@@ -3,6 +3,7 @@ package plex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -236,5 +237,19 @@ func TestItemPathsReadsLocationsAndFiles(t *testing.T) {
 				t.Errorf("request = %s %s", r.Method, r.URL.Path)
 			}
 		})
+	}
+}
+
+func TestItemPathsEmptyResponseIsNotNotFound(t *testing.T) {
+	_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"MediaContainer":{}}`))
+	})
+
+	_, err := c.ItemPaths(context.Background(), "1001")
+	if err == nil {
+		t.Fatal("no error")
+	}
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrUnavailable) {
+		t.Errorf("error %q wraps ErrNotFound or ErrUnavailable, want a plain error", err)
 	}
 }

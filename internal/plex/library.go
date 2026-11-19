@@ -2,6 +2,7 @@ package plex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -162,7 +163,8 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 }
 
 // ItemPaths returns Location[].path of a series, or Media[].Part[].file of a
-// movie.
+// movie. Only a 404 status gives ErrNotFound. A response without an item
+// gives a plain error.
 func (c *Client) ItemPaths(ctx context.Context, ratingKey string) ([]string, error) {
 	endpoint, err := metadataPath(ratingKey, "")
 	if err != nil {
@@ -174,7 +176,7 @@ func (c *Client) ItemPaths(ctx context.Context, ratingKey string) ([]string, err
 		return nil, fmt.Errorf("item paths: %w", err)
 	}
 	if len(resp.MediaContainer.Metadata) == 0 {
-		return nil, fmt.Errorf("item paths: %w", ErrNotFound)
+		return nil, errors.New("item paths: response has no item")
 	}
 
 	m := resp.MediaContainer.Metadata[0]
