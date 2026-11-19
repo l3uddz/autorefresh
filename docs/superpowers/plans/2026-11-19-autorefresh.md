@@ -70,7 +70,7 @@ The owner chose three rows on 2026-11-19, in answers to separate questions: "Mis
 | `max-refreshes-per-run` | If it is set, it must be 1 or more. |
 | `minimum-age`, `oversample`, `refresh-delay` | 0 or more. `refresh-interval` must be more than 0. |
 | Schedule | `schedule` and `cache-refresh` use `cron.ParseStandard` (5 fields and descriptors such as `@hourly`), in the local time zone (`TZ`). Without `--once`, the first run waits for the schedule. |
-| `cache-refresh` default | `0 3 * * 0`, weekly at 03:00 on Sunday. It replaces the `168h` of the design. |
+| `cache-refresh` default | `0 3 * * 0`, weekly at 03:00 on Sunday. It replaces the `168h` of the design. The full read happens in the first run at or after that time, so its start depends on `schedule`. The README tells users to choose a `cache-refresh` time at which `schedule` also starts a run. |
 | Shutdown | On SIGINT or SIGTERM, autorefresh stops the schedule and cancels the run. The run stops before its next request. Then the process exits. |
 | Warnings that repeat | A skipped library with another agent and a configured library title that Plex does not have each log one warning for each process. |
 | YAML library | `go.yaml.in/yaml/v3` with `KnownFields(true)`. An unknown key is an error, as in autoscan. A test pins duration decoding. |
@@ -97,7 +97,7 @@ Procedure:
 4. Write a header file: `printf 'X-Plex-Token: %s\nAccept: application/json\n' "$(cat rec/token)" > rec/headers`. `printf` is a shell builtin, so the token is not in the process list.
 5. Use one helper for every request: `curl -sS --fail --request GET --max-time 60 -H @rec/headers -o "rec/<name>.json" "$(cat rec/url)<path-and-query>" 2>"rec/<name>.err"; echo "exit=$?"`.
 6. Probe the request forms on one movie library. Print only numbers and rating keys.
-   - Filter encoding: get the 10 newest items with `sort=addedAt:desc`. Choose a time `T` between the `addedAt` of the 5th and the 6th item, so that the expected result is the 5 newest rating keys. Then list `addedAt>>=T` in the raw form and in the percent-encoded form (`addedAt%3E%3E=T`). If a form returns exactly the 5 expected rating keys, it works. Any other result means that the form does not work.
+   - Filter encoding: get the 20 newest items of a movie library with `sort=addedAt:desc`. Look at the positions `k` from 3 to 19. Find the first `k` with an `addedAt` of item `k` at least 2 seconds after the `addedAt` of item `k+1`. Set `T` to the `addedAt` of item `k+1` plus 1. The expected result is then the `k` newest rating keys, and no item has the time `T`. If no such `k` exists, try another movie or show library. If no library has one, stop and tell the owner. Then list `addedAt>>=T` in the raw form and in the percent-encoded form (`addedAt%3E%3E=T`). If a form returns exactly the `k` expected rating keys, it works. Any other result means that the form does not work.
    - Choose the filter form by these rules. When both forms work, use the percent-encoded form, because `url.Values.Encode` makes it. When one form works, use that form. When no form works, stop and tell the owner.
    - Order: get one item with `sort=addedAt` and one with `sort=addedAt:desc`. If the `addedAt` of `sort=addedAt` is lower, that form is ascending. Otherwise try `sort=addedAt:asc`.
    - Paging: get one item with `X-Plex-Container-Start=0` and one with `X-Plex-Container-Start=1`, both with `X-Plex-Container-Size=1` in the query. If each response has one item and the rating keys differ, paging in the query works. Otherwise try the same names as headers.
@@ -622,7 +622,7 @@ Autorefresh stages the results of all requests of one library in a `store.Read`:
 3. After a full read, `Unseen` gives the rows that the listing did not return. Autorefresh calls `ItemPaths` for each. `ErrNotFound` puts the rating key in `Gone`. `ErrUnavailable` stops the server. Any other result keeps the row.
 4. When every request of the library succeeds, autorefresh calls `ApplyRead` once and logs each fixed row. When one request fails, it skips `ApplyRead`, so the library keeps its cache.
 
-Autorefresh keeps the movie `Files` of the run in a map by rating key for Task 6.
+For each server, autorefresh keeps the movie `Files` of the run in a map by rating key for Task 6. Each server gets a new map, because two servers can use the same rating key.
 
 - [ ] Step 1: Write the failing tests. Use the fake Plex and a real store in `t.TempDir()`.
   - `TestRunSelectsSupportedLibraries`: Plex has three libraries. They are a movie library with the movie agent, a show library with the series agent, and a movie library with `tv.plex.agents.none`. Only the first two are read. Two runs log the warning for the third library once.
@@ -681,6 +681,7 @@ At the end of each server, log one info summary line with: items read, incomplet
   - `TestUnmatchedFirstAttemptIsPlainRefresh`: an unmatched item with `Refreshes == 0` gets `Refresh` and no `SearchMatches`.
   - `TestFixMatchMovie`: an unmatched movie with `Refreshes == 1` and the listing file `/m/Film (2020) {tmdb-1}/Film.mkv` gets `SearchMatches(key, "tmdb-1", "tv.plex.agents.movie", <section language>)`, then `Match` with the candidate. `Refreshes` becomes 2, and the summary counts one match.
   - `TestFixMatchMovieWithoutListingUsesItemPaths`.
+  - `TestFixMatchFileMapIsPerServer`: server A lists movie `1001` with a path. Server B has a due unmatched movie `1001` that its read did not list. Server B calls `ItemPaths` and does not use the path of server A.
   - `TestFixMatchSeriesUsesItemPaths`: the series path comes from `ItemPaths`, and the agent is `tv.plex.agents.series`.
   - `TestFixMatchConflictSendsPlainRefresh`: two IDs with different guids log a warning and send `Refresh`.
   - `TestFixMatchWithoutIDsSendsPlainRefresh`.
@@ -754,7 +755,7 @@ Wiring in `main`:
     - the refresh interval, with no limit on attempts
     - the fix match from path IDs, and the pacing
     - autorefresh never sends a library-wide refresh
-  - Add "Configuration": the spec's example with neutral values, the key table with defaults, and the rules for `name`, `url`, `token`, and `libraries`. Add a note that `http` sends the token in clear text. If the connection leaves a trusted network, tell users to use `https`.
+  - Add "Configuration": the spec's example with neutral values, the key table with defaults, and the rules for `name`, `url`, `token`, and `libraries`. Tell users to choose a `cache-refresh` time at which `schedule` also starts a run, because the full read happens in the first run at or after that time. Add a note that `http` sends the token in clear text. If the connection leaves a trusted network, tell users to use `https`.
   - Add the four new flags to the flag table, and add a "Dry run" section.
   - In the Docker section, list the three environment variables that the image sets.
 - [ ] Step 7: Update the `cmd/autorefresh/` row in the `AGENTS.md` path table.

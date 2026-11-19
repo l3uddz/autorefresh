@@ -269,8 +269,10 @@ by page. Autorefresh evaluates each item with the rules above.
 If a library has no full read yet, autorefresh does a full read of it.
 `cache-refresh` is a cron expression. If a `cache-refresh` time passed
 since the last full read of a library, the next run does a full read of
-it. Full reads then happen at a fixed, quiet time. The owner chose this
-cron form on 2026-11-19, after the plan review.
+it. `schedule` sets the start time of that run. If a run starts at each
+`cache-refresh` time, the full reads happen at that time. With the
+defaults, the hourly run at 03:00 on Sunday does the full reads. The owner
+chose this cron form on 2026-11-19, after the plan review.
 
 ### Incremental read
 
