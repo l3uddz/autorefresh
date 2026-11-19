@@ -1,0 +1,11 @@
+.DS_Store
+.idea/
+vendor/
+dist/
+
+*.db
+*.log
+/autorefresh
+/config.yml
+
+mise.local.toml
