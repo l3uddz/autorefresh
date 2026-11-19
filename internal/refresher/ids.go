@@ -14,9 +14,9 @@ func (id pathID) title() string {
 }
 
 var (
-	// groupPattern finds a bracket group with no bracket inside. The three
+	// groupPattern finds a bracket group with no bracket or path separator inside. The three
 	// alternatives keep the opening and closing bracket of the same kind.
-	groupPattern = regexp.MustCompile(`\{([^{}\[\]()]*)\}|\[([^{}\[\]()]*)\]|\(([^{}\[\]()]*)\)`)
+	groupPattern = regexp.MustCompile(`\{([^{}\[\]()/\\]*)\}|\[([^{}\[\]()/\\]*)\]|\(([^{}\[\]()/\\]*)\)`)
 	// idPattern matches a whole group text that holds one ID.
 	idPattern = regexp.MustCompile(`(?i)^(imdb|tmdb|tvdb)(?:id)?[^a-z0-9]+(.+)$`)
 	// imdbValue and numberValue match the value of an ID.

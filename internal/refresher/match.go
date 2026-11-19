@@ -18,6 +18,8 @@ func chooseMatch(itemYear int, results []searchResult) (cand plex.Candidate, ok 
 			continue
 		case len(r.candidates) > 1:
 			return plex.Candidate{}, false, "several candidates"
+		case r.candidates[0].GUID == "":
+			return plex.Candidate{}, false, "candidate without guid"
 		case found && r.candidates[0].GUID != cand.GUID:
 			return plex.Candidate{}, false, "different candidates"
 		}

@@ -34,6 +34,9 @@ func TestChooseMatch(t *testing.T) {
 		{"two ids different guids", 2020, []searchResult{res(a), res(a2)}, false, true},
 		{"year differs by two", 2020, []searchResult{res(withYear(2022))}, false, true},
 		{"year differs by one", 2020, []searchResult{res(withYear(2021))}, true, false},
+		{"item year two newer", 2022, []searchResult{res(withYear(2020))}, false, true},
+		{"item year one newer", 2021, []searchResult{res(withYear(2020))}, true, false},
+		{"empty guids", 2020, []searchResult{res(plex.Candidate{}), res(plex.Candidate{})}, false, true},
 		{"item year zero", 0, []searchResult{res(withYear(2022))}, true, false},
 		{"candidate year zero", 2020, []searchResult{res(withYear(0))}, true, false},
 	}

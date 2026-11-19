@@ -21,6 +21,7 @@ func TestParseIDs(t *testing.T) {
 		{"imdb without tt", []string{"/m/Film {imdb-12345}"}, nil},
 		{"tmdb with tt", []string{"/m/Film {tmdb-tt1}"}, nil},
 		{"outside brackets", []string{"/m/Film tmdb-1 (2020)/f.mkv"}, nil},
+		{"group spans path parts", []string{"/m/Film {tmdb-/5}"}, nil},
 		{"two IDs in one group", []string{"/m/Film {tmdb-1 imdb-tt2}"}, nil},
 		{"mismatched brackets", []string{"/m/Film {tmdb-1]"}, nil},
 		{"same ID in folder and file", []string{"/m/Film {tmdb-5}/Film {tmdb-5}.mkv"}, []pathID{{"tmdb", "5"}}},
