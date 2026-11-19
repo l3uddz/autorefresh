@@ -2,7 +2,9 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -99,7 +101,7 @@ func (s *Store) Library(server, section string) (Library, error) {
 	var full, read sql.NullInt64
 	err := s.db.QueryRow(`SELECT last_full_read, last_read FROM library WHERE server = ? AND section = ?`,
 		server, section).Scan(&full, &read)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return Library{}, nil
 	}
 	if err != nil {
@@ -114,7 +116,9 @@ func (s *Store) Library(server, section string) (Library, error) {
 // lists (or else the old episode bits). It inserts rows for new items with
 // final reasons that are not 0, deletes the rows whose final reasons are 0
 // and returns them as fixed, deletes the r.Gone rows (not in fixed), and
-// sets the read times. LastFullRead changes only if r.Full.
+// sets the read times. LastFullRead changes only if r.Full. The caller must
+// set AddedAt on every item, because a zero time is stored as a negative number.
+// A row of the same rating key in another section moves to r.Section.
 func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -190,8 +194,11 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 		case exists:
 			_, err = tx.Exec(`UPDATE item SET reasons = ? WHERE server = ? AND rating_key = ?`, int(final), r.Server, key)
 		case final != 0:
+			// A row of the same key in another section moves here and keeps its history.
 			_, err = tx.Exec(`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT (server, rating_key) DO UPDATE SET section = excluded.section, type = excluded.type,
+					title = excluded.title, year = excluded.year, added_at = excluded.added_at, reasons = excluded.reasons`,
 				r.Server, r.Section, key, meta.Type, meta.Title, meta.Year, meta.AddedAt.Unix(), int(final))
 		}
 		if err != nil {
@@ -199,6 +206,7 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 		}
 	}
 
+	// The caller never puts a key in both Items and Gone, so no row is updated and then deleted.
 	for _, key := range r.Gone {
 		if deleted[key] {
 			continue
@@ -207,6 +215,8 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 			return nil, err
 		}
 	}
+
+	sort.Slice(fixed, func(i, j int) bool { return fixed[i].RatingKey < fixed[j].RatingKey })
 
 	if err := writeReadTimes(tx, r); err != nil {
 		return nil, err

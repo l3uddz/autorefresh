@@ -236,12 +236,14 @@ func TestDueOrder(t *testing.T) {
 		it.AddedAt = base.Add(added)
 		return it
 	}
+	// Within each tie, the larger rating key has the older AddedAt.
 	apply(t, s, Read{Items: []Item{
-		mk("old-attempt", 0), mk("new-attempt", 0), mk("never-late", 2*time.Hour),
-		mk("never-early", time.Hour), mk("tie-b", 0), mk("tie-a", 0),
+		mk("never-z", 0), mk("never-a", time.Hour),
+		mk("old-attempt", 0), mk("new-attempt", 0),
+		mk("same-z", 0), mk("same-a", time.Hour),
 	}})
 	at := base.Add(10 * time.Hour)
-	for k, d := range map[string]time.Duration{"old-attempt": 0, "new-attempt": time.Hour, "tie-a": 2 * time.Hour, "tie-b": 2 * time.Hour} {
+	for k, d := range map[string]time.Duration{"old-attempt": 0, "new-attempt": time.Hour, "same-z": 2 * time.Hour, "same-a": 2 * time.Hour} {
 		if err := s.RecordAttempt(srv, k, at.Add(d), false); err != nil {
 			t.Fatal(err)
 		}
@@ -251,16 +253,46 @@ func TestDueOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"never-early", "never-late", "old-attempt", "new-attempt", "tie-a", "tie-b"}
+	want := []string{"never-z", "never-a", "old-attempt", "new-attempt", "same-z", "same-a"}
 	if k := keys(got); !reflect.DeepEqual(k, want) {
 		t.Fatalf("Due = %v, want %v", k, want)
+	}
+}
+
+func TestApplyReadMovesRowBetweenSections(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	refresh(t, s, "a", 2)
+
+	n := item("a", NoPoster)
+	n.Section = "2"
+	apply(t, s, Read{Section: "2", Items: []Item{n}})
+
+	moved, err := s.Unseen(srv, "2", nil)
+	if err != nil || len(moved) != 1 {
+		t.Fatalf("section 2 = %v, %v", moved, err)
+	}
+	if got := moved[0]; got.Section != "2" || got.Reasons != NoPoster || got.Refreshes != 2 {
+		t.Fatalf("row = %+v, want section 2, NoPoster, Refreshes 2", got)
+	}
+	if len(rows(t, s)) != 0 {
+		t.Fatal("row still in section 1")
+	}
+}
+
+func TestApplyReadReturnsFixedInKeyOrder(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("c", NoArt), item("a", NoArt), item("b", NoArt)}})
+	fixed := apply(t, s, Read{Items: []Item{item("c", 0), item("a", 0), item("b", 0)}})
+	if k := keys(fixed); !reflect.DeepEqual(k, []string{"a", "b", "c"}) {
+		t.Fatalf("fixed = %v, want [a b c]", k)
 	}
 }
 
 func TestDueSkipsRecentAttemptsAndOtherScopes(t *testing.T) {
 	s := openTest(t)
 	now := base.Add(48 * time.Hour)
-	apply(t, s, Read{Items: []Item{item("recent", NoArt), item("old", NoArt), item("other-section", NoArt)}})
+	apply(t, s, Read{Items: []Item{item("recent", NoArt), item("old", NoArt), item("second", NoArt)}})
 	apply(t, s, Read{Section: "2", Items: []Item{item("hidden", NoArt)}})
 	apply(t, s, Read{Server: "other", Items: []Item{item("elsewhere", NoArt)}})
 	if err := s.RecordAttempt(srv, "recent", now.Add(-time.Hour), false); err != nil {
@@ -275,7 +307,7 @@ func TestDueSkipsRecentAttemptsAndOtherScopes(t *testing.T) {
 	}
 	k := keys(got)
 	sort.Strings(k)
-	if want := []string{"old", "other-section"}; !reflect.DeepEqual(k, want) {
+	if want := []string{"old", "second"}; !reflect.DeepEqual(k, want) {
 		t.Fatalf("Due = %v, want %v", k, want)
 	}
 	n, err := s.CountIncomplete(srv, []string{sec})
@@ -295,7 +327,7 @@ func TestDueSkipsYoungItemUntilOldEnough(t *testing.T) {
 	if err != nil || len(got) != 0 {
 		t.Fatalf("young Due = %v, %v", got, err)
 	}
-	if n, _ := s.CountIncomplete(srv, []string{sec}); n != 1 {
+	if n, err := s.CountIncomplete(srv, []string{sec}); err != nil || n != 1 {
 		t.Fatalf("CountIncomplete = %d, want 1", n)
 	}
 	got, err = s.Due(srv, []string{sec}, now.Add(24*time.Hour), 24*time.Hour, time.Hour)
