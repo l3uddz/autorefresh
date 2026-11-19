@@ -222,11 +222,30 @@ func TestRefreshUnavailableStopsServer(t *testing.T) {
 		t.Fatalf("got %d unavailable errors, want 1", len(errs))
 	}
 	wantField(t, errs[0], "server", "down")
-	for _, key := range []string{"101", "102"} {
-		if row, _ := f.row("down", "1", key); row.Refreshes != 0 || !row.LastAttempt.IsZero() {
-			t.Errorf("row %s = %+v, want no attempt", key, row)
-		}
+	// Plex can apply a refresh before the response fails, so the failed
+	// request counts as an attempt.
+	if row, _ := f.row("down", "1", "101"); row.Refreshes != 0 || !row.LastAttempt.Equal(t0) {
+		t.Errorf("row 101 = %+v, want no refresh and LastAttempt %v", row, t0)
 	}
+	if row, _ := f.row("down", "1", "102"); !row.LastAttempt.IsZero() {
+		t.Errorf("row 102 = %+v, want no attempt", row)
+	}
+	summary := f.lastSummary("down")
+	wantField(t, summary, "refreshes", float64(1))
+	wantField(t, summary, "failures", float64(1))
+	if got := len(f.logLines("info", "Run summary")); got != 2 {
+		t.Errorf("got %d summary lines, want 2", got)
+	}
+
+	down.refreshErrs = map[string]error{}
+	down.calls, up.calls = nil, nil
+	f.run(t0.Add(23 * time.Hour))
+	wantCalls(t, sends(down.calls), "Refresh 102")
+	wantCalls(t, sends(up.calls))
+
+	down.calls = nil
+	f.run(t0.Add(24 * time.Hour))
+	wantCalls(t, sends(down.calls), "Refresh 101")
 }
 
 func TestUnmatchedFirstAttemptIsPlainRefresh(t *testing.T) {
@@ -540,6 +559,36 @@ func TestCanceledDelayStopsRunQuietly(t *testing.T) {
 
 	wantCalls(t, sends(first.calls), "Refresh 101")
 	wantCalls(t, second.calls)
+	if strings.Contains(f.logs.String(), `"level":"error"`) {
+		t.Errorf("got error lines, want none:\n%s", f.logs)
+	}
+	if lines := f.logLines("info", "Run summary"); len(lines) != 0 {
+		t.Errorf("got summary lines %v, want none", lines)
+	}
+}
+
+func TestCanceledSendRecordsAttempt(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102")}
+	fp.refreshErrs["101"] = fmt.Errorf("refresh: %w: %w", plex.ErrUnavailable, context.Canceled)
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fp.onCall = func(call string) {
+		if call == "Refresh 101" {
+			cancel()
+		}
+	}
+
+	f.now = t0
+	if err := f.r.Run(ctx); err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+
+	wantCalls(t, sends(fp.calls), "Refresh 101")
+	if row, _ := f.row(testServer, "1", "101"); row.Refreshes != 0 || !row.LastAttempt.Equal(t0) {
+		t.Errorf("row = %+v, want no refresh and LastAttempt %v", row, t0)
+	}
 	if strings.Contains(f.logs.String(), `"level":"error"`) {
 		t.Errorf("got error lines, want none:\n%s", f.logs)
 	}

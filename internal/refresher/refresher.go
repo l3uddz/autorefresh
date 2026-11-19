@@ -93,11 +93,24 @@ type serverRun struct {
 	files     map[string][]string // movie files by rating key, from the reads of this run
 	itemsRead int
 	completed int // rows that became complete
+	due       int
+	refreshes int // refresh requests sent, also failed ones
+	matches   int // match requests sent, also failed ones
+	failures  int // failed requests and match searches, without 404 answers
 }
 
-// Run reads the libraries of each server in order, and then refreshes the
-// due items of that server. It returns an error only for a store error. If
-// ctx ends, Run stops and returns nil.
+// sections returns the section IDs of the selected libraries.
+func (run *serverRun) sections() []string {
+	sections := make([]string, 0, len(run.libraries))
+	for _, lib := range run.libraries {
+		sections = append(sections, lib.ID)
+	}
+	return sections
+}
+
+// Run reads the libraries of each server in order, refreshes the due items
+// of that server, and logs its summary. It returns an error only for a store
+// error. If ctx ends, Run stops and returns nil.
 func (r *Refresher) Run(ctx context.Context) error {
 	for _, srv := range r.servers {
 		if ctx.Err() != nil {
@@ -106,18 +119,25 @@ func (r *Refresher) Run(ctx context.Context) error {
 		}
 		run := &serverRun{server: srv, began: time.Now(), files: map[string][]string{}}
 		err := r.readLibraries(ctx, run)
-		if err == nil {
+		readsDone := err == nil
+		if readsDone {
 			err = r.refreshDue(ctx, run)
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
 			log.Debug().Str("server", srv.Name).Msg("Run canceled")
 			return nil
 		}
-		if errors.Is(err, plex.ErrUnavailable) {
+		switch {
+		case errors.Is(err, plex.ErrUnavailable):
 			log.Error().Str("server", srv.Name).Err(err).Msg("Plex server unavailable")
-			continue
+			if !readsDone {
+				continue
+			}
+		case err != nil:
+			return fmt.Errorf("server %s: %w", srv.Name, err)
 		}
-		if err != nil {
+		// A server that the refresh step stopped also gets its summary.
+		if err := r.logSummary(run); err != nil {
 			return fmt.Errorf("server %s: %w", srv.Name, err)
 		}
 	}

@@ -18,28 +18,22 @@ type refreshStep struct {
 	now       time.Time
 	libraries map[string]plex.Library // by section
 	sent      int                     // refresh and match requests, or logged items in a dry run
-	due       int
-	refreshes int // refresh requests sent, also failed ones
-	matches   int // match requests sent, also failed ones
-	failures  int // failed requests and match searches, without 404 answers
 }
 
 // refreshDue sends a refresh or a match request to each due item of the
-// server, in Due order, and then logs the summary of the server. It returns
-// only the error of stopError, a sleep error, or a store error.
+// server, in Due order. It returns only the error of stopError, a sleep
+// error, or a store error.
 func (r *Refresher) refreshDue(ctx context.Context, run *serverRun) error {
 	s := &refreshStep{run: run, now: r.now(), libraries: map[string]plex.Library{}}
-	sections := make([]string, 0, len(run.libraries))
 	for _, lib := range run.libraries {
 		s.libraries[lib.ID] = lib
-		sections = append(sections, lib.ID)
 	}
 
-	due, err := r.store.Due(run.server.Name, sections, s.now, r.opts.MinimumAge, r.opts.RefreshInterval)
+	due, err := r.store.Due(run.server.Name, run.sections(), s.now, r.opts.MinimumAge, r.opts.RefreshInterval)
 	if err != nil {
 		return err
 	}
-	s.due = len(due)
+	run.due = len(due)
 	for _, it := range due {
 		if r.opts.MaxRefreshesPerRun > 0 && s.sent >= r.opts.MaxRefreshesPerRun {
 			break
@@ -48,13 +42,17 @@ func (r *Refresher) refreshDue(ctx context.Context, run *serverRun) error {
 			return err
 		}
 	}
+	return nil
+}
 
-	incomplete, err := r.store.CountIncomplete(run.server.Name, sections)
+// logSummary logs the summary line of the server.
+func (r *Refresher) logSummary(run *serverRun) error {
+	incomplete, err := r.store.CountIncomplete(run.server.Name, run.sections())
 	if err != nil {
 		return err
 	}
 	log.Info().Str("server", run.server.Name).Int("items", run.itemsRead).Int("incomplete", incomplete).
-		Int("due", s.due).Int("refreshes", s.refreshes).Int("matches", s.matches).Int("failures", s.failures).
+		Int("due", run.due).Int("refreshes", run.refreshes).Int("matches", run.matches).Int("failures", run.failures).
 		Int("completed", run.completed).Dur("duration", time.Since(run.began)).Msg("Run summary")
 	return nil
 }
@@ -89,10 +87,10 @@ func (r *Refresher) refreshItem(ctx context.Context, s *refreshStep, it store.It
 	s.sent++
 	client := s.run.server.Plex
 	if match {
-		s.matches++
+		s.run.matches++
 		err = client.Match(ctx, it.RatingKey, cand)
 	} else {
-		s.refreshes++
+		s.run.refreshes++
 		err = client.Refresh(ctx, it.RatingKey)
 	}
 
@@ -104,16 +102,19 @@ func (r *Refresher) refreshItem(ctx context.Context, s *refreshStep, it store.It
 		itemEvent(log.Info(), name, lib, it).Str("action", action).Msg("Sent request")
 		return nil
 	}
-	if stop := stopError(ctx, err); stop != nil {
-		return stop
-	}
-	if errors.Is(err, plex.ErrNotFound) {
+	stop := stopError(ctx, err)
+	if stop == nil && errors.Is(err, plex.ErrNotFound) {
 		return r.store.Delete(name, it.RatingKey)
 	}
+	// Plex can apply a request before its response fails, so each failed
+	// request counts as an attempt, also when it stops the server.
 	if err := r.store.RecordAttempt(name, it.RatingKey, s.now, false); err != nil {
 		return err
 	}
-	s.failures++
+	s.run.failures++
+	if stop != nil {
+		return stop
+	}
 	itemEvent(log.Warn(), name, lib, it).Str("action", action).Err(err).Msg("Request failed")
 	return nil
 }
@@ -173,7 +174,7 @@ func (r *Refresher) matchSearchFailed(ctx context.Context, s *refreshStep, lib p
 		return r.store.Delete(name, it.RatingKey)
 	}
 	if !notFound {
-		s.failures++
+		s.run.failures++
 	}
 	itemEvent(log.Warn(), name, lib, it).Err(err).Msg("Match search failed")
 	if r.opts.DryRun {
