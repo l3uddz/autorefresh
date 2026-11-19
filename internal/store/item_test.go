@@ -341,12 +341,17 @@ func TestDueComparesTimesAcrossZones(t *testing.T) {
 	apply(t, s, Read{Items: []Item{item("a", NoArt), item("b", NoArt)}})
 	east := time.FixedZone("east", 12*3600)
 	west := time.FixedZone("west", -12*3600)
-	// b is earlier by instant but later by wall clock.
+	// b is earlier by instant but later by wall clock. The wall clock of a
+	// is 12:00 earlier than its instant, and that of b is 12:00 later.
 	instant := base.Add(24 * time.Hour)
-	if err := s.RecordAttempt(srv, "a", instant.In(east), false); err != nil {
+	a, b := instant.In(west), instant.Add(-time.Hour).In(east)
+	if a.Format("2006-01-02T15:04:05") >= b.Format("2006-01-02T15:04:05") {
+		t.Fatal("setup: wall-clock order must be opposite to instant order")
+	}
+	if err := s.RecordAttempt(srv, "a", a, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordAttempt(srv, "b", instant.Add(-time.Hour).In(west), false); err != nil {
+	if err := s.RecordAttempt(srv, "b", b, false); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Due(srv, []string{sec}, instant.Add(48*time.Hour), 0, time.Hour)
@@ -393,5 +398,56 @@ func TestDelete(t *testing.T) {
 	}
 	if err := s.Delete(srv, "a"); err != nil {
 		t.Fatalf("missing row: %v", err)
+	}
+}
+
+func TestApplyReadMovedRowKeepsOldReasons(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt), item("b", NoPoster)}})
+	refresh(t, s, "a", 2)
+
+	moved := item("a", 0)
+	moved.Section = "2"
+	fixed := apply(t, s, Read{Section: "2", Shows: true, EpisodeNoSummary: []Item{moved}})
+	if len(fixed) != 0 {
+		t.Fatalf("fixed = %+v, want none", fixed)
+	}
+	got, err := s.Unseen(srv, "2", nil)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("section 2 = %v, %v", got, err)
+	}
+	if a := got[0]; a.Reasons != NoArt|EpisodeNoSummary || a.Refreshes != 2 {
+		t.Fatalf("a = %+v, want NoArt|EpisodeNoSummary and Refreshes 2", a)
+	}
+	if b := rows(t, s)["b"]; b.Reasons != NoPoster {
+		t.Fatalf("unmentioned b = %+v, want NoPoster kept in section 1", b)
+	}
+}
+
+func TestApplyReadMovedCompleteRowIsFixed(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	refresh(t, s, "a", 3)
+
+	moved := item("a", 0)
+	moved.Section = "2"
+	fixed := apply(t, s, Read{Section: "2", Items: []Item{moved}})
+	if len(fixed) != 1 || fixed[0].RatingKey != "a" || fixed[0].Refreshes != 3 {
+		t.Fatalf("fixed = %+v, want a with Refreshes 3", fixed)
+	}
+	if len(rows(t, s)) != 0 {
+		t.Fatal("row left in section 1")
+	}
+}
+
+func TestApplyReadGoneEpisodeOnlyRowIsNotFixed(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Shows: true, EpisodeNoSummary: []Item{item("a", 0)}})
+	fixed := apply(t, s, Read{Full: true, Shows: true, Gone: []string{"a"}})
+	if len(fixed) != 0 {
+		t.Fatalf("fixed = %+v, want none", fixed)
+	}
+	if len(rows(t, s)) != 0 {
+		t.Fatal("row not deleted")
 	}
 }

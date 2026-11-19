@@ -118,22 +118,14 @@ func (s *Store) Library(server, section string) (Library, error) {
 // and returns them as fixed, deletes the r.Gone rows (not in fixed), and
 // sets the read times. LastFullRead changes only if r.Full. The caller must
 // set AddedAt on every item, because a zero time is stored as a negative number.
-// A row of the same rating key in another section moves to r.Section.
+// A row of the same rating key in another section moves to r.Section and
+// keeps its history and its reasons that the read does not replace.
 func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("begin read: %w", err)
 	}
 	defer tx.Rollback()
-
-	old, err := queryItems(tx, `SELECT `+itemColumns+` FROM item WHERE server = ? AND section = ?`, r.Server, r.Section)
-	if err != nil {
-		return nil, fmt.Errorf("read stored items: %w", err)
-	}
-	oldByKey := make(map[string]Item, len(old))
-	for _, it := range old {
-		oldByKey[it.RatingKey] = it
-	}
 
 	// The newest metadata for each rating key: r.Items first, then the episode lists.
 	latest := map[string]Item{}
@@ -155,6 +147,25 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 			}
 			episodeBits[it.RatingKey] |= list.reason
 		}
+	}
+
+	// The old rows are the rows of the section, and the rows of any section
+	// whose rating key is in the read (a moved item). The server's rows are
+	// filtered in Go because a read can hold more keys than SQLite accepts
+	// as query parameters.
+	stored, err := queryItems(tx, `SELECT `+itemColumns+` FROM item WHERE server = ?`, r.Server)
+	if err != nil {
+		return nil, fmt.Errorf("read stored items: %w", err)
+	}
+	oldByKey := map[string]Item{}
+	for _, it := range stored {
+		if _, incoming := latest[it.RatingKey]; incoming || it.Section == r.Section {
+			oldByKey[it.RatingKey] = it
+		}
+	}
+	gone := make(map[string]bool, len(r.Gone))
+	for _, k := range r.Gone {
+		gone[k] = true
 	}
 
 	keys := map[string]bool{}
@@ -186,7 +197,9 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 				return nil, err
 			}
 			deleted[key] = true
-			fixed = append(fixed, prev)
+			if !gone[key] {
+				fixed = append(fixed, prev)
+			}
 		case exists && hasMeta:
 			_, err = tx.Exec(`UPDATE item SET section = ?, type = ?, title = ?, year = ?, added_at = ?, reasons = ?
 				WHERE server = ? AND rating_key = ?`,
