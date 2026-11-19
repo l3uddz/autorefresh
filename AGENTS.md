@@ -16,7 +16,7 @@ When the design adds packages or rules, update this file.
 
 | Path | Content |
 | --- | --- |
-| `cmd/autorefresh/` | CLI entry point |
+| `cmd/autorefresh/` | CLI entry point, logging, and the default configuration directory |
 | `docker/Dockerfile` | Container image, built from the goreleaser output in `dist/` |
 | `mise.toml` | Tool versions and development tasks |
 | `.goreleaser.yml` | Release build configuration |
@@ -31,7 +31,8 @@ Apply SOLID, KISS, DRY, and YAGNI to each code change.
   and define them where callers use them.
 - Prefer direct control flow and names that explain intent.
 - If existing code implements the same rule, reuse it. If two rules are
-  separate, keep their code separate, even when the code looks similar.
+  separate, keep their code separate. Do this also when the code looks
+  similar.
 - Add abstractions, configuration, and dependencies only for current needs.
 - Before delivery, review the diff for duplicated rules, unnecessary
   abstraction, and unused code. Fix the problems that the change introduces.
@@ -45,6 +46,10 @@ Apply SOLID, KISS, DRY, and YAGNI to each code change.
   directory of the package that reads them.
 - Remove server addresses, tokens, and other private values from recorded
   responses before you commit them.
+- Log with the zerolog global logger, `github.com/rs/zerolog/log`. `main`
+  configures it in `cmd/autorefresh/logging.go`. Put values in fields, for
+  example `log.Info().Str("item", title).Msg("Refreshed item")`, not in the
+  message text.
 - If you change user-facing behavior or configuration, update `README.md`.
 - The Go version comes from `go.mod`. Do not lower it. Keep the `go` version
   in `mise.toml` on the same minor release.
