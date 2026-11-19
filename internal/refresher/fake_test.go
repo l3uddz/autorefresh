@@ -10,26 +10,35 @@ import (
 
 var _ Plex = (*plex.Client)(nil)
 
-// fakePlex records each call and returns the configured results. A List or
-// ItemPaths call without a configured result returns an empty result.
+// fakePlex records each call and returns the configured results. A List,
+// ItemPaths, or SearchMatches call without a configured result returns an
+// empty result.
 type fakePlex struct {
 	libraries    []plex.Library
 	librariesErr error
-	lists        map[string][]plex.Item // by listKey
-	listErrs     map[string]error       // by listKey
-	paths        map[string][]string    // by rating key
-	pathErrs     map[string]error       // by rating key
+	lists        map[string][]plex.Item      // by listKey
+	listErrs     map[string]error            // by listKey
+	paths        map[string][]string         // by rating key
+	pathErrs     map[string]error            // by rating key
+	candidates   map[string][]plex.Candidate // by "<rating key> <search title>"
+	searchErrs   map[string]error            // by rating key
+	refreshErrs  map[string]error            // by rating key
+	matchErrs    map[string]error            // by rating key
 	calls        []string
 	onCall       func(call string) // runs after each recorded call, if set
 }
 
 func newFakePlex(libraries ...plex.Library) *fakePlex {
 	return &fakePlex{
-		libraries: libraries,
-		lists:     map[string][]plex.Item{},
-		listErrs:  map[string]error{},
-		paths:     map[string][]string{},
-		pathErrs:  map[string]error{},
+		libraries:   libraries,
+		lists:       map[string][]plex.Item{},
+		listErrs:    map[string]error{},
+		paths:       map[string][]string{},
+		pathErrs:    map[string]error{},
+		candidates:  map[string][]plex.Candidate{},
+		searchErrs:  map[string]error{},
+		refreshErrs: map[string]error{},
+		matchErrs:   map[string]error{},
 	}
 }
 
@@ -74,15 +83,20 @@ func (f *fakePlex) ItemPaths(_ context.Context, ratingKey string) ([]string, err
 
 func (f *fakePlex) Refresh(_ context.Context, ratingKey string) error {
 	f.record("Refresh " + ratingKey)
-	return nil
+	return f.refreshErrs[ratingKey]
 }
 
-func (f *fakePlex) SearchMatches(_ context.Context, ratingKey, _, _, _ string) ([]plex.Candidate, error) {
-	f.record("SearchMatches " + ratingKey)
-	return nil, nil
+// SearchMatches records "SearchMatches <rating key> <title> <agent> <language>".
+func (f *fakePlex) SearchMatches(_ context.Context, ratingKey, title, agent, language string) ([]plex.Candidate, error) {
+	f.record(strings.Join([]string{"SearchMatches", ratingKey, title, agent, language}, " "))
+	if err := f.searchErrs[ratingKey]; err != nil {
+		return nil, err
+	}
+	return f.candidates[ratingKey+" "+title], nil
 }
 
-func (f *fakePlex) Match(_ context.Context, ratingKey string, _ plex.Candidate) error {
-	f.record("Match " + ratingKey)
-	return nil
+// Match records "Match <rating key> <candidate guid>".
+func (f *fakePlex) Match(_ context.Context, ratingKey string, cand plex.Candidate) error {
+	f.record("Match " + ratingKey + " " + cand.GUID)
+	return f.matchErrs[ratingKey]
 }

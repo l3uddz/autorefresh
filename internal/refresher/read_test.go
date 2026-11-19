@@ -72,11 +72,12 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 }
 
 type fixture struct {
-	t     *testing.T
-	store *store.Store
-	r     *Refresher
-	logs  *bytes.Buffer
-	now   time.Time
+	t      *testing.T
+	store  *store.Store
+	r      *Refresher
+	logs   *bytes.Buffer
+	now    time.Time
+	sleeps []time.Duration // the durations passed to sleep
 }
 
 func newFixture(t *testing.T, servers ...Server) *fixture {
@@ -93,14 +94,20 @@ func newFixture(t *testing.T, servers ...Server) *fixture {
 	}
 
 	f := &fixture{t: t, store: st, logs: logs}
+	// The read tests use a dry run, so the refresh step after the reads sends
+	// no request and changes no row. newRefreshFixture turns it off.
 	f.r = New(servers, st, Options{
 		MinimumAge:      minimumAge,
 		RefreshInterval: 24 * time.Hour,
 		Oversample:      oversample,
 		CacheRefresh:    schedule,
+		DryRun:          true,
 	})
 	f.r.now = func() time.Time { return f.now }
-	f.r.sleep = func(context.Context, time.Duration) error { return nil }
+	f.r.sleep = func(_ context.Context, d time.Duration) error {
+		f.sleeps = append(f.sleeps, d)
+		return nil
+	}
 	return f
 }
 
