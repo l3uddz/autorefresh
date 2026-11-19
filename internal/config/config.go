@@ -123,7 +123,7 @@ func (s Server) validate() error {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return errors.New("url must use http or https")
 	}
-	if u.Host == "" {
+	if u.Hostname() == "" {
 		return errors.New("url has no host")
 	}
 	if s.Token == "" {

@@ -105,6 +105,7 @@ func TestDecodeRejectsInvalidConfig(t *testing.T) {
 		{"empty url", "plex:\n  - name: a\n    url: \"\"\n    token: t\n"},
 		{"unsupported scheme", "plex:\n  - name: a\n    url: ftp://plex.example.invalid\n    token: t\n"},
 		{"url without host", "plex:\n  - name: a\n    url: http://\n    token: t\n"},
+		{"url with port but no host", "plex:\n  - name: a\n    url: \"http://:32400\"\n    token: t\n"},
 		{"empty token", "plex:\n  - name: a\n    url: http://plex.example.invalid\n    token: \"\"\n"},
 		{"invalid schedule", "schedule: every hour\n" + minimalServer},
 		{"zero refresh interval", "refresh-interval: 0s\n" + minimalServer},
@@ -125,23 +126,29 @@ func TestDecodeRejectsInvalidConfig(t *testing.T) {
 }
 
 func TestDecodeErrorsOmitSecrets(t *testing.T) {
-	const doc = `
-plex:
-  - name: main
-    url: ftp://secret-host.example.invalid
-    token: secret-token
-`
-	_, err := Decode(strings.NewReader(doc))
-	if err == nil {
-		t.Fatal("Decode accepted an unsupported scheme")
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"unsupported scheme", "ftp://secret-host.example.invalid"},
+		{"url parse failure", "http://secret-host.example.invalid:bad"},
 	}
-	msg := err.Error()
-	if !strings.Contains(msg, "main") {
-		t.Errorf("error %q does not name the server", msg)
-	}
-	for _, secret := range []string{"secret-host", "secret-token"} {
-		if strings.Contains(msg, secret) {
-			t.Errorf("error %q contains %q", msg, secret)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc := "plex:\n  - name: main\n    url: \"" + tt.url + "\"\n    token: secret-token\n"
+			_, err := Decode(strings.NewReader(doc))
+			if err == nil {
+				t.Fatal("Decode accepted an invalid url")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "main") {
+				t.Errorf("error %q does not name the server", msg)
+			}
+			for _, secret := range []string{"secret-host", "secret-token"} {
+				if strings.Contains(msg, secret) {
+					t.Errorf("error %q contains %q", msg, secret)
+				}
+			}
+		})
 	}
 }
