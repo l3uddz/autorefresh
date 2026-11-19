@@ -307,14 +307,17 @@ does it.
 
 ## Refresh rules
 
-- If an item is incomplete, older than `minimum-age`, and not refreshed in
-  the last `refresh-interval`, the item is due. An item that was never
-  refreshed is due at once.
-- Autorefresh never gives up. It refreshes an incomplete item again after
-  each `refresh-interval` until the item is complete or gone from Plex.
+- If an item is incomplete, older than `minimum-age`, and has no attempt
+  in the last `refresh-interval`, the item is due. An attempt is any
+  refresh or match request, successful or failed. An item with no attempt
+  is due at once. One rule therefore paces successful and failed requests
+  alike. A refresh that Plex applied before the response failed cannot
+  repeat within `refresh-interval`.
+- Autorefresh never gives up. It sends an incomplete item a new attempt
+  after each `refresh-interval` until the item is complete or gone from
+  Plex.
 - Each run refreshes the due items in this order: first the items with no
-  attempt, then the items with the oldest last attempt. An attempt is any
-  refresh or match request, also a failed one. Ties go to the item that Plex
+  attempt, then the items with the oldest last attempt. Ties go to the item that Plex
   added first. A failing item therefore moves to the end of the queue and
   cannot block other items.
 - Autorefresh sends one refresh or match request at a time on each server.
@@ -339,7 +342,8 @@ does it.
   period again.
 - If a refresh or match request fails for a reason other than 404,
   autorefresh logs it and records the time of the attempt. It does not
-  record a refresh, so the item stays due.
+  record a refresh or change the refresh count. The item is due again
+  after `refresh-interval`, as for any attempt.
 - If a match search fails, autorefresh does not treat it as an empty
   result. It applies no match and sends no plain refresh for that item in
   this run. It handles the item as a failed request, as above. The rule
