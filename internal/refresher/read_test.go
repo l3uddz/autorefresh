@@ -556,36 +556,74 @@ func TestUnavailableSkipsServer(t *testing.T) {
 }
 
 func TestCancelStopsRunQuietly(t *testing.T) {
+	firstIncremental := "List 1?type=1&updatedAt>>=" + unixString(t0.Add(-oversample))
+	noSummary, _ := episodeKeys(t0)
 	tests := []struct {
-		name    string
-		listErr error // the error of the List call that cancels the context
+		name       string
+		prior      map[string][]plex.Item // if set, the listings of a run at t0 before the canceled run
+		at         time.Time              // the time of the canceled run
+		cancelCall string                 // the call that cancels the context
+		listErr    error                  // the error of that call, if it is a List call
+		want       []string
 	}{
-		{"between libraries", nil},
-		{"during a request", fmt.Errorf("listing section 1: %w: %w", plex.ErrUnavailable, context.Canceled)},
-		{"plain error after cancel", errors.New("listing section 1: decoding response: unexpected EOF")},
+		{
+			name: "between libraries", at: t0, cancelCall: "List 1?type=1",
+			want: []string{"Libraries", "List 1?type=1"},
+		},
+		{
+			name: "during a request", at: t0, cancelCall: "List 1?type=1",
+			listErr: fmt.Errorf("listing section 1: %w: %w", plex.ErrUnavailable, context.Canceled),
+			want:    []string{"Libraries", "List 1?type=1"},
+		},
+		{
+			name: "plain error after cancel", at: t0, cancelCall: "List 1?type=1",
+			listErr: errors.New("listing section 1: decoding response: unexpected EOF"),
+			want:    []string{"Libraries", "List 1?type=1"},
+		},
+		{
+			name: "after the first incremental listing", prior: map[string][]plex.Item{},
+			at: t0.Add(time.Hour), cancelCall: firstIncremental,
+			want: []string{"Libraries", firstIncremental},
+		},
+		{
+			name: "after the first episode request", at: t0, cancelCall: "List " + noSummary,
+			want: []string{"Libraries", "List 1?type=1", "List 2?type=2", "List " + noSummary},
+		},
+		{
+			name:  "after the first unseen check",
+			prior: map[string][]plex.Item{"1?type=1": {incompleteItem("101"), incompleteItem("102")}},
+			at:    sunday0300, cancelCall: "ItemPaths 101",
+			want: []string{"Libraries", "List 1?type=1", "ItemPaths 101"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			first := newFakePlex(moviesLib, showsLib)
+			second := newFakePlex(moviesLib)
+			f := newFixture(t, Server{Name: "first", Plex: first}, Server{Name: "second", Plex: second})
+			if tt.prior != nil {
+				first.lists = tt.prior
+				f.run(t0)
+				first.lists = map[string][]plex.Item{}
+				first.calls, second.calls = nil, nil
+			}
+
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			first := newFakePlex(moviesLib, showsLib)
 			first.onCall = func(call string) {
-				if call == "List 1?type=1" {
+				if call == tt.cancelCall {
 					cancel()
 				}
 			}
 			if tt.listErr != nil {
-				first.listErrs["1?type=1"] = tt.listErr
+				first.listErrs[strings.TrimPrefix(tt.cancelCall, "List ")] = tt.listErr
 			}
-			second := newFakePlex(moviesLib)
-			f := newFixture(t, Server{Name: "first", Plex: first}, Server{Name: "second", Plex: second})
-
-			f.now = t0
+			f.now = tt.at
 			if err := f.r.Run(ctx); err != nil {
 				t.Fatalf("Run = %v, want nil", err)
 			}
 
-			wantCalls(t, first.calls, "Libraries", "List 1?type=1")
+			wantCalls(t, first.calls, tt.want...)
 			wantCalls(t, second.calls)
 			if strings.Contains(f.logs.String(), `"level":"error"`) {
 				t.Errorf("got error lines, want none:\n%s", f.logs)
