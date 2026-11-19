@@ -14,6 +14,12 @@ on:
 permissions:
   contents: write
 
+# A new run cancels the older run for the same ref, so an older commit never
+# replaces the image of a newer commit.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   IMAGE: l3uddz/autorefresh
 
@@ -63,8 +69,9 @@ jobs:
         run: mise run lint
 
       # Docker tags: the version and latest for a v* tag. Otherwise the
-      # branch name, with each character that a Docker tag does not allow
-      # replaced by a hyphen. cleanup.yml uses the same rule.
+      # branch tag from docker-branch-tag.sh, which cleanup.yml also uses.
+      # This step runs before publish, so a version that is not a valid
+      # Docker tag stops the run before goreleaser makes a GitHub release.
       - name: image tags
         id: image
         env:
@@ -73,12 +80,17 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
         run: |
           if [ "$REF_TYPE" = "tag" ]; then
+            version="${REF_NAME#v}"
+            if [[ ! "$version" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+              echo "::error::version '$version' is not a valid Docker tag"
+              exit 1
+            fi
             echo "is_tag=true" >> "$GITHUB_OUTPUT"
-            printf 'tags<<EOF\n%s:%s\n%s:latest\nEOF\n' "$IMAGE" "${REF_NAME#v}" "$IMAGE" >> "$GITHUB_OUTPUT"
+            printf 'tags<<EOF\n%s:%s\n%s:latest\nEOF\n' "$IMAGE" "$version" "$IMAGE" >> "$GITHUB_OUTPUT"
           else
-            branch="${HEAD_REF:-$REF_NAME}"
+            tag="$(.github/scripts/docker-branch-tag.sh "${HEAD_REF:-$REF_NAME}")"
             echo "is_tag=false" >> "$GITHUB_OUTPUT"
-            echo "tags=$IMAGE:${branch//[^A-Za-z0-9_.-]/-}" >> "$GITHUB_OUTPUT"
+            echo "tags=$IMAGE:$tag" >> "$GITHUB_OUTPUT"
           fi
 
       # build

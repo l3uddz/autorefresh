@@ -2,14 +2,20 @@ name: Docker Cleanup
 
 on: delete
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   cleanup_branch:
     if: github.event.ref_type == 'branch'
     runs-on: ubuntu-latest
     steps:
-      # build.yml makes the branch tag with the same rule.
+      - name: checkout
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+
+      # build.yml makes the branch tag with the same script.
       - name: remove docker tag
         shell: bash
         env:
@@ -17,5 +23,5 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
           branch: ${{ github.event.ref }}
         run: |
-          tag="${branch//[^A-Za-z0-9_.-]/-}"
+          tag="$(.github/scripts/docker-branch-tag.sh "$branch")"
           docker run --rm lumir/remove-dockerhub-tag --user "$username" --password "$password" "l3uddz/autorefresh:$tag"
