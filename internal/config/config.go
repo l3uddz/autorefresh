@@ -71,15 +71,30 @@ func Decode(r io.Reader) (Config, error) {
 	return cfg, nil
 }
 
-var yamlLine = regexp.MustCompile(`line (\d+)`)
+var (
+	typeErrorLine   = regexp.MustCompile(`^line (\d+):`)
+	syntaxErrorLine = regexp.MustCompile(`^yaml: line (\d+):`)
+)
 
 // yamlError keeps only the line numbers of a YAML error. The yaml package
-// puts values such as the token into its messages, so the error is not wrapped.
+// puts values such as the token into its messages, so the error is not
+// wrapped. Line numbers come only from the fixed prefix of each message,
+// because a value after the prefix could imitate a line number.
 func yamlError(err error) error {
+	var messages []string
+	re := syntaxErrorLine
+	var typeErr *yaml.TypeError
+	if errors.As(err, &typeErr) {
+		messages = typeErr.Errors
+		re = typeErrorLine
+	} else {
+		messages = []string{err.Error()}
+	}
+
 	var lines []string
 	seen := map[string]bool{}
-	for _, m := range yamlLine.FindAllStringSubmatch(err.Error(), -1) {
-		if !seen[m[1]] {
+	for _, msg := range messages {
+		if m := re.FindStringSubmatch(msg); m != nil && !seen[m[1]] {
 			seen[m[1]] = true
 			lines = append(lines, m[1])
 		}

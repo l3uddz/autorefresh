@@ -140,6 +140,7 @@ func TestDecodeErrorsOmitSecrets(t *testing.T) {
 		{"unsupported scheme", "ftp://secret-host.example.invalid", "secret-token", true},
 		{"url parse failure", "http://secret-host.example.invalid:bad", "secret-token", true},
 		{"yaml type error in token", "http://plex.example.invalid", "!!bool secret-token", false},
+		{"yaml type error with line-like value", "http://plex.example.invalid", "!!bool line 739582", false},
 		{"yaml type error in url", "!!int http://secret-host.example.invalid", "secret-token", false},
 	}
 	for _, tt := range tests {
@@ -153,7 +154,7 @@ func TestDecodeErrorsOmitSecrets(t *testing.T) {
 			if tt.wantName && !strings.Contains(msg, "main") {
 				t.Errorf("error %q does not name the server", msg)
 			}
-			for _, secret := range []string{"secret-host", "secret-token"} {
+			for _, secret := range []string{"secret-host", "secret-token", "739582"} {
 				if strings.Contains(msg, secret) {
 					t.Errorf("error %q contains %q", msg, secret)
 				}
@@ -167,4 +168,14 @@ func quoteUnlessTagged(v string) string {
 		return v
 	}
 	return `"` + v + `"`
+}
+
+func TestDecodeSyntaxErrorNamesLine(t *testing.T) {
+	_, err := Decode(strings.NewReader("schedule: \"0 * * * *\"\nplex: [\n"))
+	if err == nil {
+		t.Fatal("Decode accepted a syntax error")
+	}
+	if !strings.Contains(err.Error(), "line ") {
+		t.Errorf("error %q does not name the line", err)
+	}
 }
