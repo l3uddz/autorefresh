@@ -78,13 +78,20 @@ episodes. The largest movie library has 29,160 movies.
 - `summary=` with an empty value returns the items with an empty summary.
   Plex does not list this filter in its field list, so it is undocumented.
   The client must also check the summary of each returned item.
-- `addedAt<<=-1d` and `addedAt>>=-1d` filter on relative dates.
-  `updatedAt>>=<unix time>` returns the items that changed since that time.
-  `episode.addedAt>>=-1d` on type 2 returns series that got new episodes.
+- `addedAt<<=-1d` and `addedAt>>=-1d` filter on relative dates. The same
+  filters accept absolute Unix times, for example `addedAt<<=1795025872`,
+  with the same results. `updatedAt>>=<unix time>` returns the items that
+  changed since that time. Autorefresh sends absolute times.
+- On type 2, filters with the prefix `episode.` apply to the episodes of
+  each series. `type=2&unmatched=0&episode.unmatched=0&episode.summary=&episode.addedAt<<=<time>`
+  returned 761 series. Grouping the 6,851 matching episodes by series
+  returned the same 761 series, with no difference in either direction.
 - Filters with `==` returned no items in all tests. Do not use them.
 - There is no filter for artwork. `thumb=` and `art=` return status 500.
-- `excludeElements=Media,Role,Director,Writer,Genre,Country,Image` makes a
-  page about 25% smaller. Movie listings need `Media` for the file paths.
+- `excludeElements=Media,Role,Director,Writer,Genre,Country` makes a page
+  about 25% smaller. `Image` and `UltraBlurColors` stayed in the response
+  when they were in the list. Movie listings need `Media` for the file
+  paths.
 
 ### How incomplete items look
 
@@ -143,7 +150,8 @@ the library section. The response lists candidates in
 `PUT /library/metadata/<ratingKey>/match?guid=<guid>&name=<name>&year=<year>`
 applies a match. Plex returned 200 with an empty body. Within 3 seconds, the
 movie had the `plex://` guid, a summary, a poster, and art. The `ratingKey`
-did not change.
+did not change. This request was tested on one movie only. It is not tested
+on a series.
 
 ### JSON shapes
 
@@ -178,13 +186,15 @@ The owner's paths contain IDs such as `{tmdb-747059}`, `{imdb-tt19120100}`,
 | Filtered page of 200 episodes at offset 6,000 | 0.4 seconds |
 | Page of 500 movies added in the last 60 days | 0.75 seconds |
 | Unfiltered page of 1,000 episodes (2.6 MB) | 5 seconds |
+| Filtered series list with `episode.` filters | 2.5 seconds for the count |
 | Single item | 0.2 seconds |
 | Refresh or match request | 0.2 to 0.5 seconds |
 
-A full listing of all movies in three libraries takes about 95 seconds. A
-full listing of all series in three libraries takes about 2 minutes. A full
-listing of all episodes in the largest library takes about 30 minutes,
-so autorefresh never lists all episodes.
+The following full-listing times are estimates from single pages, not
+measurements. A full listing of all movies in three libraries takes about
+95 seconds. A full listing of all series in three libraries takes about 2
+minutes. A full listing of all episodes in the largest library takes about
+30 minutes, so autorefresh never lists all episodes.
 
 ## Approaches
 
@@ -252,12 +262,11 @@ last read of the library minus `oversample`. Autorefresh then requests:
 
 ### Episodes without a summary
 
-On every run, for every `show` library, autorefresh requests the episodes
-with `type=4&unmatched=0&summary=&addedAt<<=-<minimum-age>`. It groups the
-results by `grandparentRatingKey`, which is the series. Each series in the
-result is incomplete for the reason "episodes without a summary". On the
-owner's largest library, this is about 6,900 episodes in about 7 pages, from
-762 series.
+On every run, for every `show` library, autorefresh requests the series
+with `type=2&unmatched=0&episode.unmatched=0&episode.summary=&episode.addedAt<<=<now - minimum-age>`.
+Each series in the result is incomplete for the reason "episodes without a
+summary". On the owner's largest library, this is 761 series in 2 pages of
+500. Autorefresh never lists episodes.
 
 When a series no longer appears in this result, the reason is gone.
 
@@ -265,7 +274,8 @@ When a series no longer appears in this result, the reason is gone.
 
 Autorefresh skips items that Plex added less than `minimum-age` ago. Plex can
 still be working on them. For movies and series, autorefresh compares
-`addedAt` with the current time. For episodes, the filter does it.
+`addedAt` with the current time. For episodes, the `episode.addedAt` filter
+does it.
 
 ## Refresh rules
 
@@ -282,6 +292,22 @@ still be working on them. For movies and series, autorefresh compares
 - If `max-refreshes-per-run` is set, a run sends at most that many refresh
   and match requests on each server. If it is not set, there is no limit.
 - Autorefresh never sends a library-wide refresh.
+- Runs do not overlap. If a run is still busy when the schedule fires
+  again, autorefresh skips that start and logs it. The first run on a large
+  server can take some hours. On the owner's server, about 2,000 items at
+  5 seconds each take close to 3 hours.
+- Within one run, autorefresh handles the servers one after another.
+
+### Failed requests
+
+- If Plex does not answer, autorefresh logs the error and skips that server
+  for the rest of the run.
+- If a read of a library fails or stops part of the way, autorefresh does
+  not change the read times of that library. The next run reads the same
+  period again.
+- If a refresh or match request fails for a reason other than 404,
+  autorefresh logs it and does not record it as a refresh. The item stays
+  due.
 
 ### Fix match
 
@@ -358,6 +384,20 @@ plex:
 
 The owner agreed the keys and these values. The owner's own setup leaves out
 `libraries` and `max-refreshes-per-run`.
+
+| Key | Required | Default |
+| --- | --- | --- |
+| `schedule` | no | `0 * * * *` |
+| `minimum-age` | no | `24h` |
+| `refresh-interval` | no | `12h` |
+| `cache-refresh` | no | `168h` |
+| `oversample` | no | `48h` |
+| `refresh-delay` | no | `5s` |
+| `max-refreshes-per-run` | no | no limit |
+| `plex` | yes, at least one server | none |
+
+The defaults are the values that the owner agreed for the example. This is
+the builder's call.
 
 - The timing keys apply to all servers. There is no per-server timing configuration.
 - `name`, `url`, and `token` are required for each server. Each `name` must
