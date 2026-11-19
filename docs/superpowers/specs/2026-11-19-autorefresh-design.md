@@ -86,6 +86,11 @@ episodes. The largest movie library has 29,160 movies.
   each series. `type=2&unmatched=0&episode.unmatched=0&episode.summary=&episode.addedAt<<=<time>`
   returned 761 series. Grouping the 6,851 matching episodes by series
   returned the same 761 series, with no difference in either direction.
+- `season.index>>=1` excludes specials (season 0) on type 2 and type 4.
+  With `episode.` filters on type 2, it applies to the same episode. A
+  series whose only unmatched episode was a special dropped out of the
+  result. Series with unmatched regular episodes stayed in it.
+- `parentIndex` and `episode.parentIndex` filters return status 500.
 - Filters with `==` returned no items in all tests. Do not use them.
 - There is no filter for artwork. `thumb=` and `art=` return status 500.
 - `excludeElements=Media,Role,Director,Writer,Genre,Country` makes a page
@@ -144,14 +149,17 @@ the library section. The response lists candidates in
 - `title=tvdb-485190` and `title=imdb-tt50940908` with
   `agent=tv.plex.agents.series` each returned the same series candidate.
 - For one unmatched series, the TVDB ID search and the plain search returned
-  no candidates. A fix match cannot help such an item. It needs further
-  refreshes.
+  no candidates, but the IMDb ID from the same folder returned one. So
+  autorefresh must try every ID in the path.
+- Of the 25 newest unmatched series in the largest library, 12 had at least
+  one ID that returned exactly one candidate. 7 had no IDs in the path.
 
 `PUT /library/metadata/<ratingKey>/match?guid=<guid>&name=<name>&year=<year>`
 applies a match. Plex returned 200 with an empty body. Within 3 seconds, the
 movie had the `plex://` guid, a summary, a poster, and art. The `ratingKey`
-did not change. This request was tested on one movie only. It is not tested
-on a series.
+did not change. The same request on an unmatched series gave it a
+`plex://` guid, a summary, a poster, and art within 3 seconds. All 4
+episodes of that series were then matched and had a summary.
 
 ### JSON shapes
 
@@ -218,15 +226,25 @@ The owner agreed these rules.
 | --- | --- |
 | Movie | The item is unmatched (`local://` guid), or the summary, poster, or art is missing. |
 | Series | The item is unmatched, or the summary, poster, or art is missing. |
-| Series | Some matched episodes of the series have an empty summary. |
+| Series | Some matched regular episodes of the series have an empty summary. |
+| Series | The series is matched, but some regular episodes are unmatched. |
 | Season | Never. |
 | Episode | Never on its own. Episodes count only through their series. |
 
-An episode without a summary causes a refresh of its series. Autorefresh
-never refreshes a single episode.
+A regular episode is an episode outside season 0. Specials are in season 0.
+The owner decided that specials never count, because they often miss
+information.
 
-Unmatched episodes belong to an unmatched series, so the series rule covers
-them.
+An incomplete episode causes a refresh of its series. Autorefresh never
+refreshes a single episode. The episodes of an unmatched series are
+unmatched too, so the first series rule covers them.
+
+On the owner's largest library, 450 series include regular episodes without
+a summary. 285 matched series include unmatched regular episodes. Some of
+these episodes never get metadata. A possible cause is episode numbers that
+differ from the metadata provider. Autorefresh never gives up, so it
+refreshes such a series every `refresh-interval` for as long as the episode
+stays incomplete. The owner accepted this cost.
 
 ## How autorefresh finds items
 
@@ -260,15 +278,21 @@ last read of the library minus `oversample`. Autorefresh then requests:
 - all unmatched items (`unmatched=1`), because unmatched series have no
   `updatedAt`
 
-### Episodes without a summary
+### Incomplete episodes
 
-On every run, for every `show` library, autorefresh requests the series
-with `type=2&unmatched=0&episode.unmatched=0&episode.summary=&episode.addedAt<<=<now - minimum-age>`.
-Each series in the result is incomplete for the reason "episodes without a
-summary". On the owner's largest library, this is 761 series in 2 pages of
-500. Autorefresh never lists episodes.
+On every run, for every `show` library, autorefresh sends two series
+requests. Let A be the current time minus `minimum-age`.
 
-When a series no longer appears in this result, the reason is gone.
+- `type=2&unmatched=0&episode.unmatched=0&episode.summary=&episode.addedAt<<=A&season.index>>=1`
+  returns the series with regular episodes without a summary.
+- `type=2&unmatched=0&episode.unmatched=1&episode.addedAt<<=A&season.index>>=1`
+  returns the matched series with unmatched regular episodes.
+
+Each series in a result is incomplete for that reason. Each request
+returns a few hundred series on the owner's largest library. Autorefresh
+never lists episodes.
+
+When a series no longer appears in a result, that reason is gone.
 
 ### Minimum age
 
@@ -311,8 +335,9 @@ does it.
 
 ### Fix match
 
-Autorefresh tries a fix match only for an unmatched item that it refreshed
-at least once before. A plain refresh alone fixed one unmatched series, so
+Autorefresh tries a fix match only for an unmatched movie or series that it
+refreshed at least once before. A matched series with unmatched episodes
+gets only plain refreshes. A plain refresh alone fixed one unmatched series, so
 the first attempt is always a plain refresh.
 
 1. Autorefresh gets the paths of the item. For a movie, these are the file
