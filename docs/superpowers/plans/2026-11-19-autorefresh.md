@@ -755,7 +755,7 @@ Wiring in `main`:
     - the refresh interval, with no limit on attempts
     - the fix match from path IDs, and the pacing
     - autorefresh never sends a library-wide refresh
-  - Add "Configuration": the spec's example with neutral values, the key table with defaults, and the rules for `name`, `url`, `token`, and `libraries`. Tell users to choose a `cache-refresh` time at which `schedule` also starts a run, because the full read happens in the first run at or after that time. Add a note that `http` sends the token in clear text. If the connection leaves a trusted network, tell users to use `https`.
+  - Add "Configuration": the spec's example with neutral values, the key table with defaults, and the rules for `name`, `url`, `token`, and `libraries`. The full read happens in the first run at or after a `cache-refresh` time. So tell users to choose a `cache-refresh` time at which `schedule` also starts a run. Add a note that `http` sends the token in clear text. If the connection leaves a trusted network, tell users to use `https`.
   - Add the four new flags to the flag table, and add a "Dry run" section.
   - In the Docker section, list the three environment variables that the image sets.
 - [ ] Step 7: Update the `cmd/autorefresh/` row in the `AGENTS.md` path table.
