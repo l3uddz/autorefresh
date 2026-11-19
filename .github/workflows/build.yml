@@ -1,9 +1,11 @@
 name: Build
 
+# Pushes build main and v* tags. Every other branch builds through its PR
+# into main, so only one run publishes each branch tag.
 on:
   push:
     branches:
-      - "*"
+      - main
     tags:
       - "v*"
   pull_request:
@@ -78,6 +80,7 @@ jobs:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
           HEAD_REF: ${{ github.head_ref }}
+          FORK: ${{ github.event.pull_request.head.repo.fork }}
         run: |
           if [ "$REF_TYPE" = "tag" ]; then
             version="${REF_NAME#v}"
@@ -88,9 +91,12 @@ jobs:
             echo "is_tag=true" >> "$GITHUB_OUTPUT"
             printf 'tags<<EOF\n%s:%s\n%s:latest\nEOF\n' "$IMAGE" "$version" "$IMAGE" >> "$GITHUB_OUTPUT"
           else
-            tag="$(.github/scripts/docker-branch-tag.sh "${HEAD_REF:-$REF_NAME}")"
             echo "is_tag=false" >> "$GITHUB_OUTPUT"
-            echo "tags=$IMAGE:$tag" >> "$GITHUB_OUTPUT"
+            # A fork PR publishes no image, so it needs no branch tag.
+            if [ "$FORK" != "true" ]; then
+              tag="$(.github/scripts/docker-branch-tag.sh "${HEAD_REF:-$REF_NAME}")"
+              echo "tags=$IMAGE:$tag" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       # build
