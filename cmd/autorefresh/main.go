@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/alecthomas/kong"
@@ -44,7 +45,7 @@ func main() {
 	if cli.Log == "" {
 		cli.Log = filepath.Join(defaultConfigDirectory("autorefresh", "config.yml"), "activity.log")
 	}
-	log.Logger = newLogger(cli.Log, cli.Verbosity)
+	log.Logger = newLogger(os.Stderr, cli.Log, cli.Verbosity)
 
 	log.Info().
 		Str("version", version).

@@ -6,7 +6,10 @@ import (
 	"path/filepath"
 )
 
-var userConfigDirFunc = os.UserConfigDir
+var (
+	userConfigDirFunc = os.UserConfigDir
+	executableFunc    = os.Executable
+)
 
 // defaultConfigDirectory returns the directory for files with no set path.
 // If filename exists next to the binary, it returns the binary directory.
@@ -38,14 +41,18 @@ func defaultConfigDirectory(app string, filename string) string {
 	return bcd
 }
 
+// getBinaryPath returns the directory of the running binary. It uses the
+// executable path, because os.Args[0] has no directory when a PATH lookup
+// starts the binary. If the executable path is unknown, it returns the
+// working directory.
 func getBinaryPath() string {
-	// get current binary path
-	dir, err := filepath.Abs(filepath.Dir(os.Args[0]))
+	if exe, err := executableFunc(); err == nil {
+		return filepath.Dir(exe)
+	}
+
+	dir, err := os.Getwd()
 	if err != nil {
-		// get current working dir
-		if dir, err = os.Getwd(); err != nil {
-			panic(fmt.Sprintf("getwd: %v", err))
-		}
+		panic(fmt.Sprintf("getwd: %v", err))
 	}
 
 	return dir

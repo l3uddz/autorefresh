@@ -23,6 +23,36 @@ func TestDefaultConfigDirectoryUsesBinaryDirWhenConfigFileIsThere(t *testing.T) 
 	}
 }
 
+func TestGetBinaryPathUsesExecutableForPathLaunch(t *testing.T) {
+	binDir := setBinaryPath(t)
+
+	// A PATH lookup gives os.Args[0] without a directory.
+	original := os.Args[0]
+	os.Args[0] = "autorefresh"
+	t.Cleanup(func() {
+		os.Args[0] = original
+	})
+
+	if dir := getBinaryPath(); dir != binDir {
+		t.Fatalf("expected binary dir %s, got %s", binDir, dir)
+	}
+}
+
+func TestGetBinaryPathFallsBackToWorkingDir(t *testing.T) {
+	stubExecutable(t, func() (string, error) {
+		return "", errors.New("executable unknown")
+	})
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working dir: %v", err)
+	}
+
+	if dir := getBinaryPath(); dir != wd {
+		t.Fatalf("expected working dir %s, got %s", wd, dir)
+	}
+}
+
 func TestDefaultConfigDirectoryUsesUserConfigDirWhenAvailable(t *testing.T) {
 	setBinaryPath(t)
 
@@ -87,11 +117,18 @@ func setBinaryPath(t *testing.T) string {
 		t.Fatalf("failed to create bin dir: %v", err)
 	}
 
-	original := os.Args[0]
-	os.Args[0] = filepath.Join(binDir, "autorefresh")
-	t.Cleanup(func() {
-		os.Args[0] = original
+	stubExecutable(t, func() (string, error) {
+		return filepath.Join(binDir, "autorefresh"), nil
 	})
 
 	return binDir
+}
+
+func stubExecutable(t *testing.T, fn func() (string, error)) {
+	t.Helper()
+	original := executableFunc
+	executableFunc = fn
+	t.Cleanup(func() {
+		executableFunc = original
+	})
 }

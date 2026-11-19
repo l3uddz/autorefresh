@@ -2,7 +2,6 @@ package main
 
 import (
 	"io"
-	"os"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -10,12 +9,13 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-// newLogger returns a logger that writes to stderr and to the rotated log
-// file at path. verbosity 1 selects debug and more selects trace.
-func newLogger(path string, verbosity int) zerolog.Logger {
-	logger := log.Output(io.MultiWriter(zerolog.ConsoleWriter{
+// newLogger returns a logger that writes to console and to the rotated log
+// file at path. verbosity 1 selects debug and more selects trace. Each event
+// goes to both writers, even if the console write fails.
+func newLogger(console io.Writer, path string, verbosity int) zerolog.Logger {
+	logger := log.Output(zerolog.MultiLevelWriter(zerolog.ConsoleWriter{
 		TimeFormat: time.Stamp,
-		Out:        os.Stderr,
+		Out:        console,
 	}, zerolog.ConsoleWriter{
 		TimeFormat: time.Stamp,
 		Out: &lumberjack.Logger{

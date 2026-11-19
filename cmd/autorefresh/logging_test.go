@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +23,7 @@ func TestNewLoggerLevelFollowsVerbosity(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		logger := newLogger(filepath.Join(t.TempDir(), "activity.log"), tt.verbosity)
+		logger := newLogger(io.Discard, filepath.Join(t.TempDir(), "activity.log"), tt.verbosity)
 		if got := logger.GetLevel(); got != tt.want {
 			t.Errorf("verbosity %d: expected level %s, got %s", tt.verbosity, tt.want, got)
 		}
@@ -30,7 +32,7 @@ func TestNewLoggerLevelFollowsVerbosity(t *testing.T) {
 
 func TestNewLoggerWritesPlainTextToLogFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "activity.log")
-	logger := newLogger(path, 0)
+	logger := newLogger(io.Discard, path, 0)
 
 	logger.Info().Str("item", "Movie").Msg("Refreshed item")
 	logger.Debug().Msg("Hidden at info level")
@@ -49,5 +51,26 @@ func TestNewLoggerWritesPlainTextToLogFile(t *testing.T) {
 	}
 	if strings.Contains(got, "\x1b[") {
 		t.Fatalf("expected no color codes in the log file, got %q", got)
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("console closed")
+}
+
+func TestNewLoggerWritesLogFileWhenConsoleFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "activity.log")
+	logger := newLogger(failingWriter{}, path, 0)
+
+	logger.Info().Msg("Still logged")
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read log file: %v", err)
+	}
+	if !strings.Contains(string(content), "Still logged") {
+		t.Fatalf("expected the line in the log file, got %q", content)
 	}
 }
