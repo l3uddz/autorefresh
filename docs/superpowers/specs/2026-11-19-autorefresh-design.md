@@ -290,9 +290,12 @@ requests. Let A be the current time minus `minimum-age`.
 
 Each series in a result is incomplete for that reason. Each request
 returns a few hundred series on the owner's largest library. Autorefresh
-never lists episodes.
+reads every page of each request until it has all `totalSize` series.
+Autorefresh never lists episodes.
 
-When a series no longer appears in a result, that reason is gone.
+When a series is absent from a complete result, that reason is gone. If a
+request fails or stops part of the way, autorefresh keeps the reasons from
+the last complete result.
 
 ### Minimum age
 
@@ -308,9 +311,11 @@ does it.
   refreshed is due at once.
 - Autorefresh never gives up. It refreshes an incomplete item again after
   each `refresh-interval` until the item is complete or gone from Plex.
-- Each run refreshes the due items in this order: first the items that were
-  never refreshed, then the items with the oldest last refresh. Ties go to
-  the item that Plex added first.
+- Each run refreshes the due items in this order: first the items with no
+  attempt, then the items with the oldest last attempt. An attempt is any
+  refresh or match request, also a failed one. Ties go to the item that Plex
+  added first. A failing item therefore moves to the end of the queue and
+  cannot block other items.
 - Autorefresh sends one refresh or match request at a time on each server.
   It waits `refresh-delay` between two of these requests on one server. The
   match searches are reads. They take about 0.3 seconds each and are not
@@ -332,8 +337,12 @@ does it.
   not change the read times of that library. The next run reads the same
   period again.
 - If a refresh or match request fails for a reason other than 404,
-  autorefresh logs it and does not record it as a refresh. The item stays
-  due.
+  autorefresh logs it and records the time of the attempt. It does not
+  record a refresh, so the item stays due.
+- If a match search fails, autorefresh does not treat it as an empty
+  result. It applies no match and sends no plain refresh for that item in
+  this run. It handles the item as a failed request, as above. The rule
+  for an empty result in the fix match steps does not apply.
 
 ### Fix match
 
@@ -380,9 +389,10 @@ The database holds:
 
 - For each library: the server name, the section ID, the time of the last
   full read, and the time of the last read of any kind.
-- For each incomplete movie or series: the server name, the section ID, the
-  `ratingKey`, the title, the year, the type, the reasons, `addedAt`, the
-  time of the last refresh, and the number of refreshes.
+- For each incomplete movie or series: the server name, the section ID,
+  the `ratingKey`, the title, the year, the type, the reasons, and
+  `addedAt`. The row also holds the refresh history: the time of the last
+  refresh, the time of the last attempt, and the number of refreshes.
 
 The keys use the server `name` from the configuration, so a change of the
 server URL keeps the state.
@@ -477,6 +487,25 @@ The owner asked for a standard Go layout. All packages are under
 The schedule uses `github.com/robfig/cron/v3`, because autoscan has no
 scheduler to reuse.
 
+## Logging
+
+The owner wants clear logs in the style of autoscan. The `info` level stays
+short. The other levels hold the details. Each message is a short fixed
+text, and the values go in fields, as AGENTS.md requires. The exact
+messages and field names are the builder's call.
+
+| Level | Content |
+| --- | --- |
+| `error` | Problems that stop a run or the program: an invalid configuration, a database error, a Plex server that does not answer. |
+| `warn` | Problems that autorefresh survives: a failed refresh, match, or match search, a match conflict, a skipped library with another agent, a skipped scheduled start. |
+| `info` | The start, with the version, the servers, and the schedule. One line for each refresh or match that autorefresh sends, with the server, the library, the title, and the reasons. One line for each item that becomes complete, with the number of refreshes. One summary line for each server at the end of a run. In a dry run, one line for each item that is due. |
+| `debug` | Each library read: full or incremental, the number of items read, the number of incomplete items, and the time it took. Items that `minimum-age` skips. Match search results. |
+| `trace` | Each HTTP request, with the method, the path without the token, the status, and the time. |
+
+The summary line for a server has these counts: items read, incomplete
+items, due items, refreshes sent, matches sent, failures, and items that
+became complete. It also has the time of the run.
+
 ## Testing
 
 - Tests use `net/http/httptest` and recorded Plex responses in the
@@ -499,4 +528,4 @@ The design leaves these points to the builder:
 - the page size for listings
 - the HTTP timeout for each request, which is 30 seconds in autoscan
 - the exact table layout and migration file names
-- the log levels and the field names, within the AGENTS.md logging rules
+- the exact log messages and field names, within the logging rules above
