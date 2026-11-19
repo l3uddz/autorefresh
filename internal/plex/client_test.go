@@ -3,6 +3,8 @@ package plex
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -188,20 +191,36 @@ func TestTransportErrorsKeepNoTransportText(t *testing.T) {
 	const host = "private-plex-host.invalid"
 	buf := captureLog(t)
 	c := New("test", "http://"+host+":32400", testToken)
+	addr := &net.TCPAddr{IP: net.IPv4(10, 0, 0, 2), Port: 32400}
 
-	tests := map[string]error{
-		"dns": &net.OpError{Op: "dial", Err: &net.DNSError{Err: "no such host", Name: host, Server: "10.0.0.1:53"}},
-		"tls": errors.New("x509: certificate is valid for other.invalid, not " + host),
+	tests := []struct {
+		name   string
+		cause  error
+		reason string
+	}{
+		{"dns", &net.OpError{Op: "dial", Err: &net.DNSError{Err: "no such host", Name: host, Server: "10.0.0.1:53"}}, "host lookup failed"},
+		{"refused", &net.OpError{Op: "dial", Net: "tcp", Addr: addr, Err: os.NewSyscallError("connect", syscall.ECONNREFUSED)}, "connection refused"},
+		{"tls verification", &tls.CertificateVerificationError{Err: errors.New("x509: certificate is valid for other.invalid, not " + host)}, "certificate verification failed"},
+		{"x509 unknown authority", x509.UnknownAuthorityError{}, "certificate verification failed"},
+		{"timeout", &net.OpError{Op: "read", Net: "tcp", Addr: addr, Err: os.ErrDeadlineExceeded}, "request timed out"},
+		{"other", errors.New("unexpected failure at " + host), "request failed"},
 	}
-	for name, cause := range tests {
-		t.Run(name, func(t *testing.T) {
-			c.http.Transport = failingTransport{cause}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf.Reset()
+			c.http.Transport = failingTransport{tt.cause}
 
 			err := c.Refresh(context.Background(), "1001")
 			if !errors.Is(err, ErrUnavailable) {
 				t.Fatalf("err = %v, want ErrUnavailable", err)
 			}
-			for _, secret := range []string{host, testToken, "10.0.0.1"} {
+			if !strings.Contains(err.Error(), ": "+tt.reason+": ") {
+				t.Errorf("err = %v, want the reason %q", err, tt.reason)
+			}
+			if want := `"error":"` + tt.reason + `"`; !strings.Contains(buf.String(), want) {
+				t.Errorf("trace = %s, want %s", buf.String(), want)
+			}
+			for _, secret := range []string{host, testToken, "10.0.0.1", "10.0.0.2"} {
 				if strings.Contains(err.Error(), secret) || strings.Contains(buf.String(), secret) {
 					t.Errorf("error or log contains %q: %v", secret, err)
 				}
@@ -268,7 +287,7 @@ func TestErrorsAndTraceOmitSecrets(t *testing.T) {
 			t.Errorf("line %d = %s, want %s", i, lines[i], want)
 		}
 	}
-	for i, want := range []string{`"status":200`, `"status":503`, `"error":"request failed"`} {
+	for i, want := range []string{`"status":200`, `"status":503`, `"error":"connection refused"`} {
 		if !strings.Contains(lines[i], want) {
 			t.Errorf("line %d = %s, want %s", i, lines[i], want)
 		}
@@ -286,18 +305,25 @@ func TestRefusesCrossOriginRedirect(t *testing.T) {
 		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusTemporaryRedirect)
 	}))
 	t.Cleanup(origin.Close)
+	buf := captureLog(t)
 	c := New("test", origin.URL, testToken)
 
 	err := c.Refresh(context.Background(), "1001")
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v, want ErrUnavailable", err)
 	}
+	if !strings.Contains(err.Error(), ": redirect refused: ") {
+		t.Errorf("err = %v, want the reason %q", err, "redirect refused")
+	}
+	if want := `"error":"redirect refused"`; !strings.Contains(buf.String(), want) {
+		t.Errorf("trace = %s, want %s", buf.String(), want)
+	}
 	if n := other.Load(); n != 0 {
 		t.Errorf("the other origin got %d requests", n)
 	}
 	for _, secret := range []string{testToken, strings.TrimPrefix(target.URL, "http://"), strings.TrimPrefix(origin.URL, "http://")} {
-		if strings.Contains(err.Error(), secret) {
-			t.Errorf("error contains %q: %v", secret, err)
+		if strings.Contains(err.Error(), secret) || strings.Contains(buf.String(), secret) {
+			t.Errorf("error or log contains %q: %v", secret, err)
 		}
 	}
 }

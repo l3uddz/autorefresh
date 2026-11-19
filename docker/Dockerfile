@@ -10,6 +10,8 @@ ARG TARGETARCH
 
 ENV \
   PATH="/app" \
+  AUTOREFRESH_CONFIG="/config/config.yml" \
+  AUTOREFRESH_DATABASE="/config/autorefresh.db" \
   AUTOREFRESH_LOG="/config/activity.log" \
   AUTOREFRESH_VERBOSITY="0"
 

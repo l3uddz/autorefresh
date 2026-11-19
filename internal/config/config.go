@@ -109,11 +109,11 @@ func yamlError(err error) error {
 }
 
 func (c Config) validate() error {
-	if _, err := cron.ParseStandard(c.Schedule); err != nil {
-		return fmt.Errorf("schedule %q: %w", c.Schedule, err)
+	if err := validateCron("schedule", c.Schedule); err != nil {
+		return err
 	}
-	if _, err := cron.ParseStandard(c.CacheRefresh); err != nil {
-		return fmt.Errorf("cache-refresh %q: %w", c.CacheRefresh, err)
+	if err := validateCron("cache-refresh", c.CacheRefresh); err != nil {
+		return err
 	}
 	if c.RefreshInterval <= 0 {
 		return errors.New("refresh-interval must be greater than zero")
@@ -143,6 +143,20 @@ func (c Config) validate() error {
 			return fmt.Errorf("plex server %s: name is used more than once", s.label(i))
 		}
 		names[s.Name] = struct{}{}
+	}
+	return nil
+}
+
+// validateCron checks that expr is a standard cron expression that fires.
+// For an expression that never fires, such as February 30, Next returns the
+// zero time.
+func validateCron(key, expr string) error {
+	sched, err := cron.ParseStandard(expr)
+	if err != nil {
+		return fmt.Errorf("%s %q: %w", key, expr, err)
+	}
+	if sched.Next(time.Now()).IsZero() {
+		return fmt.Errorf("%s %q: the expression never fires", key, expr)
 	}
 	return nil
 }

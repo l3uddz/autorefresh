@@ -115,6 +115,8 @@ func TestDecodeRejectsInvalidConfig(t *testing.T) {
 		{"invalid schedule", "schedule: every hour\n" + minimalServer},
 		{"zero refresh interval", "refresh-interval: 0s\n" + minimalServer},
 		{"cache refresh not cron", "cache-refresh: 168h\n" + minimalServer},
+		{"schedule never fires", "schedule: \"0 0 30 2 *\"\n" + minimalServer},
+		{"cache refresh never fires", "cache-refresh: \"0 0 30 2 *\"\n" + minimalServer},
 		{"negative minimum age", "minimum-age: -1h\n" + minimalServer},
 		{"negative oversample", "oversample: -1h\n" + minimalServer},
 		{"negative refresh delay", "refresh-delay: -1s\n" + minimalServer},

@@ -378,14 +378,15 @@ func TestFixMatchReadErrors(t *testing.T) {
 		name      string
 		fail      func(*fakePlex)
 		wantSends []string // the failing item 201 never gets a request
-		wantRow   string   // "kept", "deleted", or "attempted"
+		wantRow   string   // "deleted" or "attempted"
+		wantStop  bool     // the error stops the server
 	}{
-		{"item paths unavailable", func(fp *fakePlex) { fp.pathErrs["201"] = unavailable }, nil, "kept"},
-		{"item paths not found", func(fp *fakePlex) { fp.pathErrs["201"] = notFound }, []string{"Refresh 202"}, "deleted"},
-		{"item paths 500", func(fp *fakePlex) { fp.pathErrs["201"] = serverErr }, []string{"Refresh 202"}, "attempted"},
-		{"search unavailable", func(fp *fakePlex) { fp.searchErrs["201"] = unavailable }, nil, "kept"},
-		{"search not found", func(fp *fakePlex) { fp.searchErrs["201"] = notFound }, []string{"Refresh 202"}, "deleted"},
-		{"search 500", func(fp *fakePlex) { fp.searchErrs["201"] = serverErr }, []string{"Refresh 202"}, "attempted"},
+		{"item paths unavailable", func(fp *fakePlex) { fp.pathErrs["201"] = unavailable }, nil, "attempted", true},
+		{"item paths not found", func(fp *fakePlex) { fp.pathErrs["201"] = notFound }, []string{"Refresh 202"}, "deleted", false},
+		{"item paths 500", func(fp *fakePlex) { fp.pathErrs["201"] = serverErr }, []string{"Refresh 202"}, "attempted", false},
+		{"search unavailable", func(fp *fakePlex) { fp.searchErrs["201"] = unavailable }, nil, "attempted", true},
+		{"search not found", func(fp *fakePlex) { fp.searchErrs["201"] = notFound }, []string{"Refresh 202"}, "deleted", false},
+		{"search 500", func(fp *fakePlex) { fp.searchErrs["201"] = serverErr }, []string{"Refresh 202"}, "attempted", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -404,20 +405,6 @@ func TestFixMatchReadErrors(t *testing.T) {
 			wantCalls(t, sends(fp.calls), tt.wantSends...)
 			row, exists := f.row(testServer, "2", "201")
 			switch tt.wantRow {
-			case "kept":
-				if !exists || row.Refreshes != 1 || !row.LastAttempt.Equal(seedAttempt) {
-					t.Errorf("row = %+v (exists %v), want it unchanged", row, exists)
-				}
-				if errs := f.logLines("error", "Plex server unavailable"); len(errs) != 1 {
-					t.Errorf("got %d unavailable errors, want 1", len(errs))
-				}
-				logs := f.logs.String()
-				errAt := strings.Index(logs, `"message":"Plex server unavailable"`)
-				summaryAt := strings.Index(logs, `"message":"Run summary"`)
-				if errAt < 0 || summaryAt < errAt {
-					t.Errorf("the summary line does not follow the error line:\n%s", logs)
-				}
-				wantField(t, f.lastSummary(testServer), "failures", float64(1))
 			case "deleted":
 				if exists {
 					t.Errorf("row = %+v, want none", row)
@@ -426,11 +413,45 @@ func TestFixMatchReadErrors(t *testing.T) {
 				if !exists || row.Refreshes != 1 || !row.LastAttempt.Equal(t0) {
 					t.Errorf("row = %+v (exists %v), want 1 refresh and LastAttempt %v", row, exists, t0)
 				}
-				if warnings := f.logLines("warn", "Match search failed"); len(warnings) != 1 {
-					t.Errorf("got %d search failure warnings, want 1", len(warnings))
-				}
 			}
+			if !tt.wantStop {
+				if tt.wantRow == "attempted" {
+					if warnings := f.logLines("warn", "Match search failed"); len(warnings) != 1 {
+						t.Errorf("got %d search failure warnings, want 1", len(warnings))
+					}
+				}
+				return
+			}
+			if errs := f.logLines("error", "Plex server unavailable"); len(errs) != 1 {
+				t.Errorf("got %d unavailable errors, want 1", len(errs))
+			}
+			logs := f.logs.String()
+			errAt := strings.Index(logs, `"message":"Plex server unavailable"`)
+			summaryAt := strings.Index(logs, `"message":"Run summary"`)
+			if errAt < 0 || summaryAt < errAt {
+				t.Errorf("the summary line does not follow the error line:\n%s", logs)
+			}
+			wantField(t, f.lastSummary(testServer), "failures", float64(1))
 		})
+	}
+}
+
+func TestDryRunUnavailableSearchRecordsNothing(t *testing.T) {
+	fp := newFakePlex(showsLib)
+	fp.paths["201"] = []string{"/tv/Show (2020) {tvdb-5}"}
+	fp.searchErrs["201"] = unavailable
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.opts.DryRun = true
+	f.seed(testServer, showsLib, unmatchedItem("201"), store.Unmatched, 1)
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls))
+	if row, exists := f.row(testServer, "2", "201"); !exists || row.Refreshes != 1 || !row.LastAttempt.Equal(seedAttempt) {
+		t.Errorf("row = %+v (exists %v), want it unchanged", row, exists)
+	}
+	if errs := f.logLines("error", "Plex server unavailable"); len(errs) != 1 {
+		t.Errorf("got %d unavailable errors, want 1", len(errs))
 	}
 }
 
