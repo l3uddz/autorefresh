@@ -1,0 +1,584 @@
+package refresher
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/robfig/cron/v3"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+
+	"github.com/l3uddz/autorefresh/internal/plex"
+	"github.com/l3uddz/autorefresh/internal/store"
+)
+
+const (
+	testServer = "home"
+	minimumAge = 2 * time.Hour
+	oversample = 48 * time.Hour
+)
+
+var (
+	moviesLib = plex.Library{ID: "1", Title: "Movies", Type: "movie", Agent: "tv.plex.agents.movie", Language: "en-US"}
+	showsLib  = plex.Library{ID: "2", Title: "TV", Type: "show", Agent: "tv.plex.agents.series", Language: "en-US"}
+
+	// t0 is a Saturday. The cache-refresh schedule "0 3 * * 0" next runs on
+	// Sunday at 03:00.
+	t0         = time.Date(2026, 11, 21, 12, 0, 0, 0, time.Local)
+	sunday0259 = time.Date(2026, 11, 22, 2, 59, 0, 0, time.Local)
+	sunday0300 = time.Date(2026, 11, 22, 3, 0, 0, 0, time.Local)
+	addedAt    = t0.Add(-30 * 24 * time.Hour)
+)
+
+func completeItem(key string) plex.Item {
+	return plex.Item{
+		RatingKey: key, GUID: "plex://item/" + key, Title: "Title " + key, Year: 2020,
+		Summary: "A summary.", Thumb: "/thumb/" + key, Art: "/art/" + key, AddedAt: addedAt,
+	}
+}
+
+func incompleteItem(key string) plex.Item {
+	it := completeItem(key)
+	it.Summary = ""
+	return it
+}
+
+// episodeKeys returns the listing keys of the two episode requests of the
+// show library at the given run time.
+func episodeKeys(at time.Time) (noSummary, unmatched string) {
+	a := unixString(at.Add(-minimumAge))
+	noSummary = "2?type=2&unmatched=0&episode.unmatched=0&episode.summary=&episode.addedAt<<=" + a + "&season.index>>=1"
+	unmatched = "2?type=2&unmatched=0&episode.unmatched=1&episode.addedAt<<=" + a + "&season.index>>=1"
+	return noSummary, unmatched
+}
+
+// captureLogs sends the global logger to a buffer until the test ends.
+func captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := log.Logger
+	log.Logger = zerolog.New(&buf)
+	t.Cleanup(func() { log.Logger = prev })
+	return &buf
+}
+
+type fixture struct {
+	t     *testing.T
+	store *store.Store
+	r     *Refresher
+	logs  *bytes.Buffer
+	now   time.Time
+}
+
+func newFixture(t *testing.T, servers ...Server) *fixture {
+	t.Helper()
+	logs := captureLogs(t)
+	st, err := store.Open(filepath.Join(t.TempDir(), "cache.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	schedule, err := cron.ParseStandard("0 3 * * 0")
+	if err != nil {
+		t.Fatalf("parse schedule: %v", err)
+	}
+
+	f := &fixture{t: t, store: st, logs: logs}
+	f.r = New(servers, st, Options{
+		MinimumAge:      minimumAge,
+		RefreshInterval: 24 * time.Hour,
+		Oversample:      oversample,
+		CacheRefresh:    schedule,
+	})
+	f.r.now = func() time.Time { return f.now }
+	f.r.sleep = func(context.Context, time.Duration) error { return nil }
+	return f
+}
+
+func (f *fixture) run(at time.Time) {
+	f.t.Helper()
+	f.now = at
+	if err := f.r.Run(context.Background()); err != nil {
+		f.t.Fatalf("Run: %v", err)
+	}
+}
+
+// rows returns the stored rows of a section, ordered by rating key.
+func (f *fixture) rows(server, section string) []store.Item {
+	f.t.Helper()
+	rows, err := f.store.Unseen(server, section, nil)
+	if err != nil {
+		f.t.Fatalf("read rows: %v", err)
+	}
+	return rows
+}
+
+func (f *fixture) reasons(section string) map[string]store.Reasons {
+	f.t.Helper()
+	got := map[string]store.Reasons{}
+	for _, it := range f.rows(testServer, section) {
+		got[it.RatingKey] = it.Reasons
+	}
+	return got
+}
+
+func (f *fixture) library(server, section string) store.Library {
+	f.t.Helper()
+	lib, err := f.store.Library(server, section)
+	if err != nil {
+		f.t.Fatalf("read library: %v", err)
+	}
+	return lib
+}
+
+func (f *fixture) refreshed(key string, times int) {
+	f.t.Helper()
+	for range times {
+		if err := f.store.RecordAttempt(testServer, key, t0, true); err != nil {
+			f.t.Fatalf("record attempt: %v", err)
+		}
+	}
+}
+
+// logLines returns the logged events with the level and the message.
+func (f *fixture) logLines(level, message string) []map[string]any {
+	f.t.Helper()
+	var lines []map[string]any
+	sc := bufio.NewScanner(bytes.NewReader(f.logs.Bytes()))
+	for sc.Scan() {
+		var ev map[string]any
+		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
+			f.t.Fatalf("decode log line %q: %v", sc.Text(), err)
+		}
+		if ev["level"] == level && ev["message"] == message {
+			lines = append(lines, ev)
+		}
+	}
+	return lines
+}
+
+func keys(rows []store.Item) []string {
+	var got []string
+	for _, it := range rows {
+		got = append(got, it.RatingKey)
+	}
+	return got
+}
+
+// listedSections returns the sections of the recorded List calls.
+func listedSections(calls []string) map[string]bool {
+	sections := map[string]bool{}
+	for _, c := range calls {
+		if rest, ok := strings.CutPrefix(c, "List "); ok {
+			section, _, _ := strings.Cut(rest, "?")
+			sections[section] = true
+		}
+	}
+	return sections
+}
+
+func wantCalls(t *testing.T, got []string, want ...string) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("calls:\n got %q\nwant %q", got, want)
+	}
+}
+
+func wantField(t *testing.T, ev map[string]any, field string, want any) {
+	t.Helper()
+	if got := ev[field]; got != want {
+		t.Errorf("log field %s = %v (%T), want %v (%T)", field, got, got, want, want)
+	}
+}
+
+func TestRunSelectsSupportedLibraries(t *testing.T) {
+	personal := plex.Library{ID: "3", Title: "Home Videos", Type: "movie", Agent: "tv.plex.agents.none"}
+	fp := newFakePlex(moviesLib, showsLib, personal)
+	f := newFixture(t, Server{Name: testServer, Plex: fp})
+
+	f.run(t0)
+	f.run(t0.Add(time.Hour))
+
+	if got, want := listedSections(fp.calls), map[string]bool{"1": true, "2": true}; !reflect.DeepEqual(got, want) {
+		t.Errorf("listed sections = %v, want %v", got, want)
+	}
+	warnings := f.logLines("warn", "Skipping library with unsupported agent")
+	if len(warnings) != 1 {
+		t.Fatalf("got %d unsupported agent warnings, want 1", len(warnings))
+	}
+	wantField(t, warnings[0], "server", testServer)
+	wantField(t, warnings[0], "library", "Home Videos")
+	wantField(t, warnings[0], "agent", "tv.plex.agents.none")
+}
+
+func TestRunUsesConfiguredLibraries(t *testing.T) {
+	fp := newFakePlex(moviesLib, showsLib)
+	f := newFixture(t, Server{Name: testServer, Plex: fp, Libraries: []string{"Movies", "Anime"}})
+
+	f.run(t0)
+	f.run(t0.Add(time.Hour))
+
+	if got, want := listedSections(fp.calls), map[string]bool{"1": true}; !reflect.DeepEqual(got, want) {
+		t.Errorf("listed sections = %v, want %v", got, want)
+	}
+	warnings := f.logLines("warn", "Configured library not found")
+	if len(warnings) != 1 {
+		t.Fatalf("got %d missing library warnings, want 1", len(warnings))
+	}
+	wantField(t, warnings[0], "library", "Anime")
+}
+
+func TestFirstRunDoesFullRead(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), completeItem("102")}
+	f := newFixture(t, Server{Name: testServer, Plex: fp})
+
+	f.run(t0)
+
+	wantCalls(t, fp.calls, "Libraries", "List 1?type=1")
+	want := []store.Item{{
+		Server: testServer, Section: "1", RatingKey: "101", Type: "movie",
+		Title: "Title 101", Year: 2020, AddedAt: addedAt, Reasons: store.NoSummary,
+	}}
+	if got := f.rows(testServer, "1"); !reflect.DeepEqual(got, want) {
+		t.Errorf("rows:\n got %+v\nwant %+v", got, want)
+	}
+	lib := f.library(testServer, "1")
+	if !lib.LastFullRead.Equal(t0) || !lib.LastRead.Equal(t0) {
+		t.Errorf("library times = %+v, want both %v", lib, t0)
+	}
+
+	reads := f.logLines("debug", "Read library")
+	if len(reads) != 1 {
+		t.Fatalf("got %d read lines, want 1", len(reads))
+	}
+	wantField(t, reads[0], "server", testServer)
+	wantField(t, reads[0], "library", "Movies")
+	wantField(t, reads[0], "kind", "full")
+	wantField(t, reads[0], "items", float64(2))
+	wantField(t, reads[0], "incomplete", float64(1))
+	if _, ok := reads[0]["duration"]; !ok {
+		t.Error("read line has no duration")
+	}
+}
+
+func TestFullReadChecksUnseenRows(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102"), incompleteItem("103")}
+	f := newFixture(t, Server{Name: testServer, Plex: fp})
+	f.run(t0)
+
+	fp.lists["1?type=1"] = []plex.Item{incompleteItem("103")}
+	fp.pathErrs["101"] = fmt.Errorf("item paths: %w", plex.ErrNotFound)
+	fp.paths["102"] = []string{"/movies/Title 102/Title 102.mkv"}
+	fp.calls = nil
+	f.run(sunday0300)
+
+	wantCalls(t, fp.calls, "Libraries", "List 1?type=1", "ItemPaths 101", "ItemPaths 102")
+	if got, want := keys(f.rows(testServer, "1")), []string{"102", "103"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("rows = %v, want %v", got, want)
+	}
+	if fixed := f.logLines("info", "Item complete"); len(fixed) != 0 {
+		t.Errorf("got complete lines %v, want none", fixed)
+	}
+}
+
+func TestIncrementalReadFilters(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
+	f := newFixture(t, Server{Name: testServer, Plex: fp})
+	f.run(t0)
+
+	since := unixString(t0.Add(-48 * time.Hour))
+	unmatched := incompleteItem("105")
+	unmatched.GUID = "local://105"
+	fp.lists["1?type=1&updatedAt>>="+since] = []plex.Item{incompleteItem("104")}
+	fp.lists["1?type=1&addedAt>>="+since] = []plex.Item{incompleteItem("104")}
+	fp.lists["1?type=1&unmatched=1"] = []plex.Item{unmatched}
+	fp.calls = nil
+	f.run(t0.Add(time.Hour))
+
+	wantCalls(t, fp.calls,
+		"Libraries",
+		"List 1?type=1&updatedAt>>="+since,
+		"List 1?type=1&addedAt>>="+since,
+		"List 1?type=1&unmatched=1",
+	)
+	lib := f.library(testServer, "1")
+	if !lib.LastFullRead.Equal(t0) || !lib.LastRead.Equal(t0.Add(time.Hour)) {
+		t.Errorf("library times = %+v, want full %v and read %v", lib, t0, t0.Add(time.Hour))
+	}
+	if got, want := keys(f.rows(testServer, "1")), []string{"101", "104", "105"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("rows = %v, want %v", got, want)
+	}
+	reads := f.logLines("debug", "Read library")
+	last := reads[len(reads)-1]
+	wantField(t, last, "kind", "incremental")
+	wantField(t, last, "items", float64(2))
+}
+
+func TestFullReadAfterCacheRefresh(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	f := newFixture(t, Server{Name: testServer, Plex: fp})
+	f.run(t0)
+
+	fp.calls = nil
+	f.run(sunday0259)
+	since := unixString(t0.Add(-oversample))
+	wantCalls(t, fp.calls,
+		"Libraries",
+		"List 1?type=1&updatedAt>>="+since,
+		"List 1?type=1&addedAt>>="+since,
+		"List 1?type=1&unmatched=1",
+	)
+	if lib := f.library(testServer, "1"); !lib.LastFullRead.Equal(t0) {
+		t.Errorf("LastFullRead after 02:59 = %v, want %v", lib.LastFullRead, t0)
+	}
+
+	fp.calls = nil
+	f.run(sunday0300)
+	wantCalls(t, fp.calls, "Libraries", "List 1?type=1")
+	if lib := f.library(testServer, "1"); !lib.LastFullRead.Equal(sunday0300) {
+		t.Errorf("LastFullRead after 03:00 = %v, want %v", lib.LastFullRead, sunday0300)
+	}
+}
+
+func TestEpisodeRequestFilters(t *testing.T) {
+	fp := newFakePlex(showsLib)
+	noSummary, unmatched := episodeKeys(t0)
+	fp.lists["2?type=2"] = []plex.Item{completeItem("201"), completeItem("202")}
+	fp.lists[noSummary] = []plex.Item{completeItem("201"), completeItem("202")}
+	fp.lists[unmatched] = []plex.Item{completeItem("202")}
+	f := newFixture(t, Server{Name: testServer, Plex: fp})
+
+	f.run(t0)
+
+	a := unixString(t0.Add(-minimumAge))
+	wantCalls(t, fp.calls,
+		"Libraries",
+		"List 2?type=2",
+		"List 2?type=2&unmatched=0&episode.unmatched=0&episode.summary=&episode.addedAt<<="+a+"&season.index>>=1",
+		"List 2?type=2&unmatched=0&episode.unmatched=1&episode.addedAt<<="+a+"&season.index>>=1",
+	)
+	want := map[string]store.Reasons{
+		"201": store.EpisodeNoSummary,
+		"202": store.EpisodeNoSummary | store.EpisodeUnmatched,
+	}
+	if got := f.reasons("2"); !reflect.DeepEqual(got, want) {
+		t.Errorf("reasons after first run = %v, want %v", got, want)
+	}
+
+	next := t0.Add(time.Hour)
+	noSummary, unmatched = episodeKeys(next)
+	fp.lists[noSummary] = []plex.Item{completeItem("201")}
+	fp.lists[unmatched] = []plex.Item{completeItem("202")}
+	fp.calls = nil
+	f.run(next)
+
+	since := unixString(t0.Add(-oversample))
+	wantCalls(t, fp.calls,
+		"Libraries",
+		"List 2?type=2&updatedAt>>="+since,
+		"List 2?type=2&addedAt>>="+since,
+		"List 2?type=2&unmatched=1",
+		"List "+noSummary,
+		"List "+unmatched,
+	)
+	want = map[string]store.Reasons{"201": store.EpisodeNoSummary, "202": store.EpisodeUnmatched}
+	if got := f.reasons("2"); !reflect.DeepEqual(got, want) {
+		t.Errorf("reasons after second run = %v, want %v", got, want)
+	}
+}
+
+func TestFailedReadKeepsState(t *testing.T) {
+	noSummaryAt0, _ := episodeKeys(t0)
+	noSummaryAtRefresh, _ := episodeKeys(sunday0300)
+	tests := []struct {
+		name          string
+		failKey       string
+		checkedUnseen bool
+	}{
+		{"full listing fails", "2?type=2", false},
+		{"episode request fails", noSummaryAtRefresh, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := newFakePlex(showsLib, moviesLib)
+			fp.lists["2?type=2"] = []plex.Item{incompleteItem("201"), incompleteItem("202")}
+			fp.lists[noSummaryAt0] = []plex.Item{completeItem("202")}
+			fp.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
+			f := newFixture(t, Server{Name: testServer, Plex: fp})
+			f.run(t0)
+			rowsBefore := f.rows(testServer, "2")
+			libBefore := f.library(testServer, "2")
+
+			// A partial apply would fix 201 and delete the unseen row 202.
+			fp.lists["2?type=2"] = []plex.Item{completeItem("201")}
+			fp.pathErrs["202"] = fmt.Errorf("item paths: %w", plex.ErrNotFound)
+			fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102")}
+			fp.listErrs[tt.failKey] = errors.New("listing section 2: decoding response: unexpected token")
+			fp.calls = nil
+			f.run(sunday0300)
+
+			if got := f.rows(testServer, "2"); !reflect.DeepEqual(got, rowsBefore) {
+				t.Errorf("rows of the failed library:\n got %+v\nwant %+v", got, rowsBefore)
+			}
+			lib := f.library(testServer, "2")
+			if !lib.LastFullRead.Equal(libBefore.LastFullRead) || !lib.LastRead.Equal(libBefore.LastRead) {
+				t.Errorf("library times = %+v, want %+v", lib, libBefore)
+			}
+			if got := listedSections(fp.calls)["2"] && containsCall(fp.calls, "ItemPaths 202"); got != tt.checkedUnseen {
+				t.Errorf("unseen row checked = %v, want %v", got, tt.checkedUnseen)
+			}
+			if fixed := f.logLines("info", "Item complete"); len(fixed) != 0 {
+				t.Errorf("got complete lines %v, want none", fixed)
+			}
+			warnings := f.logLines("warn", "Reading library failed")
+			if len(warnings) != 1 {
+				t.Fatalf("got %d read failure warnings, want 1", len(warnings))
+			}
+			wantField(t, warnings[0], "library", "TV")
+
+			if got, want := keys(f.rows(testServer, "1")), []string{"101", "102"}; !reflect.DeepEqual(got, want) {
+				t.Errorf("rows of the next library = %v, want %v", got, want)
+			}
+			if lib := f.library(testServer, "1"); !lib.LastFullRead.Equal(sunday0300) {
+				t.Errorf("LastFullRead of the next library = %v, want %v", lib.LastFullRead, sunday0300)
+			}
+		})
+	}
+}
+
+func containsCall(calls []string, call string) bool {
+	for _, c := range calls {
+		if c == call {
+			return true
+		}
+	}
+	return false
+}
+
+func TestUnavailableSkipsServer(t *testing.T) {
+	tests := []struct {
+		name string
+		fail func(*fakePlex)
+	}{
+		{"libraries", func(fp *fakePlex) { fp.librariesErr = fmt.Errorf("libraries: %w", plex.ErrUnavailable) }},
+		{"list", func(fp *fakePlex) {
+			fp.listErrs["1?type=1"] = fmt.Errorf("listing section 1: %w", plex.ErrUnavailable)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			down := newFakePlex(moviesLib, showsLib)
+			tt.fail(down)
+			up := newFakePlex(moviesLib)
+			up.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
+			f := newFixture(t, Server{Name: "down", Plex: down}, Server{Name: "up", Plex: up})
+
+			f.run(t0)
+
+			if listedSections(down.calls)["2"] {
+				t.Errorf("the unavailable server read its second library: %q", down.calls)
+			}
+			if lib := f.library("down", "1"); !lib.LastRead.IsZero() {
+				t.Errorf("the unavailable server has read times %+v", lib)
+			}
+			errs := f.logLines("error", "Plex server unavailable")
+			if len(errs) != 1 {
+				t.Fatalf("got %d unavailable errors, want 1", len(errs))
+			}
+			wantField(t, errs[0], "server", "down")
+			if got := keys(f.rows("up", "1")); !reflect.DeepEqual(got, []string{"101"}) {
+				t.Errorf("rows of the next server = %v, want [101]", got)
+			}
+		})
+	}
+}
+
+func TestCompleteItemLogsFixed(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
+	f := newFixture(t, Server{Name: testServer, Plex: fp})
+	f.run(t0)
+	f.refreshed("101", 2)
+
+	fp.lists["1?type=1&updatedAt>>="+unixString(t0.Add(-oversample))] = []plex.Item{completeItem("101")}
+	f.run(t0.Add(time.Hour))
+
+	if rows := f.rows(testServer, "1"); len(rows) != 0 {
+		t.Errorf("rows = %+v, want none", rows)
+	}
+	fixed := f.logLines("info", "Item complete")
+	if len(fixed) != 1 {
+		t.Fatalf("got %d complete lines, want 1", len(fixed))
+	}
+	wantField(t, fixed[0], "server", testServer)
+	wantField(t, fixed[0], "library", "Movies")
+	wantField(t, fixed[0], "title", "Title 101")
+	wantField(t, fixed[0], "refreshes", float64(2))
+}
+
+func TestCompleteItemKeepsEpisodeReason(t *testing.T) {
+	fp := newFakePlex(showsLib)
+	noArt := completeItem("201")
+	noArt.Art = ""
+	fp.lists["2?type=2"] = []plex.Item{noArt}
+	f := newFixture(t, Server{Name: testServer, Plex: fp})
+	f.run(t0)
+	f.refreshed("201", 2)
+
+	noSummary, _ := episodeKeys(sunday0300)
+	fp.lists["2?type=2"] = []plex.Item{completeItem("201")}
+	fp.lists[noSummary] = []plex.Item{completeItem("201")}
+	f.run(sunday0300)
+
+	rows := f.rows(testServer, "2")
+	if len(rows) != 1 || rows[0].Reasons != store.EpisodeNoSummary || rows[0].Refreshes != 2 {
+		t.Errorf("rows = %+v, want 201 with episode-no-summary and 2 refreshes", rows)
+	}
+	if fixed := f.logLines("info", "Item complete"); len(fixed) != 0 {
+		t.Errorf("got complete lines %v, want none", fixed)
+	}
+}
+
+func TestYoungItemLogsDebug(t *testing.T) {
+	young := incompleteItem("101")
+	young.AddedAt = t0.Add(-30 * time.Minute)
+	youngComplete := completeItem("103")
+	youngComplete.AddedAt = t0.Add(-30 * time.Minute)
+	fp := newFakePlex(moviesLib)
+	fp.lists["1?type=1"] = []plex.Item{young, incompleteItem("102"), youngComplete}
+	f := newFixture(t, Server{Name: testServer, Plex: fp})
+
+	f.run(t0)
+
+	if got, want := keys(f.rows(testServer, "1")), []string{"101", "102"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("rows = %v, want %v", got, want)
+	}
+	lines := f.logLines("debug", "Item too young to refresh")
+	if len(lines) != 1 {
+		t.Fatalf("got %d young item lines, want 1", len(lines))
+	}
+	wantField(t, lines[0], "title", "Title 101")
+}
+
+func TestStoreErrorEndsRun(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	f := newFixture(t, Server{Name: testServer, Plex: fp})
+	f.store.Close()
+
+	f.now = t0
+	if err := f.r.Run(context.Background()); err == nil {
+		t.Error("Run with a closed store returned no error")
+	}
+}
