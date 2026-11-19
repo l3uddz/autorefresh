@@ -87,8 +87,12 @@ plex:
 }
 
 func TestDecodeRejectsUnknownKey(t *testing.T) {
-	if _, err := Decode(strings.NewReader("refresh-dely: 5s\n" + minimalServer)); err == nil {
+	_, err := Decode(strings.NewReader("refresh-dely: 5s\n" + minimalServer))
+	if err == nil {
 		t.Fatal("Decode accepted an unknown key")
+	}
+	if !strings.Contains(err.Error(), "line 1") {
+		t.Errorf("error %q does not name the line", err)
 	}
 }
 
@@ -99,6 +103,7 @@ func TestDecodeRejectsInvalidConfig(t *testing.T) {
 		doc  string
 	}{
 		{"empty document", ""},
+		{"second document", minimalServer + "---\nrefresh-dely: 1s\n"},
 		{"no plex entry", "schedule: \"0 * * * *\"\n"},
 		{"duplicate server names", "plex:\n  - name: a\n" + server + "  - name: a\n" + server},
 		{"empty name", "plex:\n  - name: \"\"\n" + server},
@@ -127,21 +132,25 @@ func TestDecodeRejectsInvalidConfig(t *testing.T) {
 
 func TestDecodeErrorsOmitSecrets(t *testing.T) {
 	tests := []struct {
-		name string
-		url  string
+		name     string
+		url      string
+		token    string
+		wantName bool
 	}{
-		{"unsupported scheme", "ftp://secret-host.example.invalid"},
-		{"url parse failure", "http://secret-host.example.invalid:bad"},
+		{"unsupported scheme", "ftp://secret-host.example.invalid", "secret-token", true},
+		{"url parse failure", "http://secret-host.example.invalid:bad", "secret-token", true},
+		{"yaml type error in token", "http://plex.example.invalid", "!!bool secret-token", false},
+		{"yaml type error in url", "!!int http://secret-host.example.invalid", "secret-token", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			doc := "plex:\n  - name: main\n    url: \"" + tt.url + "\"\n    token: secret-token\n"
+			doc := "plex:\n  - name: main\n    url: " + quoteUnlessTagged(tt.url) + "\n    token: " + tt.token + "\n"
 			_, err := Decode(strings.NewReader(doc))
 			if err == nil {
-				t.Fatal("Decode accepted an invalid url")
+				t.Fatal("Decode accepted an invalid configuration")
 			}
 			msg := err.Error()
-			if !strings.Contains(msg, "main") {
+			if tt.wantName && !strings.Contains(msg, "main") {
 				t.Errorf("error %q does not name the server", msg)
 			}
 			for _, secret := range []string{"secret-host", "secret-token"} {
@@ -151,4 +160,11 @@ func TestDecodeErrorsOmitSecrets(t *testing.T) {
 			}
 		})
 	}
+}
+
+func quoteUnlessTagged(v string) string {
+	if strings.HasPrefix(v, "!!") {
+		return v
+	}
+	return `"` + v + `"`
 }

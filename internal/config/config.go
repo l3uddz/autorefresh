@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -52,13 +54,43 @@ func Decode(r io.Reader) (Config, error) {
 	dec.KnownFields(true)
 	// An empty document returns io.EOF. Keep the defaults and validate them.
 	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
-		return Config{}, fmt.Errorf("decode configuration: %w", err)
+		return Config{}, yamlError(err)
+	}
+	// Only one document is allowed. A later one would be ignored silently.
+	var extra yaml.Node
+	switch err := dec.Decode(&extra); {
+	case err == nil:
+		return Config{}, errors.New("configuration has more than one YAML document")
+	case !errors.Is(err, io.EOF):
+		return Config{}, yamlError(err)
 	}
 
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+var yamlLine = regexp.MustCompile(`line (\d+)`)
+
+// yamlError keeps only the line numbers of a YAML error. The yaml package
+// puts values such as the token into its messages, so the error is not wrapped.
+func yamlError(err error) error {
+	var lines []string
+	seen := map[string]bool{}
+	for _, m := range yamlLine.FindAllStringSubmatch(err.Error(), -1) {
+		if !seen[m[1]] {
+			seen[m[1]] = true
+			lines = append(lines, m[1])
+		}
+	}
+	switch len(lines) {
+	case 0:
+		return errors.New("decode configuration: invalid YAML")
+	case 1:
+		return fmt.Errorf("decode configuration: invalid YAML at line %s", lines[0])
+	}
+	return fmt.Errorf("decode configuration: invalid YAML at lines %s", strings.Join(lines, ", "))
 }
 
 func (c Config) validate() error {
