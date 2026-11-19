@@ -15,7 +15,8 @@ jobs:
         with:
           sparse-checkout: .github/scripts
 
-      # build.yml makes the branch tag with the same script.
+      # build.yml makes the branch tag with the same script. The image is
+      # pinned by digest, because it receives the Docker Hub credentials.
       - name: remove docker tag
         shell: bash
         env:
@@ -24,4 +25,4 @@ jobs:
           branch: ${{ github.event.ref }}
         run: |
           tag="$(.github/scripts/docker-branch-tag.sh "$branch")"
-          docker run --rm lumir/remove-dockerhub-tag --user "$username" --password "$password" "l3uddz/autorefresh:$tag"
+          docker run --rm lumir/remove-dockerhub-tag@sha256:9d5a167f76969cb22059f6accd191329856891cac2dcac5b2bfae84f746f1b4b --user "$username" --password "$password" "l3uddz/autorefresh:$tag"
