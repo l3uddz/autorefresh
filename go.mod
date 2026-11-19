@@ -4,7 +4,9 @@ go 1.27.0
 
 require (
 	github.com/alecthomas/kong v1.17.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/zerolog v1.35.1
+	go.yaml.in/yaml/v3 v3.0.6
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 

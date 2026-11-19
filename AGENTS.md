@@ -17,6 +17,7 @@ When the design adds packages or rules, update this file.
 | Path | Content |
 | --- | --- |
 | `cmd/autorefresh/` | CLI entry point, logging, and the default configuration directory |
+| `internal/config/` | Configuration types, defaults, loading, and validation |
 | `docker/Dockerfile` | Container image, built from the goreleaser output in `dist/` |
 | `mise.toml` | Tool versions and development tasks |
 | `.goreleaser.yml` | Release build configuration |
