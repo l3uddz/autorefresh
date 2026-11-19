@@ -48,6 +48,8 @@ These inputs are likely to break autorefresh for a user, and the spec does not t
 
 The spec leaves these points to the builder, or it is silent on them. Each decision uses the plain wording of the spec first and the autoscan pattern second. The owner approves them with this plan.
 
+The owner chose three rows on 2026-11-19, in answers to separate questions: "Missing or empty configuration file", "Dry run", and the 401 part of "Plex status codes".
+
 | Point | Decision |
 | --- | --- |
 | Page size for listings | 500 items. |
@@ -86,27 +88,34 @@ Rules:
 
 Procedure:
 
-1. Call `request_secret` with `delivery: "file"` twice: label `Plex server URL`, then label `Plex token`. Ask for one value on each card. Keep the two returned file paths as `URL_FILE` and `TOKEN_FILE`.
-2. Write a header file in `rec/`: `printf 'X-Plex-Token: %s\nAccept: application/json\n' "$(cat "$TOKEN_FILE")" > rec/headers`. `printf` is a shell builtin, so the token is not in the process list.
-3. Use one helper for every request: `curl -sS --fail --request GET --max-time 60 -H @rec/headers -o "rec/<name>.json" "$(cat "$URL_FILE")<path-and-query>" 2>"rec/<name>.err"; echo "exit=$?"`.
-4. Probe the query encoding. Send `X-Plex-Container-Size=0` requests on one library in two forms: raw operators (`addedAt>>=<unix>`) and percent-encoded operators (`addedAt%3E%3E=<unix>`). Print only `totalSize` of each with `jq '.MediaContainer.totalSize'`. Do the same for `summary=` with an empty value and for `sort=addedAt`. The form that returns the same counts as the spec's examples wins. Record the result in the Task 2 PR description.
-5. Record these responses. Use `X-Plex-Container-Size` of 1 to 3, so each file stays small.
+1. Before the prompt, write the recording commands as one script in the scratchpad, `rec/record.sh`. It takes the two secret file paths as arguments. Read it once more and make sure that every request uses `--request GET`.
+2. Call `request_secret` with `delivery: "file"` twice: label `Plex server URL`, then label `Plex token`. Ask for one value on each card.
+3. The first command copies both secret files into `rec/` with `umask 077`. A secret file can be gone after its first read, and the copies serve the later commands.
+4. Write a header file: `printf 'X-Plex-Token: %s\nAccept: application/json\n' "$(cat rec/token)" > rec/headers`. `printf` is a shell builtin, so the token is not in the process list.
+5. Use one helper for every request: `curl -sS --fail --request GET --max-time 60 -H @rec/headers -o "rec/<name>.json" "$(cat rec/url)<path-and-query>" 2>"rec/<name>.err"; echo "exit=$?"`.
+6. Probe the request forms on one movie library. Print only numbers and rating keys.
+   - Filter encoding: get `totalSize` with `X-Plex-Container-Size=0` for no filter, for raw `addedAt>>=<unix time 30 days ago>`, and for percent-encoded `addedAt%3E%3E=<same time>`. If the count of a form is lower than the unfiltered count, that form filters. If both forms filter with the same count, use the percent-encoded form, because `url.Values.Encode` makes it. If only one form filters, use that form. If neither filters, stop and tell the owner.
+   - Order: get one item with `sort=addedAt` and one with `sort=addedAt:desc`. If the `addedAt` of `sort=addedAt` is lower, that form is ascending. Otherwise try `sort=addedAt:asc`.
+   - Paging: get one item with `X-Plex-Container-Start=0` and one with `X-Plex-Container-Start=1`, both with `X-Plex-Container-Size=1` in the query. If each response has one item and the rating keys differ, paging in the query works. Otherwise try the same names as headers.
+   - Language: search `title=tmdb-747059` with the movie agent once with `language=<section language>` and once without it. Both must give the same number of candidates.
+
+   Record the results in the Task 2 PR description. The client and the tests use the forms that won.
+7. Record these responses. Each request uses the exact query that the client builds: the winning forms, `sort`, `excludeElements`, the paging parameters, and the match search `language`. A size of 1 to 3 keeps each file small.
 
    | File | Request |
    | --- | --- |
    | `sections.json` | `GET /library/sections` |
-   | `movies_matched.json` | type 1, `unmatched=0`, `sort=addedAt:desc`, size 2 |
+   | `movies_matched.json` | type 1, `unmatched=0`, size 2 |
    | `movies_unmatched.json` | type 1, `unmatched=1`, size 1 |
    | `shows_unmatched.json` | type 2, `unmatched=1`, size 1 |
    | `shows_episode_summary.json` | the spec's first episode request, size 2 |
-   | `count.json` | type 2, `X-Plex-Container-Size=0` |
    | `item_movie.json` | `GET /library/metadata/<key>` of a movie |
    | `item_show.json` | `GET /library/metadata/<key>` of a series |
    | `matches_one.json` | match search with `title=tmdb-747059` and the movie agent, on an unmatched movie |
    | `matches_none.json` | match search with `title=imdb-tt13167288`, on the same movie |
 
    The two IDs in the match searches are already public in the spec. Find the rating keys with `jq` and print only the keys.
-6. Clean each file into `internal/plex/testdata/` with a `jq` program in the scratchpad. Use an allow list of keys, not a block list. Keep the JSON types and keep absent keys absent: `ratingKey` stays a string, a missing `thumb`, `art`, or `updatedAt` stays absent, and an empty `summary` stays `""`.
+8. Clean each file into `internal/plex/testdata/` with a `jq` program in the scratchpad. Use an allow list of keys, not a block list. Keep the JSON types and keep absent keys absent: `ratingKey` stays a string, a missing `thumb`, `art`, or `updatedAt` stays absent, and an empty `summary` stays `""`.
 
    | Object | Kept keys | Neutral values |
    | --- | --- | --- |
@@ -126,14 +135,14 @@ Procedure:
    - Series paths become `/media/tv/Series One (2021) {tvdb-200001}`.
 
    The server can have no library with another agent. Then copy the movie section into a third entry. Set its `agent` to `tv.plex.agents.none`, its `type` to `movie`, and its `title` to `Home Videos`.
-7. Run the leak check. It prints counts only, and each count must be 0.
-   - `grep -rFc -f "$TOKEN_FILE" internal/plex/testdata`
+9. Run the leak check. It prints counts only, and each count must be 0.
+   - `grep -rFc -f rec/token internal/plex/testdata`
    - the host of the URL: write it to `rec/host` with `sed`, then `grep -rFc -f rec/host internal/plex/testdata`
    - `grep -rEc 'machineIdentifier|uuid|librarySectionUUID' internal/plex/testdata`
    - the original titles, file names, and paths: extract every `title`, `file`, and `path` value from `rec/*.json` into `rec/private`, then `grep -rFc -f rec/private internal/plex/testdata`
-8. Run `rm -rf rec "$URL_FILE" "$TOKEN_FILE"`.
+10. Run `rm -rf rec`. If the two secret files still exist, delete them.
 
-If a later task needs a new fixture, it repeats steps 1 to 8 for that fixture only.
+If a later task needs a new fixture, it repeats this procedure for that fixture only.
 
 ---
 
@@ -312,18 +321,18 @@ Requests:
 | `SearchMatches` | `GET /library/metadata/<ratingKey>/matches?manual=1&title=<title>&agent=<agent>&language=<language>` |
 | `Match` | `PUT /library/metadata/<ratingKey>/match?guid=<guid>&name=<name>&year=<year>`. If the year is 0, leave out `year`. |
 
-- [ ] Step 1: Record and clean the fixtures as "Recording test data" describes. Run the leak check. Expected: every count is 0.
+- [ ] Step 1: Record and clean the fixtures as "Recording test data" describes. Expected: the probe selects a form for each point, and every leak check count is 0.
 - [ ] Step 2: Write the failing tests. Each test uses an `httptest.Server`.
   - `TestRequestsSendTokenHeaderAndAcceptJSON`: every method sends `X-Plex-Token` and `Accept: application/json`, and no URL has a `X-Plex-Token` query parameter.
   - `TestLibrariesDecodesSections`: `sections.json` gives three libraries with the IDs, types, agents, and languages of the fixture.
-  - `TestListDecodesRecordedShapes`: `movies_matched.json`, `movies_unmatched.json`, and `shows_unmatched.json` give these values:
+  - `TestListDecodesRecordedShapes`: `movies_matched.json`, `movies_unmatched.json`, `shows_unmatched.json`, and `shows_episode_summary.json` give these values:
     - string rating keys, and `AddedAt` from Unix seconds
     - `Files` from `Media[].Part[].file`
     - `Thumb == ""` and `Art == ""` where the fixture has no key
     - `Summary == ""` for an empty summary
   - `TestListReadsEveryPage`: a handler with `totalSize` 1,001 and pages of 500, 500, and 1 items gives 1,001 items and requests `X-Plex-Container-Start` 0, 500, and 1000.
   - `TestListStopsOnEmptyPage`: a page with 0 items before `totalSize` ends the read with an error, not a loop.
-  - `TestListEncodesFilters`: `List(ctx, "2", TypeShow, Filter{"addedAt", ">>=", "100"}, Filter{"episode.summary", "=", ""})` sends the form that the recording probe selected. Assert the exact `r.URL.RawQuery`. Also assert `excludeElements=Media,Role,Director,Writer,Genre,Country` for type 2 and `excludeElements=Role,Director,Writer,Genre,Country` for type 1.
+  - `TestListEncodesFilters`: `List(ctx, "2", TypeShow, Filter{"addedAt", ">>=", "100"}, Filter{"episode.summary", "=", ""})` sends the filter, order, and paging forms that the recording probe selected. Assert the exact `r.URL.RawQuery`. Also assert `excludeElements=Media,Role,Director,Writer,Genre,Country` for type 2 and `excludeElements=Role,Director,Writer,Genre,Country` for type 1.
   - `TestItemPathsReadsLocationsAndFiles`: `item_show.json` gives the `Location` path. `item_movie.json` gives the file path.
   - `TestRefreshSendsPutToItem`: `Refresh(ctx, "1001")` sends `PUT /library/metadata/1001/refresh`.
   - `TestSearchMatchesDecodesCandidates`: `matches_one.json` gives one candidate with its guid, name, and year. `matches_none.json` gives none. The query has `manual=1`, `title`, `agent`, and `language`.
@@ -618,10 +627,14 @@ The step for each due item, in `Due` order:
 
 1. If the limit is set and the run sent `MaxRefreshesPerRun` refresh or match requests on this server, stop.
 2. Choose the action. If the item has `Unmatched` and `Refreshes >= 1`, the action is a fix match. Otherwise it is a plain refresh.
-3. For a fix match, get the paths. A movie uses the file map of the run. If the map has no entry for it, it uses `ItemPaths`. A series uses `ItemPaths`. Search once for each ID with the agent and the language of the section. If a search fails, record a failed attempt, send nothing, and continue. This does not count toward the limit. Then call `chooseMatch`. A conflict logs a warning and uses a plain refresh.
-4. In a dry run, log the item at info with the server, the library, the title, the reasons, and the action, and continue.
-5. If this is not the first request on the server in this run, call `sleep(RefreshDelay)`.
-6. Send `Match` or `Refresh`. On success: `RecordAttempt(refreshed=true)` and an info line. On `ErrNotFound`: `Delete`. On `ErrUnavailable`: log an error and stop the server. On another error: log a warning and `RecordAttempt(refreshed=false)`.
+3. For a fix match, get the paths. A movie uses the file map of the run. If the map has no entry for it, it uses `ItemPaths`. A series uses `ItemPaths`. Search once for each ID with the agent and the language of the section. Then call `chooseMatch`. A conflict logs a warning and uses a plain refresh.
+4. If `ItemPaths` or a search fails, send nothing for this item. This does not count toward the limit. The error decides the next step:
+   - `ErrUnavailable`: log an error and stop the server.
+   - `ErrNotFound`: `Delete` the row.
+   - Another error: log a warning and `RecordAttempt(refreshed=false)`. In a dry run, record nothing.
+5. In a dry run, log the item at info with the server, the library, the title, the reasons, and the action, and continue.
+6. If this is not the first request on the server in this run, call `sleep(RefreshDelay)`.
+7. Send `Match` or `Refresh`. On success: `RecordAttempt(refreshed=true)` and an info line. On `ErrNotFound`: `Delete`. On `ErrUnavailable`: log an error and stop the server. On another error: log a warning and `RecordAttempt(refreshed=false)`.
 
 At the end of each server, log one info summary line with: items read, incomplete items (`CountIncomplete`), due items, refreshes sent, matches sent, failures, items that became complete, and the time of the run.
 
@@ -638,9 +651,10 @@ At the end of each server, log one info summary line with: items read, incomplet
   - `TestFixMatchSeriesUsesItemPaths`: the series path comes from `ItemPaths`, and the agent is `tv.plex.agents.series`.
   - `TestFixMatchConflictSendsPlainRefresh`: two IDs with different guids log a warning and send `Refresh`.
   - `TestFixMatchWithoutIDsSendsPlainRefresh`.
+  - `TestFixMatchReadErrors`, a table test for `ItemPaths` and `SearchMatches`. `ErrUnavailable` stops the server. `ErrNotFound` deletes the row. A 500 error records a failed attempt. No case sends `Match` or `Refresh`.
   - `TestFailedSearchSendsNothing` (Review Focus 5): the limit is 1, and `SearchMatches` fails on the first item. That item gets no `Match` or `Refresh`. Its `LastAttempt` is set, and `Refreshes` does not change. The second due item still gets its refresh.
   - `TestEpisodeReasonGetsPlainRefresh`: a matched series with `EpisodeUnmatched` and `Refreshes == 3` gets `Refresh` and no `SearchMatches`.
-  - `TestDryRunSendsAndRecordsNothing` (Review Focus 5): the fake gets no `Refresh` or `Match` call, and `sleep` gets no call. `LastAttempt` stays zero. The log has one info line for each due item with its action. The read state is saved.
+  - `TestDryRunSendsAndRecordsNothing` (Review Focus 5): the fake gets no `Refresh` or `Match` call, and `sleep` gets no call. `LastAttempt` stays zero. The log has one info line for each due item with its action. A failed `SearchMatches` writes no state either. The read state is saved.
   - `TestSummaryLine`: the info line has the counts of a run with one refresh, one match, one failure, and one fixed item.
 - [ ] Step 2: Run `go test ./internal/refresher/...`. Expected: FAIL.
 - [ ] Step 3: Implement `refresh.go` and call it from `Run`. Log each match search result at debug with the ID and the number of candidates.
