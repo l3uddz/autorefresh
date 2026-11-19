@@ -20,6 +20,7 @@ When the design adds packages or rules, update this file.
 | `internal/config/` | Configuration types, defaults, loading, and validation |
 | `internal/plex/` | Plex API client: list libraries and items, refresh, search matches, and apply a match |
 | `internal/store/` | SQLite cache of incomplete items and the read times of each library |
+| `internal/refresher/` | Rules for missing metadata, path ID parsing, and the fix match choice |
 | `docker/Dockerfile` | Container image, built from the goreleaser output in `dist/` |
 | `mise.toml` | Tool versions and development tasks |
 | `.goreleaser.yml` | Release build configuration |
