@@ -35,9 +35,21 @@ CI publishes the image `l3uddz/autorefresh` to Docker Hub for
 | `latest` | The latest release |
 | `<version>` | A release, for example `1.0.0` |
 | `main` | The latest commit on the `main` branch |
-| `<branch>` | The latest build of an open PR into `main` from a branch of this repository. Each `/` in the branch name becomes `-` |
+| `<branch>` | The latest build of an open PR into `main` from a branch of this repository |
 
 A PR from a fork, or a PR into another branch, publishes no image.
+
+CI makes the `<branch>` tag from the branch name with these rules:
+
+- Each character other than `A-Z`, `a-z`, `0-9`, `_`, `.` and `-` becomes
+  `-`. For example, `fix/a` publishes `fix-a`.
+- If the tag starts with `.` or `-`, it gets a `_` prefix. For example,
+  `+fix` publishes `_-fix`.
+- If the tag is longer than 128 characters, CI cuts it and adds an
+  8-character hash of the branch name.
+- If the tag is `latest` or starts with a digit, the build fails, because
+  releases own these tags.
+- If two branches map to the same tag, the build fails.
 
 ```sh
 docker run --rm l3uddz/autorefresh:main --version
