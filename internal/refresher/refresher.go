@@ -88,22 +88,27 @@ func sleep(ctx context.Context, d time.Duration) error {
 // serverRun is the state of one server in one run.
 type serverRun struct {
 	server    Server
+	began     time.Time
 	libraries []plex.Library      // the selected libraries
 	files     map[string][]string // movie files by rating key, from the reads of this run
 	itemsRead int
 	completed int // rows that became complete
 }
 
-// Run checks each server in order. It returns an error only for a store error.
-// If ctx ends, Run stops and returns nil.
+// Run reads the libraries of each server in order, and then refreshes the
+// due items of that server. It returns an error only for a store error. If
+// ctx ends, Run stops and returns nil.
 func (r *Refresher) Run(ctx context.Context) error {
 	for _, srv := range r.servers {
 		if ctx.Err() != nil {
 			log.Debug().Str("server", srv.Name).Msg("Run canceled")
 			return nil
 		}
-		run := &serverRun{server: srv, files: map[string][]string{}}
+		run := &serverRun{server: srv, began: time.Now(), files: map[string][]string{}}
 		err := r.readLibraries(ctx, run)
+		if err == nil {
+			err = r.refreshDue(ctx, run)
+		}
 		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
 			log.Debug().Str("server", srv.Name).Msg("Run canceled")
 			return nil
