@@ -309,7 +309,9 @@ does it.
 
 - If an item is incomplete, older than `minimum-age`, and has no attempt
   in the last `refresh-interval`, the item is due. An attempt is any
-  refresh or match request, successful or failed. An item with no attempt
+  refresh or match request, successful or failed. A failed match search
+  also counts as an attempt, but not toward `max-refreshes-per-run`,
+  because it sends no refresh or match request. An item with no attempt
   is due at once. One rule therefore paces successful and failed requests
   alike. A refresh that Plex applied before the response failed cannot
   repeat within `refresh-interval`.
