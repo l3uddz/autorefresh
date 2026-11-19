@@ -162,13 +162,21 @@ func (r *Refresher) findMatch(ctx context.Context, srv Server, lib plex.Library,
 // a fix match. The item gets no request in this run. It returns the error of
 // stopError or a store error.
 func (r *Refresher) matchSearchFailed(ctx context.Context, s *refreshStep, lib plex.Library, it store.Item, err error) error {
+	name := s.run.server.Name
 	if stop := stopError(ctx, err); stop != nil {
-		if ctx.Err() == nil {
-			s.run.failures++ // unavailable: the summary still counts it
+		if ctx.Err() != nil {
+			return stop
+		}
+		s.run.failures++ // unavailable: the summary still counts it
+		// The attempt moves the item to the end of the queue, so it cannot
+		// stop the server at the same item in every run.
+		if !r.opts.DryRun {
+			if err := r.store.RecordAttempt(name, it.RatingKey, r.now(), false); err != nil {
+				return err
+			}
 		}
 		return stop
 	}
-	name := s.run.server.Name
 	notFound := errors.Is(err, plex.ErrNotFound)
 	if notFound && !r.opts.DryRun {
 		return r.store.Delete(name, it.RatingKey)
