@@ -8,11 +8,14 @@ set -euo pipefail
 branch="${1:?usage: docker-branch-tag.sh <branch>}"
 
 # to_tag prints the Docker tag for a branch name. A Docker tag allows only
-# letters, digits, "_", "." and "-", and has at most 128 characters. A cut
-# tag ends with a hash of the full branch name, so that two long branches
-# with the same start get different tags.
+# letters, digits, "_", "." and "-", cannot start with "." or "-", and has at
+# most 128 characters. A cut tag ends with a hash of the full branch name, so
+# that two long branches with the same start get different tags.
 to_tag() {
   local tag="${1//[^A-Za-z0-9_.-]/-}"
+  if [[ "$tag" == [.-]* ]]; then
+    tag="_$tag"
+  fi
   if (( ${#tag} > 128 )); then
     tag="${tag:0:119}-$(printf '%s' "$1" | sha256sum | cut -c1-8)"
   fi

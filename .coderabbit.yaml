@@ -62,8 +62,9 @@ reviews:
     - path: ".github/workflows/**"
       instructions: >-
         The Build workflow publishes public Docker tags for pushes to main
-        and for PRs into main, and a GitHub release for v* tags. Pushes to
-        other branches do not run it, by design. Flag changes to these triggers or to the
+        and for PRs into main from branches of this repository, and a GitHub
+        release for v* tags. Fork PRs build but publish no image, and pushes
+        to other branches do not run the workflow. Both are by design. Flag changes to these triggers or to the
         published tags. build.yml and cleanup.yml must both use
         .github/scripts/docker-branch-tag.sh to turn a branch name into a
         Docker tag. That script must keep "latest" and the version tags for
