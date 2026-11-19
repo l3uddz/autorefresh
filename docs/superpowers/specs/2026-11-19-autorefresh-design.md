@@ -311,8 +311,10 @@ does it.
 - Each run refreshes the due items in this order: first the items that were
   never refreshed, then the items with the oldest last refresh. Ties go to
   the item that Plex added first.
-- Autorefresh sends one refresh at a time on each server. It waits
-  `refresh-delay` between two refreshes on one server.
+- Autorefresh sends one refresh or match request at a time on each server.
+  It waits `refresh-delay` between two of these requests on one server. The
+  match searches are reads. They take about 0.3 seconds each and are not
+  paced.
 - If `max-refreshes-per-run` is set, a run sends at most that many refresh
   and match requests on each server. If it is not set, there is no limit.
 - Autorefresh never sends a library-wide refresh.
@@ -353,9 +355,15 @@ the first attempt is always a plain refresh.
 4. It applies a match in one case only: every ID that found something found
    exactly one candidate, and all of these candidates have the same guid. IDs that
    find nothing are ignored.
-5. If the IDs find different candidates, or one ID finds more than one,
-   autorefresh logs the conflict and sends a plain refresh.
-6. If the path has no IDs, or no ID finds anything, autorefresh sends a
+5. Before it applies the match, autorefresh compares the years. If the item
+   and the candidate both have a year, and the years differ by more than 1,
+   it does not apply the match. Autorefresh does not compare titles. The
+   title of an unmatched item comes from the folder or file name, so it can
+   differ from the Plex title. This rule is the builder's call.
+6. If the IDs find different candidates, or one ID finds more than one,
+   or the years do not agree, autorefresh logs the conflict and sends a
+   plain refresh.
+7. If the path has no IDs, or no ID finds anything, autorefresh sends a
    plain refresh.
 
 A match request counts as the refresh of the item for `refresh-interval`
@@ -380,7 +388,10 @@ The keys use the server `name` from the configuration, so a change of the
 server URL keeps the state.
 
 When a read shows that an item is complete, autorefresh deletes its row.
-It logs that the item is fixed and the number of refreshes that it took. A full
+It logs that the item is fixed and the number of refreshes that it took. If
+the item becomes incomplete again later, it starts with no refresh history
+and is due at once. Plex changed the item, so the earlier refreshes do not
+apply to the new problem. This rule is the builder's call. A full
 read deletes the rows of items that Plex no longer returns. A refresh or
 match request that returns 404 also deletes the row.
 
@@ -427,6 +438,11 @@ the builder's call.
 - The timing keys apply to all servers. There is no per-server timing configuration.
 - `name`, `url`, and `token` are required for each server. Each `name` must
   be unique.
+- `url` accepts `http` and `https`, as in autoscan. Plex listens on plain
+  HTTP on port 32400 by default, and many setups reach it on a local
+  network or a Docker network. With `http`, the token crosses the network
+  in clear text. If the connection leaves a trusted network, the README
+  tells users to use `https`. This rule is the builder's call.
 - `libraries` selects libraries by their title.
 
 ## Command line
