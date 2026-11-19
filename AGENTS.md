@@ -54,8 +54,8 @@ Apply SOLID, KISS, DRY, and YAGNI to each code change.
 You need [mise](https://mise.jdx.dev). Run `mise install` once to install
 the Go and goreleaser versions from `mise.toml`.
 
-The required `build` job runs the following commands in order before
-packaging. Run the same commands before you push.
+The required `build` job of the `ci` workflow runs the following commands in
+order before packaging. Run the same commands before you push.
 
 ```sh
 mise run vendor
@@ -76,7 +76,7 @@ changes the committed files, CI fails.
 
 ## CI side effects
 
-The `Build` workflow in `.github/workflows/build.yml` runs on pushes to
+The `ci` workflow in `.github/workflows/ci.yml` runs on pushes to
 `main`, on `v*` tags, and on PRs into `main`. A push to another branch, such
 as `fix/<issue>-<slug>`, runs CI only after you open a PR into `main`.
 
@@ -94,8 +94,8 @@ as `fix/<issue>-<slug>`, runs CI only after you open a PR into `main`.
 - A new run cancels an older run for the same ref. Only one ref publishes
   each branch tag: `main` for pushes, or the PR for another branch. An older
   commit then cannot replace the image of a newer commit.
-- If you delete a branch, the `Docker Cleanup` workflow removes its Docker tag.
-  It uses the same script as the build.
+- If you delete a branch, the `docker-cleanup` workflow removes its Docker
+  tag. It uses the same script as the build.
 - If someone pushes a `v*` tag, CI publishes a GitHub release and the Docker
   tags `<version>` and `latest`. Do not create or push tags unless the user
   asks for a release.

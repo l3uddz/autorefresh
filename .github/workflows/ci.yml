@@ -1,4 +1,4 @@
-name: Build
+name: ci
 
 # Pushes build main and v* tags. Every other branch builds through its PR
 # into main, so only one run publishes each branch tag.
@@ -71,7 +71,7 @@ jobs:
         run: mise run lint
 
       # Docker tags: the version and latest for a v* tag. Otherwise the
-      # branch tag from docker-branch-tag.sh, which cleanup.yml also uses.
+      # branch tag from docker-branch-tag.sh, which docker-cleanup.yml also uses.
       # This step runs before publish, so a version that is not a valid
       # Docker tag stops the run before goreleaser makes a GitHub release.
       - name: image tags

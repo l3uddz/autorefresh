@@ -1,4 +1,4 @@
-name: Docker Cleanup
+name: docker-cleanup
 
 on: delete
 
@@ -15,7 +15,7 @@ jobs:
         with:
           sparse-checkout: .github/scripts
 
-      # build.yml makes the branch tag with the same script. The image is
+      # ci.yml makes the branch tag with the same script. The image is
       # pinned by digest, because it receives the Docker Hub credentials.
       - name: remove docker tag
         shell: bash
