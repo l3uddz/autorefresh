@@ -1,0 +1,31 @@
+{
+  "MediaContainer": {
+    "size": 1,
+    "totalSize": 34,
+    "offset": 0,
+    "Metadata": [
+      {
+        "ratingKey": "1003",
+        "key": "/library/metadata/1003",
+        "guid": "local://1003",
+        "type": "movie",
+        "title": "Fixture Movie Three",
+        "year": 2024,
+        "summary": "",
+        "thumb": "/library/metadata/1003/thumb/1700000250",
+        "art": "/library/metadata/1003/art/1700000250",
+        "addedAt": 1700000200,
+        "updatedAt": 1700000250,
+        "Media": [
+          {
+            "Part": [
+              {
+                "file": "/fixture/movies/Fixture Movie Three (2024) {tmdb-100003}/Fixture Movie Three (2024).mkv"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "MediaContainer": {
+    "size": 1,
+    "SearchResult": [
+      {
+        "guid": "plex://movie/000000000000000000000001",
+        "name": "Fixture Movie One",
+        "year": 2020,
+        "type": "movie",
+        "summary": "A neutral summary.",
+        "thumb": "https://metadata.example.invalid/thumb.jpg"
+      }
+    ]
+  }
+}

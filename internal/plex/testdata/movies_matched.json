@@ -1,0 +1,81 @@
+{
+  "MediaContainer": {
+    "size": 2,
+    "totalSize": 5713,
+    "offset": 0,
+    "Metadata": [
+      {
+        "ratingKey": "1001",
+        "key": "/library/metadata/1001",
+        "guid": "plex://movie/000000000000000000000001",
+        "type": "movie",
+        "title": "Fixture Movie One",
+        "year": 2020,
+        "summary": "A neutral summary.",
+        "thumb": "/library/metadata/1001/thumb/1700000050",
+        "art": "/library/metadata/1001/art/1700000050",
+        "addedAt": 1700000000,
+        "updatedAt": 1700000050,
+        "Media": [
+          {
+            "Part": [
+              {
+                "file": "/fixture/movies/Fixture Movie One (2020) {tmdb-100001}/Fixture Movie One (2020).mkv"
+              }
+            ]
+          },
+          {
+            "Part": [
+              {
+                "file": "/fixture/movies/Fixture Movie One (2020) {tmdb-100001}/Fixture Movie One (2020) - version2.mkv"
+              }
+            ]
+          },
+          {
+            "Part": [
+              {
+                "file": "/fixture/movies/Fixture Movie One (2020) {tmdb-100001}/Fixture Movie One (2020) - version3.mkv"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "ratingKey": "1002",
+        "key": "/library/metadata/1002",
+        "guid": "plex://movie/000000000000000000000002",
+        "type": "movie",
+        "title": "Fixture Movie Two",
+        "year": 2020,
+        "summary": "A neutral summary.",
+        "thumb": "/library/metadata/1002/thumb/1700000150",
+        "art": "/library/metadata/1002/art/1700000150",
+        "addedAt": 1700000100,
+        "updatedAt": 1700000150,
+        "Media": [
+          {
+            "Part": [
+              {
+                "file": "/fixture/movies/Fixture Movie Two (2020) {tmdb-100002}/Fixture Movie Two (2020).mkv"
+              }
+            ]
+          },
+          {
+            "Part": [
+              {
+                "file": "/fixture/movies/Fixture Movie Two (2020) {tmdb-100002}/Fixture Movie Two (2020) - version2.mkv"
+              }
+            ]
+          },
+          {
+            "Part": [
+              {
+                "file": "/fixture/movies/Fixture Movie Two (2020) {tmdb-100002}/Fixture Movie Two (2020) - version3.mkv"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

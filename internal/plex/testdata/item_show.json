@@ -1,0 +1,21 @@
+{
+  "MediaContainer": {
+    "size": 1,
+    "Metadata": [
+      {
+        "ratingKey": "1004",
+        "key": "/library/metadata/1004/children",
+        "guid": "local://1004",
+        "type": "show",
+        "title": "Fixture Series One",
+        "summary": "",
+        "addedAt": 1700000300,
+        "Location": [
+          {
+            "path": "/fixture/tv/Fixture Series One (2021) {tvdb-200004}"
+          }
+        ]
+      }
+    ]
+  }
+}
