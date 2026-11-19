@@ -222,6 +222,15 @@ func TestRefreshUnavailableStopsServer(t *testing.T) {
 		t.Fatalf("got %d unavailable errors, want 1", len(errs))
 	}
 	wantField(t, errs[0], "server", "down")
+	warnings := f.logLines("warn", "Request failed")
+	if len(warnings) != 1 {
+		t.Fatalf("got %d request failure warnings, want 1", len(warnings))
+	}
+	wantField(t, warnings[0], "server", "down")
+	wantField(t, warnings[0], "library", "Movies")
+	wantField(t, warnings[0], "title", "Title 101")
+	wantField(t, warnings[0], "reasons", "no-summary")
+	wantField(t, warnings[0], "action", "refresh")
 	// Plex can apply a refresh before the response fails, so the failed
 	// request counts as an attempt.
 	if row, _ := f.row("down", "1", "101"); row.Refreshes != 0 || !row.LastAttempt.Equal(t0) {
@@ -401,6 +410,12 @@ func TestFixMatchReadErrors(t *testing.T) {
 				}
 				if errs := f.logLines("error", "Plex server unavailable"); len(errs) != 1 {
 					t.Errorf("got %d unavailable errors, want 1", len(errs))
+				}
+				logs := f.logs.String()
+				errAt := strings.Index(logs, `"message":"Plex server unavailable"`)
+				summaryAt := strings.Index(logs, `"message":"Run summary"`)
+				if errAt < 0 || summaryAt < errAt {
+					t.Errorf("the summary line does not follow the error line:\n%s", logs)
 				}
 			case "deleted":
 				if exists {
@@ -595,4 +610,62 @@ func TestCanceledSendRecordsAttempt(t *testing.T) {
 	if lines := f.logLines("info", "Run summary"); len(lines) != 0 {
 		t.Errorf("got summary lines %v, want none", lines)
 	}
+}
+
+func TestMatchFailureRecordsAttemptOnly(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	movie := unmatchedItem("101")
+	movie.Files = []string{"/m/Film (2020) {tmdb-1}/Film.mkv"}
+	fp.lists["1?type=1&unmatched=1"] = []plex.Item{movie}
+	fp.candidates["101 tmdb-1"] = []plex.Candidate{{GUID: "plex://movie/a", Name: "Film", Year: 2020}}
+	fp.matchErrs["101"] = serverErr
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.seed(testServer, moviesLib, movie, store.Unmatched, 1)
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/a")
+	if row, _ := f.row(testServer, "1", "101"); row.Refreshes != 1 || !row.LastAttempt.Equal(t0) {
+		t.Errorf("row = %+v, want 1 refresh and LastAttempt %v", row, t0)
+	}
+	warnings := f.logLines("warn", "Request failed")
+	if len(warnings) != 1 {
+		t.Fatalf("got %d request failure warnings, want 1", len(warnings))
+	}
+	wantField(t, warnings[0], "title", "Title 101")
+	wantField(t, warnings[0], "action", "match")
+	summary := f.lastSummary(testServer)
+	wantField(t, summary, "matches", float64(1))
+	wantField(t, summary, "failures", float64(1))
+}
+
+func TestAttemptTimeIsRequestTime(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	since := unixString(seedAt.Add(-oversample))
+	fp.lists["1?type=1&updatedAt>>="+since] = []plex.Item{incompleteItem("101"), incompleteItem("102")}
+	fp.paths["103"] = []string{"/m/Film (2020) {tmdb-3}/Film.mkv"}
+	fp.searchErrs["103"] = serverErr
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.seed(testServer, moviesLib, unmatchedItem("103"), store.Unmatched, 1)
+	// The clock moves forward by each delay.
+	f.r.sleep = func(_ context.Context, d time.Duration) error {
+		f.now = f.now.Add(d)
+		return nil
+	}
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 101", "Refresh 102")
+	later := t0.Add(refreshDelay)
+	want := map[string]time.Time{"101": t0, "102": later, "103": later}
+	for key, at := range want {
+		if row, _ := f.row(testServer, "1", key); !row.LastAttempt.Equal(at) {
+			t.Errorf("row %s = %+v, want LastAttempt %v", key, row, at)
+		}
+	}
+	if row, _ := f.row(testServer, "1", "102"); !row.LastRefresh.Equal(later) {
+		t.Errorf("row 102 = %+v, want LastRefresh %v", row, later)
+	}
+	// zerolog writes a duration in milliseconds.
+	wantField(t, f.lastSummary(testServer), "duration", float64(refreshDelay.Milliseconds()))
 }

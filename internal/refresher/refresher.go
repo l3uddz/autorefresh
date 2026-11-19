@@ -117,7 +117,7 @@ func (r *Refresher) Run(ctx context.Context) error {
 			log.Debug().Str("server", srv.Name).Msg("Run canceled")
 			return nil
 		}
-		run := &serverRun{server: srv, began: time.Now(), files: map[string][]string{}}
+		run := &serverRun{server: srv, began: r.now(), files: map[string][]string{}}
 		err := r.readLibraries(ctx, run)
 		readsDone := err == nil
 		if readsDone {
