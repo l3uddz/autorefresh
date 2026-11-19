@@ -63,7 +63,7 @@ cache.
 
 If an incomplete item has no attempt in the last `refresh-interval`, the
 item is due. An attempt is a refresh or match request, successful or
-failed. Autorefresh never gives up. It tries an incomplete item again after
+failed. A failed match search also counts as an attempt. Autorefresh never gives up. It tries an incomplete item again after
 each `refresh-interval` until the item is complete or gone from Plex.
 
 Each run refreshes the due items in this order:
@@ -106,8 +106,9 @@ plain refresh.
 4. If the item and the candidate both have a year, the years must differ by
    1 or less.
 
-In all other cases, autorefresh sends a plain refresh. If the IDs disagree,
-it also logs the conflict. A match request counts as a refresh for
+If no match applies, autorefresh sends a plain refresh. If the IDs disagree,
+it also logs the conflict. If a match search fails, autorefresh logs a
+warning and sends no request for that item in this run. A match request counts as a refresh for
 `refresh-interval` and for `max-refreshes-per-run`.
 
 ### No library-wide refresh
@@ -151,7 +152,9 @@ plex:
 
 `schedule` and `cache-refresh` are cron expressions with 5 fields, or
 descriptors such as `@hourly`. They use the local time zone, which the `TZ`
-environment variable sets. `refresh-interval` must be more than 0.
+environment variable sets. Choose a `cache-refresh` time at which
+`schedule` also starts a run, because the full read happens in the first run
+at or after that time. `refresh-interval` must be more than 0.
 `minimum-age`, `oversample`, and `refresh-delay` must be 0 or more. If
 `max-refreshes-per-run` is set, it must be 1 or more. The timing keys apply
 to all servers.
