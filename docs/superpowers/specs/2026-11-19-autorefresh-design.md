@@ -266,8 +266,13 @@ of the owner's libraries use these two agents.
 A full read lists every movie (type 1) or series (type 2) in a library, page
 by page. Autorefresh evaluates each item with the rules above.
 
-If a library has no full read yet, or its last full read is older than
-`cache-refresh`, autorefresh does a full read of it.
+If a library has no full read yet, autorefresh does a full read of it.
+`cache-refresh` is a cron expression. If a `cache-refresh` time passed
+since the last full read of a library, the next run does a full read of
+it. `schedule` sets the start time of that run. If a run starts at each
+`cache-refresh` time, the full reads happen at that time. With the
+defaults, the hourly run at 03:00 on Sunday does the full reads. The owner
+chose this cron form on 2026-11-19, after the plan review.
 
 ### Incremental read
 
@@ -426,7 +431,7 @@ configuration directory.
 schedule: "0 * * * *"         # cron expression for each run
 minimum-age: 24h              # skip items added less than this long ago
 refresh-interval: 12h         # wait at least this long between refreshes of one item
-cache-refresh: 168h           # do a full read of each library this often
+cache-refresh: "0 3 * * 0"    # cron expression for full reads of each library
 oversample: 48h               # each incremental read also gets changes from this far back
 refresh-delay: 5s             # wait between two refreshes on one server
 max-refreshes-per-run: 100    # optional; no limit if it is not set
@@ -448,14 +453,16 @@ The owner agreed the keys and these values. The owner's own setup leaves out
 | `schedule` | no | `0 * * * *` |
 | `minimum-age` | no | `24h` |
 | `refresh-interval` | no | `12h` |
-| `cache-refresh` | no | `168h` |
+| `cache-refresh` | no | `0 3 * * 0` |
 | `oversample` | no | `48h` |
 | `refresh-delay` | no | `5s` |
 | `max-refreshes-per-run` | no | no limit |
 | `plex` | yes, at least one server | none |
 
 The defaults are the values that the owner agreed for the example. This is
-the builder's call.
+the builder's call. The `cache-refresh` default replaces the earlier `168h`
+with a weekly time at 03:00 on Sunday. The cron keys use the local time
+zone.
 
 - The timing keys apply to all servers. There is no per-server timing configuration.
 - `name`, `url`, and `token` are required for each server. Each `name` must
