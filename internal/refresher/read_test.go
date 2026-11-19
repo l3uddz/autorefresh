@@ -273,23 +273,37 @@ func TestFirstRunDoesFullRead(t *testing.T) {
 
 func TestFullReadChecksUnseenRows(t *testing.T) {
 	fp := newFakePlex(moviesLib)
-	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102"), incompleteItem("103")}
+	fp.lists["1?type=1"] = []plex.Item{
+		incompleteItem("101"), incompleteItem("102"), incompleteItem("103"), incompleteItem("104"),
+	}
 	f := newFixture(t, Server{Name: testServer, Plex: fp})
 	f.run(t0)
 
-	fp.lists["1?type=1"] = []plex.Item{incompleteItem("103")}
+	noPoster := completeItem("103")
+	noPoster.Thumb = ""
+	fp.lists["1?type=1"] = []plex.Item{noPoster}
 	fp.pathErrs["101"] = fmt.Errorf("item paths: %w", plex.ErrNotFound)
 	fp.paths["102"] = []string{"/movies/Title 102/Title 102.mkv"}
+	fp.pathErrs["104"] = errors.New("item paths: GET /library/metadata/104: 500 Internal Server Error")
 	fp.calls = nil
 	f.run(sunday0300)
 
-	wantCalls(t, fp.calls, "Libraries", "List 1?type=1", "ItemPaths 101", "ItemPaths 102")
-	if got, want := keys(f.rows(testServer, "1")), []string{"102", "103"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("rows = %v, want %v", got, want)
+	wantCalls(t, fp.calls, "Libraries", "List 1?type=1", "ItemPaths 101", "ItemPaths 102", "ItemPaths 104")
+	want := map[string]store.Reasons{"102": store.NoSummary, "103": store.NoPoster, "104": store.NoSummary}
+	if got := f.reasons("1"); !reflect.DeepEqual(got, want) {
+		t.Errorf("reasons = %v, want %v", got, want)
+	}
+	if lib := f.library(testServer, "1"); !lib.LastFullRead.Equal(sunday0300) {
+		t.Errorf("LastFullRead = %v, want %v", lib.LastFullRead, sunday0300)
 	}
 	if fixed := f.logLines("info", "Item complete"); len(fixed) != 0 {
 		t.Errorf("got complete lines %v, want none", fixed)
 	}
+	warnings := f.logLines("warn", "Checking unseen item failed")
+	if len(warnings) != 1 {
+		t.Fatalf("got %d unseen item warnings, want 1", len(warnings))
+	}
+	wantField(t, warnings[0], "title", "Title 104")
 }
 
 func TestIncrementalReadFilters(t *testing.T) {
@@ -321,7 +335,10 @@ func TestIncrementalReadFilters(t *testing.T) {
 		t.Errorf("rows = %v, want %v", got, want)
 	}
 	reads := f.logLines("debug", "Read library")
-	last := reads[len(reads)-1]
+	if len(reads) != 2 {
+		t.Fatalf("got %d read lines, want 2", len(reads))
+	}
+	last := reads[1]
 	wantField(t, last, "kind", "incremental")
 	wantField(t, last, "items", float64(2))
 }
@@ -401,14 +418,20 @@ func TestEpisodeRequestFilters(t *testing.T) {
 
 func TestFailedReadKeepsState(t *testing.T) {
 	noSummaryAt0, _ := episodeKeys(t0)
-	noSummaryAtRefresh, _ := episodeKeys(sunday0300)
+	noSummaryAtRefresh, unmatchedAtRefresh := episodeKeys(sunday0300)
+	hourLater := t0.Add(time.Hour)
+	since := unixString(t0.Add(-oversample))
 	tests := []struct {
 		name          string
+		at            time.Time // sunday0300 gives a full read, hourLater an incremental read
 		failKey       string
 		checkedUnseen bool
 	}{
-		{"full listing fails", "2?type=2", false},
-		{"episode request fails", noSummaryAtRefresh, true},
+		{"full listing fails", sunday0300, "2?type=2", false},
+		{"first episode request fails", sunday0300, noSummaryAtRefresh, true},
+		{"second episode request fails", sunday0300, unmatchedAtRefresh, true},
+		{"second incremental listing fails", hourLater, "2?type=2&addedAt>>=" + since, false},
+		{"third incremental listing fails", hourLater, "2?type=2&unmatched=1", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -421,14 +444,20 @@ func TestFailedReadKeepsState(t *testing.T) {
 			rowsBefore := f.rows(testServer, "2")
 			libBefore := f.library(testServer, "2")
 
-			// A partial apply would fix 201 and delete the unseen row 202.
+			// A partial apply would fix 201, delete the unseen row 202 on a
+			// full read, and drop the episode reason of 202.
 			fp.lists["2?type=2"] = []plex.Item{completeItem("201")}
+			fp.lists["2?type=2&updatedAt>>="+since] = []plex.Item{completeItem("201")}
 			fp.pathErrs["202"] = fmt.Errorf("item paths: %w", plex.ErrNotFound)
 			fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102")}
+			fp.lists["1?type=1&updatedAt>>="+since] = []plex.Item{incompleteItem("102")}
 			fp.listErrs[tt.failKey] = errors.New("listing section 2: decoding response: unexpected token")
 			fp.calls = nil
-			f.run(sunday0300)
+			f.run(tt.at)
 
+			if !containsCall(fp.calls, "List "+tt.failKey) {
+				t.Fatalf("the failing request was not sent: %q", fp.calls)
+			}
 			if got := f.rows(testServer, "2"); !reflect.DeepEqual(got, rowsBefore) {
 				t.Errorf("rows of the failed library:\n got %+v\nwant %+v", got, rowsBefore)
 			}
@@ -436,7 +465,7 @@ func TestFailedReadKeepsState(t *testing.T) {
 			if !lib.LastFullRead.Equal(libBefore.LastFullRead) || !lib.LastRead.Equal(libBefore.LastRead) {
 				t.Errorf("library times = %+v, want %+v", lib, libBefore)
 			}
-			if got := listedSections(fp.calls)["2"] && containsCall(fp.calls, "ItemPaths 202"); got != tt.checkedUnseen {
+			if got := containsCall(fp.calls, "ItemPaths 202"); got != tt.checkedUnseen {
 				t.Errorf("unseen row checked = %v, want %v", got, tt.checkedUnseen)
 			}
 			if fixed := f.logLines("info", "Item complete"); len(fixed) != 0 {
@@ -451,8 +480,8 @@ func TestFailedReadKeepsState(t *testing.T) {
 			if got, want := keys(f.rows(testServer, "1")), []string{"101", "102"}; !reflect.DeepEqual(got, want) {
 				t.Errorf("rows of the next library = %v, want %v", got, want)
 			}
-			if lib := f.library(testServer, "1"); !lib.LastFullRead.Equal(sunday0300) {
-				t.Errorf("LastFullRead of the next library = %v, want %v", lib.LastFullRead, sunday0300)
+			if lib := f.library(testServer, "1"); !lib.LastRead.Equal(tt.at) {
+				t.Errorf("LastRead of the next library = %v, want %v", lib.LastRead, tt.at)
 			}
 		})
 	}
@@ -476,6 +505,9 @@ func TestUnavailableSkipsServer(t *testing.T) {
 		{"list", func(fp *fakePlex) {
 			fp.listErrs["1?type=1"] = fmt.Errorf("listing section 1: %w", plex.ErrUnavailable)
 		}},
+		{"item paths", func(fp *fakePlex) {
+			fp.pathErrs["100"] = fmt.Errorf("item paths: %w", plex.ErrUnavailable)
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -485,13 +517,31 @@ func TestUnavailableSkipsServer(t *testing.T) {
 			up.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
 			f := newFixture(t, Server{Name: "down", Plex: down}, Server{Name: "up", Plex: up})
 
+			// A full read a week ago stored row 100. The listing of this run
+			// does not return it, so the full read checks it with ItemPaths.
+			_, err := f.store.ApplyRead(store.Read{
+				Server: "down", Section: "1", At: t0.Add(-7 * 24 * time.Hour), Full: true,
+				Items: []store.Item{{
+					Server: "down", Section: "1", RatingKey: "100", Type: "movie",
+					Title: "Title 100", AddedAt: addedAt, Reasons: store.NoSummary,
+				}},
+			})
+			if err != nil {
+				t.Fatalf("seed store: %v", err)
+			}
+			rowsBefore := f.rows("down", "1")
+			libBefore := f.library("down", "1")
+
 			f.run(t0)
 
 			if listedSections(down.calls)["2"] {
 				t.Errorf("the unavailable server read its second library: %q", down.calls)
 			}
-			if lib := f.library("down", "1"); !lib.LastRead.IsZero() {
-				t.Errorf("the unavailable server has read times %+v", lib)
+			if got := f.rows("down", "1"); !reflect.DeepEqual(got, rowsBefore) {
+				t.Errorf("rows of the unavailable server:\n got %+v\nwant %+v", got, rowsBefore)
+			}
+			if lib := f.library("down", "1"); !lib.LastFullRead.Equal(libBefore.LastFullRead) || !lib.LastRead.Equal(libBefore.LastRead) {
+				t.Errorf("library times of the unavailable server = %+v, want %+v", lib, libBefore)
 			}
 			errs := f.logLines("error", "Plex server unavailable")
 			if len(errs) != 1 {
@@ -500,6 +550,48 @@ func TestUnavailableSkipsServer(t *testing.T) {
 			wantField(t, errs[0], "server", "down")
 			if got := keys(f.rows("up", "1")); !reflect.DeepEqual(got, []string{"101"}) {
 				t.Errorf("rows of the next server = %v, want [101]", got)
+			}
+		})
+	}
+}
+
+func TestCancelStopsRunQuietly(t *testing.T) {
+	tests := []struct {
+		name    string
+		listErr error // the error of the List call that cancels the context
+	}{
+		{"between libraries", nil},
+		{"during a request", fmt.Errorf("listing section 1: %w: %w", plex.ErrUnavailable, context.Canceled)},
+		{"plain error after cancel", errors.New("listing section 1: decoding response: unexpected EOF")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			first := newFakePlex(moviesLib, showsLib)
+			first.onCall = func(call string) {
+				if call == "List 1?type=1" {
+					cancel()
+				}
+			}
+			if tt.listErr != nil {
+				first.listErrs["1?type=1"] = tt.listErr
+			}
+			second := newFakePlex(moviesLib)
+			f := newFixture(t, Server{Name: "first", Plex: first}, Server{Name: "second", Plex: second})
+
+			f.now = t0
+			if err := f.r.Run(ctx); err != nil {
+				t.Fatalf("Run = %v, want nil", err)
+			}
+
+			wantCalls(t, first.calls, "Libraries", "List 1?type=1")
+			wantCalls(t, second.calls)
+			if strings.Contains(f.logs.String(), `"level":"error"`) {
+				t.Errorf("got error lines, want none:\n%s", f.logs)
+			}
+			if warnings := f.logLines("warn", "Reading library failed"); len(warnings) != 0 {
+				t.Errorf("got read failure warnings %v, want none", warnings)
 			}
 		})
 	}

@@ -95,10 +95,19 @@ type serverRun struct {
 }
 
 // Run checks each server in order. It returns an error only for a store error.
+// If ctx ends, Run stops and returns nil.
 func (r *Refresher) Run(ctx context.Context) error {
 	for _, srv := range r.servers {
+		if ctx.Err() != nil {
+			log.Debug().Str("server", srv.Name).Msg("Run canceled")
+			return nil
+		}
 		run := &serverRun{server: srv, files: map[string][]string{}}
 		err := r.readLibraries(ctx, run)
+		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+			log.Debug().Str("server", srv.Name).Msg("Run canceled")
+			return nil
+		}
 		if errors.Is(err, plex.ErrUnavailable) {
 			log.Error().Str("server", srv.Name).Err(err).Msg("Plex server unavailable")
 			continue

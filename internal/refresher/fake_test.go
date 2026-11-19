@@ -20,6 +20,7 @@ type fakePlex struct {
 	paths        map[string][]string    // by rating key
 	pathErrs     map[string]error       // by rating key
 	calls        []string
+	onCall       func(call string) // runs after each recorded call, if set
 }
 
 func newFakePlex(libraries ...plex.Library) *fakePlex {
@@ -42,14 +43,21 @@ func listKey(section string, itemType int, filters ...plex.Filter) string {
 	return section + "?" + strings.Join(parts, "&")
 }
 
+func (f *fakePlex) record(call string) {
+	f.calls = append(f.calls, call)
+	if f.onCall != nil {
+		f.onCall(call)
+	}
+}
+
 func (f *fakePlex) Libraries(context.Context) ([]plex.Library, error) {
-	f.calls = append(f.calls, "Libraries")
+	f.record("Libraries")
 	return f.libraries, f.librariesErr
 }
 
 func (f *fakePlex) List(_ context.Context, section string, itemType int, filters ...plex.Filter) ([]plex.Item, error) {
 	key := listKey(section, itemType, filters...)
-	f.calls = append(f.calls, "List "+key)
+	f.record("List " + key)
 	if err := f.listErrs[key]; err != nil {
 		return nil, err
 	}
@@ -57,7 +65,7 @@ func (f *fakePlex) List(_ context.Context, section string, itemType int, filters
 }
 
 func (f *fakePlex) ItemPaths(_ context.Context, ratingKey string) ([]string, error) {
-	f.calls = append(f.calls, "ItemPaths "+ratingKey)
+	f.record("ItemPaths " + ratingKey)
 	if err := f.pathErrs[ratingKey]; err != nil {
 		return nil, err
 	}
@@ -65,16 +73,16 @@ func (f *fakePlex) ItemPaths(_ context.Context, ratingKey string) ([]string, err
 }
 
 func (f *fakePlex) Refresh(_ context.Context, ratingKey string) error {
-	f.calls = append(f.calls, "Refresh "+ratingKey)
+	f.record("Refresh " + ratingKey)
 	return nil
 }
 
 func (f *fakePlex) SearchMatches(_ context.Context, ratingKey, _, _, _ string) ([]plex.Candidate, error) {
-	f.calls = append(f.calls, "SearchMatches "+ratingKey)
+	f.record("SearchMatches " + ratingKey)
 	return nil, nil
 }
 
 func (f *fakePlex) Match(_ context.Context, ratingKey string, _ plex.Candidate) error {
-	f.calls = append(f.calls, "Match "+ratingKey)
+	f.record("Match " + ratingKey)
 	return nil
 }

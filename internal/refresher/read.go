@@ -24,20 +24,23 @@ func supported(lib plex.Library) bool {
 }
 
 // readLibraries selects the libraries of the server and reads each one into
-// the cache. It returns only an error that wraps plex.ErrUnavailable or a
-// store error. It logs and skips the other failures.
+// the cache. It returns only the error of stopError or a store error. It logs
+// and skips the other failures.
 func (r *Refresher) readLibraries(ctx context.Context, run *serverRun) error {
 	libraries, err := run.server.Plex.Libraries(ctx)
-	if errors.Is(err, plex.ErrUnavailable) {
-		return err
-	}
 	if err != nil {
+		if stop := stopError(ctx, err); stop != nil {
+			return stop
+		}
 		log.Warn().Str("server", run.server.Name).Err(err).Msg("Listing libraries failed")
 		return nil
 	}
 
 	run.libraries = r.selectLibraries(run.server, libraries)
 	for _, lib := range run.libraries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := r.readLibrary(ctx, run, lib); err != nil {
 			return err
 		}
@@ -103,7 +106,7 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 
 	items, err := r.listItems(ctx, client, lib.ID, itemType, rd.Full, state.LastRead)
 	if err != nil {
-		return readFailed(name, lib, err)
+		return readFailed(ctx, name, lib, err)
 	}
 	rd.Items = make([]store.Item, 0, len(items))
 	seen := make([]string, 0, len(items))
@@ -118,13 +121,13 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 			return err
 		}
 		if rd.Gone, err = goneKeys(ctx, client, name, lib, unseen); err != nil {
-			return readFailed(name, lib, err)
+			return readFailed(ctx, name, lib, err)
 		}
 	}
 
 	if rd.Shows {
 		if rd.EpisodeNoSummary, rd.EpisodeUnmatched, err = r.episodeSeries(ctx, client, name, lib, at); err != nil {
-			return readFailed(name, lib, err)
+			return readFailed(ctx, name, lib, err)
 		}
 	}
 
@@ -144,11 +147,24 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 	return nil
 }
 
-// readFailed returns err if it stops the server. Otherwise it logs err and
-// returns nil, so the library keeps its cache and the run continues.
-func readFailed(server string, lib plex.Library, err error) error {
+// stopError returns the error that stops the server after a failed Plex
+// request: the context error once ctx is done, or err if it wraps
+// plex.ErrUnavailable. It returns nil for any other failure.
+func stopError(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
 	if errors.Is(err, plex.ErrUnavailable) {
 		return err
+	}
+	return nil
+}
+
+// readFailed returns the error of stopError. Otherwise it logs err and
+// returns nil, so the library keeps its cache and the run continues.
+func readFailed(ctx context.Context, server string, lib plex.Library, err error) error {
+	if stop := stopError(ctx, err); stop != nil {
+		return stop
 	}
 	log.Warn().Str("server", server).Str("library", lib.Title).Err(err).Msg("Reading library failed")
 	return nil
@@ -189,16 +205,18 @@ func goneKeys(ctx context.Context, client Plex, server string, lib plex.Library,
 	var gone []string
 	for _, it := range unseen {
 		_, err := client.ItemPaths(ctx, it.RatingKey)
-		switch {
-		case err == nil:
-		case errors.Is(err, plex.ErrNotFound):
-			gone = append(gone, it.RatingKey)
-		case errors.Is(err, plex.ErrUnavailable):
-			return nil, err
-		default:
-			log.Warn().Str("server", server).Str("library", lib.Title).Str("title", it.Title).
-				Err(err).Msg("Checking unseen item failed")
+		if err == nil {
+			continue
 		}
+		if errors.Is(err, plex.ErrNotFound) {
+			gone = append(gone, it.RatingKey)
+			continue
+		}
+		if stop := stopError(ctx, err); stop != nil {
+			return nil, stop
+		}
+		log.Warn().Str("server", server).Str("library", lib.Title).Str("title", it.Title).
+			Err(err).Msg("Checking unseen item failed")
 	}
 	return gone, nil
 }
