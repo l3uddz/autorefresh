@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -175,6 +176,45 @@ func TestStatusMapping(t *testing.T) {
 	})
 }
 
+// failingTransport fails every request with err.
+type failingTransport struct{ err error }
+
+func (f failingTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, f.err }
+
+func TestTransportErrorsKeepNoTransportText(t *testing.T) {
+	const host = "private-plex-host.invalid"
+	buf := captureLog(t)
+	c := New("test", "http://"+host+":32400", testToken)
+
+	tests := map[string]error{
+		"dns": &net.OpError{Op: "dial", Err: &net.DNSError{Err: "no such host", Name: host, Server: "10.0.0.1:53"}},
+		"tls": errors.New("x509: certificate is valid for other.invalid, not " + host),
+	}
+	for name, cause := range tests {
+		t.Run(name, func(t *testing.T) {
+			c.http.Transport = failingTransport{cause}
+
+			err := c.Refresh(context.Background(), "1001")
+			if !errors.Is(err, ErrUnavailable) {
+				t.Fatalf("err = %v, want ErrUnavailable", err)
+			}
+			for _, secret := range []string{host, testToken, "10.0.0.1"} {
+				if strings.Contains(err.Error(), secret) || strings.Contains(buf.String(), secret) {
+					t.Errorf("error or log contains %q: %v", secret, err)
+				}
+			}
+		})
+	}
+
+	t.Run("canceled context", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if err := c.Refresh(ctx, "1001"); !errors.Is(err, context.Canceled) || !errors.Is(err, ErrUnavailable) {
+			t.Errorf("err = %v", err)
+		}
+	})
+}
+
 func TestErrorsAndTraceOmitSecrets(t *testing.T) {
 	buf := captureLog(t)
 
@@ -213,15 +253,24 @@ func TestErrorsAndTraceOmitSecrets(t *testing.T) {
 		}
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("got %d trace lines, want 2: %s", len(lines), out)
+	if len(lines) != 3 {
+		t.Fatalf("got %d trace lines, want 3: %s", len(lines), out)
 	}
 	for i, want := range []string{
-		`"method":"PUT","path":"/library/metadata/1/refresh","status":200,"duration":`,
-		`"method":"PUT","path":"/library/metadata/2/refresh","status":503,"duration":`,
+		`"method":"PUT","path":"/library/metadata/1/refresh","duration":`,
+		`"method":"PUT","path":"/library/metadata/2/refresh","duration":`,
+		`"method":"PUT","path":"/library/metadata/3/refresh","duration":`,
 	} {
 		if !strings.Contains(lines[i], want) || !strings.Contains(lines[i], `"level":"trace"`) {
 			t.Errorf("line %d = %s, want %s", i, lines[i], want)
 		}
+	}
+	for i, want := range []string{`"status":200`, `"status":503`, `"error":"request failed"`} {
+		if !strings.Contains(lines[i], want) {
+			t.Errorf("line %d = %s, want %s", i, lines[i], want)
+		}
+	}
+	if strings.Contains(lines[2], `"status"`) {
+		t.Errorf("transport error line has a status: %s", lines[2])
 	}
 }

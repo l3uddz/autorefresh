@@ -164,12 +164,13 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 // ItemPaths returns Location[].path of a series, or Media[].Part[].file of a
 // movie.
 func (c *Client) ItemPaths(ctx context.Context, ratingKey string) ([]string, error) {
-	if err := checkRatingKey(ratingKey); err != nil {
+	endpoint, err := metadataPath(ratingKey, "")
+	if err != nil {
 		return nil, err
 	}
 
 	var resp metadataResponse
-	if err := c.send(ctx, http.MethodGet, "/library/metadata/"+ratingKey, nil, &resp); err != nil {
+	if err := c.send(ctx, http.MethodGet, endpoint, nil, &resp); err != nil {
 		return nil, fmt.Errorf("item paths: %w", err)
 	}
 	if len(resp.MediaContainer.Metadata) == 0 {

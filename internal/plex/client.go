@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
@@ -49,20 +51,12 @@ func New(name, baseURL, token string) *Client {
 	}
 }
 
-// checkRatingKey makes sure that a rating key cannot change the request path.
-func checkRatingKey(ratingKey string) error {
-	if !ratingKeyPattern.MatchString(ratingKey) {
-		return errors.New("invalid plex rating key")
-	}
-	return nil
-}
-
 // send sends a request to endpoint, which is relative to the base URL. If out
 // is not nil, it decodes the JSON response body into out.
 func (c *Client) send(ctx context.Context, method, endpoint string, query url.Values, out any) error {
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+endpoint, nil)
 	if err != nil {
-		return fmt.Errorf("creating request: %w", withoutAddress(err))
+		return errors.New("creating request: invalid server URL")
 	}
 	req.URL.RawQuery = query.Encode()
 	req.Header.Set("X-Plex-Token", c.token)
@@ -71,17 +65,15 @@ func (c *Client) send(ctx context.Context, method, endpoint string, query url.Va
 	start := time.Now()
 	res, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s %s: %w: %w", method, req.URL.Path, withoutAddress(err), ErrUnavailable)
+		return c.transportError(ctx, req, start, err)
 	}
-	defer res.Body.Close()
+	defer func() {
+		// Draining the body lets the connection get reused.
+		io.Copy(io.Discard, res.Body)
+		res.Body.Close()
+	}()
 
-	log.Trace().
-		Str("server", c.name).
-		Str("method", method).
-		Str("path", req.URL.Path).
-		Int("status", res.StatusCode).
-		Dur("duration", time.Since(start)).
-		Msg("Plex request")
+	c.trace(req, start).Int("status", res.StatusCode).Msg("Plex request")
 
 	if err := statusError(res); err != nil {
 		return fmt.Errorf("%s %s: %w", method, req.URL.Path, err)
@@ -113,31 +105,47 @@ func statusError(res *http.Response) error {
 	}
 }
 
-// bodyError wraps an error from decoding a response body. A timeout means
-// that the server is unavailable.
+// bodyError wraps an error from decoding a response body. A network error
+// means that the server is unavailable, and its text can hold the server
+// address, so the result keeps none of it.
 func bodyError(method, path string, err error) error {
-	err = withoutAddress(err)
-
 	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return fmt.Errorf("%s %s: decoding response: %w: %w", method, path, err, ErrUnavailable)
+	if errors.As(err, &netErr) {
+		return fmt.Errorf("%s %s: reading response failed: %w", method, path, ErrUnavailable)
 	}
 	return fmt.Errorf("%s %s: decoding response: %w", method, path, err)
 }
 
-// withoutAddress returns the cause of a *url.Error or *net.OpError. The error
-// then omits the request URL and the server address.
-func withoutAddress(err error) error {
-	for {
-		var urlErr *url.Error
-		var opErr *net.OpError
-		switch {
-		case errors.As(err, &urlErr):
-			err = urlErr.Err
-		case errors.As(err, &opErr):
-			err = opErr.Err
-		default:
-			return err
-		}
+// trace starts the trace line of one request.
+func (c *Client) trace(req *http.Request, start time.Time) *zerolog.Event {
+	return log.Trace().
+		Str("server", c.name).
+		Str("method", req.Method).
+		Str("path", req.URL.Path).
+		Dur("duration", time.Since(start))
+}
+
+// transportError traces a failed request and returns a fixed error. It keeps
+// no text of err, because that text can hold the server address.
+func (c *Client) transportError(ctx context.Context, req *http.Request, start time.Time, err error) error {
+	reason := "request failed"
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		reason = "request timed out"
 	}
+
+	c.trace(req, start).Str("error", reason).Msg("Plex request")
+
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("%s %s: %s: %w: %w", req.Method, req.URL.Path, reason, ErrUnavailable, ctxErr)
+	}
+	return fmt.Errorf("%s %s: %s: %w", req.Method, req.URL.Path, reason, ErrUnavailable)
+}
+
+// metadataPath checks ratingKey and returns the path of the item with suffix.
+func metadataPath(ratingKey, suffix string) (string, error) {
+	if !ratingKeyPattern.MatchString(ratingKey) {
+		return "", errors.New("invalid plex rating key")
+	}
+	return "/library/metadata/" + ratingKey + suffix, nil
 }

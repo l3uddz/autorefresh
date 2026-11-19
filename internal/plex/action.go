@@ -16,11 +16,12 @@ type Candidate struct {
 
 // Refresh asks Plex to refresh the metadata of one item.
 func (c *Client) Refresh(ctx context.Context, ratingKey string) error {
-	if err := checkRatingKey(ratingKey); err != nil {
+	endpoint, err := metadataPath(ratingKey, "/refresh")
+	if err != nil {
 		return err
 	}
 
-	if err := c.send(ctx, http.MethodPut, "/library/metadata/"+ratingKey+"/refresh", nil, nil); err != nil {
+	if err := c.send(ctx, http.MethodPut, endpoint, nil, nil); err != nil {
 		return fmt.Errorf("refresh: %w", err)
 	}
 	return nil
@@ -28,7 +29,8 @@ func (c *Client) Refresh(ctx context.Context, ratingKey string) error {
 
 // SearchMatches asks Plex for the matches of one item.
 func (c *Client) SearchMatches(ctx context.Context, ratingKey, title, agent, language string) ([]Candidate, error) {
-	if err := checkRatingKey(ratingKey); err != nil {
+	endpoint, err := metadataPath(ratingKey, "/matches")
+	if err != nil {
 		return nil, err
 	}
 
@@ -48,7 +50,7 @@ func (c *Client) SearchMatches(ctx context.Context, ratingKey, title, agent, lan
 			} `json:"SearchResult"`
 		} `json:"MediaContainer"`
 	}
-	if err := c.send(ctx, http.MethodGet, "/library/metadata/"+ratingKey+"/matches", query, &resp); err != nil {
+	if err := c.send(ctx, http.MethodGet, endpoint, query, &resp); err != nil {
 		return nil, fmt.Errorf("search matches: %w", err)
 	}
 
@@ -61,7 +63,8 @@ func (c *Client) SearchMatches(ctx context.Context, ratingKey, title, agent, lan
 
 // Match applies a candidate to one item.
 func (c *Client) Match(ctx context.Context, ratingKey string, cand Candidate) error {
-	if err := checkRatingKey(ratingKey); err != nil {
+	endpoint, err := metadataPath(ratingKey, "/match")
+	if err != nil {
 		return err
 	}
 
@@ -70,7 +73,7 @@ func (c *Client) Match(ctx context.Context, ratingKey string, cand Candidate) er
 		query.Set("year", strconv.Itoa(cand.Year))
 	}
 
-	if err := c.send(ctx, http.MethodPut, "/library/metadata/"+ratingKey+"/match", query, nil); err != nil {
+	if err := c.send(ctx, http.MethodPut, endpoint, query, nil); err != nil {
 		return fmt.Errorf("match: %w", err)
 	}
 	return nil
