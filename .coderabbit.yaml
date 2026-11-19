@@ -63,8 +63,10 @@ reviews:
       instructions: >-
         The Build workflow publishes public Docker tags for branch pushes and
         a GitHub release for v* tags. Flag changes to these triggers or to the
-        published tags. build.yml and cleanup.yml must use the same rule to
-        turn a branch name into a Docker tag.
+        published tags. build.yml and cleanup.yml must both use
+        .github/scripts/docker-branch-tag.sh to turn a branch name into a
+        Docker tag. That script must keep "latest" and the version tags for
+        releases.
     - path: "mise.toml"
       instructions: >-
         CI installs its tools from this file. Flag a go version that does not
