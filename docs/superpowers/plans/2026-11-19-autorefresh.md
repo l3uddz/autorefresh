@@ -39,8 +39,8 @@ Each task includes these requirements. The values come from the spec and from `A
 These inputs are likely to break autorefresh for a user, and the spec does not test them. Each line has a test in the named task.
 
 1. A rating key that is not a decimal number, such as `../sections/1`. The client must refuse it and send no request, because the URL join collapses `..` into a section refresh. Test: Task 2.
-2. A library read that fails part of the way. Autorefresh must not change the read times, must not delete unseen rows, and must keep the last episode reasons. Test: Task 5.
-3. A series that is complete at item level but has an episode reason. An item read must not delete its row. Test: Task 3 and Task 5.
+2. A library read that fails part of the way. This includes a read where only one episode request fails. Autorefresh must not change the cache of that library: no read times, no rows, and no reasons. Test: Task 5.
+3. A series whose item reasons and episode reasons change in the same read, for example from `NoArt` to `EpisodeNoSummary`. Autorefresh must not delete the row or log it as complete, and the row keeps its refresh history. Test: Task 3 and Task 5.
 4. An `oversample` shorter than `minimum-age`. A young incomplete item must stay in the cache. After `minimum-age`, it must become due. Test: Task 3.
 5. A failed match search. Autorefresh must send no match and no plain refresh, must record the attempt, and must not count it toward `max-refreshes-per-run`. A dry run must write no attempt or refresh state. Test: Task 6.
 
@@ -63,7 +63,9 @@ The owner chose three rows on 2026-11-19, in answers to separate questions: "Mis
 | Minimum age | The store keeps young incomplete items. The due query skips them. |
 | Which rows can be due | Only rows of libraries that the current run checks. Rows of removed libraries stay unused. |
 | Movie paths for a fix match | The file paths from the listings of the current run. If no listing of the run returned the movie, autorefresh requests the single item. |
-| Dry run | Autorefresh reads Plex, updates the cache, and sends match searches (reads) to choose the logged action. It sends no refresh or match request, writes no attempt or refresh state, does not wait `refresh-delay`, and applies `max-refreshes-per-run` to the logged items. |
+| Dry run | Autorefresh reads Plex, updates the cache, and sends match searches (reads) to choose the logged action. It sends no refresh or match request, writes no attempt or refresh state, does not wait `refresh-delay`, and applies `max-refreshes-per-run` to the logged items. Each logged item counts as one request. A failed `ItemPaths` or match search changes nothing in the store. |
+| Library read changes | Autorefresh stages all results of one library in memory. After every request of the library succeeds, it writes them in one transaction. The final reasons of each row combine the item and episode results before any delete. If one request fails, the cache of that library does not change. |
+| Rows that a full read does not see | Autorefresh requests each such item. Only a 404 deletes the row. Plex can add or remove items during a paged read, and the pages then move. So an item that a listing skipped can still be in Plex. |
 | Missing or empty configuration file | Autorefresh waits for it and checks again every 5 seconds, as autoscan's `waitForConfig` does. A container can then start before `config.yml` exists. |
 | `max-refreshes-per-run` | If it is set, it must be 1 or more. |
 | `minimum-age`, `oversample`, `refresh-delay` | 0 or more. `refresh-interval` must be more than 0. |
@@ -95,7 +97,8 @@ Procedure:
 4. Write a header file: `printf 'X-Plex-Token: %s\nAccept: application/json\n' "$(cat rec/token)" > rec/headers`. `printf` is a shell builtin, so the token is not in the process list.
 5. Use one helper for every request: `curl -sS --fail --request GET --max-time 60 -H @rec/headers -o "rec/<name>.json" "$(cat rec/url)<path-and-query>" 2>"rec/<name>.err"; echo "exit=$?"`.
 6. Probe the request forms on one movie library. Print only numbers and rating keys.
-   - Filter encoding: get `totalSize` with `X-Plex-Container-Size=0` for no filter, for raw `addedAt>>=<unix time 30 days ago>`, and for percent-encoded `addedAt%3E%3E=<same time>`. If the count of a form is lower than the unfiltered count, that form filters. If both forms filter with the same count, use the percent-encoded form, because `url.Values.Encode` makes it. If only one form filters, use that form. If neither filters, stop and tell the owner.
+   - Filter encoding: get the 10 newest items with `sort=addedAt:desc`. Choose a time `T` between the `addedAt` of the 5th and the 6th item, so that the expected result is the 5 newest rating keys. Then list `addedAt>>=T` in the raw form and in the percent-encoded form (`addedAt%3E%3E=T`). If a form returns exactly the 5 expected rating keys, it works. Any other result means that the form does not work.
+   - Choose the filter form by these rules. When both forms work, use the percent-encoded form, because `url.Values.Encode` makes it. When one form works, use that form. When no form works, stop and tell the owner.
    - Order: get one item with `sort=addedAt` and one with `sort=addedAt:desc`. If the `addedAt` of `sort=addedAt` is lower, that form is ascending. Otherwise try `sort=addedAt:asc`.
    - Paging: get one item with `X-Plex-Container-Start=0` and one with `X-Plex-Container-Start=1`, both with `X-Plex-Container-Size=1` in the query. If each response has one item and the rating keys differ, paging in the query works. Otherwise try the same names as headers.
    - Language: search `title=tmdb-747059` with the movie agent once with `language=<section language>` and once without it. Both must give the same number of candidates.
@@ -121,26 +124,30 @@ Procedure:
    | Object | Kept keys | Neutral values |
    | --- | --- | --- |
    | `MediaContainer` | `size`, `offset`, `totalSize`, `Directory`, `Metadata`, `SearchResult` | counts unchanged |
-   | `Directory` (section) | `key`, `type`, `title`, `agent`, `language` | `key` `1`, `2`, `3`, and titles `Movies`, `TV Shows`, `Home Videos` |
+   | `Directory` (section) | `key`, `type`, `title`, `agent`, `language` | `key` `1`, `2`, `3`, and titles `Fixture Movies`, `Fixture Shows`, `Fixture Other` |
    | `Metadata` | `ratingKey`, `key`, `guid`, `type`, `title`, `year`, `summary`, `thumb`, `art`, `addedAt`, `updatedAt`, `Media[].Part[].file`, `Location[].path` | See the list below the table. |
-   | `SearchResult` | `guid`, `name`, `year`, `type`, `summary`, `thumb` | `name` `Movie One`, `thumb` `https://metadata.example.invalid/thumb.jpg` |
+   | `SearchResult` | `guid`, `name`, `year`, `type`, `summary`, `thumb` | `name` `Fixture Movie One`, `thumb` `https://metadata.example.invalid/thumb.jpg` |
 
    Neutral values for `Metadata`:
 
    - Rating keys start at `1001`. Use the same new key in `key`, `thumb`, `art`, and `local://` guids.
-   - Titles become `Movie One` and `Series One`.
+   - Titles become `Fixture Movie One` and `Fixture Series One`.
    - A summary that is not empty becomes `A neutral summary.`
    - A `plex://` guid becomes `plex://movie/000000000000000000000001` or `plex://show/000000000000000000000001`.
    - Times start at `1700000000`.
-   - File paths become `/media/movies/Movie One (2020) {tmdb-100001}/Movie One (2020).mkv`.
-   - Series paths become `/media/tv/Series One (2021) {tvdb-200001}`.
+   - File paths become `/fixture/movies/Fixture Movie One (2020) {tmdb-100001}/Fixture Movie One (2020).mkv`.
+   - Series paths become `/fixture/tv/Fixture Series One (2021) {tvdb-200001}`.
 
-   The server can have no library with another agent. Then copy the movie section into a third entry. Set its `agent` to `tv.plex.agents.none`, its `type` to `movie`, and its `title` to `Home Videos`.
+   Every neutral title and path starts with `Fixture` or `/fixture`, so it cannot be the same as a title or path of the owner.
+
+   The server can have no library with another agent. Then copy the movie section into a third entry. Set its `agent` to `tv.plex.agents.none`, its `type` to `movie`, and its `title` to `Fixture Other`.
 9. Run the leak check. It prints counts only, and each count must be 0.
    - `grep -rFc -f rec/token internal/plex/testdata`
    - the host of the URL: write it to `rec/host` with `sed`, then `grep -rFc -f rec/host internal/plex/testdata`
    - `grep -rEc 'machineIdentifier|uuid|librarySectionUUID' internal/plex/testdata`
-   - the original titles, file names, and paths: extract every `title`, `file`, and `path` value from `rec/*.json` into `rec/private`, then `grep -rFc -f rec/private internal/plex/testdata`
+   - the original titles, file names, and paths: write every `title`, `name`, `file`, and `path` value from `rec/*.json` into `rec/private` as a JSON string with its quotes (`jq -r '.. | (.title?, .name?, .file?, .path?) | strings | tojson'`). Then run `grep -rFc -f rec/private internal/plex/testdata`. The quotes make the check match whole values only, so a short title does not match part of a key.
+
+   If a count is not 0, do not commit. Find and fix the value without printing it.
 10. Run `rm -rf rec`. If the two secret files still exist, delete them.
 
 If a later task needs a new fixture, it repeats this procedure for that fixture only.
@@ -398,23 +405,30 @@ func Open(path string) (*Store, error) // one connection, runs migrations
 func (s *Store) Close() error
 
 func (s *Store) Library(server, section string) (Library, error)
-// SaveRead sets LastRead to at. If full, it also sets LastFullRead.
-func (s *Store) SaveRead(server, section string, at time.Time, full bool) error
 
-// SaveItems sets the bits in mask of each item's row to item.Reasons&mask
-// and keeps the other bits. It writes title, year, and addedAt. It inserts
-// a row only when the result is not 0. It deletes each row whose result is
-// 0 and returns these rows as they were before the delete.
-func (s *Store) SaveItems(items []Item, mask Reasons) (fixed []Item, err error)
+// Read is the staged result of all requests for one library.
+type Read struct {
+	Server, Section  string
+	At               time.Time // the start of the read
+	Full             bool
+	Items            []Item    // the full or incremental read, with item reasons only
+	Gone             []string  // full read only: rating keys that Plex answered with 404
+	Shows            bool      // a show library: replace both episode reasons
+	EpisodeNoSummary []Item    // the series of the first episode request
+	EpisodeUnmatched []Item    // the series of the second episode request
+}
 
-// ReplaceReason sets reason on the rows of items and clears it on every
-// other row of the section. It deletes rows that have no reason left and
-// returns them.
-func (s *Store) ReplaceReason(server, section string, reason Reasons, items []Item) (fixed []Item, err error)
+// ApplyRead writes r in one transaction. For each row of the section, the
+// final reasons are the item bits from r.Items (or the old item bits if the
+// item is not in r.Items) and, if r.Shows, the episode bits from the two
+// lists (or else the old episode bits). It inserts rows for new items with
+// final reasons that are not 0, deletes the rows whose final reasons are 0
+// and returns them as fixed, deletes the r.Gone rows (not in fixed), and
+// sets the read times. LastFullRead changes only if r.Full.
+func (s *Store) ApplyRead(r Read) (fixed []Item, err error)
 
-// DeleteUnseen deletes the rows of the section whose rating key is not in
-// seen, and returns them.
-func (s *Store) DeleteUnseen(server, section string, seen []string) ([]Item, error)
+// Unseen returns the rows of the section whose rating key is not in seen.
+func (s *Store) Unseen(server, section string, seen []string) ([]Item, error)
 
 // Due returns the rows of the sections that are incomplete, added at or
 // before now-minimumAge, and with no attempt after now-refreshInterval.
@@ -460,17 +474,21 @@ The migration runner is a small part of `store.go`: a `schema_migration (version
 - [ ] Step 1: Write the failing tests. Each test opens a database in `t.TempDir()`.
   - `TestOpenMigratesOnce`: `Open` twice on the same file succeeds, and `schema_migration` has one row.
   - `TestReasonsString`: `Unmatched|NoArt` gives `"unmatched,no-art"`. `0` gives `""`.
-  - `TestSaveItemsStoresOnlyIncomplete`: of two items, one with reasons and one with `0`, only the first gets a row.
-  - `TestSaveItemsReturnsFixedItem`: a row with `Refreshes == 3` and `NoSummary`, saved again with `0`, is deleted, and `fixed` has one item with `Refreshes == 3`. After this, the same item saved with `NoSummary` has `Refreshes == 0` and a zero `LastAttempt`.
-  - `TestSaveItemsKeepsEpisodeReason` (Review Focus 3): a row with `NoArt|EpisodeNoSummary`, saved with mask `ItemReasons` and reasons `0`, keeps `EpisodeNoSummary`, and `fixed` is empty.
-  - `TestReplaceReasonClearsAbsentSeries`: rows A and B have `EpisodeUnmatched`. `ReplaceReason` with only B and C keeps B, adds C, and deletes A. `fixed` has A. A row with another reason keeps that reason.
-  - `TestDeleteUnseen`: in a section with rows A, B, and C, `seen` `[A, C]` deletes B only. A row in another section stays.
+  - `TestApplyReadStoresOnlyIncomplete`: of two items, one with reasons and one with `0`, only the first gets a row.
+  - `TestApplyReadReturnsFixedItem`: a row with `Refreshes == 3` and `NoSummary`, read again with `0`, is deleted, and `fixed` has one item with `Refreshes == 3`. After this, the same item read with `NoSummary` has `Refreshes == 0` and a zero `LastAttempt`.
+  - `TestApplyReadCombinesReasons` (Review Focus 3), a table test. Each row has `Refreshes == 2`, each read has `Shows == true`, and `fixed` stays empty:
+    - a row with only `NoArt`, read complete and in `EpisodeNoSummary`, keeps its row with `EpisodeNoSummary` and `Refreshes == 2`
+    - a row with only `EpisodeNoSummary`, read with `NoArt` and absent from both episode lists, keeps its row with `NoArt` and `Refreshes == 2`
+  - `TestApplyReadReplacesEpisodeReasons`: rows A and B have `EpisodeUnmatched`. A read with `EpisodeUnmatched` B and C keeps B, adds C, and deletes A. `fixed` has A. A row with another reason keeps that reason.
+  - `TestApplyReadWithoutShowsKeepsEpisodeReasons`: with `Shows == false`, a row with `NoArt|EpisodeNoSummary` read complete keeps `EpisodeNoSummary`.
+  - `TestApplyReadDeletesGone`: a row in `Gone` is deleted and is not in `fixed`.
+  - `TestUnseen`: in a section with rows A, B, and C, `seen` `[A, C]` returns B only. A row in another section is not returned.
   - `TestDueOrder`: rows with no attempt come first, then the oldest `LastAttempt`. Equal values go by the oldest `AddedAt`.
   - `TestDueSkipsRecentAttemptsAndOtherScopes`: a row with an attempt 1 hour before `now` and `refreshInterval` 12h is not due. A row of another server or of a section that is not in `sections` is not due.
   - `TestDueSkipsYoungItemUntilOldEnough` (Review Focus 4): with `minimumAge` 24h, an item added 1 hour before `now` is stored but not due. With `now` 24 hours later, it is due.
   - `TestDueComparesTimesAcrossZones`: times saved in two different `time.Location` values sort by instant.
   - `TestRecordAttempt`: `refreshed == true` sets `LastRefresh` and `Refreshes == 1`. `refreshed == false` sets only `LastAttempt`.
-  - `TestSaveReadIncrementalKeepsFullRead`: a full read at t1 and an incremental read at t2 give `LastFullRead == t1` and `LastRead == t2`.
+  - `TestApplyReadIncrementalKeepsFullRead`: a full read at t1 and an incremental read at t2 give `LastFullRead == t1` and `LastRead == t2`.
   - `TestDelete`: the row is gone, and a delete of a missing row is not an error.
 - [ ] Step 2: Run `go test ./internal/store/...`. Expected: FAIL, because the package is empty.
 - [ ] Step 3: Implement the store. Call `db.SetMaxOpenConns(1)` in `Open`. Run each multi-row change in one transaction. Close rows before the next statement, because the pool has one connection.
@@ -561,9 +579,9 @@ type Plex interface {
 }
 
 // Store is the part of store.Store that the refresher uses: Library,
-// SaveRead, SaveItems, ReplaceReason, DeleteUnseen, Due, CountIncomplete,
-// RecordAttempt, and Delete, with the Task 3 signatures.
-type Store interface { /* the nine methods */ }
+// ApplyRead, Unseen, Due, CountIncomplete, RecordAttempt, and Delete, with
+// the Task 3 signatures.
+type Store interface { /* the seven methods */ }
 
 type Server struct {
 	Name      string
@@ -597,21 +615,28 @@ Reads for each selected library, with `now` at the start of the read:
 | Episode requests (each `show` library, every run), with `A = now - MinimumAge` | `unmatched=0`, `episode.unmatched=0`, `episode.summary=`, `episode.addedAt<<=A`, `season.index>>=1`, which gives `EpisodeNoSummary` |
 | | `unmatched=0`, `episode.unmatched=1`, `episode.addedAt<<=A`, `season.index>>=1`, which gives `EpisodeUnmatched` |
 
-After a full or incremental read, autorefresh calls `SaveItems` with mask `ItemReasons`. After a full read, it also calls `DeleteUnseen`. Each episode request ends with `ReplaceReason`. Only after all requests of a library succeed does autorefresh call `SaveRead(server, section, start, full)`. It keeps the movie `Files` of the run in a map by rating key for Task 6.
+Autorefresh stages the results of all requests of one library in a `store.Read`:
+
+1. `Items` has each item of the full or incremental read with `itemReasons`.
+2. For a show library, `Shows` is true, and the two episode lists hold the series of the episode requests.
+3. After a full read, `Unseen` gives the rows that the listing did not return. Autorefresh calls `ItemPaths` for each. `ErrNotFound` puts the rating key in `Gone`. `ErrUnavailable` stops the server. Any other result keeps the row.
+4. When every request of the library succeeds, autorefresh calls `ApplyRead` once and logs each fixed row. When one request fails, it skips `ApplyRead`, so the library keeps its cache.
+
+Autorefresh keeps the movie `Files` of the run in a map by rating key for Task 6.
 
 - [ ] Step 1: Write the failing tests. Use the fake Plex and a real store in `t.TempDir()`.
   - `TestRunSelectsSupportedLibraries`: Plex has three libraries. They are a movie library with the movie agent, a show library with the series agent, and a movie library with `tv.plex.agents.none`. Only the first two are read. Two runs log the warning for the third library once.
   - `TestRunUsesConfiguredLibraries`: with `Libraries: ["Movies"]`, only that title is read. A configured title that Plex does not have logs one warning.
   - `TestFirstRunDoesFullRead`: `List` gets no filters. The incomplete items get rows, and the complete items do not. `LastFullRead` and `LastRead` equal the start time.
-  - `TestFullReadDeletesUnseenRows`: a row whose item is not in the next full read is deleted.
+  - `TestFullReadChecksUnseenRows`: two rows are not in the next full read. `ItemPaths` returns `ErrNotFound` for the first and a path for the second. Only the first row is deleted, and no line logs either row as complete.
   - Tests that use `CacheRefresh` parse `0 3 * * 0` and set t0 to Saturday 2026-11-21 12:00 in `time.Local`.
   - `TestIncrementalReadFilters`: with a full read at t0 and a run at t0+1h, `List` gets the three filters with `T = t0 - 48h` in Unix seconds, and `LastFullRead` stays t0.
   - `TestFullReadAfterCacheRefresh`: the full read is at t0. A run on Sunday 2026-11-22 at 02:59 does an incremental read. A run at 03:00 does a full read.
   - `TestEpisodeRequestFilters`: a show library gets the two requests with the exact filters in the table above. A series in a result gets the reason, and an absent series loses it.
-  - `TestFailedReadKeepsState` (Review Focus 2): a `List` error on a full read changes no read time and deletes no row. A failed episode request keeps the earlier `EpisodeNoSummary` rows. The next library is still read.
+  - `TestFailedReadKeepsState` (Review Focus 2), a table test: a `List` error on the full read, and a full read that succeeds with an error on the first episode request. In both cases, no row, reason, or read time of that library changes, and an unseen row stays. The next library is still read.
   - `TestUnavailableSkipsServer`: `ErrUnavailable` from `Libraries` or from `List` stops that server and logs an error. The next server is still read.
   - `TestCompleteItemLogsFixed`: a stored item that a read returns complete loses its row, and an info line has the title and the refresh count.
-  - `TestCompleteItemKeepsEpisodeReason` (Review Focus 3): a series with an `EpisodeNoSummary` row that a full read returns complete keeps its row.
+  - `TestCompleteItemKeepsEpisodeReason` (Review Focus 3): a series row has only `NoArt` and `Refreshes == 2`. The full read returns it complete, and the first episode request returns it. The row keeps `EpisodeNoSummary` and `Refreshes == 2`, and no line logs it as complete.
   - `TestYoungItemLogsDebug`: an incomplete item added after `now - MinimumAge` is stored, and a debug line has its title.
 - [ ] Step 2: Run `go test ./internal/refresher/...`. Expected: FAIL.
 - [ ] Step 3: Implement `refresher.go` and `read.go`. Log each library read at debug with the kind of read, the item count, the incomplete count, and the time it took.
@@ -631,13 +656,15 @@ After a full or incremental read, autorefresh calls `SaveItems` with mask `ItemR
 
 The step for each due item, in `Due` order:
 
-1. If the limit is set and the run sent `MaxRefreshesPerRun` refresh or match requests on this server, stop.
+1. If the limit is set and the run sent `MaxRefreshesPerRun` refresh or match requests on this server, stop. In a dry run, each logged item counts as one request.
 2. Choose the action. If the item has `Unmatched` and `Refreshes >= 1`, the action is a fix match. Otherwise it is a plain refresh.
 3. For a fix match, get the paths. A movie uses the file map of the run. If the map has no entry for it, it uses `ItemPaths`. A series uses `ItemPaths`. Search once for each ID with the agent and the language of the section. Then call `chooseMatch`. A conflict logs a warning and uses a plain refresh.
 4. If `ItemPaths` or a search fails, send nothing for this item. This does not count toward the limit. The error decides the next step:
    - `ErrUnavailable`: log an error and stop the server.
    - `ErrNotFound`: `Delete` the row.
-   - Another error: log a warning and `RecordAttempt(refreshed=false)`. In a dry run, record nothing.
+   - Another error: log a warning and `RecordAttempt(refreshed=false)`.
+
+   In a dry run, `ErrUnavailable` still stops the server. The other errors only log a warning, and the store does not change.
 5. In a dry run, log the item at info with the server, the library, the title, the reasons, and the action, and continue.
 6. If this is not the first request on the server in this run, call `sleep(RefreshDelay)`.
 7. Send `Match` or `Refresh`. On success: `RecordAttempt(refreshed=true)` and an info line. On `ErrNotFound`: `Delete`. On `ErrUnavailable`: log an error and stop the server. On another error: log a warning and `RecordAttempt(refreshed=false)`.
@@ -660,7 +687,8 @@ At the end of each server, log one info summary line with: items read, incomplet
   - `TestFixMatchReadErrors`, a table test for `ItemPaths` and `SearchMatches`. `ErrUnavailable` stops the server. `ErrNotFound` deletes the row. A 500 error records a failed attempt. No case sends `Match` or `Refresh`.
   - `TestFailedSearchSendsNothing` (Review Focus 5): the limit is 1, and `SearchMatches` fails on the first item. That item gets no `Match` or `Refresh`. Its `LastAttempt` is set, and `Refreshes` does not change. The second due item still gets its refresh.
   - `TestEpisodeReasonGetsPlainRefresh`: a matched series with `EpisodeUnmatched` and `Refreshes == 3` gets `Refresh` and no `SearchMatches`.
-  - `TestDryRunSendsAndRecordsNothing` (Review Focus 5): the fake gets no `Refresh` or `Match` call, and `sleep` gets no call. `LastAttempt` stays zero. The log has one info line for each due item with its action. A failed `SearchMatches` writes no state either. The read state is saved.
+  - `TestDryRunSendsAndRecordsNothing` (Review Focus 5): the fake gets no `Refresh` or `Match` call, and `sleep` gets no call. `LastAttempt` stays zero. The log has one info line for each due item with its action. A `SearchMatches` 500 error records no attempt, and a `SearchMatches` 404 deletes no row. The read state is saved.
+  - `TestDryRunAppliesLimit`: with a limit of 1 and three due items, a dry run logs one item.
   - `TestSummaryLine`: the info line has the counts of a run with one refresh, one match, one failure, and one fixed item.
 - [ ] Step 2: Run `go test ./internal/refresher/...`. Expected: FAIL.
 - [ ] Step 3: Implement `refresh.go` and call it from `Run`. Log each match search result at debug with the ID and the number of candidates.
