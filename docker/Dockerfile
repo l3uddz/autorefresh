@@ -8,7 +8,10 @@ FROM scratch
 ARG TARGETOS
 ARG TARGETARCH
 
-ENV PATH="/app"
+ENV \
+  PATH="/app" \
+  AUTOREFRESH_LOG="/config/activity.log" \
+  AUTOREFRESH_VERBOSITY="0"
 
 COPY --from=rootfs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=rootfs /usr/share/zoneinfo /usr/share/zoneinfo
