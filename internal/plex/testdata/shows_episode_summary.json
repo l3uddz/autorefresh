@@ -1,0 +1,35 @@
+{
+  "MediaContainer": {
+    "size": 2,
+    "totalSize": 451,
+    "offset": 0,
+    "Metadata": [
+      {
+        "ratingKey": "1005",
+        "key": "/library/metadata/1005/children",
+        "guid": "plex://show/000000000000000000000002",
+        "type": "show",
+        "title": "Fixture Series Two",
+        "year": 2018,
+        "summary": "A neutral summary.",
+        "thumb": "/library/metadata/1005/thumb/1700000450",
+        "art": "/library/metadata/1005/art/1700000450",
+        "addedAt": 1700000400,
+        "updatedAt": 1700000450
+      },
+      {
+        "ratingKey": "1006",
+        "key": "/library/metadata/1006/children",
+        "guid": "plex://show/000000000000000000000003",
+        "type": "show",
+        "title": "Fixture Series Three",
+        "year": 2022,
+        "summary": "A neutral summary.",
+        "thumb": "/library/metadata/1006/thumb/1700000550",
+        "art": "/library/metadata/1006/art/1700000550",
+        "addedAt": 1700000500,
+        "updatedAt": 1700000550
+      }
+    ]
+  }
+}

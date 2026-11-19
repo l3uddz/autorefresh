@@ -1,0 +1,18 @@
+{
+  "MediaContainer": {
+    "size": 1,
+    "totalSize": 58,
+    "offset": 0,
+    "Metadata": [
+      {
+        "ratingKey": "1004",
+        "key": "/library/metadata/1004/children",
+        "guid": "local://1004",
+        "type": "show",
+        "title": "Fixture Series One",
+        "summary": "",
+        "addedAt": 1700000300
+      }
+    ]
+  }
+}
