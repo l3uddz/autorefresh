@@ -47,8 +47,21 @@ func New(name, baseURL, token string) *Client {
 		name:    name,
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
-		http:    &http.Client{Timeout: timeout},
+		http:    &http.Client{Timeout: timeout, CheckRedirect: sameOrigin},
 	}
+}
+
+// sameOrigin refuses a redirect to another origin. Go forwards the
+// X-Plex-Token header to the target of a redirect, so a cross-origin redirect
+// would leak the token.
+func sameOrigin(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("too many redirects")
+	}
+	if req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host {
+		return errors.New("redirect to another origin")
+	}
+	return nil
 }
 
 // send sends a request to endpoint, which is relative to the base URL. If out
@@ -88,29 +101,31 @@ func (c *Client) send(ctx context.Context, method, endpoint string, query url.Va
 	return nil
 }
 
-// statusError returns nil for a 2xx response.
+// statusError returns nil for a 2xx response. The message uses the standard
+// reason phrase, because the phrase of the response can hold an address.
 func statusError(res *http.Response) error {
 	if res.StatusCode >= 200 && res.StatusCode < 300 {
 		return nil
 	}
 
+	status := fmt.Sprintf("%d %s", res.StatusCode, http.StatusText(res.StatusCode))
 	switch res.StatusCode {
 	case http.StatusUnauthorized, http.StatusBadGateway,
 		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		return fmt.Errorf("%s: %w", res.Status, ErrUnavailable)
+		return fmt.Errorf("%s: %w", status, ErrUnavailable)
 	case http.StatusNotFound:
-		return fmt.Errorf("%s: %w", res.Status, ErrNotFound)
+		return fmt.Errorf("%s: %w", status, ErrNotFound)
 	default:
-		return errors.New(res.Status)
+		return errors.New(status)
 	}
 }
 
-// bodyError wraps an error from decoding a response body. A network error
-// means that the server is unavailable, and its text can hold the server
+// bodyError wraps an error from decoding a response body. A network error or
+// a body that ends early means that the server is unavailable, and its text can hold the server
 // address, so the result keeps none of it.
 func bodyError(method, path string, err error) error {
 	var netErr net.Error
-	if errors.As(err, &netErr) {
+	if errors.As(err, &netErr) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return fmt.Errorf("%s %s: reading response failed: %w", method, path, ErrUnavailable)
 	}
 	return fmt.Errorf("%s %s: decoding response: %w", method, path, err)

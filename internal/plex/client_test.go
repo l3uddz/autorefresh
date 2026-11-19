@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -272,5 +275,93 @@ func TestErrorsAndTraceOmitSecrets(t *testing.T) {
 	}
 	if strings.Contains(lines[2], `"status"`) {
 		t.Errorf("transport error line has a status: %s", lines[2])
+	}
+}
+
+func TestRefusesCrossOriginRedirect(t *testing.T) {
+	var other atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { other.Add(1) }))
+	t.Cleanup(target.Close)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(origin.Close)
+	c := New("test", origin.URL, testToken)
+
+	err := c.Refresh(context.Background(), "1001")
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v, want ErrUnavailable", err)
+	}
+	if n := other.Load(); n != 0 {
+		t.Errorf("the other origin got %d requests", n)
+	}
+	for _, secret := range []string{testToken, strings.TrimPrefix(target.URL, "http://"), strings.TrimPrefix(origin.URL, "http://")} {
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("error contains %q: %v", secret, err)
+		}
+	}
+}
+
+func TestAllowsSameOriginRedirect(t *testing.T) {
+	var final atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/moved" {
+			final.Add(1)
+			return
+		}
+		http.Redirect(w, r, "/moved", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(srv.Close)
+
+	if err := New("test", srv.URL, testToken).Refresh(context.Background(), "1001"); err != nil {
+		t.Fatal(err)
+	}
+	if final.Load() != 1 {
+		t.Errorf("the redirect target got %d requests", final.Load())
+	}
+}
+
+// phraseTransport answers each request with a custom reason phrase.
+type phraseTransport struct{ code int }
+
+func (p phraseTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: p.code,
+		Status:     fmt.Sprintf("%d backend plex.private:32400 unavailable", p.code),
+		Body:       io.NopCloser(strings.NewReader("")),
+		Header:     http.Header{},
+		Request:    req,
+	}, nil
+}
+
+func TestStatusErrorsOmitReasonPhrase(t *testing.T) {
+	c := New("test", "http://example.invalid", testToken)
+	for _, code := range []int{503, 404, 500} {
+		c.http.Transport = phraseTransport{code}
+
+		err := c.Refresh(context.Background(), "1001")
+		if err == nil || strings.Contains(err.Error(), "plex.private") {
+			t.Errorf("status %d: err = %v", code, err)
+		}
+	}
+}
+
+func TestTruncatedBodyIsUnavailable(t *testing.T) {
+	_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "1000")
+		w.Write([]byte(`{"MediaContainer":{"Directory":[`))
+	})
+
+	if _, err := c.Libraries(context.Background()); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("err = %v, want ErrUnavailable", err)
+	}
+}
+
+func TestMalformedBodyIsPlainError(t *testing.T) {
+	_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte(`{"MediaContainer": nope}`)) })
+
+	_, err := c.Libraries(context.Background())
+	if err == nil || errors.Is(err, ErrUnavailable) {
+		t.Errorf("err = %v, want a plain error", err)
 	}
 }
