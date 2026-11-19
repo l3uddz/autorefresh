@@ -183,7 +183,8 @@ listings do not include the folder paths. `GET /library/metadata/<ratingKey>`
 for a series returns them in `Location[].path`.
 
 The owner's paths contain IDs such as `{tmdb-747059}`, `{imdb-tt19120100}`,
-`{imdbid-tt31289994}`, and `{tvdb-463649}`. Other users can write
+`{imdbid-tt31289994}`, and `{tvdb-463649}`. The owner said that an ID can
+be in `{}`, `[]`, or `()`, for example `[tmdb-747059]` or `(tvdb-463649)`. Other users can write
 `imdb:` or use another separator, and many users have no IDs in their paths.
 
 ### Timing on the largest library
@@ -354,11 +355,16 @@ the first attempt is always a plain refresh.
 1. Autorefresh gets the paths of the item. For a movie, these are the file
    paths from the listing. For a series, it requests the item to get
    `Location[].path`.
-2. It reads IDs from the folder names and the file names. It accepts the
-   sources `imdb`, `tmdb`, and `tvdb`, also written with an `id` suffix, for
-   example `imdbid`. It accepts any separator between the source and the
-   value, such as `-`, `:`, `=`, or `_`. An IMDb value starts with `tt`.
-   TMDb and TVDB values are numbers.
+2. It reads IDs from the folder names and the file names. It reads an ID
+   only from a group in curly brackets `{}`, square brackets `[]`, or
+   parentheses `()`. Examples are `{tmdb-747059}`, `[imdb:tt19120100]`, and
+   `(tvdb-463649)`. A year in parentheses, such as `(2020)`, has no source
+   name, so it is not an ID. A group in brackets holds one
+   ID. It accepts the sources `imdb`, `tmdb`, and `tvdb`, also written with
+   an `id` suffix, for example `imdbid`. It accepts any separator between
+   the source and the value, such as `-`, `:`, `=`, or `_`. An IMDb value
+   starts with `tt`. TMDb and TVDB values are numbers. Text outside the
+   brackets, such as a title, is never read as an ID.
 3. It searches Plex once for each distinct ID, with the agent and the
    language of the library section.
 4. It applies a match in one case only: every ID that found something found
