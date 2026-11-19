@@ -163,6 +163,9 @@ func (r *Refresher) findMatch(ctx context.Context, srv Server, lib plex.Library,
 // stopError or a store error.
 func (r *Refresher) matchSearchFailed(ctx context.Context, s *refreshStep, lib plex.Library, it store.Item, err error) error {
 	if stop := stopError(ctx, err); stop != nil {
+		if ctx.Err() == nil {
+			s.run.failures++ // unavailable: the summary still counts it
+		}
 		return stop
 	}
 	name := s.run.server.Name

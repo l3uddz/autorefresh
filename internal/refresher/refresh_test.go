@@ -417,6 +417,7 @@ func TestFixMatchReadErrors(t *testing.T) {
 				if errAt < 0 || summaryAt < errAt {
 					t.Errorf("the summary line does not follow the error line:\n%s", logs)
 				}
+				wantField(t, f.lastSummary(testServer), "failures", float64(1))
 			case "deleted":
 				if exists {
 					t.Errorf("row = %+v, want none", row)
