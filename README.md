@@ -17,7 +17,9 @@ CI publishes the image `l3uddz/autorefresh` to Docker Hub for
 | `latest` | The latest release |
 | `<version>` | A release, for example `1.0.0` |
 | `main` | The latest commit on the `main` branch |
-| `<branch>` | The latest build of an open PR from that branch. Each `/` in the branch name becomes `-` |
+| `<branch>` | The latest build of an open PR into `main` from a branch of this repository. Each `/` in the branch name becomes `-` |
+
+A PR from a fork, or a PR into another branch, publishes no image.
 
 ```sh
 docker run --rm l3uddz/autorefresh:main --version
