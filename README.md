@@ -63,8 +63,11 @@ cache.
 
 If an incomplete item has no attempt in the last `refresh-interval`, the
 item is due. An attempt is a refresh or match request, successful or
-failed. A failed match search also counts as an attempt. Autorefresh never gives up. It tries an incomplete item again after
-each `refresh-interval` until the item is complete or gone from Plex.
+failed. A failed match search also counts as an attempt, but it does not
+count toward `max-refreshes-per-run`. A dry run records no attempts.
+
+Autorefresh never gives up. It tries an incomplete item again after each
+`refresh-interval` until the item is complete or gone from Plex.
 
 Each run refreshes the due items in this order:
 
@@ -107,8 +110,8 @@ plain refresh.
    1 or less.
 
 If no match applies, autorefresh sends a plain refresh. If the IDs disagree,
-it also logs the conflict. If a match search fails, autorefresh logs a
-warning and sends no request for that item in this run. A match request counts as a refresh for
+it also logs the conflict. If a match search fails, autorefresh sends no
+request for that item in this run. A match request counts as a refresh for
 `refresh-interval` and for `max-refreshes-per-run`.
 
 ### No library-wide refresh
@@ -228,7 +231,8 @@ deletes files after 14 days.
 
 | Level | Content |
 | --- | --- |
-| `error` | Problems that stop a run or the program, such as an invalid configuration, a database error, or a Plex server that does not answer |
+| `fatal` | Problems that stop the program at the start, such as an invalid configuration or a database that does not open |
+| `error` | Problems that stop a run or the checks of a server, such as a database error or a Plex server that does not answer |
 | `warn` | Problems that autorefresh survives, such as a failed request, a match conflict, a skipped library, or a skipped scheduled start |
 | `info` | The start, each request that autorefresh sends, each item that becomes complete, and one summary line for each server at the end of a run |
 | `debug` | Each library read, items that `minimum-age` skips, and match search results |
