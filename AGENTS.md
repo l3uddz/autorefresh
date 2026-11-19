@@ -19,6 +19,7 @@ When the design adds packages or rules, update this file.
 | `cmd/autorefresh/` | CLI entry point, logging, and the default configuration directory |
 | `internal/config/` | Configuration types, defaults, loading, and validation |
 | `internal/plex/` | Plex API client: list libraries and items, refresh, search matches, and apply a match |
+| `internal/store/` | SQLite cache of incomplete items and the read times of each library |
 | `docker/Dockerfile` | Container image, built from the goreleaser output in `dist/` |
 | `mise.toml` | Tool versions and development tasks |
 | `.goreleaser.yml` | Release build configuration |
