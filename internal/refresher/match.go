@@ -23,13 +23,22 @@ func chooseMatch(itemYear int, results []searchResult) (cand plex.Candidate, ok 
 		case found && r.candidates[0].GUID != cand.GUID:
 			return plex.Candidate{}, false, "different candidates"
 		}
+		if yearDiffers(itemYear, r.candidates[0].Year) {
+			return plex.Candidate{}, false, "year differs"
+		}
 		cand, found = r.candidates[0], true
 	}
 	if !found {
 		return plex.Candidate{}, false, ""
 	}
-	if itemYear != 0 && cand.Year != 0 && (itemYear-cand.Year > 1 || cand.Year-itemYear > 1) {
-		return plex.Candidate{}, false, "year differs"
-	}
 	return cand, true, ""
+}
+
+// yearDiffers is true when both years are known and differ by more than 1.
+func yearDiffers(itemYear, candYear int) bool {
+	if itemYear == 0 || candYear == 0 {
+		return false
+	}
+	diff := itemYear - candYear
+	return diff > 1 || diff < -1
 }
