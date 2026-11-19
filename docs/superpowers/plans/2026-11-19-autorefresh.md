@@ -24,7 +24,7 @@ Each task includes these requirements. The values come from the spec and from `A
 - A regular episode is outside season 0. Specials never count.
 - Use `modernc.org/sqlite` (no cgo) with one open connection. Embed the migrations as SQL files.
 - Use `github.com/robfig/cron/v3` for the schedule.
-- Configuration defaults: `schedule` `0 * * * *`, `minimum-age` `24h`, `refresh-interval` `12h`, `cache-refresh` `168h`, `oversample` `48h`, `refresh-delay` `5s`, `max-refreshes-per-run` no limit. `plex` needs at least one server.
+- Configuration defaults: `schedule` `0 * * * *`, `minimum-age` `24h`, `refresh-interval` `12h`, `cache-refresh` `0 3 * * 0` (a cron expression), `oversample` `48h`, `refresh-delay` `5s`, `max-refreshes-per-run` no limit. `plex` needs at least one server.
 - Each server needs `name`, `url`, and `token`. Each `name` is unique. `url` accepts `http` and `https`.
 - New flags: `--config` (`AUTOREFRESH_CONFIG`), `--database` (`AUTOREFRESH_DATABASE`), `--dry-run` (`AUTOREFRESH_DRY_RUN`), `--once` (`AUTOREFRESH_ONCE`). Keep `--version`, `--log`, and `-v`.
 - Default files are `config.yml` and `autorefresh.db` in the default configuration directory.
@@ -66,8 +66,9 @@ The owner chose three rows on 2026-11-19, in answers to separate questions: "Mis
 | Dry run | Autorefresh reads Plex, updates the cache, and sends match searches (reads) to choose the logged action. It sends no refresh or match request, writes no attempt or refresh state, does not wait `refresh-delay`, and applies `max-refreshes-per-run` to the logged items. |
 | Missing or empty configuration file | Autorefresh waits for it and checks again every 5 seconds, as autoscan's `waitForConfig` does. A container can then start before `config.yml` exists. |
 | `max-refreshes-per-run` | If it is set, it must be 1 or more. |
-| `minimum-age`, `oversample`, `refresh-delay` | 0 or more. `refresh-interval` and `cache-refresh` must be more than 0. |
-| Schedule | `cron.ParseStandard` (5 fields and descriptors such as `@hourly`), in the local time zone (`TZ`). Without `--once`, the first run waits for the schedule. |
+| `minimum-age`, `oversample`, `refresh-delay` | 0 or more. `refresh-interval` must be more than 0. |
+| Schedule | `schedule` and `cache-refresh` use `cron.ParseStandard` (5 fields and descriptors such as `@hourly`), in the local time zone (`TZ`). Without `--once`, the first run waits for the schedule. |
+| `cache-refresh` default | `0 3 * * 0`, weekly at 03:00 on Sunday. It replaces the `168h` of the design. |
 | Shutdown | On SIGINT or SIGTERM, autorefresh stops the schedule and cancels the run. The run stops before its next request. Then the process exits. |
 | Warnings that repeat | A skipped library with another agent and a configured library title that Plex does not have each log one warning for each process. |
 | YAML library | `go.yaml.in/yaml/v3` with `KnownFields(true)`. An unknown key is an error, as in autoscan. A test pins duration decoding. |
@@ -205,7 +206,7 @@ type Config struct {
 	Schedule           string        `yaml:"schedule"`
 	MinimumAge         time.Duration `yaml:"minimum-age"`
 	RefreshInterval    time.Duration `yaml:"refresh-interval"`
-	CacheRefresh       time.Duration `yaml:"cache-refresh"`
+	CacheRefresh       string        `yaml:"cache-refresh"` // cron expression
 	Oversample         time.Duration `yaml:"oversample"`
 	RefreshDelay       time.Duration `yaml:"refresh-delay"`
 	MaxRefreshesPerRun *int          `yaml:"max-refreshes-per-run"` // nil: no limit
@@ -227,7 +228,7 @@ func Decode(r io.Reader) (Config, error)
 - [ ] Step 1: Write the failing tests in `internal/config/config_test.go`.
   - `TestDecodeAppliesDefaults`: the file has only one server (`name: main`, `url: http://plex.example.invalid:32400`, `token: example-token`). Expected values:
     - `Schedule == "0 * * * *"`
-    - `MinimumAge == 24*time.Hour`, `RefreshInterval == 12*time.Hour`, `CacheRefresh == 168*time.Hour`
+    - `MinimumAge == 24*time.Hour`, `RefreshInterval == 12*time.Hour`, `CacheRefresh == "0 3 * * 0"`
     - `Oversample == 48*time.Hour`, `RefreshDelay == 5*time.Second`
     - `MaxRefreshesPerRun == nil`
   - `TestDecodeReadsAllKeys`: the YAML example from the spec, with neutral values, gives every key, `*MaxRefreshesPerRun == 100`, and `Libraries == []string{"Movies", "TV"}`.
@@ -235,12 +236,12 @@ func Decode(r io.Reader) (Config, error)
   - `TestDecodeRejectsInvalidConfig`, a table test. Each of these cases returns an error:
     - no `plex` entry, two servers with the same `name`, an empty `name`
     - an empty `url`, `url: ftp://plex.example.invalid`, a `url` without a host, an empty `token`
-    - `schedule: every hour`, `refresh-interval: 0s`, `cache-refresh: 0s`
+    - `schedule: every hour`, `refresh-interval: 0s`, `cache-refresh: 168h`
     - `minimum-age: -1h`, `oversample: -1h`, `refresh-delay: -1s`
     - `max-refreshes-per-run: 0`, an empty library title
   - `TestDecodeErrorsOmitSecrets`: a server with `url: ftp://secret-host.example.invalid` and `token: secret-token` returns an error that contains the server name and contains neither `secret-host` nor `secret-token`.
 - [ ] Step 2: Run `go test ./internal/config/...`. Expected: FAIL, because `Decode` is not defined.
-- [ ] Step 3: Implement `Decode` in `internal/config/config.go`. Use `yaml.NewDecoder(r)` with `KnownFields(true)` and `cron.ParseStandard` for `schedule`. Name the server by its `name` in each error, never by its URL or token.
+- [ ] Step 3: Implement `Decode` in `internal/config/config.go`. Use `yaml.NewDecoder(r)` with `KnownFields(true)` and `cron.ParseStandard` for `schedule` and `cache-refresh`. Name the server by its `name` in each error, never by its URL or token.
 - [ ] Step 4: Run `go test ./internal/config/...`. Expected: PASS.
 - [ ] Step 5: Add the `internal/config/` row to `AGENTS.md`. Run the checks from "Delivery for each task". Commit with `feat(config): load and validate the configuration`.
 
@@ -570,8 +571,12 @@ type Server struct {
 	Libraries []string // titles; empty means all supported libraries
 }
 
+// Schedule is the part of cron.Schedule that the refresher uses.
+type Schedule interface{ Next(time.Time) time.Time }
+
 type Options struct {
-	MinimumAge, RefreshInterval, CacheRefresh, Oversample, RefreshDelay time.Duration
+	MinimumAge, RefreshInterval, Oversample, RefreshDelay time.Duration
+	CacheRefresh       Schedule
 	MaxRefreshesPerRun int // 0: no limit
 	DryRun             bool
 }
@@ -587,7 +592,7 @@ Reads for each selected library, with `now` at the start of the read:
 
 | Read | Requests |
 | --- | --- |
-| Full (no full read yet, or `LastFullRead` older than `CacheRefresh`) | `List(section, type)` with no filters |
+| Full (no full read yet, or `CacheRefresh.Next(LastFullRead)` is not after the start time) | `List(section, type)` with no filters |
 | Incremental, with `T = LastRead - Oversample` in Unix seconds | `updatedAt>>=T`, `addedAt>>=T`, and `unmatched=1`. Autorefresh joins the results by rating key. |
 | Episode requests (each `show` library, every run), with `A = now - MinimumAge` | `unmatched=0`, `episode.unmatched=0`, `episode.summary=`, `episode.addedAt<<=A`, `season.index>>=1`, which gives `EpisodeNoSummary` |
 | | `unmatched=0`, `episode.unmatched=1`, `episode.addedAt<<=A`, `season.index>>=1`, which gives `EpisodeUnmatched` |
@@ -599,8 +604,9 @@ After a full or incremental read, autorefresh calls `SaveItems` with mask `ItemR
   - `TestRunUsesConfiguredLibraries`: with `Libraries: ["Movies"]`, only that title is read. A configured title that Plex does not have logs one warning.
   - `TestFirstRunDoesFullRead`: `List` gets no filters. The incomplete items get rows, and the complete items do not. `LastFullRead` and `LastRead` equal the start time.
   - `TestFullReadDeletesUnseenRows`: a row whose item is not in the next full read is deleted.
+  - Tests that use `CacheRefresh` parse `0 3 * * 0` and set t0 to Saturday 2026-11-21 12:00 in `time.Local`.
   - `TestIncrementalReadFilters`: with a full read at t0 and a run at t0+1h, `List` gets the three filters with `T = t0 - 48h` in Unix seconds, and `LastFullRead` stays t0.
-  - `TestFullReadAfterCacheRefresh`: a run at t0+169h does a full read.
+  - `TestFullReadAfterCacheRefresh`: the full read is at t0. A run on Sunday 2026-11-22 at 02:59 does an incremental read. A run at 03:00 does a full read.
   - `TestEpisodeRequestFilters`: a show library gets the two requests with the exact filters in the table above. A series in a result gets the reason, and an absent series loses it.
   - `TestFailedReadKeepsState` (Review Focus 2): a `List` error on a full read changes no read time and deletes no row. A failed episode request keeps the earlier `EpisodeNoSummary` rows. The next library is still read.
   - `TestUnavailableSkipsServer`: `ErrUnavailable` from `Libraries` or from `List` stops that server and logs an error. The next server is still read.
@@ -697,7 +703,7 @@ Wiring in `main`:
 
 1. Parse the flags. Run `applyDefaultPaths`. Start the logger.
 2. Wait for the configuration and decode it. Open the store. Each failure is a fatal error.
-3. Make one `plex.New(name, url, token)` for each server, and `refresher.New` with the options. If `cfg.MaxRefreshesPerRun` is nil, pass 0. Otherwise pass its value.
+3. Make one `plex.New(name, url, token)` for each server, and `refresher.New` with the options. `CacheRefresh` is the result of `cron.ParseStandard(cfg.CacheRefresh)`. If `cfg.MaxRefreshesPerRun` is nil, pass 0. Otherwise pass its value.
 4. Log `Initialised` at info with the version, the server names, the schedule, and `dry_run`.
 5. With `--once`, run once and exit. If `Run` returns an error, exit with code 1.
 6. Otherwise, add `runner.start` to `cron.New()` with the schedule. Start the schedule. On SIGINT or SIGTERM, cancel the context, wait for `cron.Stop()`, and close the store.
