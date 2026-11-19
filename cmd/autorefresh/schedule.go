@@ -19,10 +19,10 @@ func (r *runner) start(ctx context.Context) {
 		log.Warn().Msg("Skipped scheduled start, a run is busy")
 		return
 	}
-	err := r.run(ctx)
-	r.mu.Unlock()
+	// A deferred unlock also runs if r.run panics.
+	defer r.mu.Unlock()
 
-	if err != nil {
+	if err := r.run(ctx); err != nil {
 		log.Error().Err(err).Msg("Run failed")
 	}
 }

@@ -54,3 +54,25 @@ func TestRunnerLogsRunError(t *testing.T) {
 		t.Fatalf("expected an error line with the run error, got %q", got)
 	}
 }
+
+func TestRunnerUnlocksAfterPanic(t *testing.T) {
+	captureLog(t)
+
+	var calls atomic.Int32
+	r := &runner{run: func(context.Context) error {
+		if calls.Add(1) == 1 {
+			panic("run failed")
+		}
+		return nil
+	}}
+
+	func() {
+		defer func() { _ = recover() }()
+		r.start(context.Background())
+	}()
+	r.start(context.Background())
+
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("expected 2 calls of run after a panic, got %d", got)
+	}
+}
