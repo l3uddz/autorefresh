@@ -213,9 +213,9 @@ the candidates.
   it asks TMDB for an ID only once. The cache removes these IDs with the
   item.
 - If a TMDB request fails, autorefresh sends no request for the item in
-  this run. The item is due again after `refresh-interval`, and the failed
-  request does not make the wait longer. Autorefresh logs a `TMDB lookup
-  failed` warning.
+  this run, as for a failed match search. The item is due again after its
+  current wait, and the failed request does not make the wait longer.
+  Autorefresh logs a `TMDB lookup failed` warning.
 
 The debug line of each second pass search has a `from` field with the ID
 that TMDB translated, for example `tvdb-81189`.
