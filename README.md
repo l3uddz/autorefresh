@@ -402,6 +402,14 @@ If you set no user, the container runs as the default user:
 sudo chown -R 65532:65532 /opt/autorefresh
 ```
 
+If you mount a named volume at `/config` instead of a directory, change the
+owner inside the volume. This example uses the volume `autorefresh` and the
+default user. Use your own volume name and user:
+
+```sh
+docker run --rm -v autorefresh:/config alpine chown -R 65532:65532 /config
+```
+
 | Tag | Content |
 | --- | --- |
 | `latest` | The latest release |
