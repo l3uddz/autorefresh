@@ -93,18 +93,14 @@ func main() {
 		names = append(names, s.Name)
 	}
 
-	maxRefreshes := 0 // no limit
-	if cfg.MaxRefreshesPerRun != nil {
-		maxRefreshes = *cfg.MaxRefreshesPerRun
-	}
-
 	r := refresher.New(servers, st, refresher.Options{
 		MinimumAge:         cfg.MinimumAge,
 		RefreshInterval:    cfg.RefreshInterval,
+		MaxRefreshInterval: cfg.MaxRefreshInterval,
 		Oversample:         cfg.Oversample,
 		RefreshDelay:       cfg.RefreshDelay,
 		CacheRefresh:       cacheRefresh,
-		MaxRefreshesPerRun: maxRefreshes,
+		MaxRefreshesPerRun: cfg.MaxRefreshesPerRun,
 		DryRun:             cli.DryRun,
 	})
 

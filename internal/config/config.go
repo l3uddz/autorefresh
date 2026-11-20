@@ -19,10 +19,11 @@ type Config struct {
 	Schedule           string        `yaml:"schedule"`
 	MinimumAge         time.Duration `yaml:"minimum-age"`
 	RefreshInterval    time.Duration `yaml:"refresh-interval"`
+	MaxRefreshInterval time.Duration `yaml:"max-refresh-interval"`
 	CacheRefresh       string        `yaml:"cache-refresh"` // cron expression
 	Oversample         time.Duration `yaml:"oversample"`
 	RefreshDelay       time.Duration `yaml:"refresh-delay"`
-	MaxRefreshesPerRun *int          `yaml:"max-refreshes-per-run"` // nil: no limit
+	MaxRefreshesPerRun int           `yaml:"max-refreshes-per-run"` // 0: no limit
 	Plex               []Server      `yaml:"plex"`
 }
 
@@ -36,12 +37,14 @@ type Server struct {
 
 func defaults() Config {
 	return Config{
-		Schedule:        "0 * * * *",
-		MinimumAge:      24 * time.Hour,
-		RefreshInterval: 12 * time.Hour,
-		CacheRefresh:    "0 3 * * 0",
-		Oversample:      48 * time.Hour,
-		RefreshDelay:    5 * time.Second,
+		Schedule:           "0 * * * *",
+		MinimumAge:         24 * time.Hour,
+		RefreshInterval:    12 * time.Hour,
+		MaxRefreshInterval: 7 * 24 * time.Hour,
+		CacheRefresh:       "0 3 * * 0",
+		Oversample:         48 * time.Hour,
+		RefreshDelay:       5 * time.Second,
+		MaxRefreshesPerRun: 250,
 	}
 }
 
@@ -118,6 +121,9 @@ func (c Config) validate() error {
 	if c.RefreshInterval <= 0 {
 		return errors.New("refresh-interval must be greater than zero")
 	}
+	if c.MaxRefreshInterval < 0 {
+		return errors.New("max-refresh-interval must not be negative")
+	}
 	if c.MinimumAge < 0 {
 		return errors.New("minimum-age must not be negative")
 	}
@@ -127,8 +133,8 @@ func (c Config) validate() error {
 	if c.RefreshDelay < 0 {
 		return errors.New("refresh-delay must not be negative")
 	}
-	if c.MaxRefreshesPerRun != nil && *c.MaxRefreshesPerRun < 1 {
-		return errors.New("max-refreshes-per-run must be at least 1")
+	if c.MaxRefreshesPerRun < 0 {
+		return errors.New("max-refreshes-per-run must not be negative")
 	}
 	if len(c.Plex) == 0 {
 		return errors.New("no plex server is configured")

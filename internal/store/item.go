@@ -288,19 +288,39 @@ func (s *Store) Unseen(server, section string, seen []string) ([]Item, error) {
 }
 
 // Due returns the rows of the sections that are incomplete, added at or
-// before now-minimumAge, and with no attempt after now-refreshInterval.
-// Order: no attempt first, then the oldest LastAttempt, then the oldest AddedAt.
-func (s *Store) Due(server string, sections []string, now time.Time, minimumAge, refreshInterval time.Duration) ([]Item, error) {
+// before now-minimumAge, and with no attempt in their wait before now.
+//
+// The wait backs off: it is refreshInterval for a row with at most 1
+// refresh, and it doubles with each later refresh, up to
+// maxRefreshInterval. A maxRefreshInterval below refreshInterval means no
+// backoff.
+//
+// Order: the fewest Refreshes first, then no attempt, then the oldest
+// LastAttempt, then the oldest AddedAt.
+func (s *Store) Due(server string, sections []string, now time.Time, minimumAge, refreshInterval, maxRefreshInterval time.Duration) ([]Item, error) {
 	if len(sections) == 0 {
 		return nil, nil
 	}
+	// The wait is in milliseconds, so a wait such as 1.5s keeps its
+	// fraction. The cutoff is then rounded down to whole seconds, like the
+	// stored times.
+	interval := refreshInterval.Milliseconds()
+	maxWait := max(maxRefreshInterval.Milliseconds(), interval)
+	// doublings is the number of doublings that reach maxWait. The shift in
+	// the query stops there, so it cannot overflow.
+	doublings := 0
+	for wait := interval; wait > 0 && wait < maxWait; wait *= 2 {
+		doublings++
+	}
+
 	args := append([]any{server}, stringArgs(sections)...)
-	args = append(args, now.Add(-minimumAge).Unix(), now.Add(-refreshInterval).Unix())
+	args = append(args, now.Add(-minimumAge).Unix(), now.UnixMilli(), maxWait, interval, doublings)
 
 	items, err := queryItems(s.db, `SELECT `+itemColumns+` FROM item
 		WHERE server = ? AND section IN (`+placeholders(len(sections))+`)
-		AND added_at <= ? AND (last_attempt IS NULL OR last_attempt <= ?)
-		ORDER BY last_attempt IS NOT NULL, last_attempt, added_at, rating_key`, args...)
+		AND added_at <= ?
+		AND (last_attempt IS NULL OR last_attempt <= (? - MIN(?, ? << MIN(MAX(refreshes - 1, 0), ?))) / 1000)
+		ORDER BY refreshes, last_attempt IS NOT NULL, last_attempt, added_at, rating_key`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read due items: %w", err)
 	}

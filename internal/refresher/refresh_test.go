@@ -145,6 +145,20 @@ func TestMaxRefreshesPerRun(t *testing.T) {
 	wantCalls(t, sends(fp.calls), "Refresh 103", "Refresh 101")
 }
 
+func TestRefreshBacksOffAfterRefreshes(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.opts.MaxRefreshInterval = 7 * 24 * time.Hour
+	// At t0, the last refresh of each row is 48h old. Two refreshes wait
+	// 48h, and three refreshes wait 96h.
+	f.seed(testServer, moviesLib, incompleteItem("101"), store.NoSummary, 2)
+	f.seed(testServer, moviesLib, incompleteItem("102"), store.NoSummary, 3)
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 101")
+}
+
 func TestRefreshSuccessRecordsRefresh(t *testing.T) {
 	fp := newFakePlex(moviesLib)
 	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101")}

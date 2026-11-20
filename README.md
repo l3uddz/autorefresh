@@ -61,26 +61,45 @@ cache.
 
 ### Refreshes
 
-If an incomplete item has no attempt in the last `refresh-interval`, the
-item is due. An attempt is a refresh or match request, successful or
-failed. A failed match search also counts as an attempt, but it does not
-count toward `max-refreshes-per-run`. A dry run records no attempts.
+If an incomplete item has no attempt in its wait, the item is due. An
+attempt is a refresh or match request, successful or failed. A failed match
+search also counts as an attempt, but it does not count toward
+`max-refreshes-per-run`. A dry run records no attempts.
+
+The wait backs off, because an item that many refreshes did not fix is
+less likely to become complete. For an item with no refresh or one refresh,
+the wait is `refresh-interval`. Each later refresh doubles the wait, up to
+`max-refresh-interval`. A refresh is a refresh or match request that Plex
+accepted, so failed requests do not make the wait longer. With the
+defaults, the waits are:
+
+| Refreshes | Wait |
+| --- | --- |
+| 0 or 1 | 12h |
+| 2 | 24h |
+| 3 | 48h |
+| 4 | 96h |
+| 5 or more | 168h (7 days) |
 
 Autorefresh never gives up. It tries an incomplete item again after each
-`refresh-interval` until the item is complete or gone from Plex.
+wait until the item is complete or gone from Plex. If you set
+`max-refresh-interval` to `refresh-interval` or less, the wait never grows.
 
 Each run refreshes the due items in this order:
 
-1. Items with no attempt.
-2. Items with the oldest last attempt.
+1. Items with the fewest refreshes. A refresh is a refresh or match request
+   that Plex accepted. Items that Plex never refreshed therefore go first.
+2. Items with no attempt.
+3. Items with the oldest last attempt.
 
 If two items are equal, the item that Plex added first goes first. A failing
-item therefore moves to the end of the queue.
+item therefore moves to the end of the items with the same number of
+refreshes.
 
 Autorefresh sends one refresh or match request at a time on each server. It
-waits `refresh-delay` between two of these requests. If
-`max-refreshes-per-run` is set, a run sends at most that many refresh and
-match requests on each server.
+waits `refresh-delay` between two of these requests. A run sends at most
+`max-refreshes-per-run` refresh and match requests on each server. If you
+set it to 0, a run has no limit.
 
 Runs do not overlap. If a run is still busy when the schedule starts the
 next run, autorefresh skips that start and logs a warning. The first run on
@@ -112,7 +131,7 @@ plain refresh.
 If no match applies, autorefresh sends a plain refresh. If the IDs disagree,
 it also logs the conflict. If a match search fails, autorefresh sends no
 request for that item in this run. A match request counts as a refresh for
-`refresh-interval` and for `max-refreshes-per-run`.
+the wait and for `max-refreshes-per-run`.
 
 ### No library-wide refresh
 
@@ -128,10 +147,11 @@ configuration directory.
 schedule: "0 * * * *"         # cron expression for each run
 minimum-age: 24h              # skip items added less than this long ago
 refresh-interval: 12h         # wait at least this long between attempts on one item
+max-refresh-interval: 168h    # the longest wait between attempts after the backoff
 cache-refresh: "0 3 * * 0"    # cron expression for full reads of each library
 oversample: 48h               # each incremental read also gets changes from this far back
 refresh-delay: 5s             # wait between two refreshes on one server
-max-refreshes-per-run: 100    # optional; no limit if it is not set
+max-refreshes-per-run: 250    # the most refresh and match requests in each run; 0 for no limit
 
 plex:
   - name: main                    # label for logs and the database
@@ -147,20 +167,24 @@ plex:
 | `schedule` | no | `0 * * * *` |
 | `minimum-age` | no | `24h` |
 | `refresh-interval` | no | `12h` |
+| `max-refresh-interval` | no | `168h` |
 | `cache-refresh` | no | `0 3 * * 0` |
 | `oversample` | no | `48h` |
 | `refresh-delay` | no | `5s` |
-| `max-refreshes-per-run` | no | no limit |
+| `max-refreshes-per-run` | no | `250` |
 | `plex` | yes, at least one server | none |
 
 `schedule` and `cache-refresh` are cron expressions with 5 fields, or
 descriptors such as `@hourly`. They use the local time zone, which the `TZ`
 environment variable sets. Choose a `cache-refresh` time at which
 `schedule` also starts a run, because the full read happens in the first run
-at or after that time. `refresh-interval` must be more than 0.
-`minimum-age`, `oversample`, and `refresh-delay` must be 0 or more. If
-`max-refreshes-per-run` is set, it must be 1 or more. The timing keys apply
-to all servers.
+at or after that time.
+
+Durations use Go units such as `h`, `m`, and `s`, so write 7 days as
+`168h`. `refresh-interval` must be more than 0. `max-refresh-interval`,
+`minimum-age`, `oversample`, and `refresh-delay` must be 0 or more.
+`max-refreshes-per-run` must be 0 or more, and 0 means no limit. These keys
+apply to all servers.
 
 Each entry in `plex` is one Plex server:
 

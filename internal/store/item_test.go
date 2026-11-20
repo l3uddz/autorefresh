@@ -249,13 +249,138 @@ func TestDueOrder(t *testing.T) {
 		}
 	}
 	now := base.Add(100 * time.Hour)
-	got, err := s.Due(srv, []string{sec}, now, 0, time.Hour)
+	got, err := s.Due(srv, []string{sec}, now, 0, time.Hour, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"never-z", "never-a", "old-attempt", "new-attempt", "same-z", "same-a"}
 	if k := keys(got); !reflect.DeepEqual(k, want) {
 		t.Fatalf("Due = %v, want %v", k, want)
+	}
+}
+
+func TestDuePutsFewerRefreshesFirst(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("never", NoArt), item("failed", NoArt), item("once", NoArt), item("twice", NoArt)}})
+	// The last attempts are in the opposite order of the refreshes.
+	refresh(t, s, "twice", 2)
+	if err := s.RecordAttempt(srv, "once", base.Add(5*time.Hour), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordAttempt(srv, "failed", base.Add(6*time.Hour), false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Due(srv, []string{sec}, base.Add(100*time.Hour), 0, time.Hour, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"never", "failed", "once", "twice"}
+	if k := keys(got); !reflect.DeepEqual(k, want) {
+		t.Fatalf("Due = %v, want %v", k, want)
+	}
+}
+
+func TestDueBacksOffAfterRefreshes(t *testing.T) {
+	s := openTest(t)
+	refreshes := map[string]int{"failed": 0, "r1": 1, "r2": 2, "r3": 3, "r5": 5}
+	var items []Item
+	for k := range refreshes {
+		items = append(items, item(k, NoArt))
+	}
+	apply(t, s, Read{Items: items})
+	at := base.Add(time.Hour)
+	for k, n := range refreshes {
+		if n == 0 {
+			if err := s.RecordAttempt(srv, k, at, false); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for range n {
+			if err := s.RecordAttempt(srv, k, at, true); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	// The wait is 1h, then 1h, 2h, 4h, and then the 4h cap.
+	tests := []struct {
+		after time.Duration
+		want  []string
+	}{
+		{59 * time.Minute, nil},
+		{time.Hour, []string{"failed", "r1"}},
+		{2*time.Hour - time.Second, []string{"failed", "r1"}},
+		{2 * time.Hour, []string{"failed", "r1", "r2"}},
+		{4 * time.Hour, []string{"failed", "r1", "r2", "r3", "r5"}},
+	}
+	for _, tt := range tests {
+		got, err := s.Due(srv, []string{sec}, at.Add(tt.after), 0, time.Hour, 4*time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if k := keys(got); !reflect.DeepEqual(k, tt.want) {
+			t.Errorf("Due after %v = %v, want %v", tt.after, k, tt.want)
+		}
+	}
+}
+
+func TestDueKeepsFractionalSecondWaits(t *testing.T) {
+	tests := []struct {
+		name      string
+		refreshes int
+		interval  time.Duration
+		wait      time.Duration
+	}{
+		{"1.5s after one refresh", 1, 1500 * time.Millisecond, 1500 * time.Millisecond},
+		{"500ms after three refreshes", 3, 500 * time.Millisecond, 2 * time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := openTest(t)
+			apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+			at := base.Add(time.Hour)
+			for range tt.refreshes {
+				if err := s.RecordAttempt(srv, "a", at, true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, c := range []struct {
+				after time.Duration
+				want  int
+			}{{tt.wait - time.Millisecond, 0}, {tt.wait, 1}} {
+				got, err := s.Due(srv, []string{sec}, at.Add(c.after), 0, tt.interval, time.Hour)
+				if err != nil || len(got) != c.want {
+					t.Errorf("Due after %v = %v, %v, want %d items", c.after, got, err, c.want)
+				}
+			}
+		})
+	}
+}
+
+func TestDueWithoutBackoffBelowRefreshInterval(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	refresh(t, s, "a", 5)
+	got, err := s.Due(srv, []string{sec}, base.Add(5*time.Minute+time.Hour), 0, time.Hour, 0)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("Due = %v, %v, want a", got, err)
+	}
+}
+
+func TestDueCapsLongBackoff(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	refresh(t, s, "a", 200)
+	last := base.Add(200 * time.Minute)
+	limit := 100 * 365 * 24 * time.Hour
+	for _, tt := range []struct {
+		after time.Duration
+		want  int
+	}{{limit - time.Second, 0}, {limit, 1}} {
+		got, err := s.Due(srv, []string{sec}, last.Add(tt.after), 0, time.Hour, limit)
+		if err != nil || len(got) != tt.want {
+			t.Errorf("Due after %v = %v, %v, want %d items", tt.after, got, err, tt.want)
+		}
 	}
 }
 
@@ -301,7 +426,7 @@ func TestDueSkipsRecentAttemptsAndOtherScopes(t *testing.T) {
 	if err := s.RecordAttempt(srv, "old", now.Add(-13*time.Hour), false); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Due(srv, []string{sec}, now, 0, 12*time.Hour)
+	got, err := s.Due(srv, []string{sec}, now, 0, 12*time.Hour, 12*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +439,7 @@ func TestDueSkipsRecentAttemptsAndOtherScopes(t *testing.T) {
 	if err != nil || n != 3 {
 		t.Fatalf("CountIncomplete = %d, %v, want 3", n, err)
 	}
-	if got, err := s.Due(srv, nil, now, 0, 0); err != nil || len(got) != 0 {
+	if got, err := s.Due(srv, nil, now, 0, 0, 0); err != nil || len(got) != 0 {
 		t.Fatalf("Due without sections = %v, %v", got, err)
 	}
 }
@@ -323,14 +448,14 @@ func TestDueSkipsYoungItemUntilOldEnough(t *testing.T) {
 	s := openTest(t)
 	now := base.Add(time.Hour)
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
-	got, err := s.Due(srv, []string{sec}, now, 24*time.Hour, time.Hour)
+	got, err := s.Due(srv, []string{sec}, now, 24*time.Hour, time.Hour, time.Hour)
 	if err != nil || len(got) != 0 {
 		t.Fatalf("young Due = %v, %v", got, err)
 	}
 	if n, err := s.CountIncomplete(srv, []string{sec}); err != nil || n != 1 {
 		t.Fatalf("CountIncomplete = %d, want 1", n)
 	}
-	got, err = s.Due(srv, []string{sec}, now.Add(24*time.Hour), 24*time.Hour, time.Hour)
+	got, err = s.Due(srv, []string{sec}, now.Add(24*time.Hour), 24*time.Hour, time.Hour, time.Hour)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("old Due = %v, %v", got, err)
 	}
@@ -354,7 +479,7 @@ func TestDueComparesTimesAcrossZones(t *testing.T) {
 	if err := s.RecordAttempt(srv, "b", b, false); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Due(srv, []string{sec}, instant.Add(48*time.Hour), 0, time.Hour)
+	got, err := s.Due(srv, []string{sec}, instant.Add(48*time.Hour), 0, time.Hour, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
