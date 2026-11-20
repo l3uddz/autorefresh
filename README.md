@@ -97,9 +97,9 @@ item therefore moves to the end of the items with the same number of
 refreshes.
 
 Autorefresh sends one refresh or match request at a time on each server. It
-waits `refresh-delay` between two of these requests. If
-`max-refreshes-per-run` is set, a run sends at most that many refresh and
-match requests on each server.
+waits `refresh-delay` between two of these requests. A run sends at most
+`max-refreshes-per-run` refresh and match requests on each server. If you
+set it to 0, a run has no limit.
 
 Runs do not overlap. If a run is still busy when the schedule starts the
 next run, autorefresh skips that start and logs a warning. The first run on
@@ -151,7 +151,7 @@ max-refresh-interval: 168h    # the longest wait between attempts after the back
 cache-refresh: "0 3 * * 0"    # cron expression for full reads of each library
 oversample: 48h               # each incremental read also gets changes from this far back
 refresh-delay: 5s             # wait between two refreshes on one server
-max-refreshes-per-run: 100    # optional; no limit if it is not set
+max-refreshes-per-run: 250    # the most refresh and match requests in each run; 0 for no limit
 
 plex:
   - name: main                    # label for logs and the database
@@ -171,7 +171,7 @@ plex:
 | `cache-refresh` | no | `0 3 * * 0` |
 | `oversample` | no | `48h` |
 | `refresh-delay` | no | `5s` |
-| `max-refreshes-per-run` | no | no limit |
+| `max-refreshes-per-run` | no | `250` |
 | `plex` | yes, at least one server | none |
 
 `schedule` and `cache-refresh` are cron expressions with 5 fields, or
@@ -182,9 +182,9 @@ at or after that time.
 
 Durations use Go units such as `h`, `m`, and `s`, so write 7 days as
 `168h`. `refresh-interval` must be more than 0. `max-refresh-interval`,
-`minimum-age`, `oversample`, and `refresh-delay` must be 0 or more. If
-`max-refreshes-per-run` is set, it must be 1 or more. The timing keys apply
-to all servers.
+`minimum-age`, `oversample`, and `refresh-delay` must be 0 or more.
+`max-refreshes-per-run` must be 0 or more, and 0 means no limit. These keys
+apply to all servers.
 
 Each entry in `plex` is one Plex server:
 

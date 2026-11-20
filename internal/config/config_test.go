@@ -39,8 +39,18 @@ func TestDecodeAppliesDefaults(t *testing.T) {
 	if cfg.RefreshDelay != 5*time.Second {
 		t.Errorf("RefreshDelay = %v", cfg.RefreshDelay)
 	}
-	if cfg.MaxRefreshesPerRun != nil {
-		t.Errorf("MaxRefreshesPerRun = %d, want nil", *cfg.MaxRefreshesPerRun)
+	if cfg.MaxRefreshesPerRun != 250 {
+		t.Errorf("MaxRefreshesPerRun = %d, want 250", cfg.MaxRefreshesPerRun)
+	}
+}
+
+func TestDecodeAcceptsZeroMaxRefreshesAsNoLimit(t *testing.T) {
+	cfg, err := Decode(strings.NewReader("max-refreshes-per-run: 0\n" + minimalServer))
+	if err != nil {
+		t.Fatalf("Decode returned an error: %v", err)
+	}
+	if cfg.MaxRefreshesPerRun != 0 {
+		t.Errorf("MaxRefreshesPerRun = %d, want 0", cfg.MaxRefreshesPerRun)
 	}
 }
 
@@ -78,8 +88,8 @@ plex:
 	if cfg.Oversample != 24*time.Hour || cfg.RefreshDelay != 2*time.Second {
 		t.Errorf("oversample, delay = %v, %v", cfg.Oversample, cfg.RefreshDelay)
 	}
-	if cfg.MaxRefreshesPerRun == nil || *cfg.MaxRefreshesPerRun != 100 {
-		t.Errorf("MaxRefreshesPerRun = %v, want 100", cfg.MaxRefreshesPerRun)
+	if cfg.MaxRefreshesPerRun != 100 {
+		t.Errorf("MaxRefreshesPerRun = %d, want 100", cfg.MaxRefreshesPerRun)
 	}
 	if len(cfg.Plex) != 1 {
 		t.Fatalf("len(Plex) = %d, want 1", len(cfg.Plex))
@@ -128,7 +138,7 @@ func TestDecodeRejectsInvalidConfig(t *testing.T) {
 		{"negative minimum age", "minimum-age: -1h\n" + minimalServer},
 		{"negative oversample", "oversample: -1h\n" + minimalServer},
 		{"negative refresh delay", "refresh-delay: -1s\n" + minimalServer},
-		{"zero max refreshes", "max-refreshes-per-run: 0\n" + minimalServer},
+		{"negative max refreshes", "max-refreshes-per-run: -1\n" + minimalServer},
 		{"empty library title", "plex:\n  - name: a\n" + server + "    libraries: [\"\"]\n"},
 	}
 	for _, tt := range tests {

@@ -23,7 +23,7 @@ type Config struct {
 	CacheRefresh       string        `yaml:"cache-refresh"` // cron expression
 	Oversample         time.Duration `yaml:"oversample"`
 	RefreshDelay       time.Duration `yaml:"refresh-delay"`
-	MaxRefreshesPerRun *int          `yaml:"max-refreshes-per-run"` // nil: no limit
+	MaxRefreshesPerRun int           `yaml:"max-refreshes-per-run"` // 0: no limit
 	Plex               []Server      `yaml:"plex"`
 }
 
@@ -44,6 +44,7 @@ func defaults() Config {
 		CacheRefresh:       "0 3 * * 0",
 		Oversample:         48 * time.Hour,
 		RefreshDelay:       5 * time.Second,
+		MaxRefreshesPerRun: 250,
 	}
 }
 
@@ -132,8 +133,8 @@ func (c Config) validate() error {
 	if c.RefreshDelay < 0 {
 		return errors.New("refresh-delay must not be negative")
 	}
-	if c.MaxRefreshesPerRun != nil && *c.MaxRefreshesPerRun < 1 {
-		return errors.New("max-refreshes-per-run must be at least 1")
+	if c.MaxRefreshesPerRun < 0 {
+		return errors.New("max-refreshes-per-run must not be negative")
 	}
 	if len(c.Plex) == 0 {
 		return errors.New("no plex server is configured")
