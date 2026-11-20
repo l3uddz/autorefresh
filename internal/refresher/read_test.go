@@ -682,6 +682,54 @@ func TestCompleteItemLogsFixed(t *testing.T) {
 	wantField(t, summary, "completed_after_request", float64(1))
 }
 
+func TestCompleteItemLogsBeforeSummary(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102")}
+	f := newFixture(t, Server{Name: testServer, Plex: fp})
+	f.run(t0)
+
+	fp.lists["1?type=1&updatedAt>>="+unixString(t0.Add(-oversample))] = []plex.Item{completeItem("101")}
+	f.logs.Reset()
+	f.run(t0.Add(time.Hour))
+
+	logs := f.logs.String()
+	refreshAt := strings.Index(logs, `"message":"Dry run"`)
+	completeAt := strings.Index(logs, `"message":"Item complete"`)
+	summaryAt := strings.Index(logs, `"message":"Run summary"`)
+	if refreshAt < 0 || completeAt < refreshAt || summaryAt < completeAt {
+		t.Errorf("want the refresh step, then Item complete, then Run summary:\n%s", logs)
+	}
+}
+
+func TestCanceledRunLogsCompleteItem(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102")}
+	f := newFixture(t, Server{Name: testServer, Plex: fp})
+	f.run(t0)
+	f.logs.Reset()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.r.sleep = func(context.Context, time.Duration) error {
+		cancel()
+		return context.Canceled
+	}
+	f.r.opts.DryRun = false
+	f.r.opts.RefreshDelay = time.Second
+	fp.lists["1?type=1&updatedAt>>="+unixString(t0.Add(-oversample))] = []plex.Item{completeItem("101"), incompleteItem("103")}
+	f.now = t0.Add(time.Hour)
+	if err := f.r.Run(ctx); err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+
+	if lines := f.logLines("info", "Run summary"); len(lines) != 0 {
+		t.Fatalf("got summary lines %v, want none", lines)
+	}
+	if lines := f.logLines("info", "Item complete"); len(lines) != 1 {
+		t.Errorf("got %d complete lines, want 1:\n%s", len(lines), f.logs)
+	}
+}
+
 func TestCompleteItemKeepsEpisodeReason(t *testing.T) {
 	fp := newFakePlex(showsLib)
 	noArt := completeItem("201")

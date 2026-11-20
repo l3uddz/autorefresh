@@ -177,18 +177,18 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 	} else {
 		run.incrementalReadItems += len(items)
 	}
-	run.completed += len(fixed)
 	for _, it := range fixed {
 		if it.Refreshes > 0 {
 			run.fixed++
 		}
+		run.completed = append(run.completed, completedItem{library: lib.Title, item: it})
 	}
 	if !rd.Shows {
 		for _, it := range items {
 			run.files[it.RatingKey] = it.Files
 		}
 	}
-	r.logRead(rd, lib, fixed, time.Since(began))
+	r.logRead(rd, lib, time.Since(began))
 	return nil
 }
 
@@ -321,13 +321,8 @@ func listSeries(ctx context.Context, client Plex, server string, lib plex.Librar
 	return items, nil
 }
 
-// logRead logs the fixed rows, the young incomplete items, and the read.
-func (r *Refresher) logRead(rd store.Read, lib plex.Library, fixed []store.Item, took time.Duration) {
-	for _, it := range fixed {
-		log.Info().Str("server", rd.Server).Str("library", lib.Title).Str("title", it.Title).
-			Int("refreshes", it.Refreshes).Msg("Item complete")
-	}
-
+// logRead logs the young incomplete items and the read.
+func (r *Refresher) logRead(rd store.Read, lib plex.Library, took time.Duration) {
 	youngAfter := rd.At.Add(-r.opts.MinimumAge)
 	incomplete := map[string]bool{}
 	for _, it := range rd.Items {

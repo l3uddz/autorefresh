@@ -99,13 +99,28 @@ type serverRun struct {
 	files                map[string][]string // movie files by rating key, from the reads of this run
 	fullReadItems        int                 // items that full reads listed
 	incrementalReadItems int                 // items that incremental reads listed
-	completed            int                 // rows that became complete
+	completed            []completedItem     // rows that became complete, logged after the refresh step
 	fixed                int                 // completed rows that had a request that Plex accepted
 	due                  int
 	refreshes            int // refresh requests sent, also failed ones
 	matches              int // match requests sent, also failed ones
 	failures             int // failed requests and match searches, without 404 answers
 	remaining            int // due items that the limit or a stop kept from this run
+}
+
+// completedItem is a row that a read of the run found complete.
+type completedItem struct {
+	library string // the library title
+	item    store.Item
+}
+
+// logCompleted logs the rows that the reads of the run found complete. It
+// logs them after the refresh step, so they stay next to the summary.
+func logCompleted(run *serverRun) {
+	for _, c := range run.completed {
+		log.Info().Str("server", run.server.Name).Str("library", c.library).Str("title", c.item.Title).
+			Int("refreshes", c.item.Refreshes).Msg("Item complete")
+	}
 }
 
 // sections returns the section IDs of the selected libraries.
@@ -165,6 +180,9 @@ func (r *Refresher) runServer(ctx context.Context, srv Server) error {
 	if readsDone {
 		err = r.refreshDue(ctx, run)
 	}
+	// The reads removed these rows from the cache, so each run logs them,
+	// also a run without a summary.
+	logCompleted(run)
 	// A canceled run logs no summary, also when the server finished without
 	// an error. The store calls do not see ctx, so they can still succeed.
 	if ctxErr := ctx.Err(); ctxErr != nil && (err == nil || errors.Is(err, ctxErr)) {
