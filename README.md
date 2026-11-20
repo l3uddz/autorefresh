@@ -55,8 +55,11 @@ field:
 
 Autorefresh does not refresh an item whose reasons are all ignored, and it
 does not count the item in `incomplete_items`. The item stays in the cache,
-so if you remove the name later, the item is due again at once. If you
-ignore an episode reason, autorefresh does not send its episode request.
+so if you remove the name later, the item counts again at once. It is due
+again when its `minimum-age` and its wait after the last attempt passed.
+
+If you ignore an episode reason, autorefresh does not send its episode
+request. The cached series keep that reason and their refresh history.
 
 ### Full and incremental reads
 
