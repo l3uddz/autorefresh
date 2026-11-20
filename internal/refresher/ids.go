@@ -41,8 +41,12 @@ func parseIDs(paths []string) []pathID {
 	return ids
 }
 
-// parseGroup reads the text inside one bracket group as one ID.
+// parseGroup reads the text inside one bracket group as one ID. A bare IMDb
+// ID, such as tt0115097, is an imdb ID.
 func parseGroup(text string) (pathID, bool) {
+	if imdbValue.MatchString(text) {
+		return pathID{"imdb", strings.ToLower(text)}, true
+	}
 	m := idPattern.FindStringSubmatch(text)
 	if m == nil {
 		return pathID{}, false
