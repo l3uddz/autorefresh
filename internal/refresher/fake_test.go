@@ -21,7 +21,7 @@ type fakePlex struct {
 	paths        map[string][]string         // by rating key
 	pathErrs     map[string]error            // by rating key
 	candidates   map[string][]plex.Candidate // by "<rating key> <search title>"
-	searchErrs   map[string]error            // by rating key
+	searchErrs   map[string]error            // by "<rating key> <search title>", else by rating key
 	refreshErrs  map[string]error            // by rating key
 	matchErrs    map[string]error            // by rating key
 	calls        []string
@@ -89,6 +89,9 @@ func (f *fakePlex) Refresh(_ context.Context, ratingKey string) error {
 // SearchMatches records "SearchMatches <rating key> <title> <agent> <language>".
 func (f *fakePlex) SearchMatches(_ context.Context, ratingKey, title, agent, language string) ([]plex.Candidate, error) {
 	f.record(strings.Join([]string{"SearchMatches", ratingKey, title, agent, language}, " "))
+	if err := f.searchErrs[ratingKey+" "+title]; err != nil {
+		return nil, err
+	}
 	if err := f.searchErrs[ratingKey]; err != nil {
 		return nil, err
 	}

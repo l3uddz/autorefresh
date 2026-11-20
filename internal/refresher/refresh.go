@@ -164,8 +164,11 @@ func (r *Refresher) findMatch(ctx context.Context, srv Server, lib plex.Library,
 			return plex.Candidate{}, false, err
 		}
 		candidates, err := srv.Plex.SearchMatches(ctx, it.RatingKey, id.title(), lib.Agent, lib.Language)
-		if err != nil {
+		if err != nil && !searchFailureIsEmpty(ctx, id, err) {
 			return plex.Candidate{}, false, err
+		}
+		if err != nil {
+			itemEvent(log.Debug(), srv.Name, lib, it).Str("id", id.title()).Err(err).Msg("Match search failed")
 		}
 		itemEvent(log.Debug(), srv.Name, lib, it).Str("id", id.title()).Int("candidates", len(candidates)).
 			Msg("Match search result")
@@ -177,6 +180,17 @@ func (r *Refresher) findMatch(ctx context.Context, srv Server, lib plex.Library,
 		itemEvent(log.Warn(), srv.Name, lib, it).Str("conflict", conflict).Msg("Match conflict")
 	}
 	return cand, match, nil
+}
+
+// searchFailureIsEmpty reports whether a failed search for id counts as a
+// search with no candidate. Plex can answer a tvdb or imdb search with an
+// error once it stops resolving such IDs. An error that stops the server or
+// says that the item is gone keeps its meaning.
+func searchFailureIsEmpty(ctx context.Context, id pathID, err error) bool {
+	if id.Source != "tvdb" && id.Source != "imdb" {
+		return false
+	}
+	return stopError(ctx, err) == nil && !errors.Is(err, plex.ErrNotFound)
 }
 
 // matchSearchFailed handles a failed ItemPaths or SearchMatches request of
