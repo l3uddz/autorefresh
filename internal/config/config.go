@@ -30,12 +30,24 @@ type Config struct {
 	Plex               []Server      `yaml:"plex"`
 }
 
+// DefaultTimeout limits each request to a server without a timeout key.
+const DefaultTimeout = 30 * time.Second
+
 // Server is one Plex server.
 type Server struct {
-	Name      string   `yaml:"name"`
-	URL       string   `yaml:"url"`
-	Token     string   `yaml:"token"`
-	Libraries []string `yaml:"libraries"` // empty: all supported libraries
+	Name      string         `yaml:"name"`
+	URL       string         `yaml:"url"`
+	Token     string         `yaml:"token"`
+	Libraries []string       `yaml:"libraries"` // empty: all supported libraries
+	Timeout   *time.Duration `yaml:"timeout"`   // nil: DefaultTimeout
+}
+
+// RequestTimeout returns the limit of each request to the server.
+func (s Server) RequestTimeout() time.Duration {
+	if s.Timeout == nil {
+		return DefaultTimeout
+	}
+	return *s.Timeout
 }
 
 func defaults() Config {
@@ -201,6 +213,9 @@ func (s Server) validate() error {
 	}
 	if s.Token == "" {
 		return errors.New("token is empty")
+	}
+	if s.RequestTimeout() <= 0 {
+		return errors.New("timeout must be greater than zero")
 	}
 	for _, lib := range s.Libraries {
 		if lib == "" {

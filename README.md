@@ -135,8 +135,9 @@ Runs do not overlap. If a run is still busy when the schedule starts the
 next run, autorefresh skips that start and logs a warning. The first run on
 a large server can take some hours.
 
-If a Plex server does not answer, autorefresh logs an error and skips that
-server for the rest of the run. The other servers continue. If a refresh or
+If a Plex server does not answer within its `timeout`, autorefresh logs an
+error and skips that server for the rest of the run. The other servers
+continue. If a refresh or
 match request fails, autorefresh logs a warning. The failed request counts
 as an attempt. A database error stops the run on all servers.
 
@@ -189,6 +190,7 @@ plex:
   - name: main                    # label for logs and the database
     url: https://plex.example.com
     token: XXXX
+    timeout: 30s                  # optional; the limit of each request to this server
     libraries:                    # optional; if omitted, all movie and show libraries
       - Movies
       - TV
@@ -226,6 +228,11 @@ Each entry in `plex` is one Plex server:
 - `url` is required and must use `http` or `https`.
 - `token` is required. It is the Plex token of the server.
 - `libraries` is optional. It selects libraries by their title.
+- `timeout` is optional. It limits each request to the server. The default
+  is `30s`, and the value must be more than 0. If the answer of a request
+  does not arrive in time, autorefresh skips the server for the rest of the
+  run. A refresh or match request has no content, so its answer is the
+  status. Set a longer timeout for a large server that answers slowly.
 
 With `http`, the token crosses the network in clear text. If the connection
 leaves a trusted network, use `https`.
