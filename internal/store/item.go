@@ -301,8 +301,11 @@ func (s *Store) Due(server string, sections []string, now time.Time, minimumAge,
 	if len(sections) == 0 {
 		return nil, nil
 	}
-	interval := int64(refreshInterval / time.Second)
-	maxWait := max(int64(maxRefreshInterval/time.Second), interval)
+	// The wait is in milliseconds, so a wait such as 1.5s keeps its
+	// fraction. The cutoff is then rounded down to whole seconds, like the
+	// stored times.
+	interval := refreshInterval.Milliseconds()
+	maxWait := max(maxRefreshInterval.Milliseconds(), interval)
 	// doublings is the number of doublings that reach maxWait. The shift in
 	// the query stops there, so it cannot overflow.
 	doublings := 0
@@ -311,12 +314,12 @@ func (s *Store) Due(server string, sections []string, now time.Time, minimumAge,
 	}
 
 	args := append([]any{server}, stringArgs(sections)...)
-	args = append(args, now.Add(-minimumAge).Unix(), now.Unix(), maxWait, interval, doublings)
+	args = append(args, now.Add(-minimumAge).Unix(), now.UnixMilli(), maxWait, interval, doublings)
 
 	items, err := queryItems(s.db, `SELECT `+itemColumns+` FROM item
 		WHERE server = ? AND section IN (`+placeholders(len(sections))+`)
 		AND added_at <= ?
-		AND (last_attempt IS NULL OR last_attempt <= ? - MIN(?, ? << MIN(MAX(refreshes - 1, 0), ?)))
+		AND (last_attempt IS NULL OR last_attempt <= (? - MIN(?, ? << MIN(MAX(refreshes - 1, 0), ?))) / 1000)
 		ORDER BY refreshes, last_attempt IS NOT NULL, last_attempt, added_at, rating_key`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read due items: %w", err)

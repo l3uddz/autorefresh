@@ -324,6 +324,39 @@ func TestDueBacksOffAfterRefreshes(t *testing.T) {
 	}
 }
 
+func TestDueKeepsFractionalSecondWaits(t *testing.T) {
+	tests := []struct {
+		name      string
+		refreshes int
+		interval  time.Duration
+		wait      time.Duration
+	}{
+		{"1.5s after one refresh", 1, 1500 * time.Millisecond, 1500 * time.Millisecond},
+		{"500ms after three refreshes", 3, 500 * time.Millisecond, 2 * time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := openTest(t)
+			apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+			at := base.Add(time.Hour)
+			for range tt.refreshes {
+				if err := s.RecordAttempt(srv, "a", at, true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, c := range []struct {
+				after time.Duration
+				want  int
+			}{{tt.wait - time.Millisecond, 0}, {tt.wait, 1}} {
+				got, err := s.Due(srv, []string{sec}, at.Add(c.after), 0, tt.interval, time.Hour)
+				if err != nil || len(got) != c.want {
+					t.Errorf("Due after %v = %v, %v, want %d items", c.after, got, err, c.want)
+				}
+			}
+		})
+	}
+}
+
 func TestDueWithoutBackoffBelowRefreshInterval(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
