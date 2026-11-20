@@ -665,8 +665,8 @@ func TestCompleteItemLogsFixed(t *testing.T) {
 	wantField(t, fixed[0], "refreshes", float64(2))
 	// Only 101 had a request from autorefresh.
 	summary := f.lastSummary(testServer)
-	wantField(t, summary, "completed", float64(2))
-	wantField(t, summary, "fixed", float64(1))
+	wantField(t, summary, "completed_items", float64(2))
+	wantField(t, summary, "completed_after_request", float64(1))
 }
 
 func TestCompleteItemKeepsEpisodeReason(t *testing.T) {

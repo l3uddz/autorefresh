@@ -136,7 +136,11 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 		return err
 	}
 
-	run.itemsRead += len(items)
+	if rd.Full {
+		run.fullReadItems += len(items)
+	} else {
+		run.incrementalReadItems += len(items)
+	}
 	run.completed += len(fixed)
 	for _, it := range fixed {
 		if it.Refreshes > 0 {

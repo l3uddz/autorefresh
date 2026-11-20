@@ -137,8 +137,8 @@ func TestMaxRefreshesPerRun(t *testing.T) {
 	f.run(t0)
 	wantCalls(t, sends(fp.calls), "Refresh 101", "Refresh 102")
 	summary := f.lastSummary(testServer)
-	wantField(t, summary, "due", float64(3))
-	wantField(t, summary, "remaining", float64(1))
+	wantField(t, summary, "due_items", float64(3))
+	wantField(t, summary, "remaining_items", float64(1))
 
 	fp.calls = nil
 	f.run(t0.Add(24 * time.Hour))
@@ -205,7 +205,7 @@ func TestRefreshNotFoundDeletesRow(t *testing.T) {
 	if rows := f.rows(testServer, "1"); len(rows) != 0 {
 		t.Errorf("rows = %+v, want none", rows)
 	}
-	wantField(t, f.lastSummary(testServer), "failures", float64(0))
+	wantField(t, f.lastSummary(testServer), "failed_requests", float64(0))
 }
 
 func TestRefreshUnavailableStopsServer(t *testing.T) {
@@ -243,9 +243,9 @@ func TestRefreshUnavailableStopsServer(t *testing.T) {
 		t.Errorf("row 102 = %+v, want no attempt", row)
 	}
 	summary := f.lastSummary("down")
-	wantField(t, summary, "refreshes", float64(1))
-	wantField(t, summary, "failures", float64(1))
-	wantField(t, summary, "remaining", float64(1))
+	wantField(t, summary, "refresh_requests", float64(1))
+	wantField(t, summary, "failed_requests", float64(1))
+	wantField(t, summary, "remaining_items", float64(1))
 	if got := len(f.logLines("info", "Run summary")); got != 2 {
 		t.Errorf("got %d summary lines, want 2", got)
 	}
@@ -291,8 +291,8 @@ func TestFixMatchMovie(t *testing.T) {
 		t.Errorf("Refreshes = %d, want 2", row.Refreshes)
 	}
 	summary := f.lastSummary(testServer)
-	wantField(t, summary, "matches", float64(1))
-	wantField(t, summary, "refreshes", float64(0))
+	wantField(t, summary, "match_requests", float64(1))
+	wantField(t, summary, "refresh_requests", float64(0))
 	results := f.logLines("debug", "Match search result")
 	if len(results) != 1 {
 		t.Fatalf("got %d search result lines, want 1", len(results))
@@ -435,7 +435,7 @@ func TestFixMatchReadErrors(t *testing.T) {
 			if errAt < 0 || summaryAt < errAt {
 				t.Errorf("the summary line does not follow the error line:\n%s", logs)
 			}
-			wantField(t, f.lastSummary(testServer), "failures", float64(1))
+			wantField(t, f.lastSummary(testServer), "failed_requests", float64(1))
 		})
 	}
 }
@@ -476,7 +476,7 @@ func TestFailedSearchSendsNothing(t *testing.T) {
 	if row, _ := f.row(testServer, "1", "101"); row.Refreshes != 1 || !row.LastAttempt.Equal(t0) {
 		t.Errorf("row = %+v, want 1 refresh and LastAttempt %v", row, t0)
 	}
-	wantField(t, f.lastSummary(testServer), "remaining", float64(0))
+	wantField(t, f.lastSummary(testServer), "remaining_items", float64(0))
 }
 
 func TestEpisodeReasonGetsPlainRefresh(t *testing.T) {
@@ -555,7 +555,11 @@ func TestDryRunAppliesLimit(t *testing.T) {
 }
 
 func TestSummaryLine(t *testing.T) {
-	fp := newFakePlex(moviesLib)
+	// moviesLib has a full read at seedAt, so it gets an incremental read.
+	// newLib has no full read yet, so it gets a full read.
+	newLib := plex.Library{ID: "3", Title: "New Movies", Type: "movie", Agent: "tv.plex.agents.movie", Language: "en-US"}
+	fp := newFakePlex(moviesLib, newLib)
+	fp.lists["3?type=1"] = []plex.Item{completeItem("301"), completeItem("302")}
 	since := unixString(seedAt.Add(-oversample))
 	fp.lists["1?type=1&updatedAt>>="+since] = []plex.Item{completeItem("101")}
 	fp.paths["103"] = []string{"/m/Film (2020) {tmdb-3}/Film.mkv"}
@@ -573,8 +577,9 @@ func TestSummaryLine(t *testing.T) {
 	wantCalls(t, sends(fp.calls), "Refresh 102", "Match 103 plex://movie/a")
 	summary := f.lastSummary(testServer)
 	for field, want := range map[string]float64{
-		"items": 1, "incomplete": 3, "due": 3, "refreshes": 1, "matches": 1, "failures": 1, "completed": 1,
-		"remaining": 0, "fixed": 1,
+		"full_read_items": 2, "incremental_read_items": 1, "incomplete_items": 3, "due_items": 3,
+		"refresh_requests": 1, "match_requests": 1, "failed_requests": 1, "remaining_items": 0,
+		"completed_items": 1, "completed_after_request": 1,
 	} {
 		wantField(t, summary, field, want)
 	}
@@ -663,8 +668,8 @@ func TestMatchFailureRecordsAttemptOnly(t *testing.T) {
 	wantField(t, warnings[0], "title", "Title 101")
 	wantField(t, warnings[0], "action", "match")
 	summary := f.lastSummary(testServer)
-	wantField(t, summary, "matches", float64(1))
-	wantField(t, summary, "failures", float64(1))
+	wantField(t, summary, "match_requests", float64(1))
+	wantField(t, summary, "failed_requests", float64(1))
 }
 
 func TestAttemptTimeIsRequestTime(t *testing.T) {

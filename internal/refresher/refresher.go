@@ -87,18 +87,19 @@ func sleep(ctx context.Context, d time.Duration) error {
 
 // serverRun is the state of one server in one run.
 type serverRun struct {
-	server    Server
-	began     time.Time
-	libraries []plex.Library      // the selected libraries
-	files     map[string][]string // movie files by rating key, from the reads of this run
-	itemsRead int
-	completed int // rows that became complete
-	fixed     int // completed rows that had a request that Plex accepted
-	due       int
-	refreshes int // refresh requests sent, also failed ones
-	matches   int // match requests sent, also failed ones
-	failures  int // failed requests and match searches, without 404 answers
-	remaining int // due items that the limit or a stop kept from this run
+	server               Server
+	began                time.Time
+	libraries            []plex.Library      // the selected libraries
+	files                map[string][]string // movie files by rating key, from the reads of this run
+	fullReadItems        int                 // items that full reads listed
+	incrementalReadItems int                 // items that incremental reads listed
+	completed            int                 // rows that became complete
+	fixed                int                 // completed rows that had a request that Plex accepted
+	due                  int
+	refreshes            int // refresh requests sent, also failed ones
+	matches              int // match requests sent, also failed ones
+	failures             int // failed requests and match searches, without 404 answers
+	remaining            int // due items that the limit or a stop kept from this run
 }
 
 // sections returns the section IDs of the selected libraries.
