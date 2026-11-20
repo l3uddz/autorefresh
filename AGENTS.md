@@ -16,7 +16,7 @@ When the design adds packages or rules, update this file.
 
 | Path | Content |
 | --- | --- |
-| `cmd/autorefresh/` | CLI entry point. It holds the flags, the default paths, logging, and the wait for the configuration file. The flags are `--config`, `--database`, `--dry-run`, `--once`, `--log`, `-v`, and `--version`. It wires the internal packages together. It runs the refresher once with `--once`, or on the `schedule` cron with one run at a time. SIGINT and SIGTERM cancel the run and stop the schedule. |
+| `cmd/autorefresh/` | CLI entry point. It holds the flags, the default paths, logging, and the wait for the configuration file. The flags are `--config`, `--database`, `--dry-run`, `--once`, `--log`, `-v`, and `--version`. It wires the internal packages together. It runs the refresher once with `--once`. Otherwise it checks the token of each Plex server once and runs the refresher on the `schedule` cron with one run at a time. SIGINT and SIGTERM cancel the run and stop the schedule. |
 | `internal/config/` | Configuration types, defaults, loading, and validation |
 | `internal/plex/` | Plex API client: list libraries and items, get item paths, refresh, search matches, and apply a match |
 | `internal/store/` | SQLite cache of incomplete items and the read times of each library |

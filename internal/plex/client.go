@@ -28,6 +28,9 @@ var (
 	ErrUnavailable = errors.New("plex server unavailable")
 	// ErrNotFound marks a 404 status.
 	ErrNotFound = errors.New("plex item not found")
+	// ErrUnauthorized marks a 401 status, which means that the server
+	// rejected the token. It also wraps ErrUnavailable.
+	ErrUnauthorized = errors.New("plex token rejected")
 )
 
 var ratingKeyPattern = regexp.MustCompile(`^[0-9]+$`)
@@ -113,8 +116,9 @@ func statusError(res *http.Response) error {
 
 	status := fmt.Sprintf("%d %s", res.StatusCode, http.StatusText(res.StatusCode))
 	switch res.StatusCode {
-	case http.StatusUnauthorized, http.StatusBadGateway,
-		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+	case http.StatusUnauthorized:
+		return fmt.Errorf("%s: %w: %w", status, ErrUnauthorized, ErrUnavailable)
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		return fmt.Errorf("%s: %w", status, ErrUnavailable)
 	case http.StatusNotFound:
 		return fmt.Errorf("%s: %w", status, ErrNotFound)

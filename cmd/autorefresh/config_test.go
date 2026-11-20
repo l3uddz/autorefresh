@@ -94,7 +94,8 @@ func captureLog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
 	original := log.Logger
-	log.Logger = zerolog.New(&buf)
+	// Some tests log from several goroutines.
+	log.Logger = zerolog.New(zerolog.SyncWriter(&buf))
 	t.Cleanup(func() {
 		log.Logger = original
 	})

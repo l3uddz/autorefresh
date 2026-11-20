@@ -133,7 +133,9 @@ func main() {
 		return
 	}
 
-	// schedule. The first run waits for the schedule.
+	// schedule. The first run waits for the schedule, so a check of each
+	// server shows a wrong token or URL at once.
+	checkServers(ctx, servers)
 	run := &runner{run: r.Run}
 	c := cron.New()
 	if _, err := c.AddFunc(cfg.Schedule, func() { run.start(ctx) }); err != nil {
