@@ -405,8 +405,13 @@ func TestTimeoutLimitsRequest(t *testing.T) {
 	t.Cleanup(func() { close(release) })
 
 	c := New("test", srv.URL, testToken, 50*time.Millisecond)
+	start := time.Now()
 	err := c.Refresh(context.Background(), "1001")
 	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "request timed out") {
 		t.Fatalf("Refresh error = %v, want a timeout that wraps ErrUnavailable", err)
+	}
+	// The default of 30s would take much longer.
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("Refresh took %v, want about 50ms", took)
 	}
 }
