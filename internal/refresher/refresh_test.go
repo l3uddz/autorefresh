@@ -200,12 +200,15 @@ func TestWarnAtLongestWait(t *testing.T) {
 
 func TestNoLongestWaitWarningWithoutBackoff(t *testing.T) {
 	fp := newFakePlex(moviesLib)
-	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.opts.MaxRefreshInterval = f.r.opts.RefreshInterval
+	// 101 gets its first refresh, and 102 its third.
+	f.seed(testServer, moviesLib, incompleteItem("101"), store.NoSummary, 0)
+	f.seed(testServer, moviesLib, incompleteItem("102"), store.NoSummary, 2)
 
 	f.run(t0)
 
-	wantCalls(t, sends(fp.calls), "Refresh 101")
+	wantCalls(t, sends(fp.calls), "Refresh 101", "Refresh 102")
 	if lines := f.logLines("warn", "Item reached the longest wait"); len(lines) != 0 {
 		t.Errorf("got longest wait lines %v, want none", lines)
 	}
