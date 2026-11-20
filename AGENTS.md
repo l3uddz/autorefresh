@@ -79,6 +79,8 @@ changes the committed files, CI fails.
 
 `mise run lint` runs `gofmt` on tracked Go files and then `go vet ./...`. If
 `gofmt` lists a file, the task fails. A lint failure fails the `build` job.
+If `gofmt` lists a file, run `mise run format`. It runs `go fmt ./...`,
+which rewrites the Go files of the module in the `gofmt` format.
 
 `mise run build` makes a local binary in `dist/`.
 `mise run snapshot` makes the release binaries in `dist/` with goreleaser.

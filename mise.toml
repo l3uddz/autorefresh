@@ -14,6 +14,11 @@ run = ["go get -u ./...", { task = "vendor" }]
 description = "Run the Go tests with the race detector"
 run = "go test ./... -cover -v -race"
 
+[tasks.format]
+description = "Format the Go files with gofmt"
+# go fmt skips vendor/.
+run = "go fmt ./..."
+
 [tasks.lint]
 description = "Check gofmt formatting and run go vet"
 # gofmt -l exits 0 even when it lists files, so fail on any output.
