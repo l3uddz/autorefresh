@@ -152,7 +152,7 @@ plain refresh.
    item. An ID is in curly brackets, square brackets, or parentheses, for
    example `{tmdb-747059}`, `[imdb:tt19120100]`, or `(tvdb-463649)`.
    The sources are `imdb`, `tmdb`, and `tvdb`, also with an `id` suffix such
-   as `imdbid`.
+   as `imdbid`. A bare IMDb ID such as `{tt0115097}` is an `imdb` ID too.
 2. It searches Plex once for each ID. These searches are reads, and
    autorefresh does not wait `refresh-delay` between them.
 3. If every ID with a result found exactly one candidate, and all of these
