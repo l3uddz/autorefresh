@@ -365,11 +365,52 @@ The image sets these paths in the `/config` volume:
 Put `config.yml` in the directory that you mount at `/config`. Set `TZ` to
 choose the time zone of `schedule` and `cache-refresh`.
 
+The image does not run as root. Its default user is `65532:65532`. Set your
+own user and group with `--user`, or with `user:` in compose. That user must
+own the directory that you mount at `/config`, because autorefresh writes
+the database and the log file there.
+
 ```sh
 docker run -d --name autorefresh \
+  --user 1000:1000 \
   -e TZ=Europe/London \
   -v /opt/autorefresh:/config \
   l3uddz/autorefresh:main
+```
+
+```yaml
+services:
+  autorefresh:
+    image: l3uddz/autorefresh:main
+    container_name: autorefresh
+    restart: unless-stopped
+    user: 1000:1000
+    environment:
+      - TZ=Europe/London
+    volumes:
+      - /opt/autorefresh:/config
+```
+
+If an earlier image ran as root, root owns the files in `/config`. Before
+you start the new image, give them to the user that the container runs as.
+If you set `--user 1000:1000` or `user: 1000:1000`, as in the examples:
+
+```sh
+sudo chown -R 1000:1000 /opt/autorefresh
+```
+
+If you set no user, the container runs as the default user:
+
+```sh
+sudo chown -R 65532:65532 /opt/autorefresh
+```
+
+If you mount a named volume at `/config` instead of a directory, change the
+owner inside the volume. This example uses the volume `autorefresh` and the
+default user. Use your own volume name and user:
+
+```sh
+docker run --rm -v autorefresh:/config alpine chown -R 65532:65532 /config
 ```
 
 | Tag | Content |
