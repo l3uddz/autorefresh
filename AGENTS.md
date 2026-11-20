@@ -137,8 +137,14 @@ as `fix/<issue>-<slug>`, runs CI only after you open a PR into `main`.
   PR title that does not use the Conventional Commits format.
 - If you fix a CodeRabbit finding, reply in its thread. Do not post
   `@coderabbitai approve` or `@coderabbitai resolve` to get an approval.
-- A human approves and merges every PR into `main`. Do not approve, merge,
-  or enable auto-merge for these PRs.
+- Contributors do not approve, merge, or enable auto-merge for a PR into
+  `main`. The maintainer, `l3uddz`, merges it after CodeRabbit approves and
+  the `build` check passes.
+- One exception applies only to the maintainer's own PRs. If `l3uddz` opened
+  the PR, an agent that works for the maintainer enables auto-merge with a
+  merge commit. GitHub then merges the PR after CodeRabbit approves and the
+  `build` check passes. The agent still never approves a PR and never
+  bypasses the ruleset.
 - In a PR into `main`, use `Closes #<id>` only for issues that the PR
   delivers.
 
