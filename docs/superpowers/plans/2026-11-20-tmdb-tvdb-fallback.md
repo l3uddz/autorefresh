@@ -99,15 +99,26 @@ func TestApplyReadMovesItemToNewLibrary(t *testing.T)
 // refreshes, and no error.
 ```
 
-Existing prune tests in `internal/store` and `internal/refresher/prune_test.go`
-prove the cascade once Step 3 removes the explicit item delete.
+The cache cleanup of PR #61 needs a review here, because foreign keys make
+two of its parts redundant. Its item deletes become the cascade, and its
+count query no longer needs to find item rows without a `library` row. The
+existing prune tests in `internal/store` and
+`internal/refresher/prune_test.go` keep the behavior and the `Items`
+counts. Add one test for the migrated case:
+
+```go
+func TestPruneRemovesMigratedLibrary(t *testing.T)
+// The setup of TestMigrationKeepsItemsWithoutLibrary, then
+// PruneSections("home", nil). Want []Pruned{{"home", "9", 1}} and no
+// item rows of "home".
+```
 
 - [ ] **Step 2: Run the tests and see them fail**
 
-Run: `go test ./internal/store/ -run 'ForeignKeys|WithoutLibrary|NeedsLibrary|SecondRead|NewLibrary'`
+Run: `go test ./internal/store/ -run 'ForeignKeys|WithoutLibrary|NeedsLibrary|SecondRead|NewLibrary|MigratedLibrary'`
 Expected: `TestOpenEnablesForeignKeys` and `TestItemNeedsLibrary` fail.
 `TestMigrationKeepsItemsWithoutLibrary` fails on `foreign_key_check`. The
-other two can pass already and guard the change.
+other three can pass already and guard the change.
 
 - [ ] **Step 3: Implement**
 
@@ -124,7 +135,11 @@ other two can pass already and guard the change.
 - `ApplyRead`: call `writeReadTimes` before the item writes. Keep its
   `INSERT … ON CONFLICT DO UPDATE` form.
 - `prune`: delete only the `library` rows. The cascade deletes the items.
-  `Pruned.Items` still comes from the count query.
+  Replace the `UNION ALL` count query with `library LEFT JOIN item` on
+  `(server, section)` and `COUNT(item.rating_key)`, grouped by server and
+  section and still filtered by `?1`. Each item now has a `library` row,
+  so the join finds every library with items. Update the comments of
+  `PruneServers`, `PruneSections`, and `prune`.
 
 - [ ] **Step 4: Run all checks**
 
