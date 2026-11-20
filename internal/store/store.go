@@ -5,6 +5,7 @@ package store
 import (
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"path"
 	"sort"
@@ -31,6 +32,18 @@ func Open(file string) (*Store, error) {
 	}
 	// One connection serializes all statements, so writers never collide.
 	db.SetMaxOpenConns(1)
+
+	// The cache cleanup relies on the cascade of the foreign keys. A "?" in
+	// the path turns them off without an error, so check them.
+	var foreignKeys int
+	if err := db.QueryRow(`PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	if foreignKeys != 1 {
+		db.Close()
+		return nil, errors.New(`open database: foreign keys are off; the path must not contain "?"`)
+	}
 
 	if err := migrate(db); err != nil {
 		db.Close()

@@ -113,12 +113,26 @@ func openVersion1(t *testing.T) string {
 	return file
 }
 
+// libraryRows returns the number of library rows of server and section.
+func libraryRows(t *testing.T, s *Store, server, section string) int {
+	t.Helper()
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM library WHERE server = ? AND section = ?`, server, section).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
 func TestMigrationKeepsItemsWithoutLibrary(t *testing.T) {
 	s, err := Open(openVersion1(t))
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	defer s.Close()
+
+	if n := libraryRows(t, s, "home", "9"); n != 1 {
+		t.Fatalf("library rows of home/9 = %d, want 1", n)
+	}
 
 	items, err := s.Unseen("home", "9", nil)
 	if err != nil {
@@ -150,6 +164,9 @@ func TestPruneRemovesMigratedLibrary(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	defer s.Close()
+	if n := libraryRows(t, s, "home", "9"); n != 1 {
+		t.Fatalf("library rows of home/9 = %d, want 1", n)
+	}
 
 	pruned, err := s.PruneSections("home", nil)
 	if err != nil {
@@ -169,5 +186,15 @@ func TestItemNeedsLibrary(t *testing.T) {
 		VALUES ('home', '9', '101', 'movie', 'Title 101', 2020, 1000, 2)`)
 	if err == nil {
 		t.Fatal("insert of an item without a library row succeeded")
+	}
+}
+
+// A "?" in the path ends the file name for the driver, and the rest turns
+// into parameters, so foreign keys would be off without an error.
+func TestOpenRejectsPathWithoutForeignKeys(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "we?rd.db"))
+	if err == nil {
+		s.Close()
+		t.Fatal("Open succeeded, want an error")
 	}
 }
