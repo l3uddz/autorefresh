@@ -108,6 +108,11 @@ as `fix/<issue>-<slug>`, runs CI only after you open a PR into `main`.
 - If someone pushes a `v*` tag, CI publishes a GitHub release and the Docker
   tags `<version>` and `latest`. Do not create or push tags unless the user
   asks for a release.
+- The release notes list the commit subjects since the previous tag. The
+  `changelog` section of `.goreleaser.yml` groups them by Conventional Commit
+  type: breaking changes, features, bug fixes, performance, and other
+  changes. It leaves out `docs` and `test` commits and merge commits. A
+  commit subject therefore appears in the release notes as you write it.
 
 ## Delivery
 
