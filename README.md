@@ -228,10 +228,11 @@ Each entry in `plex` is one Plex server:
 - `url` is required and must use `http` or `https`.
 - `token` is required. It is the Plex token of the server.
 - `libraries` is optional. It selects libraries by their title.
-- `timeout` is optional. It limits each request to the server, with the
-  answer. The default is `30s`, and the value must be more than 0. If a
-  request takes longer, autorefresh skips the server for the rest of the
-  run. Set a longer timeout for a large server that answers slowly.
+- `timeout` is optional. It limits each request to the server. The default
+  is `30s`, and the value must be more than 0. If the answer of a request
+  does not arrive in time, autorefresh skips the server for the rest of the
+  run. A refresh or match request has no content, so its answer is the
+  status. Set a longer timeout for a large server that answers slowly.
 
 With `http`, the token crosses the network in clear text. If the connection
 leaves a trusted network, use `https`.
