@@ -574,7 +574,7 @@ func TestSummaryLine(t *testing.T) {
 	summary := f.lastSummary(testServer)
 	for field, want := range map[string]float64{
 		"items": 1, "incomplete": 3, "due": 3, "refreshes": 1, "matches": 1, "failures": 1, "completed": 1,
-		"remaining": 0,
+		"remaining": 0, "fixed": 1,
 	} {
 		wantField(t, summary, field, want)
 	}

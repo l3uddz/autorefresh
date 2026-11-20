@@ -138,6 +138,11 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 
 	run.itemsRead += len(items)
 	run.completed += len(fixed)
+	for _, it := range fixed {
+		if it.Refreshes > 0 {
+			run.fixed++
+		}
+	}
 	if !rd.Shows {
 		for _, it := range items {
 			run.files[it.RatingKey] = it.Files

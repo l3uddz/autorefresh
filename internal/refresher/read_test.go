@@ -644,25 +644,29 @@ func TestCancelStopsRunQuietly(t *testing.T) {
 
 func TestCompleteItemLogsFixed(t *testing.T) {
 	fp := newFakePlex(moviesLib)
-	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
+	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102")}
 	f := newFixture(t, Server{Name: testServer, Plex: fp})
 	f.run(t0)
 	f.refreshed("101", 2)
 
-	fp.lists["1?type=1&updatedAt>>="+unixString(t0.Add(-oversample))] = []plex.Item{completeItem("101")}
+	fp.lists["1?type=1&updatedAt>>="+unixString(t0.Add(-oversample))] = []plex.Item{completeItem("101"), completeItem("102")}
 	f.run(t0.Add(time.Hour))
 
 	if rows := f.rows(testServer, "1"); len(rows) != 0 {
 		t.Errorf("rows = %+v, want none", rows)
 	}
 	fixed := f.logLines("info", "Item complete")
-	if len(fixed) != 1 {
-		t.Fatalf("got %d complete lines, want 1", len(fixed))
+	if len(fixed) != 2 {
+		t.Fatalf("got %d complete lines, want 2", len(fixed))
 	}
 	wantField(t, fixed[0], "server", testServer)
 	wantField(t, fixed[0], "library", "Movies")
 	wantField(t, fixed[0], "title", "Title 101")
 	wantField(t, fixed[0], "refreshes", float64(2))
+	// Only 101 had a request from autorefresh.
+	summary := f.lastSummary(testServer)
+	wantField(t, summary, "completed", float64(2))
+	wantField(t, summary, "fixed", float64(1))
 }
 
 func TestCompleteItemKeepsEpisodeReason(t *testing.T) {
