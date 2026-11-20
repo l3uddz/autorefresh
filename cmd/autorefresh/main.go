@@ -101,6 +101,7 @@ func main() {
 	r := refresher.New(servers, st, refresher.Options{
 		MinimumAge:         cfg.MinimumAge,
 		RefreshInterval:    cfg.RefreshInterval,
+		MaxRefreshInterval: cfg.MaxRefreshInterval,
 		Oversample:         cfg.Oversample,
 		RefreshDelay:       cfg.RefreshDelay,
 		CacheRefresh:       cacheRefresh,

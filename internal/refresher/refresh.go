@@ -28,7 +28,8 @@ func (r *Refresher) refreshDue(ctx context.Context, run *serverRun) error {
 		s.libraries[lib.ID] = lib
 	}
 
-	due, err := r.store.Due(run.server.Name, run.sections(), r.now(), r.opts.MinimumAge, r.opts.RefreshInterval)
+	due, err := r.store.Due(run.server.Name, run.sections(), r.now(), r.opts.MinimumAge,
+		r.opts.RefreshInterval, r.opts.MaxRefreshInterval)
 	if err != nil {
 		return err
 	}

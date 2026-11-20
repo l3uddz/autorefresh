@@ -27,6 +27,9 @@ func TestDecodeAppliesDefaults(t *testing.T) {
 	if cfg.RefreshInterval != 12*time.Hour {
 		t.Errorf("RefreshInterval = %v", cfg.RefreshInterval)
 	}
+	if cfg.MaxRefreshInterval != 168*time.Hour {
+		t.Errorf("MaxRefreshInterval = %v", cfg.MaxRefreshInterval)
+	}
 	if cfg.CacheRefresh != "0 3 * * 0" {
 		t.Errorf("CacheRefresh = %q", cfg.CacheRefresh)
 	}
@@ -46,6 +49,7 @@ func TestDecodeReadsAllKeys(t *testing.T) {
 schedule: "30 * * * *"
 minimum-age: 36h
 refresh-interval: 6h
+max-refresh-interval: 72h
 cache-refresh: "0 4 * * 1"
 oversample: 24h
 refresh-delay: 2s
@@ -67,6 +71,9 @@ plex:
 	}
 	if cfg.MinimumAge != 36*time.Hour || cfg.RefreshInterval != 6*time.Hour {
 		t.Errorf("ages = %v, %v", cfg.MinimumAge, cfg.RefreshInterval)
+	}
+	if cfg.MaxRefreshInterval != 72*time.Hour {
+		t.Errorf("MaxRefreshInterval = %v", cfg.MaxRefreshInterval)
 	}
 	if cfg.Oversample != 24*time.Hour || cfg.RefreshDelay != 2*time.Second {
 		t.Errorf("oversample, delay = %v, %v", cfg.Oversample, cfg.RefreshDelay)
@@ -114,6 +121,7 @@ func TestDecodeRejectsInvalidConfig(t *testing.T) {
 		{"empty token", "plex:\n  - name: a\n    url: http://plex.example.invalid\n    token: \"\"\n"},
 		{"invalid schedule", "schedule: every hour\n" + minimalServer},
 		{"zero refresh interval", "refresh-interval: 0s\n" + minimalServer},
+		{"negative max refresh interval", "max-refresh-interval: -1h\n" + minimalServer},
 		{"cache refresh not cron", "cache-refresh: 168h\n" + minimalServer},
 		{"schedule never fires", "schedule: \"0 0 30 2 *\"\n" + minimalServer},
 		{"cache refresh never fires", "cache-refresh: \"0 0 30 2 *\"\n" + minimalServer},

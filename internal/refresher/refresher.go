@@ -27,7 +27,7 @@ type Store interface {
 	Library(server, section string) (store.Library, error)
 	ApplyRead(r store.Read) (fixed []store.Item, err error)
 	Unseen(server, section string, seen []string) ([]store.Item, error)
-	Due(server string, sections []string, now time.Time, minimumAge, refreshInterval time.Duration) ([]store.Item, error)
+	Due(server string, sections []string, now time.Time, minimumAge, refreshInterval, maxRefreshInterval time.Duration) ([]store.Item, error)
 	CountIncomplete(server string, sections []string) (int, error)
 	RecordAttempt(server, ratingKey string, at time.Time, refreshed bool) error
 	Delete(server, ratingKey string) error
@@ -46,6 +46,7 @@ type Schedule interface{ Next(time.Time) time.Time }
 // Options holds the rules of a run.
 type Options struct {
 	MinimumAge, RefreshInterval, Oversample, RefreshDelay time.Duration
+	MaxRefreshInterval                                    time.Duration // below RefreshInterval: no backoff
 	CacheRefresh                                          Schedule
 	MaxRefreshesPerRun                                    int // 0: no limit
 	DryRun                                                bool

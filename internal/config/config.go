@@ -19,6 +19,7 @@ type Config struct {
 	Schedule           string        `yaml:"schedule"`
 	MinimumAge         time.Duration `yaml:"minimum-age"`
 	RefreshInterval    time.Duration `yaml:"refresh-interval"`
+	MaxRefreshInterval time.Duration `yaml:"max-refresh-interval"`
 	CacheRefresh       string        `yaml:"cache-refresh"` // cron expression
 	Oversample         time.Duration `yaml:"oversample"`
 	RefreshDelay       time.Duration `yaml:"refresh-delay"`
@@ -36,12 +37,13 @@ type Server struct {
 
 func defaults() Config {
 	return Config{
-		Schedule:        "0 * * * *",
-		MinimumAge:      24 * time.Hour,
-		RefreshInterval: 12 * time.Hour,
-		CacheRefresh:    "0 3 * * 0",
-		Oversample:      48 * time.Hour,
-		RefreshDelay:    5 * time.Second,
+		Schedule:           "0 * * * *",
+		MinimumAge:         24 * time.Hour,
+		RefreshInterval:    12 * time.Hour,
+		MaxRefreshInterval: 7 * 24 * time.Hour,
+		CacheRefresh:       "0 3 * * 0",
+		Oversample:         48 * time.Hour,
+		RefreshDelay:       5 * time.Second,
 	}
 }
 
@@ -117,6 +119,9 @@ func (c Config) validate() error {
 	}
 	if c.RefreshInterval <= 0 {
 		return errors.New("refresh-interval must be greater than zero")
+	}
+	if c.MaxRefreshInterval < 0 {
+		return errors.New("max-refresh-interval must not be negative")
 	}
 	if c.MinimumAge < 0 {
 		return errors.New("minimum-age must not be negative")
