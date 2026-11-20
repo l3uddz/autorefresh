@@ -410,7 +410,7 @@ func (s *Store) PruneServers(servers []string) ([]Pruned, error) {
 	for _, name := range servers {
 		keep[name] = true
 	}
-	return s.prune(func(server, _ string) bool { return !keep[server] })
+	return s.prune("", func(server, _ string) bool { return !keep[server] })
 }
 
 // PruneSections removes the item rows and the read times of each section of
@@ -420,13 +420,14 @@ func (s *Store) PruneSections(server string, sections []string) ([]Pruned, error
 	for _, section := range sections {
 		keep[section] = true
 	}
-	return s.prune(func(srv, section string) bool { return srv == server && !keep[section] })
+	return s.prune(server, func(_, section string) bool { return !keep[section] })
 }
 
 // prune removes the item rows and the read times of each library for which
-// remove is true, in one transaction. It returns the removed libraries,
+// remove is true, in one transaction. It reads only the libraries of server,
+// or of all servers if server is "". It returns the removed libraries,
 // ordered by server and section.
-func (s *Store) prune(remove func(server, section string) bool) ([]Pruned, error) {
+func (s *Store) prune(server string, remove func(server, section string) bool) ([]Pruned, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("begin prune: %w", err)
@@ -434,10 +435,10 @@ func (s *Store) prune(remove func(server, section string) bool) ([]Pruned, error
 	defer tx.Rollback()
 
 	rows, err := tx.Query(`SELECT server, section, SUM(n) FROM (
-			SELECT server, section, 0 AS n FROM library
+			SELECT server, section, 0 AS n FROM library WHERE ?1 = '' OR server = ?1
 			UNION ALL
-			SELECT server, section, 1 FROM item
-		) GROUP BY server, section ORDER BY server, section`)
+			SELECT server, section, 1 FROM item WHERE ?1 = '' OR server = ?1
+		) GROUP BY server, section ORDER BY server, section`, server)
 	if err != nil {
 		return nil, fmt.Errorf("read libraries: %w", err)
 	}
