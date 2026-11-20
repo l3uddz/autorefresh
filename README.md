@@ -286,6 +286,19 @@ If autorefresh gets SIGINT or SIGTERM, it stops the schedule and cancels the
 busy run. The run stops before its next request to Plex. Autorefresh then
 closes the database and exits.
 
+Without `--once`, autorefresh lists the libraries of each Plex server once
+at the start, before the first scheduled run. A wrong token or URL then
+shows at once:
+
+- If the server accepts the token, autorefresh logs the number of
+  libraries at info level.
+- If the server rejects the token, autorefresh logs a `Plex server rejected
+  the token` error.
+- If the server does not answer, autorefresh logs a warning.
+
+In each case autorefresh keeps the schedule, because Plex can still be
+starting.
+
 ## Dry run
 
 Use `--dry-run` to see what a run will do before it changes anything. A dry
@@ -316,9 +329,9 @@ deletes files after 14 days.
 | Level | Content |
 | --- | --- |
 | `fatal` | Problems that stop the program at the start, such as an invalid configuration or a database that does not open |
-| `error` | Problems that stop a run or the checks of a server, such as a database error or a Plex server that does not answer |
+| `error` | Problems that stop a run or the checks of a server, such as a database error or a Plex server that does not answer, and a token that a Plex server rejects at the start |
 | `warn` | Problems that autorefresh survives, such as a failed request, a match conflict, a skipped library, a skipped scheduled start, or an item that reached the longest wait |
-| `info` | The start, each request that autorefresh sends, each item that becomes complete, each removed library cache, and one summary line for each server at the end of a run |
+| `info` | The start, each Plex server that accepts its token at the start, each request that autorefresh sends, each item that becomes complete, each removed library cache, and one summary line for each server at the end of a run |
 | `debug` | Each library read, items that `minimum-age` skips, and match search results |
 | `trace` | Each HTTP request |
 

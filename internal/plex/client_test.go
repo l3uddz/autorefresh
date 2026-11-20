@@ -147,16 +147,17 @@ func TestRejectsInvalidRatingKey(t *testing.T) {
 
 func TestStatusMapping(t *testing.T) {
 	tests := []struct {
-		status      int
-		unavailable bool
-		notFound    bool
+		status       int
+		unavailable  bool
+		notFound     bool
+		unauthorized bool
 	}{
-		{http.StatusUnauthorized, true, false},
-		{http.StatusBadGateway, true, false},
-		{http.StatusServiceUnavailable, true, false},
-		{http.StatusGatewayTimeout, true, false},
-		{http.StatusNotFound, false, true},
-		{http.StatusInternalServerError, false, false},
+		{http.StatusUnauthorized, true, false, true},
+		{http.StatusBadGateway, true, false, false},
+		{http.StatusServiceUnavailable, true, false, false},
+		{http.StatusGatewayTimeout, true, false, false},
+		{http.StatusNotFound, false, true, false},
+		{http.StatusInternalServerError, false, false, false},
 	}
 	for _, tt := range tests {
 		t.Run(http.StatusText(tt.status), func(t *testing.T) {
@@ -171,6 +172,9 @@ func TestStatusMapping(t *testing.T) {
 			}
 			if got := errors.Is(err, ErrNotFound); got != tt.notFound {
 				t.Errorf("Is ErrNotFound = %v, want %v", got, tt.notFound)
+			}
+			if got := errors.Is(err, ErrUnauthorized); got != tt.unauthorized {
+				t.Errorf("Is ErrUnauthorized = %v, want %v", got, tt.unauthorized)
 			}
 		})
 	}
