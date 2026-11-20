@@ -106,6 +106,13 @@ Autorefresh never gives up. It tries an incomplete item again after each
 wait until the item is complete or gone from Plex. If you set
 `max-refresh-interval` to `refresh-interval` or less, the wait never grows.
 
+When Plex accepts the refresh that moves an item to the longest wait,
+autorefresh logs an `Item reached the longest wait` warning. The line has
+the server, the library, the title, the reasons, the number of refreshes,
+and the wait. Each item reaches the longest wait once, so it gets one
+warning, and `max-refreshes-per-run` limits these warnings in each run. If
+the wait never grows, autorefresh logs no such warning.
+
 Each run refreshes the due items in this order:
 
 1. Items with the fewest refreshes. A refresh is a refresh or match request
@@ -280,7 +287,7 @@ deletes files after 14 days.
 | --- | --- |
 | `fatal` | Problems that stop the program at the start, such as an invalid configuration or a database that does not open |
 | `error` | Problems that stop a run or the checks of a server, such as a database error or a Plex server that does not answer |
-| `warn` | Problems that autorefresh survives, such as a failed request, a match conflict, a skipped library, or a skipped scheduled start |
+| `warn` | Problems that autorefresh survives, such as a failed request, a match conflict, a skipped library, a skipped scheduled start, or an item that reached the longest wait |
 | `info` | The start, each request that autorefresh sends, each item that becomes complete, and one summary line for each server at the end of a run |
 | `debug` | Each library read, items that `minimum-age` skips, and match search results |
 | `trace` | Each HTTP request |

@@ -106,6 +106,7 @@ func (r *Refresher) refreshItem(ctx context.Context, s *refreshStep, it store.It
 			return err
 		}
 		itemEvent(log.Info(), name, lib, it).Str("action", action).Msg("Sent request")
+		r.warnAtLongestWait(name, lib, it)
 		return nil
 	}
 	if ctx.Err() == nil && errors.Is(err, plex.ErrNotFound) {
@@ -122,6 +123,18 @@ func (r *Refresher) refreshItem(ctx context.Context, s *refreshStep, it store.It
 	}
 	itemEvent(log.Warn(), name, lib, it).Str("action", action).Err(err).Msg("Request failed")
 	return stopError(ctx, err)
+}
+
+// warnAtLongestWait logs a warning if the refresh that Plex just accepted
+// moves the item to the longest wait. Each item reaches it once, so it gets
+// one warning.
+func (r *Refresher) warnAtLongestWait(server string, lib plex.Library, it store.Item) {
+	n := store.LongestWaitRefreshes(r.opts.RefreshInterval, r.opts.MaxRefreshInterval)
+	if n == 0 || it.Refreshes+1 != n {
+		return
+	}
+	itemEvent(log.Warn(), server, lib, it).Int("refreshes", n).Dur("wait", r.opts.MaxRefreshInterval).
+		Msg("Item reached the longest wait")
 }
 
 // findMatch returns the candidate of a fix match. match is false for a plain
