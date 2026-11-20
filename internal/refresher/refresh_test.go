@@ -302,7 +302,7 @@ func TestRefreshUnavailableStopsServer(t *testing.T) {
 	up.lists["1?type=1"] = []plex.Item{incompleteItem("201")}
 	f := newRefreshFixture(t, Server{Name: "down", Plex: down}, Server{Name: "up", Plex: up})
 
-	f.run(t0)
+	f.runUnavailable(t0)
 
 	wantCalls(t, sends(down.calls), "Refresh 101")
 	wantCalls(t, sends(up.calls), "Refresh 201")
@@ -490,7 +490,11 @@ func TestFixMatchReadErrors(t *testing.T) {
 			f.seed(testServer, showsLib, unmatchedItem("201"), store.Unmatched, 1)
 			f.seed(testServer, showsLib, second, store.NoSummary, 1)
 
-			f.run(t0)
+			if tt.wantStop {
+				f.runUnavailable(t0)
+			} else {
+				f.run(t0)
+			}
 
 			wantCalls(t, sends(fp.calls), tt.wantSends...)
 			row, exists := f.row(testServer, "2", "201")
@@ -534,7 +538,7 @@ func TestDryRunUnavailableSearchRecordsNothing(t *testing.T) {
 	f.r.opts.DryRun = true
 	f.seed(testServer, showsLib, unmatchedItem("201"), store.Unmatched, 1)
 
-	f.run(t0)
+	f.runUnavailable(t0)
 
 	wantCalls(t, sends(fp.calls))
 	if row, exists := f.row(testServer, "2", "201"); !exists || row.Refreshes != 1 || !row.LastAttempt.Equal(seedAttempt) {
@@ -800,4 +804,32 @@ func TestSummaryDurationRoundsToMilliseconds(t *testing.T) {
 
 	// The tests keep the zerolog default, a float of milliseconds.
 	wantField(t, f.lastSummary(testServer), "duration", float64(refreshDelay.Milliseconds()))
+}
+
+// countFails is a store whose CountIncomplete fails.
+type countFails struct{ Store }
+
+var errCount = errors.New("count items: database is locked")
+
+func (countFails) CountIncomplete(string, []string, store.Reasons) (int, error) {
+	return 0, errCount
+}
+
+// A store error after an unavailable server is the error of the run, so the
+// caller does not take it for an unavailable server only.
+func TestStoreErrorAfterUnavailableServer(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
+	fp.refreshErrs["101"] = unavailable
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.store = countFails{f.store}
+
+	f.now = t0
+	err := f.r.Run(context.Background())
+	if !errors.Is(err, errCount) || errors.Is(err, plex.ErrUnavailable) {
+		t.Fatalf("Run error = %v, want only the store error", err)
+	}
+	if errs := f.logLines("error", "Plex server unavailable"); len(errs) != 1 {
+		t.Errorf("got %d unavailable errors, want 1", len(errs))
+	}
 }

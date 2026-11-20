@@ -138,7 +138,9 @@ a large server can take some hours.
 If a Plex server does not answer, autorefresh logs an error and skips that
 server for the rest of the run. The other servers continue. If a refresh or
 match request fails, autorefresh logs a warning. The failed request counts
-as an attempt. A database error stops the run on all servers.
+as an attempt. A database error stops the run on all servers. After a run
+with a database error or an unavailable server, autorefresh also logs one
+`Run failed` error that names each server with the problem.
 
 ### Fix match
 
@@ -252,8 +254,9 @@ the user configuration directory, for example `~/.config/autorefresh` on
 Linux.
 
 Without `--once`, the first run starts at the next `schedule` time. With
-`--once`, autorefresh runs one check at once and exits. If that check fails
-with a database error, the exit code is 1.
+`--once`, autorefresh runs one check at once and exits. If the check logs an
+error, such as a database error or an unavailable Plex server, the exit code
+is 1.
 
 If autorefresh gets SIGINT or SIGTERM, it stops the schedule and cancels the
 busy run. The run stops before its next request to Plex. Autorefresh then

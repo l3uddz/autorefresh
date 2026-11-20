@@ -116,9 +116,10 @@ func (run *serverRun) sections() []string {
 }
 
 // Run checks each server in its own goroutine. It reads the libraries of
-// the server, refreshes its due items, and logs its summary. It returns only
-// store errors. A store error of one server also stops the other servers.
-// If ctx ends, Run stops and returns nil.
+// the server, refreshes its due items, and logs its summary. It returns the
+// store errors and the errors of the unavailable servers. A store error of
+// one server also stops the other servers. An unavailable server stops only
+// itself. If ctx ends, Run stops and returns nil.
 func (r *Refresher) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -127,8 +128,9 @@ func (r *Refresher) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	for i, srv := range r.servers {
 		wg.Go(func() {
-			if err := r.runServer(ctx, srv); err != nil {
-				errs[i] = err
+			err := r.runServer(ctx, srv)
+			errs[i] = err
+			if err != nil && !errors.Is(err, plex.ErrUnavailable) {
 				cancel()
 			}
 		})
@@ -137,7 +139,8 @@ func (r *Refresher) Run(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// runServer checks one server. It returns only a store error.
+// runServer checks one server. It returns a store error, or the error of
+// an unavailable server after it logged that error.
 func (r *Refresher) runServer(ctx context.Context, srv Server) error {
 	if ctx.Err() != nil {
 		log.Debug().Str("server", srv.Name).Msg("Run canceled")
@@ -155,17 +158,22 @@ func (r *Refresher) runServer(ctx context.Context, srv Server) error {
 		log.Debug().Str("server", srv.Name).Msg("Run canceled")
 		return nil
 	}
+	unavailable := errors.Is(err, plex.ErrUnavailable)
 	switch {
-	case errors.Is(err, plex.ErrUnavailable):
+	case unavailable:
+		// The run can take long, so the error shows at once.
 		log.Error().Str("server", srv.Name).Err(err).Msg("Plex server unavailable")
 		if !readsDone {
-			return nil
+			return fmt.Errorf("server %s: %w", srv.Name, err)
 		}
 	case err != nil:
 		return fmt.Errorf("server %s: %w", srv.Name, err)
 	}
 	// A server that the refresh step stopped also gets its summary.
 	if err := r.logSummary(run); err != nil {
+		return fmt.Errorf("server %s: %w", srv.Name, err)
+	}
+	if unavailable {
 		return fmt.Errorf("server %s: %w", srv.Name, err)
 	}
 	return nil
