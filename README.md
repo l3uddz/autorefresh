@@ -240,9 +240,11 @@ deletes files after 14 days.
 
 Autorefresh never logs the Plex token or the server URL.
 
-At the end of the run of each server, autorefresh logs one `Run summary`
-line. A server that becomes unavailable during the refresh step also gets
-this line. The line has these fields:
+When autorefresh finishes the refresh step of a server, it logs one
+`Run summary` line for that server. A server that becomes unavailable during
+the refresh step also gets this line. A server gets no summary line if it
+becomes unavailable while autorefresh reads its libraries, if a database
+error stops the run, or if you stop the run. The line has these fields:
 
 | Field | Content |
 | --- | --- |
@@ -252,7 +254,7 @@ this line. The line has these fields:
 | `refreshes` | The refresh requests that the run sent, also failed ones |
 | `matches` | The fix match requests that the run sent, also failed ones |
 | `failures` | The failed requests and match searches. A `404 Not Found` answer is not a failure. |
-| `remaining` | The due items that the run did not reach, because of `max-refreshes-per-run` or because the server became unavailable. A later run sends them. |
+| `remaining` | The due items that the run did not reach, because of `max-refreshes-per-run` or because the server became unavailable. They stay due for later runs. |
 | `completed` | The items that the reads of the run found complete. Each one also has an `Item complete` line. |
 | `fixed` | The items in `completed` that had at least one request from autorefresh that Plex accepted. Plex runs a refresh in the background, so the effect of a request shows in a later run. |
 | `duration` | The time of the run of the server, with the reads |
