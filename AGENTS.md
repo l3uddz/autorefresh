@@ -113,6 +113,10 @@ as `fix/<issue>-<slug>`, runs CI only after you open a PR into `main`.
   type: breaking changes, features, bug fixes, performance, and other
   changes. It leaves out `docs` and `test` commits and merge commits. A
   commit subject therefore appears in the release notes as you write it.
+- The release notes read only the commit subject. If a commit makes a
+  breaking change, put `!` before the colon of its subject, for example
+  `feat(config)!: rename the plex section`. Without `!`, the commit is not
+  listed under breaking changes, even with a `BREAKING CHANGE:` footer.
 - Keep GitHub's default merge commit title, `Merge pull request #<id> from
   <branch>`. Do not write a custom merge commit title. The release notes
   leave out the commits that start with `Merge`. A custom title appears in
