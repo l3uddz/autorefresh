@@ -36,6 +36,9 @@ func TestDecodeAppliesDefaults(t *testing.T) {
 	if cfg.CacheRefresh != "0 3 * * 0" {
 		t.Errorf("CacheRefresh = %q", cfg.CacheRefresh)
 	}
+	if cfg.TMDBToken != "" {
+		t.Errorf("TMDBToken = %q, want empty", cfg.TMDBToken)
+	}
 	if cfg.Oversample != 48*time.Hour {
 		t.Errorf("Oversample = %v", cfg.Oversample)
 	}
@@ -86,6 +89,7 @@ oversample: 24h
 refresh-delay: 2s
 max-refreshes-per-run: 100
 ignore-reasons: [no-art, episode-no-summary]
+tmdb-token: example-tmdb-token
 plex:
   - name: main
     url: http://plex.example.invalid:32400
@@ -116,6 +120,9 @@ plex:
 	}
 	if cfg.MaxRefreshesPerRun != 100 {
 		t.Errorf("MaxRefreshesPerRun = %d, want 100", cfg.MaxRefreshesPerRun)
+	}
+	if cfg.TMDBToken != "example-tmdb-token" {
+		t.Errorf("TMDBToken = %q, want example-tmdb-token", cfg.TMDBToken)
 	}
 	if len(cfg.Plex) != 1 {
 		t.Fatalf("len(Plex) = %d, want 1", len(cfg.Plex))

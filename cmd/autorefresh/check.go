@@ -9,6 +9,7 @@ import (
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/refresher"
+	"github.com/l3uddz/autorefresh/internal/tmdb"
 )
 
 // checkServers lists the libraries of each server once, at the same time,
@@ -32,5 +33,20 @@ func checkServer(ctx context.Context, srv refresher.Server) {
 		log.Error().Str("server", srv.Name).Err(err).Msg("Plex server rejected the token")
 	default:
 		log.Warn().Str("server", srv.Name).Err(err).Msg("Checking Plex server failed")
+	}
+}
+
+// checkTMDB checks the TMDB token once, so a wrong token shows at the start.
+// It only logs, because TMDB can be down for a short time.
+func checkTMDB(ctx context.Context, client interface{ Check(context.Context) error }) {
+	err := client.Check(ctx)
+	switch {
+	case ctx.Err() != nil:
+	case err == nil:
+		log.Info().Msg("TMDB accepted the token")
+	case errors.Is(err, tmdb.ErrUnauthorized):
+		log.Error().Err(err).Msg("TMDB rejected the token")
+	default:
+		log.Warn().Err(err).Msg("Checking TMDB failed")
 	}
 }

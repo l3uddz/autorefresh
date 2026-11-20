@@ -16,6 +16,7 @@ import (
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/refresher"
 	"github.com/l3uddz/autorefresh/internal/store"
+	"github.com/l3uddz/autorefresh/internal/tmdb"
 )
 
 // Release variables. goreleaser and the mise build task set them.
@@ -98,6 +99,15 @@ func main() {
 		names = append(names, s.Name)
 	}
 
+	// The interface stays nil without a token, so the refresher sends no
+	// TMDB requests.
+	var tmdbClient *tmdb.Client
+	var lookup refresher.TMDB
+	if cfg.TMDBToken != "" {
+		tmdbClient = tmdb.New(cfg.TMDBToken, config.DefaultTimeout)
+		lookup = tmdbClient
+	}
+
 	r := refresher.New(servers, st, refresher.Options{
 		MinimumAge:         cfg.MinimumAge,
 		RefreshInterval:    cfg.RefreshInterval,
@@ -108,6 +118,7 @@ func main() {
 		MaxRefreshesPerRun: cfg.MaxRefreshesPerRun,
 		IgnoreReasons:      ignoreReasons,
 		DryRun:             cli.DryRun,
+		TMDB:               lookup,
 	})
 
 	log.Info().
@@ -115,6 +126,7 @@ func main() {
 		Strs("servers", names).
 		Str("schedule", cfg.Schedule).
 		Bool("dry_run", cli.DryRun).
+		Bool("tmdb", tmdbClient != nil).
 		Msg("Initialised")
 
 	// SIGINT and SIGTERM cancel ctx. A run then stops before its next request.
@@ -136,6 +148,9 @@ func main() {
 	// schedule. The first run waits for the schedule, so a check of each
 	// server shows a wrong token or URL at once.
 	checkServers(ctx, servers)
+	if tmdbClient != nil {
+		checkTMDB(ctx, tmdbClient)
+	}
 	run := &runner{run: r.Run}
 	c := cron.New()
 	if _, err := c.AddFunc(cfg.Schedule, func() { run.start(ctx) }); err != nil {

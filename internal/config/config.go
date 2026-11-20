@@ -27,6 +27,7 @@ type Config struct {
 	RefreshDelay       time.Duration `yaml:"refresh-delay"`
 	MaxRefreshesPerRun int           `yaml:"max-refreshes-per-run"` // 0: no limit
 	IgnoreReasons      []string      `yaml:"ignore-reasons"`        // reason names such as "no-art"
+	TMDBToken          string        `yaml:"tmdb-token"`            // "": no TMDB fallback in fix match
 	Plex               []Server      `yaml:"plex"`
 }
 
