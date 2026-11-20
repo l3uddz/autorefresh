@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/l3uddz/autorefresh/internal/store"
 )
 
 const minimalServer = `
@@ -55,6 +57,18 @@ func TestDecodeAcceptsZeroMaxRefreshesAsNoLimit(t *testing.T) {
 	}
 	if cfg.MaxRefreshesPerRun != 0 {
 		t.Errorf("MaxRefreshesPerRun = %d, want 0", cfg.MaxRefreshesPerRun)
+	}
+}
+
+// The README lists the default waits as 24h, 24h, 48h, 96h, and then 168h
+// from the fourth refresh on.
+func TestDefaultsReachLongestWaitAfterFourRefreshes(t *testing.T) {
+	cfg, err := Decode(strings.NewReader(minimalServer))
+	if err != nil {
+		t.Fatalf("Decode returned an error: %v", err)
+	}
+	if got := store.LongestWaitRefreshes(cfg.RefreshInterval, cfg.MaxRefreshInterval); got != 4 {
+		t.Errorf("LongestWaitRefreshes of the defaults = %d, want 4", got)
 	}
 }
 

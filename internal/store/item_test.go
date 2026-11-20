@@ -396,7 +396,6 @@ func TestLongestWaitRefreshes(t *testing.T) {
 		want              int
 	}{
 		{12 * time.Hour, 168 * time.Hour, 5}, // 12h, 12h, 24h, 48h, 96h, then 168h
-		{24 * time.Hour, 168 * time.Hour, 4}, // the defaults: 24h, 24h, 48h, 96h, then 168h
 		{time.Hour, 4 * time.Hour, 3},        // 1h, 1h, 2h, then 4h
 		{time.Hour, time.Hour, 0},
 		{time.Hour, 0, 0},
