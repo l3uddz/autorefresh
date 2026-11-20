@@ -53,8 +53,8 @@ func (r *Refresher) logSummary(run *serverRun) error {
 	}
 	log.Info().Str("server", run.server.Name).Int("items", run.itemsRead).Int("incomplete", incomplete).
 		Int("due", run.due).Int("refreshes", run.refreshes).Int("matches", run.matches).Int("failures", run.failures).
-		Int("remaining", run.remaining).Int("completed", run.completed).Dur("duration", r.now().Sub(run.began)).
-		Msg("Run summary")
+		Int("remaining", run.remaining).Int("completed", run.completed).Int("fixed", run.fixed).
+		Dur("duration", r.now().Sub(run.began)).Msg("Run summary")
 	return nil
 }
 

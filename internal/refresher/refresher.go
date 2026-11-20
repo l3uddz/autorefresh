@@ -93,6 +93,7 @@ type serverRun struct {
 	files     map[string][]string // movie files by rating key, from the reads of this run
 	itemsRead int
 	completed int // rows that became complete
+	fixed     int // completed rows that had a request that Plex accepted
 	due       int
 	refreshes int // refresh requests sent, also failed ones
 	matches   int // match requests sent, also failed ones

@@ -256,6 +256,7 @@ error stops the run, or if you stop the run. The line has these fields:
 | `failures` | The failed requests and match searches. A `404 Not Found` answer is not a failure. |
 | `remaining` | The due items that the run did not reach, because of `max-refreshes-per-run` or because the server became unavailable. They stay due for later runs. |
 | `completed` | The items that the reads of the run found complete. Each one also has an `Item complete` line. |
+| `fixed` | The items in `completed` that had at least one request from autorefresh that Plex accepted. Plex runs a refresh in the background, so the effect of a request shows in a later run. |
 | `duration` | The time of the run of the server, with the reads |
 
 ## Docker
