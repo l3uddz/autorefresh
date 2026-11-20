@@ -231,3 +231,77 @@ func TestTMDBCacheErrorStopsRun(t *testing.T) {
 	}
 	wantCalls(t, ft.calls)
 }
+
+func TestTMDBFallbackDryRun(t *testing.T) {
+	t.Run("found", func(t *testing.T) {
+		fp := newFakePlex(showsLib)
+		fp.candidates["201 tmdb-77"] = show("plex://show/s")
+		ft := &fakeTMDB{ids: map[string]string{"tvdb 5 true": "77"}}
+		f := newTMDBFixture(t, fp, ft, "tvdb-5")
+		f.r.opts.DryRun = true
+
+		f.run(t0)
+
+		wantCalls(t, sends(fp.calls))
+		wantCalls(t, ft.calls, "Find tvdb 5 true")
+		lines := f.logLines("info", "Dry run")
+		if len(lines) != 1 {
+			t.Fatalf("got %d dry run lines, want 1", len(lines))
+		}
+		wantField(t, lines[0], "action", "match")
+		// A dry run caches the TMDB ID, as its reads update the cache.
+		if id, ok, err := f.store.TMDBID(testServer, "201", "tvdb", "5"); err != nil || !ok || id != "77" {
+			t.Errorf("cached TMDB ID = %q, %v, %v, want 77", id, ok, err)
+		}
+		if row, _ := f.row(testServer, "2", "201"); row.LastAttempt.Equal(t0) || row.Refreshes != 1 {
+			t.Errorf("row = %+v, want no new attempt", row)
+		}
+	})
+	t.Run("failed", func(t *testing.T) {
+		fp := newFakePlex(showsLib)
+		ft := &fakeTMDB{errs: map[string]error{"tvdb 5 true": errors.New("GET /3/find/5: 500 Internal Server Error")}}
+		f := newTMDBFixture(t, fp, ft, "tvdb-5")
+		f.r.opts.DryRun = true
+
+		f.run(t0)
+
+		if warnings := f.logLines("warn", "TMDB lookup failed"); len(warnings) != 1 {
+			t.Errorf("got %d TMDB warnings, want 1", len(warnings))
+		}
+		if row, _ := f.row(testServer, "2", "201"); row.LastAttempt.Equal(t0) || row.Refreshes != 1 {
+			t.Errorf("row = %+v, want no new attempt", row)
+		}
+	})
+}
+
+// cancelTMDB cancels the run during its Find call, and Find then fails.
+type cancelTMDB struct{ cancel context.CancelFunc }
+
+func (c cancelTMDB) Find(context.Context, string, string, bool) (string, bool, error) {
+	c.cancel()
+	return "", false, fmt.Errorf("GET /3/find/5: %w", context.Canceled)
+}
+
+func TestTMDBFindCanceled(t *testing.T) {
+	fp := newFakePlex(showsLib)
+	f := newTMDBFixture(t, fp, nil, "tvdb-5")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.r.opts.TMDB = cancelTMDB{cancel}
+
+	f.now = t0
+	if err := f.r.Run(ctx); err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+
+	wantCalls(t, sends(fp.calls))
+	if warnings := f.logLines("warn", "TMDB lookup failed"); len(warnings) != 0 {
+		t.Errorf("got TMDB warnings %v, want none", warnings)
+	}
+	if lines := f.logLines("info", "Run summary"); len(lines) != 0 {
+		t.Errorf("got summary lines %v, want none", lines)
+	}
+	if row, _ := f.row(testServer, "2", "201"); row.LastAttempt.Equal(t0) || row.Refreshes != 1 {
+		t.Errorf("row = %+v, want no new attempt", row)
+	}
+}

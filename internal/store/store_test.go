@@ -198,3 +198,61 @@ func TestOpenRejectsPathWithoutForeignKeys(t *testing.T) {
 		t.Fatal("Open succeeded, want an error")
 	}
 }
+
+// rebuildLibrary rebuilds the library table the way SQLite needs it for a
+// schema change: create a new table, copy the rows, drop the old table, and
+// rename the new one.
+const rebuildLibrary = `
+CREATE TABLE library_new (
+    server TEXT NOT NULL,
+    section TEXT NOT NULL,
+    last_full_read INTEGER,
+    last_read INTEGER,
+    PRIMARY KEY (server, section)
+);
+INSERT INTO library_new SELECT server, section, last_full_read, last_read FROM library;
+DROP TABLE library;
+ALTER TABLE library_new RENAME TO library;
+`
+
+// A migration that rebuilds a parent table must not cascade-delete the rows
+// of its child tables.
+func TestMigrationRebuildKeepsChildRows(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", Unmatched)}})
+	if err := s.SaveTMDBID(srv, "a", "tvdb", "5", "77"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := applyMigration(s.db, 99, rebuildLibrary); err != nil {
+		t.Fatalf("applyMigration: %v", err)
+	}
+
+	if got := rows(t, s); len(got) != 1 {
+		t.Errorf("item rows = %v, want a", got)
+	}
+	if _, ok, err := s.TMDBID(srv, "a", "tvdb", "5"); err != nil || !ok {
+		t.Errorf("cached TMDB ID found = %v, %v, want it kept", ok, err)
+	}
+	var on int
+	if err := s.db.QueryRow(`PRAGMA foreign_keys`).Scan(&on); err != nil || on != 1 {
+		t.Errorf("foreign_keys after the migration = %d, %v, want 1", on, err)
+	}
+}
+
+func TestMigrationRejectsBrokenForeignKey(t *testing.T) {
+	s := openTest(t)
+	script := `INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons)
+		VALUES ('home', '9', '101', 'movie', 'Title 101', 2020, 1000, 2)`
+
+	if err := applyMigration(s.db, 99, script); err == nil {
+		t.Fatal("applyMigration succeeded, want a foreign key error")
+	}
+	if items, err := s.Unseen("home", "9", nil); err != nil || len(items) != 0 {
+		t.Errorf("items = %v, %v, want none after the rollback", items, err)
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migration WHERE version = 99`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("schema_migration rows of 99 = %d, %v, want 0", n, err)
+	}
+}
