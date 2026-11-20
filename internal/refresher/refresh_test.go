@@ -697,3 +697,18 @@ func TestAttemptTimeIsRequestTime(t *testing.T) {
 	// zerolog writes a duration in milliseconds.
 	wantField(t, f.lastSummary(testServer), "duration", float64(refreshDelay.Milliseconds()))
 }
+
+func TestSummaryDurationRoundsToMilliseconds(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102")}
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.sleep = func(_ context.Context, d time.Duration) error {
+		f.now = f.now.Add(d + 400*time.Microsecond)
+		return nil
+	}
+
+	f.run(t0)
+
+	// The tests keep the zerolog default, a float of milliseconds.
+	wantField(t, f.lastSummary(testServer), "duration", float64(refreshDelay.Milliseconds()))
+}

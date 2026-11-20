@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 )
@@ -51,6 +52,21 @@ func TestNewLoggerWritesPlainTextToLogFile(t *testing.T) {
 	}
 	if strings.Contains(got, "\x1b[") {
 		t.Fatalf("expected no color codes in the log file, got %q", got)
+	}
+}
+
+func TestNewLoggerWritesReadableDurations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "activity.log")
+	logger := newLogger(io.Discard, path, 0)
+
+	logger.Info().Dur("duration", 11*time.Minute+3814*time.Millisecond).Msg("Run summary")
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read log file: %v", err)
+	}
+	if !strings.Contains(string(content), "duration=11m3.814s") {
+		t.Fatalf("expected a readable duration in the log file, got %q", content)
 	}
 }
 

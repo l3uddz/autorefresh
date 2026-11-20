@@ -143,7 +143,7 @@ func (c *Client) trace(req *http.Request, start time.Time) *zerolog.Event {
 		Str("server", c.name).
 		Str("method", req.Method).
 		Str("path", req.URL.Path).
-		Dur("duration", time.Since(start))
+		Dur("duration", time.Since(start).Round(time.Millisecond))
 }
 
 // transportError traces a failed request and returns a fixed error. It keeps
