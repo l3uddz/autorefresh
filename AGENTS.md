@@ -16,11 +16,12 @@ When the design adds packages or rules, update this file.
 
 | Path | Content |
 | --- | --- |
-| `cmd/autorefresh/` | CLI entry point. It holds the flags, the default paths, logging, and the wait for the configuration file. The flags are `--config`, `--database`, `--dry-run`, `--once`, `--log`, `-v`, and `--version`. It wires the internal packages together. It runs the refresher once with `--once`. Otherwise it checks the token of each Plex server once and runs the refresher on the `schedule` cron with one run at a time. SIGINT and SIGTERM cancel the run and stop the schedule. |
+| `cmd/autorefresh/` | CLI entry point. It holds the flags, the default paths, logging, and the wait for the configuration file. The flags are `--config`, `--database`, `--dry-run`, `--once`, `--log`, `-v`, and `--version`. It wires the internal packages together. It runs the refresher once with `--once`. Otherwise it checks the token of each Plex server and the TMDB token once. Then it runs the refresher on the `schedule` cron with one run at a time. SIGINT and SIGTERM cancel the run and stop the schedule. |
 | `internal/config/` | Configuration types, defaults, loading, and validation |
 | `internal/plex/` | Plex API client: list libraries and items, get item paths, refresh, search matches, and apply a match |
-| `internal/store/` | SQLite cache of incomplete items and the read times of each library, and the removal of the cache of unused servers and libraries |
-| `internal/refresher/` | The run of each server. It removes the cache of unused servers and libraries, reads the libraries, and refreshes the due items, with the pacing, the limit for each run, and the dry run. It logs the summary of each server. It also holds the rules for missing metadata, path ID parsing, and the fix match choice. |
+| `internal/tmdb/` | TMDB API client: find the TMDB ID of a TVDB or IMDb ID, and check the token. It sends the token only in a header. |
+| `internal/store/` | SQLite cache of incomplete items, the read times of each library, and the TMDB IDs of items. It removes the cache of unused servers and libraries. Foreign keys with `ON DELETE CASCADE` remove the rows of an item or a library with it. |
+| `internal/refresher/` | The run of each server. It removes the cache of unused servers and libraries, reads the libraries, and refreshes the due items, with the pacing, the limit for each run, and the dry run. It logs the summary of each server. It also holds the rules for missing metadata, path ID parsing, the fix match choice, and the TMDB fallback of fix match. |
 | `docker/Dockerfile` | Container image, built from the goreleaser output in `dist/`. It runs as the non-root user `65532:65532`, which owns `/config`. |
 | `mise.toml` | Tool versions and development tasks |
 | `.goreleaser.yml` | Release build configuration |
@@ -45,9 +46,9 @@ Apply SOLID, KISS, DRY, and YAGNI to each code change.
 
 ### Repository conventions
 
-- Tests must not need network access or a running Plex server. Use
-  `net/http/httptest` and put recorded Plex responses in the `testdata/`
-  directory of the package that reads them.
+- Tests must not need network access, a running Plex server, or a TMDB
+  token. Use `net/http/httptest` and put recorded Plex and TMDB responses in
+  the `testdata/` directory of the package that reads them.
 - Remove server addresses, tokens, and other private values from recorded
   responses before you commit them.
 - Log with the zerolog global logger, `github.com/rs/zerolog/log`. `main`
