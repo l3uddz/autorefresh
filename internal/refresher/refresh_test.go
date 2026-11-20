@@ -159,6 +159,38 @@ func TestRefreshBacksOffAfterRefreshes(t *testing.T) {
 	wantCalls(t, sends(fp.calls), "Refresh 101")
 }
 
+func TestIgnoredReasonsGetNoRequest(t *testing.T) {
+	noArt := completeItem("201")
+	noArt.Art = ""
+	fp := newFakePlex(showsLib)
+	fp.lists["2?type=2"] = []plex.Item{noArt, incompleteItem("202")}
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.opts.IgnoreReasons = store.NoArt | store.EpisodeNoSummary | store.EpisodeUnmatched
+
+	f.run(t0)
+
+	// No episode request is sent, because both episode reasons are ignored.
+	wantCalls(t, fp.calls, "Libraries", "List 2?type=2", "Refresh 202")
+	wantField(t, f.lastSummary(testServer), "incomplete_items", float64(1))
+}
+
+func TestIgnoredEpisodeReasonKeepsCachedRow(t *testing.T) {
+	fp := newFakePlex(showsLib)
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.seed(testServer, showsLib, completeItem("201"), store.EpisodeUnmatched, 1)
+	f.r.opts.IgnoreReasons = store.EpisodeUnmatched
+
+	f.run(t0)
+
+	if row, ok := f.row(testServer, "2", "201"); !ok || row.Reasons != store.EpisodeUnmatched || row.Refreshes != 1 {
+		t.Errorf("row 201 = %+v, %v, want EpisodeUnmatched with 1 refresh", row, ok)
+	}
+	if lines := f.logLines("info", "Item complete"); len(lines) != 0 {
+		t.Errorf("got complete lines %v, want none", lines)
+	}
+	wantCalls(t, sends(fp.calls))
+}
+
 func TestRefreshSuccessRecordsRefresh(t *testing.T) {
 	fp := newFakePlex(moviesLib)
 	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101")}

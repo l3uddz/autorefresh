@@ -1,6 +1,7 @@
 package config
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,9 @@ func TestDecodeAppliesDefaults(t *testing.T) {
 	if cfg.RefreshDelay != 5*time.Second {
 		t.Errorf("RefreshDelay = %v", cfg.RefreshDelay)
 	}
+	if len(cfg.IgnoreReasons) != 0 {
+		t.Errorf("IgnoreReasons = %v, want none", cfg.IgnoreReasons)
+	}
 	if cfg.MaxRefreshesPerRun != 250 {
 		t.Errorf("MaxRefreshesPerRun = %d, want 250", cfg.MaxRefreshesPerRun)
 	}
@@ -64,6 +68,7 @@ cache-refresh: "0 4 * * 1"
 oversample: 24h
 refresh-delay: 2s
 max-refreshes-per-run: 100
+ignore-reasons: [no-art, episode-no-summary]
 plex:
   - name: main
     url: http://plex.example.invalid:32400
@@ -87,6 +92,9 @@ plex:
 	}
 	if cfg.Oversample != 24*time.Hour || cfg.RefreshDelay != 2*time.Second {
 		t.Errorf("oversample, delay = %v, %v", cfg.Oversample, cfg.RefreshDelay)
+	}
+	if want := []string{"no-art", "episode-no-summary"}; !reflect.DeepEqual(cfg.IgnoreReasons, want) {
+		t.Errorf("IgnoreReasons = %v, want %v", cfg.IgnoreReasons, want)
 	}
 	if cfg.MaxRefreshesPerRun != 100 {
 		t.Errorf("MaxRefreshesPerRun = %d, want 100", cfg.MaxRefreshesPerRun)
@@ -138,6 +146,7 @@ func TestDecodeRejectsInvalidConfig(t *testing.T) {
 		{"negative minimum age", "minimum-age: -1h\n" + minimalServer},
 		{"negative oversample", "oversample: -1h\n" + minimalServer},
 		{"negative refresh delay", "refresh-delay: -1s\n" + minimalServer},
+		{"unknown ignored reason", "ignore-reasons: [no-banner]\n" + minimalServer},
 		{"negative max refreshes", "max-refreshes-per-run: -1\n" + minimalServer},
 		{"empty library title", "plex:\n  - name: a\n" + server + "    libraries: [\"\"]\n"},
 	}

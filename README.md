@@ -37,6 +37,30 @@ series.
 Autorefresh skips items that Plex added less than `minimum-age` ago, because
 Plex can still be working on them.
 
+### Ignored reasons
+
+Some reasons often cannot be fixed. For example, the metadata source of many
+items has no background art. To stop refreshes for such a reason, add its
+name to `ignore-reasons`. The names are the values of the `reasons` log
+field:
+
+| Name | Reason |
+| --- | --- |
+| `unmatched` | The movie or series is unmatched. |
+| `no-summary` | The movie or series has no summary. |
+| `no-poster` | The movie or series has no poster. |
+| `no-art` | The movie or series has no background art. |
+| `episode-no-summary` | Some matched regular episodes have an empty summary. |
+| `episode-unmatched` | Some regular episodes are unmatched. |
+
+Autorefresh does not refresh an item whose reasons are all ignored, and it
+does not count the item in `incomplete_items`. The item stays in the cache,
+so if you remove the name later, the item counts again at once. It is due
+again when its `minimum-age` and its wait after the last attempt passed.
+
+If you ignore an episode reason, autorefresh does not send its episode
+request. The cached series keep that reason and their refresh history.
+
 ### Full and incremental reads
 
 A full read lists every movie or series in a library. Autorefresh does a
@@ -152,6 +176,7 @@ cache-refresh: "0 3 * * 0"    # cron expression for full reads of each library
 oversample: 48h               # each incremental read also gets changes from this far back
 refresh-delay: 5s             # wait between two refreshes on one server
 max-refreshes-per-run: 250    # the most refresh and match requests in each run; 0 for no limit
+ignore-reasons: []            # reasons that never cause a refresh, for example [no-art]
 
 plex:
   - name: main                    # label for logs and the database
@@ -172,6 +197,7 @@ plex:
 | `oversample` | no | `48h` |
 | `refresh-delay` | no | `5s` |
 | `max-refreshes-per-run` | no | `250` |
+| `ignore-reasons` | no | none |
 | `plex` | yes, at least one server | none |
 
 `schedule` and `cache-refresh` are cron expressions with 5 fields, or
@@ -183,8 +209,8 @@ at or after that time.
 Durations use Go units such as `h`, `m`, and `s`, so write 7 days as
 `168h`. `refresh-interval` must be more than 0. `max-refresh-interval`,
 `minimum-age`, `oversample`, and `refresh-delay` must be 0 or more.
-`max-refreshes-per-run` must be 0 or more, and 0 means no limit. These keys
-apply to all servers.
+`max-refreshes-per-run` must be 0 or more, and 0 means no limit. An unknown
+name in `ignore-reasons` is an error. These keys apply to all servers.
 
 Each entry in `plex` is one Plex server:
 
@@ -279,7 +305,7 @@ The line has these fields:
 | --- | --- |
 | `full_read_items` | The movies and series that the full reads of the run listed. If the run did no full read, the value is 0. |
 | `incremental_read_items` | The movies and series that the incremental reads of the run listed. If the run did only full reads, the value is 0. |
-| `incomplete_items` | The incomplete items in the cache after the run. An item that the run refreshed stays in this count until a later read finds it complete. |
+| `incomplete_items` | The incomplete items in the cache after the run, without the items whose reasons are all ignored. An item that the run refreshed stays in this count until a later read finds it complete. |
 | `due_items` | The incomplete items that were due for a request |
 | `refresh_requests` | The refresh requests that the run sent, also failed ones |
 | `match_requests` | The fix match requests that the run sent, also failed ones |
