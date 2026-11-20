@@ -128,6 +128,11 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	}
 	defer tx.Rollback()
 
+	// The item rows of the library need its library row first.
+	if err := writeReadTimes(tx, r); err != nil {
+		return nil, err
+	}
+
 	// The newest metadata for each rating key: r.Items first, then the episode lists.
 	latest := map[string]Item{}
 	itemBits := map[string]Reasons{}
@@ -232,9 +237,6 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 
 	sort.Slice(fixed, func(i, j int) bool { return fixed[i].RatingKey < fixed[j].RatingKey })
 
-	if err := writeReadTimes(tx, r); err != nil {
-		return nil, err
-	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit read: %w", err)
 	}
@@ -403,8 +405,8 @@ type Pruned struct {
 	Items           int // the item rows that the prune removed
 }
 
-// PruneServers removes the item rows and the read times of each server that
-// is not in servers.
+// PruneServers removes the libraries of each server that is not in servers.
+// The removal of a library also removes its item rows.
 func (s *Store) PruneServers(servers []string) ([]Pruned, error) {
 	keep := make(map[string]bool, len(servers))
 	for _, name := range servers {
@@ -413,8 +415,8 @@ func (s *Store) PruneServers(servers []string) ([]Pruned, error) {
 	return s.prune("", func(server, _ string) bool { return !keep[server] })
 }
 
-// PruneSections removes the item rows and the read times of each section of
-// server that is not in sections. An empty sections removes all of them.
+// PruneSections removes the library of each section of server that is not in
+// sections, with its item rows. An empty sections removes all of them.
 func (s *Store) PruneSections(server string, sections []string) ([]Pruned, error) {
 	keep := make(map[string]bool, len(sections))
 	for _, section := range sections {
@@ -423,8 +425,8 @@ func (s *Store) PruneSections(server string, sections []string) ([]Pruned, error
 	return s.prune(server, func(_, section string) bool { return !keep[section] })
 }
 
-// prune removes the item rows and the read times of each library for which
-// remove is true, in one transaction. It reads only the libraries of server,
+// prune removes each library for which remove is true, in one transaction.
+// The foreign key of item removes the item rows of the library. It reads only the libraries of server,
 // or of all servers if server is "". It returns the removed libraries,
 // ordered by server and section.
 func (s *Store) prune(server string, remove func(server, section string) bool) ([]Pruned, error) {
@@ -434,11 +436,11 @@ func (s *Store) prune(server string, remove func(server, section string) bool) (
 	}
 	defer tx.Rollback()
 
-	rows, err := tx.Query(`SELECT server, section, SUM(n) FROM (
-			SELECT server, section, 0 AS n FROM library WHERE ?1 = '' OR server = ?1
-			UNION ALL
-			SELECT server, section, 1 FROM item WHERE ?1 = '' OR server = ?1
-		) GROUP BY server, section ORDER BY server, section`, server)
+	// Each item row has a library row, so the join finds every library.
+	rows, err := tx.Query(`SELECT library.server, library.section, COUNT(item.rating_key)
+		FROM library LEFT JOIN item ON item.server = library.server AND item.section = library.section
+		WHERE ?1 = '' OR library.server = ?1
+		GROUP BY library.server, library.section ORDER BY library.server, library.section`, server)
 	if err != nil {
 		return nil, fmt.Errorf("read libraries: %w", err)
 	}
@@ -459,10 +461,8 @@ func (s *Store) prune(server string, remove func(server, section string) bool) (
 	}
 
 	for _, p := range pruned {
-		for _, table := range []string{"item", "library"} {
-			if _, err := tx.Exec(`DELETE FROM `+table+` WHERE server = ? AND section = ?`, p.Server, p.Section); err != nil {
-				return nil, fmt.Errorf("prune %s: %w", table, err)
-			}
+		if _, err := tx.Exec(`DELETE FROM library WHERE server = ? AND section = ?`, p.Server, p.Section); err != nil {
+			return nil, fmt.Errorf("prune library: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {

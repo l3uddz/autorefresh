@@ -23,8 +23,9 @@ type Store struct {
 }
 
 // Open opens the database file and applies the migrations that are missing.
+// Each connection enforces foreign keys.
 func Open(file string) (*Store, error) {
-	db, err := sql.Open("sqlite", file)
+	db, err := sql.Open("sqlite", file+"?_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
