@@ -83,6 +83,23 @@ The next run reads the same period again. If an item becomes complete,
 autorefresh logs it with the number of refreshes and removes it from the
 cache.
 
+### Cache cleanup
+
+At the start of each run, autorefresh removes the cache of each server that
+is not in `plex`. A server keeps its cache under its `name`, so a renamed
+server also loses its old cache.
+
+After autorefresh lists the libraries of a server, it removes the cache of
+each library of that server that the run does not check. Such a library is
+not in the `libraries` list, has an unsupported agent, or is gone from Plex.
+If the listing fails, or if Plex lists no library at all, autorefresh keeps
+the cache of that server, because the server can still be starting.
+
+The cache of a library is its incomplete items and its read times.
+Autorefresh logs one `Removed cache of library` line for each removed
+library. If you check the library again later, autorefresh does a new full
+read of it, and its items start with no refreshes.
+
 ### Refreshes
 
 If an incomplete item has no attempt in its wait, the item is due. An
@@ -135,8 +152,9 @@ Runs do not overlap. If a run is still busy when the schedule starts the
 next run, autorefresh skips that start and logs a warning. The first run on
 a large server can take some hours.
 
-If a Plex server does not answer, autorefresh logs an error and skips that
-server for the rest of the run. The other servers continue. If a refresh or
+If a Plex server does not answer within its `timeout`, autorefresh logs an
+error and skips that server for the rest of the run. The other servers
+continue. If a refresh or
 match request fails, autorefresh logs a warning. The failed request counts
 as an attempt. A database error stops the run on all servers.
 
@@ -189,6 +207,7 @@ plex:
   - name: main                    # label for logs and the database
     url: https://plex.example.com
     token: XXXX
+    timeout: 30s                  # optional; the limit of each request to this server
     libraries:                    # optional; if omitted, all movie and show libraries
       - Movies
       - TV
@@ -226,6 +245,11 @@ Each entry in `plex` is one Plex server:
 - `url` is required and must use `http` or `https`.
 - `token` is required. It is the Plex token of the server.
 - `libraries` is optional. It selects libraries by their title.
+- `timeout` is optional. It limits each request to the server. The default
+  is `30s`, and the value must be more than 0. If the answer of a request
+  does not arrive in time, autorefresh skips the server for the rest of the
+  run. A refresh or match request has no content, so its answer is the
+  status. Set a longer timeout for a large server that answers slowly.
 
 With `http`, the token crosses the network in clear text. If the connection
 leaves a trusted network, use `https`.
@@ -291,7 +315,7 @@ deletes files after 14 days.
 | `fatal` | Problems that stop the program at the start, such as an invalid configuration or a database that does not open |
 | `error` | Problems that stop a run or the checks of a server, such as a database error or a Plex server that does not answer |
 | `warn` | Problems that autorefresh survives, such as a failed request, a match conflict, a skipped library, a skipped scheduled start, or an item that reached the longest wait |
-| `info` | The start, each request that autorefresh sends, each item that becomes complete, and one summary line for each server at the end of a run |
+| `info` | The start, each request that autorefresh sends, each item that becomes complete, each removed library cache, and one summary line for each server at the end of a run |
 | `debug` | Each library read, items that `minimum-age` skips, and match search results |
 | `trace` | Each HTTP request |
 

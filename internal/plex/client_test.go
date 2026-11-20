@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -30,6 +31,9 @@ func TestMain(m *testing.M) {
 }
 
 const testToken = "secret-token-value"
+
+// testTimeout limits each request of the test clients.
+const testTimeout = 30 * time.Second
 
 // fixture returns the bytes of a recorded response.
 func fixture(t *testing.T, name string) []byte {
@@ -64,7 +68,7 @@ func newServer(t *testing.T, handle http.HandlerFunc) (*recorder, *Client) {
 		handle(w, r)
 	}))
 	t.Cleanup(srv.Close)
-	return rec, New("test", srv.URL, testToken)
+	return rec, New("test", srv.URL, testToken, testTimeout)
 }
 
 // serveFixture answers each request with the named recorded response.
@@ -173,7 +177,7 @@ func TestStatusMapping(t *testing.T) {
 
 	t.Run("closed server", func(t *testing.T) {
 		srv := httptest.NewServer(http.NotFoundHandler())
-		c := New("test", srv.URL, testToken)
+		c := New("test", srv.URL, testToken, testTimeout)
 		srv.Close()
 
 		if err := c.Refresh(context.Background(), "1001"); !errors.Is(err, ErrUnavailable) {
@@ -190,7 +194,7 @@ func (f failingTransport) RoundTrip(*http.Request) (*http.Response, error) { ret
 func TestTransportErrorsKeepNoTransportText(t *testing.T) {
 	const host = "private-plex-host.invalid"
 	buf := captureLog(t)
-	c := New("test", "http://"+host+":32400", testToken)
+	c := New("test", "http://"+host+":32400", testToken, testTimeout)
 	addr := &net.TCPAddr{IP: net.IPv4(10, 0, 0, 2), Port: 32400}
 
 	tests := []struct {
@@ -246,7 +250,7 @@ func TestErrorsAndTraceOmitSecrets(t *testing.T) {
 		}
 	}))
 	host := strings.TrimPrefix(srv.URL, "http://")
-	c := New("test", srv.URL, testToken)
+	c := New("test", srv.URL, testToken, testTimeout)
 
 	var errs []error
 	errs = append(errs, c.Refresh(context.Background(), "1")) // succeeds
@@ -306,7 +310,7 @@ func TestRefusesCrossOriginRedirect(t *testing.T) {
 	}))
 	t.Cleanup(origin.Close)
 	buf := captureLog(t)
-	c := New("test", origin.URL, testToken)
+	c := New("test", origin.URL, testToken, testTimeout)
 
 	err := c.Refresh(context.Background(), "1001")
 	if !errors.Is(err, ErrUnavailable) {
@@ -339,7 +343,7 @@ func TestAllowsSameOriginRedirect(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	if err := New("test", srv.URL, testToken).Refresh(context.Background(), "1001"); err != nil {
+	if err := New("test", srv.URL, testToken, testTimeout).Refresh(context.Background(), "1001"); err != nil {
 		t.Fatal(err)
 	}
 	if final.Load() != 1 {
@@ -361,7 +365,7 @@ func (p phraseTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func TestStatusErrorsOmitReasonPhrase(t *testing.T) {
-	c := New("test", "http://example.invalid", testToken)
+	c := New("test", "http://example.invalid", testToken, testTimeout)
 	for _, code := range []int{503, 404, 500} {
 		c.http.Transport = phraseTransport{code}
 
@@ -389,5 +393,25 @@ func TestMalformedBodyIsPlainError(t *testing.T) {
 	_, err := c.Libraries(context.Background())
 	if err == nil || errors.Is(err, ErrUnavailable) {
 		t.Errorf("err = %v, want a plain error", err)
+	}
+}
+
+func TestTimeoutLimitsRequest(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		<-release
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+
+	c := New("test", srv.URL, testToken, 50*time.Millisecond)
+	start := time.Now()
+	err := c.Refresh(context.Background(), "1001")
+	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "request timed out") {
+		t.Fatalf("Refresh error = %v, want a timeout that wraps ErrUnavailable", err)
+	}
+	// The default of 30s would take much longer.
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("Refresh took %v, want about 50ms", took)
 	}
 }

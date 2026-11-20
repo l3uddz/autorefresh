@@ -30,9 +30,6 @@ var (
 	ErrNotFound = errors.New("plex item not found")
 )
 
-// timeout limits each request.
-const timeout = 30 * time.Second
-
 var ratingKeyPattern = regexp.MustCompile(`^[0-9]+$`)
 
 // Client sends requests to one Plex server.
@@ -44,8 +41,8 @@ type Client struct {
 }
 
 // New returns a Client. name is the server name from the configuration. It
-// labels trace lines.
-func New(name, baseURL, token string) *Client {
+// labels trace lines. timeout limits each request, with the response body.
+func New(name, baseURL, token string, timeout time.Duration) *Client {
 	return &Client{
 		name:    name,
 		baseURL: strings.TrimRight(baseURL, "/"),
