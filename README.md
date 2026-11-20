@@ -10,8 +10,8 @@ The project is in early development.
 
 Autorefresh talks only to Plex. On each run, it reads the libraries of each
 Plex server. It keeps the incomplete movies and series in a local SQLite
-cache, and it refreshes the items that are due. It handles the servers one
-after another.
+cache, and it refreshes the items that are due. It checks all servers at
+the same time, so a slow server does not delay the others.
 
 ### Libraries
 
@@ -130,8 +130,9 @@ next run, autorefresh skips that start and logs a warning. The first run on
 a large server can take some hours.
 
 If a Plex server does not answer, autorefresh logs an error and skips that
-server for the rest of the run. If a refresh or match request fails,
-autorefresh logs a warning. The failed request counts as an attempt.
+server for the rest of the run. The other servers continue. If a refresh or
+match request fails, autorefresh logs a warning. The failed request counts
+as an attempt. A database error stops the run on all servers.
 
 ### Fix match
 

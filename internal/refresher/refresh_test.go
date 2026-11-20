@@ -637,8 +637,7 @@ func TestSummaryLine(t *testing.T) {
 func TestCanceledDelayStopsRunQuietly(t *testing.T) {
 	first := newFakePlex(moviesLib)
 	first.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102")}
-	second := newFakePlex(moviesLib)
-	f := newRefreshFixture(t, Server{Name: "first", Plex: first}, Server{Name: "second", Plex: second})
+	f := newRefreshFixture(t, Server{Name: "first", Plex: first})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	f.r.sleep = func(ctx context.Context, _ time.Duration) error {
@@ -652,7 +651,6 @@ func TestCanceledDelayStopsRunQuietly(t *testing.T) {
 	}
 
 	wantCalls(t, sends(first.calls), "Refresh 101")
-	wantCalls(t, second.calls)
 	if strings.Contains(f.logs.String(), `"level":"error"`) {
 		t.Errorf("got error lines, want none:\n%s", f.logs)
 	}
