@@ -83,6 +83,23 @@ The next run reads the same period again. If an item becomes complete,
 autorefresh logs it with the number of refreshes and removes it from the
 cache.
 
+### Cache cleanup
+
+At the start of each run, autorefresh removes the cache of each server that
+is not in `plex`. A server keeps its cache under its `name`, so a renamed
+server also loses its old cache.
+
+After autorefresh lists the libraries of a server, it removes the cache of
+each library of that server that the run does not check. Such a library is
+not in the `libraries` list, has an unsupported agent, or is gone from Plex.
+If the listing fails, or if Plex lists no library at all, autorefresh keeps
+the cache of that server, because the server can still be starting.
+
+The cache of a library is its incomplete items and its read times.
+Autorefresh logs one `Removed cache of library` line for each removed
+library. If you check the library again later, autorefresh does a new full
+read of it, and its items start with no refreshes.
+
 ### Refreshes
 
 If an incomplete item has no attempt in its wait, the item is due. An
@@ -298,7 +315,7 @@ deletes files after 14 days.
 | `fatal` | Problems that stop the program at the start, such as an invalid configuration or a database that does not open |
 | `error` | Problems that stop a run or the checks of a server, such as a database error or a Plex server that does not answer |
 | `warn` | Problems that autorefresh survives, such as a failed request, a match conflict, a skipped library, a skipped scheduled start, or an item that reached the longest wait |
-| `info` | The start, each request that autorefresh sends, each item that becomes complete, and one summary line for each server at the end of a run |
+| `info` | The start, each request that autorefresh sends, each item that becomes complete, each removed library cache, and one summary line for each server at the end of a run |
 | `debug` | Each library read, items that `minimum-age` skips, and match search results |
 | `trace` | Each HTTP request |
 

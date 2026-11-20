@@ -19,8 +19,8 @@ When the design adds packages or rules, update this file.
 | `cmd/autorefresh/` | CLI entry point. It holds the flags, the default paths, logging, and the wait for the configuration file. The flags are `--config`, `--database`, `--dry-run`, `--once`, `--log`, `-v`, and `--version`. It wires the internal packages together. It runs the refresher once with `--once`, or on the `schedule` cron with one run at a time. SIGINT and SIGTERM cancel the run and stop the schedule. |
 | `internal/config/` | Configuration types, defaults, loading, and validation |
 | `internal/plex/` | Plex API client: list libraries and items, get item paths, refresh, search matches, and apply a match |
-| `internal/store/` | SQLite cache of incomplete items and the read times of each library |
-| `internal/refresher/` | The run of each server. It reads the libraries and refreshes the due items, with the pacing, the limit for each run, and the dry run. It logs the summary of each server. It also holds the rules for missing metadata, path ID parsing, and the fix match choice. |
+| `internal/store/` | SQLite cache of incomplete items and the read times of each library, and the removal of the cache of unused servers and libraries |
+| `internal/refresher/` | The run of each server. It removes the cache of unused servers and libraries, reads the libraries, and refreshes the due items, with the pacing, the limit for each run, and the dry run. It logs the summary of each server. It also holds the rules for missing metadata, path ID parsing, and the fix match choice. |
 | `docker/Dockerfile` | Container image, built from the goreleaser output in `dist/` |
 | `mise.toml` | Tool versions and development tasks |
 | `.goreleaser.yml` | Release build configuration |
