@@ -25,7 +25,7 @@ func TestDecodeAppliesDefaults(t *testing.T) {
 	if cfg.MinimumAge != 24*time.Hour {
 		t.Errorf("MinimumAge = %v", cfg.MinimumAge)
 	}
-	if cfg.RefreshInterval != 12*time.Hour {
+	if cfg.RefreshInterval != 24*time.Hour {
 		t.Errorf("RefreshInterval = %v", cfg.RefreshInterval)
 	}
 	if cfg.MaxRefreshInterval != 168*time.Hour {
