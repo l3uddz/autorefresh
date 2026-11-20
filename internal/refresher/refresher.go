@@ -31,6 +31,8 @@ type Store interface {
 	Due(server string, sections []string, now time.Time, minimumAge, refreshInterval, maxRefreshInterval time.Duration, ignored store.Reasons) ([]store.Item, error)
 	CountIncomplete(server string, sections []string, ignored store.Reasons) (int, error)
 	RecordAttempt(server, ratingKey string, at time.Time, refreshed bool) error
+	TMDBID(server, ratingKey, source, externalID string) (tmdbID string, ok bool, err error)
+	SaveTMDBID(server, ratingKey, source, externalID, tmdbID string) error
 	Delete(server, ratingKey string) error
 	PruneServers(servers []string) ([]store.Pruned, error)
 	PruneSections(server string, sections []string) ([]store.Pruned, error)
@@ -54,6 +56,7 @@ type Options struct {
 	MaxRefreshesPerRun                                    int           // 0: no limit
 	IgnoreReasons                                         store.Reasons // never refreshed for, and not counted
 	DryRun                                                bool
+	TMDB                                                  TMDB // nil: no TMDB fallback in fix match
 }
 
 // Refresher checks the libraries of each server.

@@ -139,7 +139,9 @@ func (r *Refresher) warnAtLongestWait(server string, lib plex.Library, it store.
 
 // findMatch returns the candidate of a fix match. match is false for a plain
 // refresh. Only an unmatched item that was refreshed before gets a fix
-// match. err is the error of a failed ItemPaths or SearchMatches request.
+// match. If no search found a candidate, a TMDB client gives a second pass
+// with TMDB IDs. err is the error of a failed ItemPaths or SearchMatches
+// request, of a TMDB lookup (errTMDB), or of the TMDB ID cache (errCache).
 func (r *Refresher) findMatch(ctx context.Context, srv Server, lib plex.Library, it store.Item, files map[string][]string) (cand plex.Candidate, match bool, err error) {
 	if it.Reasons&store.Unmatched == 0 || it.Refreshes < 1 {
 		return plex.Candidate{}, false, nil
@@ -158,18 +160,28 @@ func (r *Refresher) findMatch(ctx context.Context, srv Server, lib plex.Library,
 		}
 	}
 
+	ids := parseIDs(paths)
 	var results []searchResult
-	for _, id := range parseIDs(paths) {
+	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
 			return plex.Candidate{}, false, err
 		}
 		candidates, err := srv.Plex.SearchMatches(ctx, it.RatingKey, id.title(), lib.Agent, lib.Language)
-		if err != nil {
+		if err != nil && !searchFailureIsEmpty(ctx, id, err) {
 			return plex.Candidate{}, false, err
+		}
+		if err != nil {
+			itemEvent(log.Debug(), srv.Name, lib, it).Str("id", id.title()).Err(err).Msg("Match search failed")
 		}
 		itemEvent(log.Debug(), srv.Name, lib, it).Str("id", id.title()).Int("candidates", len(candidates)).
 			Msg("Match search result")
 		results = append(results, searchResult{id: id, candidates: candidates})
+	}
+
+	if r.useTMDB(ids, results) {
+		if results, err = r.tmdbResults(ctx, srv, lib, it, ids); err != nil {
+			return plex.Candidate{}, false, err
+		}
 	}
 
 	cand, match, conflict := chooseMatch(it.Year, results)
@@ -179,10 +191,24 @@ func (r *Refresher) findMatch(ctx context.Context, srv Server, lib plex.Library,
 	return cand, match, nil
 }
 
+// searchFailureIsEmpty reports whether a failed search for id counts as a
+// search with no candidate. Plex can answer a tvdb or imdb search with an
+// error once it stops resolving such IDs. An error that stops the server or
+// says that the item is gone keeps its meaning.
+func searchFailureIsEmpty(ctx context.Context, id pathID, err error) bool {
+	if id.Source != "tvdb" && id.Source != "imdb" {
+		return false
+	}
+	return stopError(ctx, err) == nil && !errors.Is(err, plex.ErrNotFound)
+}
+
 // matchSearchFailed handles a failed ItemPaths or SearchMatches request of
-// a fix match. The item gets no request in this run. It returns the error of
-// stopError or a store error.
+// a fix match, or a failed TMDB lookup. The item gets no request in this run.
+// It returns the error of stopError or a store error.
 func (r *Refresher) matchSearchFailed(ctx context.Context, s *refreshStep, lib plex.Library, it store.Item, err error) error {
+	if errors.Is(err, errCache) {
+		return err
+	}
 	name := s.run.server.Name
 	if stop := stopError(ctx, err); stop != nil {
 		if ctx.Err() != nil {
@@ -205,7 +231,11 @@ func (r *Refresher) matchSearchFailed(ctx context.Context, s *refreshStep, lib p
 	if !notFound {
 		s.run.failures++
 	}
-	itemEvent(log.Warn(), name, lib, it).Err(err).Msg("Match search failed")
+	msg := "Match search failed"
+	if errors.Is(err, errTMDB) {
+		msg = "TMDB lookup failed"
+	}
+	itemEvent(log.Warn(), name, lib, it).Err(err).Msg(msg)
 	if r.opts.DryRun {
 		return nil
 	}

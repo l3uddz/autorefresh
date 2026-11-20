@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/refresher"
+	"github.com/l3uddz/autorefresh/internal/tmdb"
 )
 
 const sectionsBody = `{"MediaContainer":{"Directory":[
@@ -85,5 +88,48 @@ func TestCheckServersLogsNothingWhenCanceled(t *testing.T) {
 
 	if got := logEvents(t, buf); len(got) != 0 {
 		t.Errorf("logged %v, want nothing", got)
+	}
+}
+
+// checkerFunc is a TMDB token check.
+type checkerFunc func(context.Context) error
+
+func (f checkerFunc) Check(ctx context.Context) error { return f(ctx) }
+
+func TestCheckTMDBLogsResult(t *testing.T) {
+	tests := []struct {
+		err   error
+		level string
+		msg   string
+	}{
+		{nil, "info", "TMDB accepted the token"},
+		{fmt.Errorf("GET /3/authentication: %w", tmdb.ErrUnauthorized), "error", "TMDB rejected the token"},
+		{errors.New("GET /3/authentication: 503 Service Unavailable"), "warn", "Checking TMDB failed"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.msg, func(t *testing.T) {
+			buf := captureLog(t)
+			checkTMDB(context.Background(), checkerFunc(func(context.Context) error { return tt.err }))
+
+			var ev map[string]any
+			if err := json.Unmarshal(buf.Bytes(), &ev); err != nil {
+				t.Fatalf("decode log %q: %v", buf, err)
+			}
+			if ev["level"] != tt.level || ev["message"] != tt.msg {
+				t.Errorf("logged %v, want %s %q", ev, tt.level, tt.msg)
+			}
+		})
+	}
+}
+
+func TestCheckTMDBLogsNothingWhenCanceled(t *testing.T) {
+	buf := captureLog(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	checkTMDB(ctx, checkerFunc(func(ctx context.Context) error { return ctx.Err() }))
+
+	if buf.Len() != 0 {
+		t.Errorf("logged %s, want nothing", buf)
 	}
 }

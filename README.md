@@ -8,8 +8,9 @@ The project is in early development.
 
 ## How it works
 
-Autorefresh talks only to Plex. On each run, it reads the libraries of each
-Plex server. It keeps the incomplete movies and series in a local SQLite
+Autorefresh talks to Plex. With a `tmdb-token`, it also asks TMDB for TMDB
+IDs during a fix match. On each run, it reads the libraries of each Plex
+server. It keeps the incomplete movies and series in a local SQLite
 cache, and it refreshes the items that are due. It checks all servers at
 the same time, so a slow server does not delay the others.
 
@@ -184,6 +185,41 @@ it also logs the conflict. If a match search fails, autorefresh sends no
 request for that item in this run. A match request counts as a refresh for
 the wait and for `max-refreshes-per-run`.
 
+Plex stops using TheTVDB on December 3, 2026, and can then answer a search
+for a `tvdb` ID with an error. So a failed search for a `tvdb` or an `imdb`
+ID counts as a search without a candidate. Two errors keep their meaning:
+
+- A `404 Not Found` answer means that the item is gone from Plex, and
+  autorefresh removes it from the cache.
+- An error that makes the server unavailable stops the server for the run.
+
+#### TMDB fallback
+
+If you set `tmdb-token`, a fix match gets a second pass. All of these
+conditions must be true for the second pass:
+
+- No search of the first pass found a candidate.
+- The paths hold no `tmdb` ID. Plex already searched for such an ID.
+
+The second pass asks TMDB for the TMDB ID of each `imdb` ID. For a series,
+it also asks for the TMDB ID of each `tvdb` ID. TMDB has no movies for TVDB
+IDs, so a movie gets no lookup for a `tvdb` ID. Autorefresh then searches
+Plex once for each TMDB ID, for example `tmdb-1396`, with the same rules for
+the candidates.
+
+- If TMDB has no entry for an ID, autorefresh skips that ID. If no ID gives
+  a match, the item gets a plain refresh.
+- Autorefresh keeps each TMDB ID that it finds in the cache of the item, so
+  it asks TMDB for an ID only once. The cache removes these IDs with the
+  item.
+- If a TMDB request fails, autorefresh sends no request for the item in
+  this run, as for a failed match search. The item is due again after its
+  current wait, and the failed request does not make the wait longer.
+  Autorefresh logs a `TMDB lookup failed` warning.
+
+The debug line of each second pass search has a `from` field with the ID
+that TMDB translated, for example `tvdb-81189`.
+
 ### No library-wide refresh
 
 Autorefresh refreshes one item at a time. It never sends a library-wide
@@ -204,6 +240,7 @@ oversample: 48h               # each incremental read also gets changes from thi
 refresh-delay: 5s             # wait between two refreshes on one server
 max-refreshes-per-run: 250    # the most refresh and match requests in each run; 0 for no limit
 ignore-reasons: []            # reasons that never cause a refresh, for example [no-art]
+tmdb-token: ""                # optional; the TMDB API Read Access Token for the fix match fallback
 
 plex:
   - name: main                    # label for logs and the database
@@ -226,6 +263,7 @@ plex:
 | `refresh-delay` | no | `5s` |
 | `max-refreshes-per-run` | no | `250` |
 | `ignore-reasons` | no | none |
+| `tmdb-token` | no | none |
 | `plex` | yes, at least one server | none |
 
 `schedule` and `cache-refresh` are cron expressions with 5 fields, or
@@ -255,6 +293,10 @@ Each entry in `plex` is one Plex server:
 
 With `http`, the token crosses the network in clear text. If the connection
 leaves a trusted network, use `https`.
+
+`tmdb-token` is the "API Read Access Token" from the API page of your TMDB
+account, not the shorter API key. Autorefresh sends it only to TMDB, in a
+request header. Without it, autorefresh sends no request to TMDB.
 
 An unknown key is an error. If the configuration file is missing or empty,
 autorefresh waits for it and checks again every 5 seconds. A container can
@@ -298,6 +340,11 @@ shows at once:
 
 In each case autorefresh keeps the schedule, because Plex can still be
 starting.
+
+With a `tmdb-token`, autorefresh also checks the token with TMDB once at the
+start. It logs `TMDB accepted the token` at info level, a `TMDB rejected the
+token` error, or a `Checking TMDB failed` warning. In each case it keeps the
+schedule.
 
 ## Dry run
 
@@ -362,7 +409,7 @@ The summary line has these fields:
 | `due_items` | The incomplete items that were due for a request |
 | `refresh_requests` | The refresh requests that the run sent, also failed ones |
 | `match_requests` | The fix match requests that the run sent, also failed ones |
-| `failed_requests` | The failed requests and match searches. A `404 Not Found` answer is not a failure. |
+| `failed_requests` | The failed requests, match searches, and TMDB lookups. A `404 Not Found` answer of Plex is not a failure. |
 | `remaining_items` | The due items that the run did not reach, because of `max-refreshes-per-run` or because the server became unavailable. They stay due for later runs. |
 | `completed_items` | The items in the cache that the reads of the run found complete. The run removes them from the cache. Each one also has an `Item complete` line. |
 | `completed_after_request` | The items in `completed_items` that had at least one request from autorefresh that Plex accepted. Plex runs a refresh in the background, so the effect of a request shows in a later run. |
