@@ -306,7 +306,7 @@ func (r *Refresher) logRead(rd store.Read, lib plex.Library, fixed []store.Item,
 		kind = "full"
 	}
 	log.Debug().Str("server", rd.Server).Str("library", lib.Title).Str("kind", kind).
-		Int("items", len(rd.Items)).Int("incomplete", len(incomplete)).Dur("duration", took).
+		Int("items", len(rd.Items)).Int("incomplete", len(incomplete)).Dur("duration", took.Round(time.Millisecond)).
 		Msg("Read library")
 }
 

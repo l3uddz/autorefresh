@@ -11,8 +11,10 @@ import (
 
 // newLogger returns a logger that writes to console and to the rotated log
 // file at path. verbosity 1 selects debug and more selects trace. Each event
-// goes to both writers, even if the console write fails.
+// goes to both writers, even if the console write fails. It also makes
+// zerolog write durations in the Go form, such as 11m3.814s.
 func newLogger(console io.Writer, path string, verbosity int) zerolog.Logger {
+	zerolog.DurationFieldFormat = zerolog.DurationFormatString
 	logger := log.Output(zerolog.MultiLevelWriter(zerolog.ConsoleWriter{
 		TimeFormat: time.Stamp,
 		Out:        console,
