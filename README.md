@@ -240,6 +240,22 @@ deletes files after 14 days.
 
 Autorefresh never logs the Plex token or the server URL.
 
+At the end of the run of each server, autorefresh logs one `Run summary`
+line. A server that becomes unavailable during the refresh step also gets
+this line. The line has these fields:
+
+| Field | Content |
+| --- | --- |
+| `items` | The items that the run read from Plex |
+| `incomplete` | The incomplete items in the cache after the run. An item that the run refreshed stays in this count until a later read finds it complete. |
+| `due` | The incomplete items that were due for a request |
+| `refreshes` | The refresh requests that the run sent, also failed ones |
+| `matches` | The fix match requests that the run sent, also failed ones |
+| `failures` | The failed requests and match searches. A `404 Not Found` answer is not a failure. |
+| `remaining` | The due items that the run did not reach, because of `max-refreshes-per-run` or because the server became unavailable. A later run sends them. |
+| `completed` | The items that the reads of the run found complete. Each one also has an `Item complete` line. |
+| `duration` | The time of the run of the server, with the reads |
+
 ## Docker
 
 CI publishes the image `l3uddz/autorefresh` to Docker Hub for

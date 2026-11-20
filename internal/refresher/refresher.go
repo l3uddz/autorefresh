@@ -97,6 +97,7 @@ type serverRun struct {
 	refreshes int // refresh requests sent, also failed ones
 	matches   int // match requests sent, also failed ones
 	failures  int // failed requests and match searches, without 404 answers
+	remaining int // due items that the limit or a stop kept from this run
 }
 
 // sections returns the section IDs of the selected libraries.

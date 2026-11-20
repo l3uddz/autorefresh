@@ -32,11 +32,13 @@ func (r *Refresher) refreshDue(ctx context.Context, run *serverRun) error {
 		return err
 	}
 	run.due = len(due)
-	for _, it := range due {
+	for i, it := range due {
 		if r.opts.MaxRefreshesPerRun > 0 && s.sent >= r.opts.MaxRefreshesPerRun {
+			run.remaining = len(due) - i
 			break
 		}
 		if err := r.refreshItem(ctx, s, it); err != nil {
+			run.remaining = len(due) - i - 1 // the item of the error was reached
 			return err
 		}
 	}
@@ -51,7 +53,8 @@ func (r *Refresher) logSummary(run *serverRun) error {
 	}
 	log.Info().Str("server", run.server.Name).Int("items", run.itemsRead).Int("incomplete", incomplete).
 		Int("due", run.due).Int("refreshes", run.refreshes).Int("matches", run.matches).Int("failures", run.failures).
-		Int("completed", run.completed).Dur("duration", r.now().Sub(run.began)).Msg("Run summary")
+		Int("remaining", run.remaining).Int("completed", run.completed).Dur("duration", r.now().Sub(run.began)).
+		Msg("Run summary")
 	return nil
 }
 
