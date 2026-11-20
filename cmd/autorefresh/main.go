@@ -75,6 +75,11 @@ func main() {
 		log.Fatal().Err(err).Msg("Failed parsing cache-refresh")
 	}
 
+	ignoreReasons, err := store.ParseReasons(cfg.IgnoreReasons)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed parsing ignore-reasons")
+	}
+
 	// database
 	st, err := store.Open(cli.Database)
 	if err != nil {
@@ -101,6 +106,7 @@ func main() {
 		RefreshDelay:       cfg.RefreshDelay,
 		CacheRefresh:       cacheRefresh,
 		MaxRefreshesPerRun: cfg.MaxRefreshesPerRun,
+		IgnoreReasons:      ignoreReasons,
 		DryRun:             cli.DryRun,
 	})
 

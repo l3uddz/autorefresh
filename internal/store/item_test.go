@@ -249,7 +249,7 @@ func TestDueOrder(t *testing.T) {
 		}
 	}
 	now := base.Add(100 * time.Hour)
-	got, err := s.Due(srv, []string{sec}, now, 0, time.Hour, time.Hour)
+	got, err := s.Due(srv, []string{sec}, now, 0, time.Hour, time.Hour, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestDuePutsFewerRefreshesFirst(t *testing.T) {
 	if err := s.RecordAttempt(srv, "failed", base.Add(6*time.Hour), false); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Due(srv, []string{sec}, base.Add(100*time.Hour), 0, time.Hour, time.Hour)
+	got, err := s.Due(srv, []string{sec}, base.Add(100*time.Hour), 0, time.Hour, time.Hour, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +314,7 @@ func TestDueBacksOffAfterRefreshes(t *testing.T) {
 		{4 * time.Hour, []string{"failed", "r1", "r2", "r3", "r5"}},
 	}
 	for _, tt := range tests {
-		got, err := s.Due(srv, []string{sec}, at.Add(tt.after), 0, time.Hour, 4*time.Hour)
+		got, err := s.Due(srv, []string{sec}, at.Add(tt.after), 0, time.Hour, 4*time.Hour, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -348,7 +348,7 @@ func TestDueKeepsFractionalSecondWaits(t *testing.T) {
 				after time.Duration
 				want  int
 			}{{tt.wait - time.Millisecond, 0}, {tt.wait, 1}} {
-				got, err := s.Due(srv, []string{sec}, at.Add(c.after), 0, tt.interval, time.Hour)
+				got, err := s.Due(srv, []string{sec}, at.Add(c.after), 0, tt.interval, time.Hour, 0)
 				if err != nil || len(got) != c.want {
 					t.Errorf("Due after %v = %v, %v, want %d items", c.after, got, err, c.want)
 				}
@@ -357,11 +357,28 @@ func TestDueKeepsFractionalSecondWaits(t *testing.T) {
 	}
 }
 
+func TestDueAndCountSkipIgnoredReasons(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("art", NoArt), item("both", NoArt|NoSummary), item("ep", 0)},
+		Shows: true, EpisodeNoSummary: []Item{item("ep", 0)}})
+	ignored := NoArt | EpisodeNoSummary
+	got, err := s.Due(srv, []string{sec}, base, 0, time.Hour, time.Hour, ignored)
+	if k := keys(got); err != nil || !reflect.DeepEqual(k, []string{"both"}) {
+		t.Fatalf("Due = %v, %v, want [both]", k, err)
+	}
+	if n, err := s.CountIncomplete(srv, []string{sec}, ignored); err != nil || n != 1 {
+		t.Fatalf("CountIncomplete = %d, %v, want 1", n, err)
+	}
+	if n, err := s.CountIncomplete(srv, []string{sec}, 0); err != nil || n != 3 {
+		t.Fatalf("CountIncomplete without ignored reasons = %d, %v, want 3", n, err)
+	}
+}
+
 func TestDueWithoutBackoffBelowRefreshInterval(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
 	refresh(t, s, "a", 5)
-	got, err := s.Due(srv, []string{sec}, base.Add(5*time.Minute+time.Hour), 0, time.Hour, 0)
+	got, err := s.Due(srv, []string{sec}, base.Add(5*time.Minute+time.Hour), 0, time.Hour, 0, 0)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("Due = %v, %v, want a", got, err)
 	}
@@ -377,7 +394,7 @@ func TestDueCapsLongBackoff(t *testing.T) {
 		after time.Duration
 		want  int
 	}{{limit - time.Second, 0}, {limit, 1}} {
-		got, err := s.Due(srv, []string{sec}, last.Add(tt.after), 0, time.Hour, limit)
+		got, err := s.Due(srv, []string{sec}, last.Add(tt.after), 0, time.Hour, limit, 0)
 		if err != nil || len(got) != tt.want {
 			t.Errorf("Due after %v = %v, %v, want %d items", tt.after, got, err, tt.want)
 		}
@@ -426,7 +443,7 @@ func TestDueSkipsRecentAttemptsAndOtherScopes(t *testing.T) {
 	if err := s.RecordAttempt(srv, "old", now.Add(-13*time.Hour), false); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Due(srv, []string{sec}, now, 0, 12*time.Hour, 12*time.Hour)
+	got, err := s.Due(srv, []string{sec}, now, 0, 12*time.Hour, 12*time.Hour, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,11 +452,11 @@ func TestDueSkipsRecentAttemptsAndOtherScopes(t *testing.T) {
 	if want := []string{"old", "second"}; !reflect.DeepEqual(k, want) {
 		t.Fatalf("Due = %v, want %v", k, want)
 	}
-	n, err := s.CountIncomplete(srv, []string{sec})
+	n, err := s.CountIncomplete(srv, []string{sec}, 0)
 	if err != nil || n != 3 {
 		t.Fatalf("CountIncomplete = %d, %v, want 3", n, err)
 	}
-	if got, err := s.Due(srv, nil, now, 0, 0, 0); err != nil || len(got) != 0 {
+	if got, err := s.Due(srv, nil, now, 0, 0, 0, 0); err != nil || len(got) != 0 {
 		t.Fatalf("Due without sections = %v, %v", got, err)
 	}
 }
@@ -448,14 +465,14 @@ func TestDueSkipsYoungItemUntilOldEnough(t *testing.T) {
 	s := openTest(t)
 	now := base.Add(time.Hour)
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
-	got, err := s.Due(srv, []string{sec}, now, 24*time.Hour, time.Hour, time.Hour)
+	got, err := s.Due(srv, []string{sec}, now, 24*time.Hour, time.Hour, time.Hour, 0)
 	if err != nil || len(got) != 0 {
 		t.Fatalf("young Due = %v, %v", got, err)
 	}
-	if n, err := s.CountIncomplete(srv, []string{sec}); err != nil || n != 1 {
+	if n, err := s.CountIncomplete(srv, []string{sec}, 0); err != nil || n != 1 {
 		t.Fatalf("CountIncomplete = %d, want 1", n)
 	}
-	got, err = s.Due(srv, []string{sec}, now.Add(24*time.Hour), 24*time.Hour, time.Hour, time.Hour)
+	got, err = s.Due(srv, []string{sec}, now.Add(24*time.Hour), 24*time.Hour, time.Hour, time.Hour, 0)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("old Due = %v, %v", got, err)
 	}
@@ -479,7 +496,7 @@ func TestDueComparesTimesAcrossZones(t *testing.T) {
 	if err := s.RecordAttempt(srv, "b", b, false); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Due(srv, []string{sec}, instant.Add(48*time.Hour), 0, time.Hour, time.Hour)
+	got, err := s.Due(srv, []string{sec}, instant.Add(48*time.Hour), 0, time.Hour, time.Hour, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

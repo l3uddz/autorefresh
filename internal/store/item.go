@@ -293,11 +293,11 @@ func (s *Store) Unseen(server, section string, seen []string) ([]Item, error) {
 // The wait backs off: it is refreshInterval for a row with at most 1
 // refresh, and it doubles with each later refresh, up to
 // maxRefreshInterval. A maxRefreshInterval below refreshInterval means no
-// backoff.
+// backoff. A row whose reasons are all in ignored is never due.
 //
 // Order: the fewest Refreshes first, then no attempt, then the oldest
 // LastAttempt, then the oldest AddedAt.
-func (s *Store) Due(server string, sections []string, now time.Time, minimumAge, refreshInterval, maxRefreshInterval time.Duration) ([]Item, error) {
+func (s *Store) Due(server string, sections []string, now time.Time, minimumAge, refreshInterval, maxRefreshInterval time.Duration, ignored Reasons) ([]Item, error) {
 	if len(sections) == 0 {
 		return nil, nil
 	}
@@ -314,11 +314,11 @@ func (s *Store) Due(server string, sections []string, now time.Time, minimumAge,
 	}
 
 	args := append([]any{server}, stringArgs(sections)...)
-	args = append(args, now.Add(-minimumAge).Unix(), now.UnixMilli(), maxWait, interval, doublings)
+	args = append(args, int(ignored), now.Add(-minimumAge).Unix(), now.UnixMilli(), maxWait, interval, doublings)
 
 	items, err := queryItems(s.db, `SELECT `+itemColumns+` FROM item
 		WHERE server = ? AND section IN (`+placeholders(len(sections))+`)
-		AND added_at <= ?
+		AND reasons & ~? != 0 AND added_at <= ?
 		AND (last_attempt IS NULL OR last_attempt <= (? - MIN(?, ? << MIN(MAX(refreshes - 1, 0), ?))) / 1000)
 		ORDER BY refreshes, last_attempt IS NOT NULL, last_attempt, added_at, rating_key`, args...)
 	if err != nil {
@@ -327,16 +327,18 @@ func (s *Store) Due(server string, sections []string, now time.Time, minimumAge,
 	return items, nil
 }
 
-// CountIncomplete counts the stored rows of the sections.
-func (s *Store) CountIncomplete(server string, sections []string) (int, error) {
+// CountIncomplete counts the stored rows of the sections that have a reason
+// outside ignored.
+func (s *Store) CountIncomplete(server string, sections []string, ignored Reasons) (int, error) {
 	if len(sections) == 0 {
 		return 0, nil
 	}
 	args := append([]any{server}, stringArgs(sections)...)
+	args = append(args, int(ignored))
 
 	var n int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM item WHERE server = ? AND section IN (`+placeholders(len(sections))+`)`,
-		args...).Scan(&n)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM item WHERE server = ? AND section IN (`+placeholders(len(sections))+`)
+		AND reasons & ~? != 0`, args...).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count items: %w", err)
 	}

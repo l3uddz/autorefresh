@@ -239,28 +239,33 @@ func goneKeys(ctx context.Context, client Plex, server string, lib plex.Library,
 	return gone, nil
 }
 
-// episodeSeries sends the two episode requests of a show library. Only
-// episodes added at or before at-MinimumAge count.
+// episodeSeries sends the episode requests of a show library. It skips the
+// request of an ignored reason. Only episodes added at or before
+// at-MinimumAge count.
 func (r *Refresher) episodeSeries(ctx context.Context, client Plex, server string, lib plex.Library, at time.Time) (noSummary, unmatched []store.Item, err error) {
 	addedBefore := unixString(at.Add(-r.opts.MinimumAge))
-	noSummary, err = listSeries(ctx, client, server, lib, store.EpisodeNoSummary,
-		filter("unmatched", "=", "0"),
-		filter("episode.unmatched", "=", "0"),
-		filter("episode.summary", "=", ""),
-		filter("episode.addedAt", "<<=", addedBefore),
-		filter("season.index", ">>=", "1"),
-	)
-	if err != nil {
-		return nil, nil, err
+	if r.opts.IgnoreReasons&store.EpisodeNoSummary == 0 {
+		noSummary, err = listSeries(ctx, client, server, lib, store.EpisodeNoSummary,
+			filter("unmatched", "=", "0"),
+			filter("episode.unmatched", "=", "0"),
+			filter("episode.summary", "=", ""),
+			filter("episode.addedAt", "<<=", addedBefore),
+			filter("season.index", ">>=", "1"),
+		)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
-	unmatched, err = listSeries(ctx, client, server, lib, store.EpisodeUnmatched,
-		filter("unmatched", "=", "0"),
-		filter("episode.unmatched", "=", "1"),
-		filter("episode.addedAt", "<<=", addedBefore),
-		filter("season.index", ">>=", "1"),
-	)
-	if err != nil {
-		return nil, nil, err
+	if r.opts.IgnoreReasons&store.EpisodeUnmatched == 0 {
+		unmatched, err = listSeries(ctx, client, server, lib, store.EpisodeUnmatched,
+			filter("unmatched", "=", "0"),
+			filter("episode.unmatched", "=", "1"),
+			filter("episode.addedAt", "<<=", addedBefore),
+			filter("season.index", ">>=", "1"),
+		)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	return noSummary, unmatched, nil
 }

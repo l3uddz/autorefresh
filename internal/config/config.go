@@ -12,6 +12,8 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"go.yaml.in/yaml/v3"
+
+	"github.com/l3uddz/autorefresh/internal/store"
 )
 
 // Config is the autorefresh configuration.
@@ -24,6 +26,7 @@ type Config struct {
 	Oversample         time.Duration `yaml:"oversample"`
 	RefreshDelay       time.Duration `yaml:"refresh-delay"`
 	MaxRefreshesPerRun int           `yaml:"max-refreshes-per-run"` // 0: no limit
+	IgnoreReasons      []string      `yaml:"ignore-reasons"`        // reason names such as "no-art"
 	Plex               []Server      `yaml:"plex"`
 }
 
@@ -135,6 +138,9 @@ func (c Config) validate() error {
 	}
 	if c.MaxRefreshesPerRun < 0 {
 		return errors.New("max-refreshes-per-run must not be negative")
+	}
+	if _, err := store.ParseReasons(c.IgnoreReasons); err != nil {
+		return fmt.Errorf("ignore-reasons: %w", err)
 	}
 	if len(c.Plex) == 0 {
 		return errors.New("no plex server is configured")

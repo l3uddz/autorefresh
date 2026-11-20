@@ -29,7 +29,7 @@ func (r *Refresher) refreshDue(ctx context.Context, run *serverRun) error {
 	}
 
 	due, err := r.store.Due(run.server.Name, run.sections(), r.now(), r.opts.MinimumAge,
-		r.opts.RefreshInterval, r.opts.MaxRefreshInterval)
+		r.opts.RefreshInterval, r.opts.MaxRefreshInterval, r.opts.IgnoreReasons)
 	if err != nil {
 		return err
 	}
@@ -49,7 +49,7 @@ func (r *Refresher) refreshDue(ctx context.Context, run *serverRun) error {
 
 // logSummary logs the summary line of the server.
 func (r *Refresher) logSummary(run *serverRun) error {
-	incomplete, err := r.store.CountIncomplete(run.server.Name, run.sections())
+	incomplete, err := r.store.CountIncomplete(run.server.Name, run.sections(), r.opts.IgnoreReasons)
 	if err != nil {
 		return err
 	}

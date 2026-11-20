@@ -1,6 +1,9 @@
 package store
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // Reasons is the set of reasons why an item counts as incomplete.
 type Reasons uint16
@@ -39,4 +42,24 @@ func (r Reasons) String() string {
 		}
 	}
 	return strings.Join(names, ",")
+}
+
+// ParseReasons returns the set of the reason names, such as "no-art". An
+// unknown name is an error.
+func ParseReasons(names []string) (Reasons, error) {
+	var r Reasons
+	for _, name := range names {
+		found := false
+		for _, n := range reasonNames {
+			if n.name == name {
+				r |= n.reason
+				found = true
+				break
+			}
+		}
+		if !found {
+			return 0, fmt.Errorf("unknown reason %q", name)
+		}
+	}
+	return r, nil
 }
