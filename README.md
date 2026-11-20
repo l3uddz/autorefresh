@@ -346,7 +346,13 @@ summary line:
 - A database error stops the run.
 - You stop the run.
 
-The line has these fields:
+Before the summary, autorefresh logs one `Item complete` line for each item
+that the reads of the run found complete. The line has the server, the
+library, the title, and the number of refreshes. These lines come after the
+refresh step, so they stay next to the summary in the log. A run without a
+summary line also logs them.
+
+The summary line has these fields:
 
 | Field | Content |
 | --- | --- |
