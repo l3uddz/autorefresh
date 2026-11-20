@@ -242,9 +242,14 @@ Autorefresh never logs the Plex token or the server URL.
 
 When autorefresh finishes the refresh step of a server, it logs one
 `Run summary` line for that server. A server that becomes unavailable during
-the refresh step also gets this line. A server gets no summary line if it
-becomes unavailable while autorefresh reads its libraries, if a database
-error stops the run, or if you stop the run. The line has these fields:
+the refresh step also gets this line. In these cases, a server gets no
+summary line:
+
+- The server becomes unavailable while autorefresh reads its libraries.
+- A database error stops the run.
+- You stop the run.
+
+The line has these fields:
 
 | Field | Content |
 | --- | --- |
