@@ -354,6 +354,8 @@ run does these things:
 - It reads Plex and updates the cache.
 - It sends match searches, which are reads, to choose the action of each
   item.
+- With a `tmdb-token`, it sends the TMDB lookups of the fix match fallback
+  and caches the TMDB IDs that they find.
 - It logs one `Dry run` line at info level for each due item. The line has
   the server, the library, the title, the reasons, and the action, which is
   `refresh` or `match`.
