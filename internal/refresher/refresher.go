@@ -147,7 +147,9 @@ func (r *Refresher) runServer(ctx context.Context, srv Server) error {
 	if readsDone {
 		err = r.refreshDue(ctx, run)
 	}
-	if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+	// A canceled run logs no summary, also when the server finished without
+	// an error. The store calls do not see ctx, so they can still succeed.
+	if ctxErr := ctx.Err(); ctxErr != nil && (err == nil || errors.Is(err, ctxErr)) {
 		log.Debug().Str("server", srv.Name).Msg("Run canceled")
 		return nil
 	}

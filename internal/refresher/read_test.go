@@ -716,6 +716,29 @@ func TestYoungItemLogsDebug(t *testing.T) {
 	wantField(t, lines[0], "title", "Title 101")
 }
 
+func TestCancelWithoutErrorLogsNoSummary(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	f := newFixture(t, Server{Name: testServer, Plex: fp})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The last request of the server cancels the run. The server then has
+	// no due item, so it returns no error.
+	fp.onCall = func(call string) {
+		if call == "List 1?type=1" {
+			cancel()
+		}
+	}
+
+	f.now = t0
+	if err := f.r.Run(ctx); err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+
+	if lines := f.logLines("info", "Run summary"); len(lines) != 0 {
+		t.Errorf("got summary lines %v, want none", lines)
+	}
+}
+
 func TestRunChecksServersInParallel(t *testing.T) {
 	a, b := newFakePlex(moviesLib), newFakePlex(moviesLib)
 	aCalled, bCalled := make(chan struct{}), make(chan struct{})
