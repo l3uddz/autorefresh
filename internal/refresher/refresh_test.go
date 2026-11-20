@@ -1,13 +1,19 @@
 package refresher
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
@@ -806,13 +812,57 @@ func TestSummaryDurationRoundsToMilliseconds(t *testing.T) {
 	wantField(t, f.lastSummary(testServer), "duration", float64(refreshDelay.Milliseconds()))
 }
 
-// countFails is a store whose CountIncomplete fails.
-type countFails struct{ Store }
+// countFails is a store whose CountIncomplete fails. If wait is set, it
+// waits for wait to close first.
+type countFails struct {
+	Store
+	wait chan struct{}
+}
 
 var errCount = errors.New("count items: database is locked")
 
-func (countFails) CountIncomplete(string, []string, store.Reasons) (int, error) {
+func (c countFails) CountIncomplete(string, []string, store.Reasons) (int, error) {
+	if c.wait != nil {
+		select {
+		case <-c.wait:
+		case <-time.After(5 * time.Second):
+		}
+	}
 	return 0, errCount
+}
+
+// signalWriter closes done after it writes a line that contains match.
+type signalWriter struct {
+	match string
+	done  chan struct{}
+	once  sync.Once
+}
+
+func (w *signalWriter) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte(w.match)) {
+		w.once.Do(func() { close(w.done) })
+	}
+	return len(p), nil
+}
+
+// Run keeps the error of an unavailable server, also when a store error of
+// another server ends the run.
+func TestRunKeepsUnavailableAndStoreErrors(t *testing.T) {
+	down := newFakePlex(moviesLib)
+	down.librariesErr = fmt.Errorf("libraries: %w", plex.ErrUnavailable)
+	broken := newFakePlex(moviesLib)
+	f := newRefreshFixture(t, Server{Name: "down", Plex: down}, Server{Name: "broken", Plex: broken})
+	// The store error waits until the unavailable server logged its error,
+	// so the cancel of the store error cannot stop that server first.
+	signal := &signalWriter{match: "Plex server unavailable", done: make(chan struct{})}
+	log.Logger = zerolog.New(zerolog.SyncWriter(io.MultiWriter(f.logs, signal)))
+	f.r.store = countFails{Store: f.store, wait: signal.done}
+
+	f.now = t0
+	err := f.r.Run(context.Background())
+	if !errors.Is(err, errCount) || !errors.Is(err, plex.ErrUnavailable) {
+		t.Fatalf("Run error = %v, want the store error and the unavailable server", err)
+	}
 }
 
 // A store error after an unavailable server is the error of the run, so the
@@ -822,7 +872,7 @@ func TestStoreErrorAfterUnavailableServer(t *testing.T) {
 	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
 	fp.refreshErrs["101"] = unavailable
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
-	f.r.store = countFails{f.store}
+	f.r.store = countFails{Store: f.store}
 
 	f.now = t0
 	err := f.r.Run(context.Background())
