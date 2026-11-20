@@ -23,7 +23,8 @@ candidate, the second pass runs.
 - Log with `github.com/rs/zerolog/log`, values in fields.
 - The TMDB token never appears in logs, errors, or URLs. It goes in an
   `Authorization: Bearer` header.
-- Without `tmdb-token`, autorefresh behaves exactly as it does now.
+- Without `tmdb-token`, autorefresh sends no TMDB request. The search error
+  rule of Task 4 applies without a token too.
 - A TMDB error never wraps `plex.ErrUnavailable` or `plex.ErrNotFound`.
 - Before each push: `mise run vendor`, `mise run test`, `mise run lint`.
 - Commit subjects use `<type>(<scope>): <summary>`, at most 72 characters,

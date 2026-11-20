@@ -49,7 +49,11 @@ foreign keys to the existing tables.
   finds a candidate, the fallback does not run and sends no TMDB request.
 - A TMDB problem must not affect the Plex side. A TMDB failure must never
   stop the run of a server, and it must never delete an item.
-- Without a TMDB token, autorefresh behaves exactly as it does now.
+- Without a TMDB token, autorefresh sends no TMDB request. One change
+  applies without a token too: a failed Plex search for a `tvdb` or `imdb`
+  ID counts as "no candidate" (see "Search errors of TVDB and IMDb IDs").
+  So a TVDB search that fails with a 500 gives a plain refresh, where today
+  it records a failed attempt.
 
 ## Constraints
 
@@ -193,8 +197,10 @@ rate limit, or a rejected token. Then autorefresh handles the item like a
 failed match search:
 
 - It sends no request for the item in this run.
-- It records a failed attempt, so the item waits `refresh-interval`. A
-  failed attempt does not make the wait longer.
+- It records a failed attempt, as for a failed match search today. The
+  item then waits its current wait, which `refresh-interval` and its number
+  of refreshes give. The failed attempt does not make the wait longer, and
+  the item keeps its refresh history.
 - It logs a `TMDB lookup failed` warning with the item fields and counts the
   failure in `failed_requests`.
 - The run of the server continues with the next item.
