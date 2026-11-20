@@ -121,13 +121,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// With --once, each logged error gives exit code 1.
 	if cli.Once {
 		err := r.Run(ctx)
 		if err != nil {
 			log.Error().Err(err).Msg("Run failed")
 		}
-		closeStore(st)
-		if err != nil {
+		if !closeStore(st) || err != nil {
 			os.Exit(1)
 		}
 		return
@@ -151,9 +151,12 @@ func main() {
 	log.Info().Msg("Stopped")
 }
 
-// closeStore closes the database and logs an error if that fails.
-func closeStore(st *store.Store) {
+// closeStore closes the database. If that fails, it logs an error and
+// returns false.
+func closeStore(st *store.Store) bool {
 	if err := st.Close(); err != nil {
 		log.Error().Err(err).Msg("Failed closing database")
+		return false
 	}
+	return true
 }

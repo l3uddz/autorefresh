@@ -124,6 +124,16 @@ func (f *fixture) run(at time.Time) {
 	}
 }
 
+// runUnavailable runs at the given time and fails unless Run returns the
+// error of an unavailable server.
+func (f *fixture) runUnavailable(at time.Time) {
+	f.t.Helper()
+	f.now = at
+	if err := f.r.Run(context.Background()); !errors.Is(err, plex.ErrUnavailable) {
+		f.t.Fatalf("Run error = %v, want an unavailable server", err)
+	}
+}
+
 // rows returns the stored rows of a section, ordered by rating key.
 func (f *fixture) rows(server, section string) []store.Item {
 	f.t.Helper()
@@ -544,7 +554,7 @@ func TestUnavailableSkipsServer(t *testing.T) {
 			rowsBefore := f.rows("down", "1")
 			libBefore := f.library("down", "1")
 
-			f.run(t0)
+			f.runUnavailable(t0)
 
 			if listedSections(down.calls)["2"] {
 				t.Errorf("the unavailable server read its second library: %q", down.calls)

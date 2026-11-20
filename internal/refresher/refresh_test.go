@@ -1,13 +1,19 @@
 package refresher
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
@@ -302,7 +308,7 @@ func TestRefreshUnavailableStopsServer(t *testing.T) {
 	up.lists["1?type=1"] = []plex.Item{incompleteItem("201")}
 	f := newRefreshFixture(t, Server{Name: "down", Plex: down}, Server{Name: "up", Plex: up})
 
-	f.run(t0)
+	f.runUnavailable(t0)
 
 	wantCalls(t, sends(down.calls), "Refresh 101")
 	wantCalls(t, sends(up.calls), "Refresh 201")
@@ -490,7 +496,11 @@ func TestFixMatchReadErrors(t *testing.T) {
 			f.seed(testServer, showsLib, unmatchedItem("201"), store.Unmatched, 1)
 			f.seed(testServer, showsLib, second, store.NoSummary, 1)
 
-			f.run(t0)
+			if tt.wantStop {
+				f.runUnavailable(t0)
+			} else {
+				f.run(t0)
+			}
 
 			wantCalls(t, sends(fp.calls), tt.wantSends...)
 			row, exists := f.row(testServer, "2", "201")
@@ -534,7 +544,7 @@ func TestDryRunUnavailableSearchRecordsNothing(t *testing.T) {
 	f.r.opts.DryRun = true
 	f.seed(testServer, showsLib, unmatchedItem("201"), store.Unmatched, 1)
 
-	f.run(t0)
+	f.runUnavailable(t0)
 
 	wantCalls(t, sends(fp.calls))
 	if row, exists := f.row(testServer, "2", "201"); !exists || row.Refreshes != 1 || !row.LastAttempt.Equal(seedAttempt) {
@@ -800,4 +810,76 @@ func TestSummaryDurationRoundsToMilliseconds(t *testing.T) {
 
 	// The tests keep the zerolog default, a float of milliseconds.
 	wantField(t, f.lastSummary(testServer), "duration", float64(refreshDelay.Milliseconds()))
+}
+
+// countFails is a store whose CountIncomplete fails. If wait is set, it
+// waits for wait to close first.
+type countFails struct {
+	Store
+	wait chan struct{}
+}
+
+var errCount = errors.New("count items: database is locked")
+
+func (c countFails) CountIncomplete(string, []string, store.Reasons) (int, error) {
+	if c.wait != nil {
+		select {
+		case <-c.wait:
+		case <-time.After(5 * time.Second):
+		}
+	}
+	return 0, errCount
+}
+
+// signalWriter closes done after it writes a line that contains match.
+type signalWriter struct {
+	match string
+	done  chan struct{}
+	once  sync.Once
+}
+
+func (w *signalWriter) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte(w.match)) {
+		w.once.Do(func() { close(w.done) })
+	}
+	return len(p), nil
+}
+
+// Run keeps the error of an unavailable server, also when a store error of
+// another server ends the run.
+func TestRunKeepsUnavailableAndStoreErrors(t *testing.T) {
+	down := newFakePlex(moviesLib)
+	down.librariesErr = fmt.Errorf("libraries: %w", plex.ErrUnavailable)
+	broken := newFakePlex(moviesLib)
+	f := newRefreshFixture(t, Server{Name: "down", Plex: down}, Server{Name: "broken", Plex: broken})
+	// The store error waits until the unavailable server logged its error,
+	// so the cancel of the store error cannot stop that server first.
+	signal := &signalWriter{match: "Plex server unavailable", done: make(chan struct{})}
+	log.Logger = zerolog.New(zerolog.SyncWriter(io.MultiWriter(f.logs, signal)))
+	f.r.store = countFails{Store: f.store, wait: signal.done}
+
+	f.now = t0
+	err := f.r.Run(context.Background())
+	if !errors.Is(err, errCount) || !errors.Is(err, plex.ErrUnavailable) {
+		t.Fatalf("Run error = %v, want the store error and the unavailable server", err)
+	}
+}
+
+// A store error after an unavailable server is the error of the run, so the
+// caller does not take it for an unavailable server only.
+func TestStoreErrorAfterUnavailableServer(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
+	fp.refreshErrs["101"] = unavailable
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.store = countFails{Store: f.store}
+
+	f.now = t0
+	err := f.r.Run(context.Background())
+	if !errors.Is(err, errCount) || errors.Is(err, plex.ErrUnavailable) {
+		t.Fatalf("Run error = %v, want only the store error", err)
+	}
+	if errs := f.logLines("error", "Plex server unavailable"); len(errs) != 1 {
+		t.Errorf("got %d unavailable errors, want 1", len(errs))
+	}
 }
