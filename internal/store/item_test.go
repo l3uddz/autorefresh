@@ -259,6 +259,27 @@ func TestDueOrder(t *testing.T) {
 	}
 }
 
+func TestDuePutsFewerRefreshesFirst(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("never", NoArt), item("failed", NoArt), item("once", NoArt), item("twice", NoArt)}})
+	// The last attempts are in the opposite order of the refreshes.
+	refresh(t, s, "twice", 2)
+	if err := s.RecordAttempt(srv, "once", base.Add(5*time.Hour), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordAttempt(srv, "failed", base.Add(6*time.Hour), false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Due(srv, []string{sec}, base.Add(100*time.Hour), 0, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"never", "failed", "once", "twice"}
+	if k := keys(got); !reflect.DeepEqual(k, want) {
+		t.Fatalf("Due = %v, want %v", k, want)
+	}
+}
+
 func TestApplyReadMovesRowBetweenSections(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})

@@ -71,11 +71,14 @@ Autorefresh never gives up. It tries an incomplete item again after each
 
 Each run refreshes the due items in this order:
 
-1. Items with no attempt.
-2. Items with the oldest last attempt.
+1. Items with the fewest refreshes. A refresh is a refresh or match request
+   that Plex accepted. Items that Plex never refreshed therefore go first.
+2. Items with no attempt.
+3. Items with the oldest last attempt.
 
 If two items are equal, the item that Plex added first goes first. A failing
-item therefore moves to the end of the queue.
+item therefore moves to the end of the items with the same number of
+refreshes.
 
 Autorefresh sends one refresh or match request at a time on each server. It
 waits `refresh-delay` between two of these requests. If

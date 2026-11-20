@@ -289,7 +289,8 @@ func (s *Store) Unseen(server, section string, seen []string) ([]Item, error) {
 
 // Due returns the rows of the sections that are incomplete, added at or
 // before now-minimumAge, and with no attempt after now-refreshInterval.
-// Order: no attempt first, then the oldest LastAttempt, then the oldest AddedAt.
+// Order: the fewest Refreshes first, then no attempt, then the oldest
+// LastAttempt, then the oldest AddedAt.
 func (s *Store) Due(server string, sections []string, now time.Time, minimumAge, refreshInterval time.Duration) ([]Item, error) {
 	if len(sections) == 0 {
 		return nil, nil
@@ -300,7 +301,7 @@ func (s *Store) Due(server string, sections []string, now time.Time, minimumAge,
 	items, err := queryItems(s.db, `SELECT `+itemColumns+` FROM item
 		WHERE server = ? AND section IN (`+placeholders(len(sections))+`)
 		AND added_at <= ? AND (last_attempt IS NULL OR last_attempt <= ?)
-		ORDER BY last_attempt IS NOT NULL, last_attempt, added_at, rating_key`, args...)
+		ORDER BY refreshes, last_attempt IS NOT NULL, last_attempt, added_at, rating_key`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read due items: %w", err)
 	}
