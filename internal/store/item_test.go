@@ -390,6 +390,23 @@ func TestDueAndCountSkipIgnoredReasons(t *testing.T) {
 	}
 }
 
+func TestLongestWaitRefreshes(t *testing.T) {
+	tests := []struct {
+		interval, longest time.Duration
+		want              int
+	}{
+		{12 * time.Hour, 168 * time.Hour, 5}, // 12h, 12h, 24h, 48h, 96h, then 168h
+		{time.Hour, 4 * time.Hour, 3},        // 1h, 1h, 2h, then 4h
+		{time.Hour, time.Hour, 0},
+		{time.Hour, 0, 0},
+	}
+	for _, tt := range tests {
+		if got := LongestWaitRefreshes(tt.interval, tt.longest); got != tt.want {
+			t.Errorf("LongestWaitRefreshes(%v, %v) = %d, want %d", tt.interval, tt.longest, got, tt.want)
+		}
+	}
+}
+
 func TestDueWithoutBackoffBelowRefreshInterval(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})

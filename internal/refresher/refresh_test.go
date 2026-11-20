@@ -174,6 +174,46 @@ func TestIgnoredReasonsGetNoRequest(t *testing.T) {
 	wantField(t, f.lastSummary(testServer), "incomplete_items", float64(1))
 }
 
+func TestWarnAtLongestWait(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	// The waits are 24h, 24h, 48h, and then 96h from the third refresh on.
+	f.r.opts.MaxRefreshInterval = 96 * time.Hour
+	f.seed(testServer, moviesLib, incompleteItem("101"), store.NoSummary, 1)
+	f.seed(testServer, moviesLib, incompleteItem("102"), store.NoSummary, 2)
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 101", "Refresh 102")
+	lines := f.logLines("warn", "Item reached the longest wait")
+	if len(lines) != 1 {
+		t.Fatalf("got %d longest wait lines, want 1", len(lines))
+	}
+	wantField(t, lines[0], "server", testServer)
+	wantField(t, lines[0], "library", "Movies")
+	wantField(t, lines[0], "title", "Title 102")
+	wantField(t, lines[0], "reasons", "no-summary")
+	wantField(t, lines[0], "refreshes", float64(3))
+	// zerolog writes a duration in milliseconds.
+	wantField(t, lines[0], "wait", float64((96 * time.Hour).Milliseconds()))
+}
+
+func TestNoLongestWaitWarningWithoutBackoff(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.opts.MaxRefreshInterval = f.r.opts.RefreshInterval
+	// 101 gets its first refresh, and 102 its third.
+	f.seed(testServer, moviesLib, incompleteItem("101"), store.NoSummary, 0)
+	f.seed(testServer, moviesLib, incompleteItem("102"), store.NoSummary, 2)
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 101", "Refresh 102")
+	if lines := f.logLines("warn", "Item reached the longest wait"); len(lines) != 0 {
+		t.Errorf("got longest wait lines %v, want none", lines)
+	}
+}
+
 func TestIgnoredEpisodeReasonKeepsCachedRow(t *testing.T) {
 	fp := newFakePlex(showsLib)
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})

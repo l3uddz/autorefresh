@@ -288,6 +288,29 @@ func (s *Store) Unseen(server, section string, seen []string) ([]Item, error) {
 	return unseen, nil
 }
 
+// backoff returns the first wait and the longest wait in milliseconds, and
+// the number of doublings from the first wait that reach the longest wait.
+// Milliseconds keep the fraction of a wait such as 1.5s. Due stops the
+// doubling at doublings, so its shift cannot overflow.
+func backoff(refreshInterval, maxRefreshInterval time.Duration) (interval, maxWait int64, doublings int) {
+	interval = refreshInterval.Milliseconds()
+	maxWait = max(maxRefreshInterval.Milliseconds(), interval)
+	for wait := interval; wait > 0 && wait < maxWait; wait *= 2 {
+		doublings++
+	}
+	return interval, maxWait, doublings
+}
+
+// LongestWaitRefreshes returns the number of refreshes after which the wait
+// of a row is maxRefreshInterval. It returns 0 if the wait never grows.
+func LongestWaitRefreshes(refreshInterval, maxRefreshInterval time.Duration) int {
+	_, _, doublings := backoff(refreshInterval, maxRefreshInterval)
+	if doublings == 0 {
+		return 0
+	}
+	return doublings + 1
+}
+
 // Due returns the rows of the sections that are incomplete, added at or
 // before now-minimumAge, and with no attempt in their wait before now.
 //
@@ -302,18 +325,9 @@ func (s *Store) Due(server string, sections []string, now time.Time, minimumAge,
 	if len(sections) == 0 {
 		return nil, nil
 	}
-	// The wait is in milliseconds, so a wait such as 1.5s keeps its
-	// fraction. The cutoff is then rounded down to whole seconds, like the
-	// stored times.
-	interval := refreshInterval.Milliseconds()
-	maxWait := max(maxRefreshInterval.Milliseconds(), interval)
-	// doublings is the number of doublings that reach maxWait. The shift in
-	// the query stops there, so it cannot overflow.
-	doublings := 0
-	for wait := interval; wait > 0 && wait < maxWait; wait *= 2 {
-		doublings++
-	}
+	interval, maxWait, doublings := backoff(refreshInterval, maxRefreshInterval)
 
+	// The query rounds the cutoff down to whole seconds, like the stored times.
 	args := append([]any{server}, stringArgs(sections)...)
 	args = append(args, int(ignored), now.Add(-minimumAge).Unix(), now.UnixMilli(), maxWait, interval, doublings)
 
