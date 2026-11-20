@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -66,7 +67,8 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
 	prev := log.Logger
-	log.Logger = zerolog.New(&buf)
+	// The servers of a run log from their own goroutines.
+	log.Logger = zerolog.New(zerolog.SyncWriter(&buf))
 	t.Cleanup(func() { log.Logger = prev })
 	return &buf
 }
@@ -77,6 +79,7 @@ type fixture struct {
 	r      *Refresher
 	logs   *bytes.Buffer
 	now    time.Time
+	mu     sync.Mutex      // guards sleeps
 	sleeps []time.Duration // the durations passed to sleep
 }
 
@@ -105,6 +108,8 @@ func newFixture(t *testing.T, servers ...Server) *fixture {
 	})
 	f.r.now = func() time.Time { return f.now }
 	f.r.sleep = func(_ context.Context, d time.Duration) error {
+		f.mu.Lock()
+		defer f.mu.Unlock()
 		f.sleeps = append(f.sleeps, d)
 		return nil
 	}
@@ -606,13 +611,12 @@ func TestCancelStopsRunQuietly(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			first := newFakePlex(moviesLib, showsLib)
-			second := newFakePlex(moviesLib)
-			f := newFixture(t, Server{Name: "first", Plex: first}, Server{Name: "second", Plex: second})
+			f := newFixture(t, Server{Name: "first", Plex: first})
 			if tt.prior != nil {
 				first.lists = tt.prior
 				f.run(t0)
 				first.lists = map[string][]plex.Item{}
-				first.calls, second.calls = nil, nil
+				first.calls = nil
 			}
 
 			ctx, cancel := context.WithCancel(context.Background())
@@ -631,7 +635,6 @@ func TestCancelStopsRunQuietly(t *testing.T) {
 			}
 
 			wantCalls(t, first.calls, tt.want...)
-			wantCalls(t, second.calls)
 			if strings.Contains(f.logs.String(), `"level":"error"`) {
 				t.Errorf("got error lines, want none:\n%s", f.logs)
 			}
@@ -711,6 +714,34 @@ func TestYoungItemLogsDebug(t *testing.T) {
 		t.Fatalf("got %d young item lines, want 1", len(lines))
 	}
 	wantField(t, lines[0], "title", "Title 101")
+}
+
+func TestRunChecksServersInParallel(t *testing.T) {
+	a, b := newFakePlex(moviesLib), newFakePlex(moviesLib)
+	aCalled, bCalled := make(chan struct{}), make(chan struct{})
+	// Each server waits in its Libraries call until the other server makes
+	// its own Libraries call. Servers that run one after another time out.
+	wait := func(own, other chan struct{}) func(string) {
+		return func(call string) {
+			if call != "Libraries" {
+				return
+			}
+			close(own)
+			select {
+			case <-other:
+			case <-time.After(5 * time.Second):
+				t.Error("the other server did not start while this server was busy")
+			}
+		}
+	}
+	a.onCall, b.onCall = wait(aCalled, bCalled), wait(bCalled, aCalled)
+	f := newFixture(t, Server{Name: "a", Plex: a}, Server{Name: "b", Plex: b})
+
+	f.run(t0)
+
+	if got := len(f.logLines("info", "Run summary")); got != 2 {
+		t.Errorf("got %d summary lines, want 2", got)
+	}
 }
 
 func TestStoreErrorEndsRun(t *testing.T) {

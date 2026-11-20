@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -58,6 +59,7 @@ type Refresher struct {
 	opts    Options
 	now     func() time.Time
 	sleep   func(context.Context, time.Duration) error
+	warnMu  sync.Mutex      // guards warned, because the servers run in parallel
 	warned  map[string]bool // the keys of the warnings that log once per process
 }
 
@@ -111,38 +113,56 @@ func (run *serverRun) sections() []string {
 	return sections
 }
 
-// Run reads the libraries of each server in order, refreshes the due items
-// of that server, and logs its summary. It returns an error only for a store
-// error. If ctx ends, Run stops and returns nil.
+// Run checks each server in its own goroutine. It reads the libraries of
+// the server, refreshes its due items, and logs its summary. It returns only
+// store errors. A store error of one server also stops the other servers.
+// If ctx ends, Run stops and returns nil.
 func (r *Refresher) Run(ctx context.Context) error {
-	for _, srv := range r.servers {
-		if ctx.Err() != nil {
-			log.Debug().Str("server", srv.Name).Msg("Run canceled")
-			return nil
-		}
-		run := &serverRun{server: srv, began: r.now(), files: map[string][]string{}}
-		err := r.readLibraries(ctx, run)
-		readsDone := err == nil
-		if readsDone {
-			err = r.refreshDue(ctx, run)
-		}
-		if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
-			log.Debug().Str("server", srv.Name).Msg("Run canceled")
-			return nil
-		}
-		switch {
-		case errors.Is(err, plex.ErrUnavailable):
-			log.Error().Str("server", srv.Name).Err(err).Msg("Plex server unavailable")
-			if !readsDone {
-				continue
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	errs := make([]error, len(r.servers))
+	var wg sync.WaitGroup
+	for i, srv := range r.servers {
+		wg.Go(func() {
+			if err := r.runServer(ctx, srv); err != nil {
+				errs[i] = err
+				cancel()
 			}
-		case err != nil:
-			return fmt.Errorf("server %s: %w", srv.Name, err)
+		})
+	}
+	wg.Wait()
+	return errors.Join(errs...)
+}
+
+// runServer checks one server. It returns only a store error.
+func (r *Refresher) runServer(ctx context.Context, srv Server) error {
+	if ctx.Err() != nil {
+		log.Debug().Str("server", srv.Name).Msg("Run canceled")
+		return nil
+	}
+	run := &serverRun{server: srv, began: r.now(), files: map[string][]string{}}
+	err := r.readLibraries(ctx, run)
+	readsDone := err == nil
+	if readsDone {
+		err = r.refreshDue(ctx, run)
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+		log.Debug().Str("server", srv.Name).Msg("Run canceled")
+		return nil
+	}
+	switch {
+	case errors.Is(err, plex.ErrUnavailable):
+		log.Error().Str("server", srv.Name).Err(err).Msg("Plex server unavailable")
+		if !readsDone {
+			return nil
 		}
-		// A server that the refresh step stopped also gets its summary.
-		if err := r.logSummary(run); err != nil {
-			return fmt.Errorf("server %s: %w", srv.Name, err)
-		}
+	case err != nil:
+		return fmt.Errorf("server %s: %w", srv.Name, err)
+	}
+	// A server that the refresh step stopped also gets its summary.
+	if err := r.logSummary(run); err != nil {
+		return fmt.Errorf("server %s: %w", srv.Name, err)
 	}
 	return nil
 }
@@ -150,6 +170,8 @@ func (r *Refresher) Run(ctx context.Context) error {
 // warnOnce reports whether the warning with key was not logged yet in this
 // process, and marks it as logged.
 func (r *Refresher) warnOnce(key string) bool {
+	r.warnMu.Lock()
+	defer r.warnMu.Unlock()
 	if r.warned[key] {
 		return false
 	}
