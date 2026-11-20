@@ -396,3 +396,76 @@ func stringArgs(values []string) []any {
 	}
 	return args
 }
+
+// Pruned is one library whose cache a prune removed.
+type Pruned struct {
+	Server, Section string
+	Items           int // the item rows that the prune removed
+}
+
+// PruneServers removes the item rows and the read times of each server that
+// is not in servers.
+func (s *Store) PruneServers(servers []string) ([]Pruned, error) {
+	keep := make(map[string]bool, len(servers))
+	for _, name := range servers {
+		keep[name] = true
+	}
+	return s.prune(func(server, _ string) bool { return !keep[server] })
+}
+
+// PruneSections removes the item rows and the read times of each section of
+// server that is not in sections. An empty sections removes all of them.
+func (s *Store) PruneSections(server string, sections []string) ([]Pruned, error) {
+	keep := make(map[string]bool, len(sections))
+	for _, section := range sections {
+		keep[section] = true
+	}
+	return s.prune(func(srv, section string) bool { return srv == server && !keep[section] })
+}
+
+// prune removes the item rows and the read times of each library for which
+// remove is true, in one transaction. It returns the removed libraries,
+// ordered by server and section.
+func (s *Store) prune(remove func(server, section string) bool) ([]Pruned, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin prune: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(`SELECT server, section, SUM(n) FROM (
+			SELECT server, section, 0 AS n FROM library
+			UNION ALL
+			SELECT server, section, 1 FROM item
+		) GROUP BY server, section ORDER BY server, section`)
+	if err != nil {
+		return nil, fmt.Errorf("read libraries: %w", err)
+	}
+	var pruned []Pruned
+	for rows.Next() {
+		var p Pruned
+		if err := rows.Scan(&p.Server, &p.Section, &p.Items); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("read libraries: %w", err)
+		}
+		if remove(p.Server, p.Section) {
+			pruned = append(pruned, p)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read libraries: %w", err)
+	}
+
+	for _, p := range pruned {
+		for _, table := range []string{"item", "library"} {
+			if _, err := tx.Exec(`DELETE FROM `+table+` WHERE server = ? AND section = ?`, p.Server, p.Section); err != nil {
+				return nil, fmt.Errorf("prune %s: %w", table, err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit prune: %w", err)
+	}
+	return pruned, nil
+}
