@@ -365,10 +365,17 @@ services:
 ```
 
 If an earlier image ran as root, root owns the files in `/config`. Before
-you start the new image, give them to the user of the container:
+you start the new image, give them to the user that the container runs as.
+If you set `--user 1000:1000` or `user: 1000:1000`, as in the examples:
 
 ```sh
 sudo chown -R 1000:1000 /opt/autorefresh
+```
+
+If you set no user, the container runs as the default user:
+
+```sh
+sudo chown -R 65532:65532 /opt/autorefresh
 ```
 
 | Tag | Content |
