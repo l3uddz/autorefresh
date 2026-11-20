@@ -232,7 +232,7 @@ type Server struct {
 func Decode(r io.Reader) (Config, error)
 ```
 
-- [ ] Step 1: Write the failing tests in `internal/config/config_test.go`.
+- [x] Step 1: Write the failing tests in `internal/config/config_test.go`.
   - `TestDecodeAppliesDefaults`: the file has only one server (`name: main`, `url: http://plex.example.invalid:32400`, `token: example-token`). Expected values:
     - `Schedule == "0 * * * *"`
     - `MinimumAge == 24*time.Hour`, `RefreshInterval == 12*time.Hour`, `CacheRefresh == "0 3 * * 0"`
@@ -247,10 +247,10 @@ func Decode(r io.Reader) (Config, error)
     - `minimum-age: -1h`, `oversample: -1h`, `refresh-delay: -1s`
     - `max-refreshes-per-run: 0`, an empty library title
   - `TestDecodeErrorsOmitSecrets`: a server with `url: ftp://secret-host.example.invalid` and `token: secret-token` returns an error that contains the server name and contains neither `secret-host` nor `secret-token`.
-- [ ] Step 2: Run `go test ./internal/config/...`. Expected: FAIL, because `Decode` is not defined.
-- [ ] Step 3: Implement `Decode` in `internal/config/config.go`. Use `yaml.NewDecoder(r)` with `KnownFields(true)` and `cron.ParseStandard` for `schedule` and `cache-refresh`. Name the server by its `name` in each error, never by its URL or token.
-- [ ] Step 4: Run `go test ./internal/config/...`. Expected: PASS.
-- [ ] Step 5: Add the `internal/config/` row to `AGENTS.md`. Run the checks from "Delivery for each task". Commit with `feat(config): load and validate the configuration`.
+- [x] Step 2: Run `go test ./internal/config/...`. Expected: FAIL, because `Decode` is not defined.
+- [x] Step 3: Implement `Decode` in `internal/config/config.go`. Use `yaml.NewDecoder(r)` with `KnownFields(true)` and `cron.ParseStandard` for `schedule` and `cache-refresh`. Name the server by its `name` in each error, never by its URL or token.
+- [x] Step 4: Run `go test ./internal/config/...`. Expected: PASS.
+- [x] Step 5: Add the `internal/config/` row to `AGENTS.md`. Run the checks from "Delivery for each task". Commit with `feat(config): load and validate the configuration`.
 
 ### Task 2: Plex client
 
@@ -329,8 +329,8 @@ Requests:
 | `SearchMatches` | `GET /library/metadata/<ratingKey>/matches?manual=1&title=<title>&agent=<agent>&language=<language>` |
 | `Match` | `PUT /library/metadata/<ratingKey>/match?guid=<guid>&name=<name>&year=<year>`. If the year is 0, leave out `year`. |
 
-- [ ] Step 1: Record and clean the fixtures as "Recording test data" describes. Expected: the probe selects a form for each point, and every leak check count is 0.
-- [ ] Step 2: Write the failing tests. Each test uses an `httptest.Server`.
+- [x] Step 1: Record and clean the fixtures as "Recording test data" describes. Expected: the probe selects a form for each point, and every leak check count is 0.
+- [x] Step 2: Write the failing tests. Each test uses an `httptest.Server`.
   - `TestRequestsSendTokenHeaderAndAcceptJSON`: every method sends `X-Plex-Token` and `Accept: application/json`, and no URL has a `X-Plex-Token` query parameter.
   - `TestLibrariesDecodesSections`: `sections.json` gives three libraries with the IDs, types, agents, and languages of the fixture.
   - `TestListDecodesRecordedShapes`: `movies_matched.json`, `movies_unmatched.json`, `shows_unmatched.json`, and `shows_episode_summary.json` give these values:
@@ -348,10 +348,10 @@ Requests:
   - `TestRejectsInvalidRatingKey` (Review Focus 1): call `Refresh`, `Match`, `ItemPaths`, and `SearchMatches` with each of `""`, `"../sections/1"`, `"1/refresh"`, and `"12a"`. Each call returns an error, and the server gets no request.
   - `TestStatusMapping`, a table test: 401 and 503 give `errors.Is(err, ErrUnavailable)`. 404 gives `ErrNotFound`. 500 gives an error that is neither. A closed server gives `ErrUnavailable`.
   - `TestErrorsAndTraceOmitSecrets`: set the global logger to trace level with a buffer. After a failed request and a successful request, the error text and the buffer contain neither the token nor the host of the server URL. The buffer has one trace line for each request with the method, the path, the status, and the time.
-- [ ] Step 3: Run `go test ./internal/plex/...`. Expected: FAIL, because the package is empty.
-- [ ] Step 4: Implement the client. Before you build a URL, make sure that the rating key matches `^[0-9]+$`. If it does not, return an error. Remove the URL from transport errors, as autoscan's `withoutURL` does. Build the filter query in the form that the probe selected. Do not add a method for a section refresh.
-- [ ] Step 5: Run `go test ./internal/plex/...`. Expected: PASS.
-- [ ] Step 6: Add the `internal/plex/` row to `AGENTS.md`. Run the checks. Commit with `feat(plex): add the Plex API client`. Put the probe results in the PR description.
+- [x] Step 3: Run `go test ./internal/plex/...`. Expected: FAIL, because the package is empty.
+- [x] Step 4: Implement the client. Before you build a URL, make sure that the rating key matches `^[0-9]+$`. If it does not, return an error. Remove the URL from transport errors, as autoscan's `withoutURL` does. Build the filter query in the form that the probe selected. Do not add a method for a section refresh.
+- [x] Step 5: Run `go test ./internal/plex/...`. Expected: PASS.
+- [x] Step 6: Add the `internal/plex/` row to `AGENTS.md`. Run the checks. Commit with `feat(plex): add the Plex API client`. Put the probe results in the PR description.
 
 ### Task 3: Store
 
@@ -471,7 +471,7 @@ CREATE TABLE item (
 
 The migration runner is a small part of `store.go`: a `schema_migration (version INTEGER PRIMARY KEY)` table, the embedded `migrations/*.sql` files in version order, and one transaction for each file. It follows autoscan's `migrate` package without the component column, because only one package has migrations.
 
-- [ ] Step 1: Write the failing tests. Each test opens a database in `t.TempDir()`.
+- [x] Step 1: Write the failing tests. Each test opens a database in `t.TempDir()`.
   - `TestOpenMigratesOnce`: `Open` twice on the same file succeeds, and `schema_migration` has one row.
   - `TestReasonsString`: `Unmatched|NoArt` gives `"unmatched,no-art"`. `0` gives `""`.
   - `TestApplyReadStoresOnlyIncomplete`: of two items, one with reasons and one with `0`, only the first gets a row.
@@ -490,10 +490,10 @@ The migration runner is a small part of `store.go`: a `schema_migration (version
   - `TestRecordAttempt`: `refreshed == true` sets `LastRefresh` and `Refreshes == 1`. `refreshed == false` sets only `LastAttempt`.
   - `TestApplyReadIncrementalKeepsFullRead`: a full read at t1 and an incremental read at t2 give `LastFullRead == t1` and `LastRead == t2`.
   - `TestDelete`: the row is gone, and a delete of a missing row is not an error.
-- [ ] Step 2: Run `go test ./internal/store/...`. Expected: FAIL, because the package is empty.
-- [ ] Step 3: Implement the store. Call `db.SetMaxOpenConns(1)` in `Open`. Run each multi-row change in one transaction. Close rows before the next statement, because the pool has one connection.
-- [ ] Step 4: Run `go test ./internal/store/...`. Expected: PASS.
-- [ ] Step 5: Add the `internal/store/` row to `AGENTS.md`. Run the checks. Commit with `feat(store): add the SQLite cache of incomplete items`.
+- [x] Step 2: Run `go test ./internal/store/...`. Expected: FAIL, because the package is empty.
+- [x] Step 3: Implement the store. Call `db.SetMaxOpenConns(1)` in `Open`. Run each multi-row change in one transaction. Close rows before the next statement, because the pool has one connection.
+- [x] Step 4: Run `go test ./internal/store/...`. Expected: PASS.
+- [x] Step 5: Add the `internal/store/` row to `AGENTS.md`. Run the checks. Commit with `feat(store): add the SQLite cache of incomplete items`.
 
 ### Task 4: Refresher rules
 
@@ -526,7 +526,7 @@ type searchResult struct {
 func chooseMatch(itemYear int, results []searchResult) (cand plex.Candidate, ok bool, conflict string)
 ```
 
-- [ ] Step 1: Write the failing tests.
+- [x] Step 1: Write the failing tests.
   - `TestItemReasons`, a table test: a `local://1001` guid gives `Unmatched`. An empty summary gives `NoSummary`. An empty thumb gives `NoPoster`. An empty art gives `NoArt`. A complete `plex://` item gives `0`. An unmatched series with no summary, thumb, or art gives all four flags.
   - `TestParseIDs`, a table test with the expected `[]pathID`:
     - `/m/Film (2020) {tmdb-747059}/Film.mkv` gives `tmdb 747059`
@@ -549,10 +549,10 @@ func chooseMatch(itemYear int, results []searchResult) (cand plex.Candidate, ok 
     - item year 2020 with candidate year 2022 gives a conflict
     - year 2020 with 2021 gives `ok`
     - year 0 on either side gives `ok`
-- [ ] Step 2: Run `go test ./internal/refresher/...`. Expected: FAIL, because the functions are not defined.
-- [ ] Step 3: Implement the three files. `parseIDs` finds each `{...}`, `[...]`, and `(...)` group. All of the text in the group must be one ID: the source `imdb`, `tmdb`, or `tvdb` in any case, an optional `id` suffix, a separator of non-alphanumeric characters, and a value. Other groups give no ID. An IMDb value is `tt` and digits. TMDb and TVDB values are digits.
-- [ ] Step 4: Run `go test ./internal/refresher/...`. Expected: PASS.
-- [ ] Step 5: Add the `internal/refresher/` row to `AGENTS.md`. Run the checks. Commit with `feat(refresher): add missing-metadata and fix match rules`.
+- [x] Step 2: Run `go test ./internal/refresher/...`. Expected: FAIL, because the functions are not defined.
+- [x] Step 3: Implement the three files. `parseIDs` finds each `{...}`, `[...]`, and `(...)` group. All of the text in the group must be one ID: the source `imdb`, `tmdb`, or `tvdb` in any case, an optional `id` suffix, a separator of non-alphanumeric characters, and a value. Other groups give no ID. An IMDb value is `tt` and digits. TMDb and TVDB values are digits.
+- [x] Step 4: Run `go test ./internal/refresher/...`. Expected: PASS.
+- [x] Step 5: Add the `internal/refresher/` row to `AGENTS.md`. Run the checks. Commit with `feat(refresher): add missing-metadata and fix match rules`.
 
 ### Task 5: Library reads
 
@@ -624,7 +624,7 @@ Autorefresh stages the results of all requests of one library in a `store.Read`:
 
 For each server, autorefresh keeps the movie `Files` of the run in a map by rating key for Task 6. Each server gets a new map, because two servers can use the same rating key.
 
-- [ ] Step 1: Write the failing tests. Use the fake Plex and a real store in `t.TempDir()`.
+- [x] Step 1: Write the failing tests. Use the fake Plex and a real store in `t.TempDir()`.
   - `TestRunSelectsSupportedLibraries`: Plex has three libraries. They are a movie library with the movie agent, a show library with the series agent, and a movie library with `tv.plex.agents.none`. Only the first two are read. Two runs log the warning for the third library once.
   - `TestRunUsesConfiguredLibraries`: with `Libraries: ["Movies"]`, only that title is read. A configured title that Plex does not have logs one warning.
   - `TestFirstRunDoesFullRead`: `List` gets no filters. The incomplete items get rows, and the complete items do not. `LastFullRead` and `LastRead` equal the start time.
@@ -638,10 +638,10 @@ For each server, autorefresh keeps the movie `Files` of the run in a map by rati
   - `TestCompleteItemLogsFixed`: a stored item that a read returns complete loses its row, and an info line has the title and the refresh count.
   - `TestCompleteItemKeepsEpisodeReason` (Review Focus 3): a series row has only `NoArt` and `Refreshes == 2`. The full read returns it complete, and the first episode request returns it. The row keeps `EpisodeNoSummary` and `Refreshes == 2`, and no line logs it as complete.
   - `TestYoungItemLogsDebug`: an incomplete item added after `now - MinimumAge` is stored, and a debug line has its title.
-- [ ] Step 2: Run `go test ./internal/refresher/...`. Expected: FAIL.
-- [ ] Step 3: Implement `refresher.go` and `read.go`. Log each library read at debug with the kind of read, the item count, the incomplete count, and the time it took.
-- [ ] Step 4: Run `go test ./internal/refresher/...`. Expected: PASS.
-- [ ] Step 5: Run the checks. Commit with `feat(refresher): read libraries into the cache`.
+- [x] Step 2: Run `go test ./internal/refresher/...`. Expected: FAIL.
+- [x] Step 3: Implement `refresher.go` and `read.go`. Log each library read at debug with the kind of read, the item count, the incomplete count, and the time it took.
+- [x] Step 4: Run `go test ./internal/refresher/...`. Expected: PASS.
+- [x] Step 5: Run the checks. Commit with `feat(refresher): read libraries into the cache`.
 
 ### Task 6: Refresh run
 
@@ -671,7 +671,7 @@ The step for each due item, in `Due` order:
 
 At the end of each server, log one info summary line with: items read, incomplete items (`CountIncomplete`), due items, refreshes sent, matches sent, failures, items that became complete, and the time of the run.
 
-- [ ] Step 1: Write the failing tests. Use the fake Plex, a real store, a fixed `now`, and a `sleep` that records its calls.
+- [x] Step 1: Write the failing tests. Use the fake Plex, a real store, a fixed `now`, and a `sleep` that records its calls.
   - `TestRefreshOrderAndDelay`: three due items are refreshed in `Due` order, and `sleep` gets `RefreshDelay` twice.
   - `TestMaxRefreshesPerRun`: with a limit of 2 and three due items, the run sends 2 refreshes. The next run, `RefreshInterval` later, sends the third first.
   - `TestRefreshSuccessRecordsRefresh`: `Refreshes == 1`, and `LastRefresh` and `LastAttempt` equal `now`.
@@ -691,10 +691,10 @@ At the end of each server, log one info summary line with: items read, incomplet
   - `TestDryRunSendsAndRecordsNothing` (Review Focus 5): the fake gets no `Refresh` or `Match` call, and `sleep` gets no call. `LastAttempt` stays zero. The log has one info line for each due item with its action. A `SearchMatches` 500 error records no attempt, and a `SearchMatches` 404 deletes no row. The read state is saved.
   - `TestDryRunAppliesLimit`: with a limit of 1 and three due items, a dry run logs one item.
   - `TestSummaryLine`: the info line has the counts of a run with one refresh, one match, one failure, and one fixed item.
-- [ ] Step 2: Run `go test ./internal/refresher/...`. Expected: FAIL.
-- [ ] Step 3: Implement `refresh.go` and call it from `Run`. Log each match search result at debug with the ID and the number of candidates.
-- [ ] Step 4: Run `go test ./internal/refresher/...`. Expected: PASS.
-- [ ] Step 5: Run the checks. Commit with `feat(refresher): refresh and match due items`.
+- [x] Step 2: Run `go test ./internal/refresher/...`. Expected: FAIL.
+- [x] Step 3: Implement `refresh.go` and call it from `Run`. Log each match search result at debug with the ID and the number of candidates.
+- [x] Step 4: Run `go test ./internal/refresher/...`. Expected: PASS.
+- [x] Step 5: Run the checks. Commit with `feat(refresher): refresh and match due items`.
 
 ### Task 7: Command line, schedule, Docker, and README
 
@@ -737,17 +737,17 @@ Wiring in `main`:
 5. With `--once`, run once and exit. If `Run` returns an error, exit with code 1.
 6. Otherwise, add `runner.start` to `cron.New()` with the schedule. Start the schedule. On SIGINT or SIGTERM, cancel the context, wait for `cron.Stop()`, and close the store.
 
-- [ ] Step 1: Write the failing tests.
+- [x] Step 1: Write the failing tests.
   - `TestApplyDefaultPathsKeepsSetPaths`: with all three paths set, no directory is created, and the paths do not change.
   - `TestApplyDefaultPathsFillsEmptyPaths`: empty paths become `config.yml`, `autorefresh.db`, and `activity.log` in the stubbed default directory.
   - `TestWaitForConfigWaitsForContent`: port autoscan's test. An empty file that gets content after a short time opens.
   - `TestRunnerSkipsOverlappingStart`: while one `start` blocks in `run`, a second `start` returns at once, does not call `run`, and logs a warning.
   - `TestRunnerLogsRunError`: an error from `run` gives an error line.
-- [ ] Step 2: Run `go test ./cmd/autorefresh/...`. Expected: FAIL.
-- [ ] Step 3: Implement the wiring. Add `github.com/robfig/cron/v3` to the imports of `main` (the module is already in `go.mod` from Task 1).
-- [ ] Step 4: Run `go test ./cmd/autorefresh/...`. Expected: PASS.
-- [ ] Step 5: Add `AUTOREFRESH_CONFIG="/config/config.yml"` and `AUTOREFRESH_DATABASE="/config/autorefresh.db"` to the `ENV` block of `docker/Dockerfile`.
-- [ ] Step 6: Update `README.md`:
+- [x] Step 2: Run `go test ./cmd/autorefresh/...`. Expected: FAIL.
+- [x] Step 3: Implement the wiring. Add `github.com/robfig/cron/v3` to the imports of `main` (the module is already in `go.mod` from Task 1).
+- [x] Step 4: Run `go test ./cmd/autorefresh/...`. Expected: PASS.
+- [x] Step 5: Add `AUTOREFRESH_CONFIG="/config/config.yml"` and `AUTOREFRESH_DATABASE="/config/autorefresh.db"` to the `ENV` block of `docker/Dockerfile`.
+- [x] Step 6: Update `README.md`:
   - Remove the sentence that the binary only starts its logger.
   - Add "How it works". Describe these points:
     - what counts as missing
@@ -758,9 +758,9 @@ Wiring in `main`:
   - Add "Configuration": the spec's example with neutral values, the key table with defaults, and the rules for `name`, `url`, `token`, and `libraries`. The full read happens in the first run at or after a `cache-refresh` time. So tell users to choose a `cache-refresh` time at which `schedule` also starts a run. Add a note that `http` sends the token in clear text. If the connection leaves a trusted network, tell users to use `https`.
   - Add the four new flags to the flag table, and add a "Dry run" section.
   - In the Docker section, list the three environment variables that the image sets.
-- [ ] Step 7: Update the `cmd/autorefresh/` row in the `AGENTS.md` path table.
-- [ ] Step 8: Run the checks and `mise run build`. Write a scratch configuration with one server at `http://127.0.0.1:9` and the token `example-token`. Run `dist/autorefresh_linux_amd64/autorefresh --once --dry-run --config <scratch file> --database <scratch db> --log <scratch log>`. Expected: the run logs the server failure at error level and exits. Neither the console nor the log file contains `example-token` or `127.0.0.1`.
-- [ ] Step 9: Commit with `feat(cli): run autorefresh on a schedule`.
+- [x] Step 7: Update the `cmd/autorefresh/` row in the `AGENTS.md` path table.
+- [x] Step 8: Run the checks and `mise run build`. Write a scratch configuration with one server at `http://127.0.0.1:9` and the token `example-token`. Run `dist/autorefresh_linux_amd64/autorefresh --once --dry-run --config <scratch file> --database <scratch db> --log <scratch log>`. Expected: the run logs the server failure at error level and exits. Neither the console nor the log file contains `example-token` or `127.0.0.1`.
+- [x] Step 9: Commit with `feat(cli): run autorefresh on a schedule`.
 
 ## Acceptance on the owner's server
 
@@ -771,3 +771,15 @@ These steps happen after Task 7 merges. Each step needs the owner's agreement be
 3. The owner removes the limit and runs the service on the schedule.
 
 Then close the acceptance with a comment on #9 or on a new acceptance issue that the owner names.
+
+### Progress
+
+All seven tasks merged on 2026-11-19 through PRs #18 to #24. Issues #11 to #17 are closed. The last merge commit is 1eac0c1.
+
+On 2026-11-20, the owner deployed the `l3uddz/autorefresh:main` image on their server:
+
+- [x] Step 1 ran before the deployment. The dry run read 11,990 items and found 3,299 incomplete items. Of these, 3,298 were due. The spec estimated about 2,000 due items.
+- [ ] Step 2 did not run as written. The owner started the service with `max-refreshes-per-run: 100` instead of 5.
+- [ ] Step 3 runs with the limit of 100. The schedule is hourly, with `minimum-age: 12h` and `refresh-interval: 24h`.
+
+The acceptance stays open until a scheduled run shows refreshed items in Plex.
