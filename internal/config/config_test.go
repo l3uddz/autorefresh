@@ -48,6 +48,9 @@ func TestDecodeAppliesDefaults(t *testing.T) {
 	if cfg.MaxRefreshesPerRun != 250 {
 		t.Errorf("MaxRefreshesPerRun = %d, want 250", cfg.MaxRefreshesPerRun)
 	}
+	if got := cfg.Plex[0].RequestTimeout(); got != 30*time.Second {
+		t.Errorf("RequestTimeout = %v, want 30s", got)
+	}
 }
 
 func TestDecodeAcceptsZeroMaxRefreshesAsNoLimit(t *testing.T) {
@@ -87,6 +90,7 @@ plex:
   - name: main
     url: http://plex.example.invalid:32400
     token: example-token
+    timeout: 2m
     libraries:
       - Movies
       - TV
@@ -122,6 +126,9 @@ plex:
 	}
 	if len(s.Libraries) != 2 || s.Libraries[0] != "Movies" || s.Libraries[1] != "TV" {
 		t.Errorf("Libraries = %v", s.Libraries)
+	}
+	if got := s.RequestTimeout(); got != 2*time.Minute {
+		t.Errorf("RequestTimeout = %v, want 2m", got)
 	}
 }
 
@@ -162,6 +169,8 @@ func TestDecodeRejectsInvalidConfig(t *testing.T) {
 		{"negative refresh delay", "refresh-delay: -1s\n" + minimalServer},
 		{"unknown ignored reason", "ignore-reasons: [no-banner]\n" + minimalServer},
 		{"negative max refreshes", "max-refreshes-per-run: -1\n" + minimalServer},
+		{"zero timeout", "plex:\n  - name: a\n" + server + "    timeout: 0s\n"},
+		{"negative timeout", "plex:\n  - name: a\n" + server + "    timeout: -1s\n"},
 		{"empty library title", "plex:\n  - name: a\n" + server + "    libraries: [\"\"]\n"},
 	}
 	for _, tt := range tests {
