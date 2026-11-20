@@ -42,7 +42,7 @@ func defaults() Config {
 	return Config{
 		Schedule:           "0 * * * *",
 		MinimumAge:         24 * time.Hour,
-		RefreshInterval:    12 * time.Hour,
+		RefreshInterval:    24 * time.Hour,
 		MaxRefreshInterval: 7 * 24 * time.Hour,
 		CacheRefresh:       "0 3 * * 0",
 		Oversample:         48 * time.Hour,

@@ -99,11 +99,10 @@ defaults, the waits are:
 
 | Refreshes | Wait |
 | --- | --- |
-| 0 or 1 | 12h |
-| 2 | 24h |
-| 3 | 48h |
-| 4 | 96h |
-| 5 or more | 168h (7 days) |
+| 0 or 1 | 24h |
+| 2 | 48h |
+| 3 | 96h |
+| 4 or more | 168h (7 days) |
 
 Autorefresh never gives up. It tries an incomplete item again after each
 wait until the item is complete or gone from Plex. If you set
@@ -178,7 +177,7 @@ configuration directory.
 ```yaml
 schedule: "0 * * * *"         # cron expression for each run
 minimum-age: 24h              # skip items added less than this long ago
-refresh-interval: 12h         # wait at least this long between attempts on one item
+refresh-interval: 24h         # wait at least this long between attempts on one item
 max-refresh-interval: 168h    # the longest wait between attempts after the backoff
 cache-refresh: "0 3 * * 0"    # cron expression for full reads of each library
 oversample: 48h               # each incremental read also gets changes from this far back
@@ -199,7 +198,7 @@ plex:
 | --- | --- | --- |
 | `schedule` | no | `0 * * * *` |
 | `minimum-age` | no | `24h` |
-| `refresh-interval` | no | `12h` |
+| `refresh-interval` | no | `24h` |
 | `max-refresh-interval` | no | `168h` |
 | `cache-refresh` | no | `0 3 * * 0` |
 | `oversample` | no | `48h` |
