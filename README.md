@@ -248,15 +248,16 @@ error stops the run, or if you stop the run. The line has these fields:
 
 | Field | Content |
 | --- | --- |
-| `items` | The items that the run read from Plex |
-| `incomplete` | The incomplete items in the cache after the run. An item that the run refreshed stays in this count until a later read finds it complete. |
-| `due` | The incomplete items that were due for a request |
-| `refreshes` | The refresh requests that the run sent, also failed ones |
-| `matches` | The fix match requests that the run sent, also failed ones |
-| `failures` | The failed requests and match searches. A `404 Not Found` answer is not a failure. |
-| `remaining` | The due items that the run did not reach, because of `max-refreshes-per-run` or because the server became unavailable. They stay due for later runs. |
-| `completed` | The items that the reads of the run found complete. Each one also has an `Item complete` line. |
-| `fixed` | The items in `completed` that had at least one request from autorefresh that Plex accepted. Plex runs a refresh in the background, so the effect of a request shows in a later run. |
+| `full_read_items` | The movies and series that the full reads of the run listed. If the run did no full read, the value is 0. |
+| `incremental_read_items` | The movies and series that the incremental reads of the run listed. If the run did only full reads, the value is 0. |
+| `incomplete_items` | The incomplete items in the cache after the run. An item that the run refreshed stays in this count until a later read finds it complete. |
+| `due_items` | The incomplete items that were due for a request |
+| `refresh_requests` | The refresh requests that the run sent, also failed ones |
+| `match_requests` | The fix match requests that the run sent, also failed ones |
+| `failed_requests` | The failed requests and match searches. A `404 Not Found` answer is not a failure. |
+| `remaining_items` | The due items that the run did not reach, because of `max-refreshes-per-run` or because the server became unavailable. They stay due for later runs. |
+| `completed_items` | The items in the cache that the reads of the run found complete. The run removes them from the cache. Each one also has an `Item complete` line. |
+| `completed_after_request` | The items in `completed_items` that had at least one request from autorefresh that Plex accepted. Plex runs a refresh in the background, so the effect of a request shows in a later run. |
 | `duration` | The time of the run of the server, with the reads, rounded to milliseconds, such as `11m3.814s` |
 
 ## Docker
