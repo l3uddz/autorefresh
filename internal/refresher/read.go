@@ -102,6 +102,8 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 	itemType := plex.TypeMovie
 	if rd.Shows {
 		itemType = plex.TypeShow
+		// episodeSeries sends no request for an ignored episode reason.
+		rd.EpisodeSkipped = r.opts.IgnoreReasons &^ store.ItemReasons
 	}
 
 	items, err := r.listItems(ctx, client, lib.ID, itemType, rd.Full, state.LastRead)

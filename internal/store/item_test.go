@@ -142,6 +142,22 @@ func TestApplyReadCombinesReasons(t *testing.T) {
 	}
 }
 
+func TestApplyReadKeepsSkippedEpisodeReasons(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Shows: true, EpisodeNoSummary: []Item{item("a", 0)}, EpisodeUnmatched: []Item{item("b", 0)}})
+	refresh(t, s, "a", 2)
+
+	// The no-summary request was skipped, and the unmatched request found nothing.
+	fixed := apply(t, s, Read{Shows: true, EpisodeSkipped: EpisodeNoSummary})
+	if k := keys(fixed); !reflect.DeepEqual(k, []string{"b"}) {
+		t.Fatalf("fixed = %v, want [b]", k)
+	}
+	got := rows(t, s)
+	if got["a"].Reasons != EpisodeNoSummary || got["a"].Refreshes != 2 {
+		t.Errorf("a = %+v, want EpisodeNoSummary and 2 refreshes", got["a"])
+	}
+}
+
 func TestApplyReadReplacesEpisodeReasons(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Shows: true, EpisodeUnmatched: []Item{item("a", 0), item("b", 0)}})

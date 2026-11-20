@@ -32,6 +32,7 @@ type Read struct {
 	Items            []Item   // the full or incremental read, with item reasons only
 	Gone             []string // full read only: rating keys that Plex answered with 404
 	Shows            bool     // a show library: replace both episode reasons
+	EpisodeSkipped   Reasons  // show reads only: the episode reasons without a request, which the rows keep
 	EpisodeNoSummary []Item   // the series of the first episode request
 	EpisodeUnmatched []Item   // the series of the second episode request
 }
@@ -113,7 +114,7 @@ func (s *Store) Library(server, section string) (Library, error) {
 // ApplyRead writes r in one transaction. For each row of the section, the
 // final reasons are the item bits from r.Items (or the old item bits if the
 // item is not in r.Items) and, if r.Shows, the episode bits from the two
-// lists (or else the old episode bits). It inserts rows for new items with
+// lists and the old bits of r.EpisodeSkipped (or else the old episode bits). It inserts rows for new items with
 // final reasons that are not 0, deletes the rows whose final reasons are 0
 // and returns them as fixed, deletes the r.Gone rows (not in fixed), and
 // sets the read times. LastFullRead changes only if r.Full. The caller must
@@ -185,7 +186,7 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 			final = prev.Reasons & ItemReasons
 		}
 		if r.Shows {
-			final |= episodeBits[key]
+			final |= episodeBits[key] | prev.Reasons&r.EpisodeSkipped
 		} else {
 			final |= prev.Reasons &^ ItemReasons
 		}

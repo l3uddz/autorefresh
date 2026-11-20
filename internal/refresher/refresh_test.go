@@ -174,6 +174,23 @@ func TestIgnoredReasonsGetNoRequest(t *testing.T) {
 	wantField(t, f.lastSummary(testServer), "incomplete_items", float64(1))
 }
 
+func TestIgnoredEpisodeReasonKeepsCachedRow(t *testing.T) {
+	fp := newFakePlex(showsLib)
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.seed(testServer, showsLib, completeItem("201"), store.EpisodeUnmatched, 1)
+	f.r.opts.IgnoreReasons = store.EpisodeUnmatched
+
+	f.run(t0)
+
+	if row, ok := f.row(testServer, "2", "201"); !ok || row.Reasons != store.EpisodeUnmatched || row.Refreshes != 1 {
+		t.Errorf("row 201 = %+v, %v, want EpisodeUnmatched with 1 refresh", row, ok)
+	}
+	if lines := f.logLines("info", "Item complete"); len(lines) != 0 {
+		t.Errorf("got complete lines %v, want none", lines)
+	}
+	wantCalls(t, sends(fp.calls))
+}
+
 func TestRefreshSuccessRecordsRefresh(t *testing.T) {
 	fp := newFakePlex(moviesLib)
 	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
