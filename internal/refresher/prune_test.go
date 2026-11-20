@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
@@ -97,18 +98,18 @@ func TestRunPrunesUnselectedLibraries(t *testing.T) {
 func TestRunKeepsCacheWithoutLibraryListing(t *testing.T) {
 	tests := []struct {
 		name string
-		fp   func() *fakePlex
+		fail func(*fakePlex)
 	}{
-		{"listing failed", func() *fakePlex {
-			fp := newFakePlex(moviesLib)
+		{"listing failed", func(fp *fakePlex) {
 			fp.librariesErr = errors.New("libraries: 500 Internal Server Error")
-			return fp
 		}},
-		{"no library listed", func() *fakePlex { return newFakePlex() }},
+		{"no library listed", func(fp *fakePlex) { fp.libraries = nil }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f := newFixture(t, Server{Name: testServer, Plex: tt.fp()})
+			fp := newFakePlex(showsLib)
+			tt.fail(fp)
+			f := newFixture(t, Server{Name: testServer, Plex: fp})
 			f.seed(testServer, moviesLib, incompleteItem("101"), store.NoSummary, 1)
 
 			f.run(t0)
@@ -118,6 +119,15 @@ func TestRunKeepsCacheWithoutLibraryListing(t *testing.T) {
 			}
 			if lines := f.logLines("info", "Removed cache of library"); len(lines) != 0 {
 				t.Errorf("got removed cache lines %v, want none", lines)
+			}
+
+			// The next listing succeeds without the library, so the run
+			// removes its cache.
+			*fp = *newFakePlex(showsLib)
+			f.run(t0.Add(time.Hour))
+
+			if got := f.cached("home/1"); got["home/1"] {
+				t.Error("cache of home/1 stayed after a listing without it")
 			}
 		})
 	}
