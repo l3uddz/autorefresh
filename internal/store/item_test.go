@@ -455,6 +455,20 @@ func TestApplyReadMovesRowBetweenSections(t *testing.T) {
 	}
 }
 
+// A second read writes the library row again. The items of the library
+// must keep their history, so that write must not delete the row.
+func TestApplyReadKeepsHistoryOnSecondRead(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Full: true, Items: []Item{item("a", NoArt)}})
+	refresh(t, s, "a", 2)
+
+	apply(t, s, Read{At: base.Add(time.Hour), Items: []Item{item("a", NoArt)}})
+
+	if got := rows(t, s)["a"]; got.Refreshes != 2 {
+		t.Fatalf("row = %+v, want Refreshes 2", got)
+	}
+}
+
 func TestApplyReadReturnsFixedInKeyOrder(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("c", NoArt), item("a", NoArt), item("b", NoArt)}})
