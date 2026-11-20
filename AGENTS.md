@@ -142,9 +142,14 @@ as `fix/<issue>-<slug>`, runs CI only after you open a PR into `main`.
   the `build` check passes.
 - One exception applies only to the maintainer's own PRs. If `l3uddz` opened
   the PR, an agent that works for the maintainer enables auto-merge with a
-  merge commit. GitHub then merges the PR after CodeRabbit approves and the
-  `build` check passes. The agent still never approves a PR and never
-  bypasses the ruleset.
+  merge commit. GitHub then merges the PR after the ruleset is satisfied:
+  one approving review, no open "changes requested" review, and a passing
+  `build` check. The ruleset accepts an approval from any reviewer. Today
+  `l3uddz` is the only account with write access and cannot approve their
+  own PR, so the approval comes from CodeRabbit. If another account gets
+  write access, its approval alone satisfies the ruleset, even before
+  CodeRabbit approves. The agent still
+  never approves a PR and never bypasses the ruleset.
 - In a PR into `main`, use `Closes #<id>` only for issues that the PR
   delivers.
 
