@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"errors"
@@ -82,7 +83,11 @@ func migrate(db *sql.DB) error {
 		if applied[m.version] {
 			continue
 		}
-		if err := applyMigration(db, m); err != nil {
+		script, err := migrations.ReadFile(path.Join("migrations", m.file))
+		if err != nil {
+			return err
+		}
+		if err := applyMigration(db, m.version, string(script)); err != nil {
 			return fmt.Errorf("%s: %w", m.file, err)
 		}
 	}
@@ -127,22 +132,47 @@ func parseMigrations() ([]migration, error) {
 	return list, nil
 }
 
-func applyMigration(db *sql.DB, m migration) error {
-	script, err := migrations.ReadFile(path.Join("migrations", m.file))
+// applyMigration runs one migration script in a transaction. Foreign keys are
+// off while it runs, so a script can rebuild a parent table without deleting
+// the rows of its child tables. SQLite ignores that setting inside a
+// transaction, so it changes on the connection first. Before the commit,
+// every row must still satisfy its foreign keys.
+func applyMigration(db *sql.DB, version int, script string) error {
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err
 	}
+	defer conn.Close()
 
-	tx, err := db.Begin()
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return err
+	}
+	err = migrateInTx(ctx, conn, version, script)
+	if _, onErr := conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`); onErr != nil && err == nil {
+		err = onErr
+	}
+	return err
+}
+
+func migrateInTx(ctx context.Context, conn *sql.Conn, version int, script string) error {
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(string(script)); err != nil {
+	if _, err := tx.Exec(script); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`INSERT INTO schema_migration (version) VALUES (?)`, m.version); err != nil {
+	var table string
+	switch err := tx.QueryRow(`PRAGMA foreign_key_check`).Scan(&table, new(any), new(any), new(any)); {
+	case err == nil:
+		return fmt.Errorf("a row of %s breaks a foreign key", table)
+	case !errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("foreign key check: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_migration (version) VALUES (?)`, version); err != nil {
 		return err
 	}
 	return tx.Commit()
