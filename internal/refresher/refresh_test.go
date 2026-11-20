@@ -136,6 +136,9 @@ func TestMaxRefreshesPerRun(t *testing.T) {
 
 	f.run(t0)
 	wantCalls(t, sends(fp.calls), "Refresh 101", "Refresh 102")
+	summary := f.lastSummary(testServer)
+	wantField(t, summary, "due", float64(3))
+	wantField(t, summary, "remaining", float64(1))
 
 	fp.calls = nil
 	f.run(t0.Add(24 * time.Hour))
@@ -242,6 +245,7 @@ func TestRefreshUnavailableStopsServer(t *testing.T) {
 	summary := f.lastSummary("down")
 	wantField(t, summary, "refreshes", float64(1))
 	wantField(t, summary, "failures", float64(1))
+	wantField(t, summary, "remaining", float64(1))
 	if got := len(f.logLines("info", "Run summary")); got != 2 {
 		t.Errorf("got %d summary lines, want 2", got)
 	}
@@ -472,6 +476,7 @@ func TestFailedSearchSendsNothing(t *testing.T) {
 	if row, _ := f.row(testServer, "1", "101"); row.Refreshes != 1 || !row.LastAttempt.Equal(t0) {
 		t.Errorf("row = %+v, want 1 refresh and LastAttempt %v", row, t0)
 	}
+	wantField(t, f.lastSummary(testServer), "remaining", float64(0))
 }
 
 func TestEpisodeReasonGetsPlainRefresh(t *testing.T) {
@@ -569,6 +574,7 @@ func TestSummaryLine(t *testing.T) {
 	summary := f.lastSummary(testServer)
 	for field, want := range map[string]float64{
 		"items": 1, "incomplete": 3, "due": 3, "refreshes": 1, "matches": 1, "failures": 1, "completed": 1,
+		"remaining": 0,
 	} {
 		wantField(t, summary, field, want)
 	}
