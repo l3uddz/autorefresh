@@ -21,7 +21,7 @@ When the design adds packages or rules, update this file.
 | `internal/plex/` | Plex API client: list libraries and items, get item paths, refresh, search matches, and apply a match |
 | `internal/store/` | SQLite cache of incomplete items and the read times of each library |
 | `internal/refresher/` | The run of each server. It reads the libraries and refreshes the due items, with the pacing, the limit for each run, and the dry run. It logs the summary of each server. It also holds the rules for missing metadata, path ID parsing, and the fix match choice. |
-| `docker/Dockerfile` | Container image, built from the goreleaser output in `dist/` |
+| `docker/Dockerfile` | Container image, built from the goreleaser output in `dist/`. It runs as the non-root user `65532:65532`, which owns `/config`. |
 | `mise.toml` | Tool versions and development tasks |
 | `.goreleaser.yml` | Release build configuration |
 

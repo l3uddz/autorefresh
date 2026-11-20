@@ -338,11 +338,37 @@ The image sets these paths in the `/config` volume:
 Put `config.yml` in the directory that you mount at `/config`. Set `TZ` to
 choose the time zone of `schedule` and `cache-refresh`.
 
+The image does not run as root. Its default user is `65532:65532`. Set your
+own user and group with `--user`, or with `user:` in compose. That user must
+own the directory that you mount at `/config`, because autorefresh writes
+the database and the log file there.
+
 ```sh
 docker run -d --name autorefresh \
+  --user 1000:1000 \
   -e TZ=Europe/London \
   -v /opt/autorefresh:/config \
   l3uddz/autorefresh:main
+```
+
+```yaml
+services:
+  autorefresh:
+    image: l3uddz/autorefresh:main
+    container_name: autorefresh
+    restart: unless-stopped
+    user: 1000:1000
+    environment:
+      - TZ=Europe/London
+    volumes:
+      - /opt/autorefresh:/config
+```
+
+If an earlier image ran as root, root owns the files in `/config`. Before
+you start the new image, give them to the user of the container:
+
+```sh
+sudo chown -R 1000:1000 /opt/autorefresh
 ```
 
 | Tag | Content |
