@@ -32,6 +32,8 @@ type Store interface {
 	CountIncomplete(server string, sections []string, ignored store.Reasons) (int, error)
 	RecordAttempt(server, ratingKey string, at time.Time, refreshed bool) error
 	Delete(server, ratingKey string) error
+	PruneServers(servers []string) ([]store.Pruned, error)
+	PruneSections(server string, sections []string) ([]store.Pruned, error)
 }
 
 // Server is one Plex server to check.
@@ -115,14 +117,25 @@ func (run *serverRun) sections() []string {
 	return sections
 }
 
-// Run checks each server in its own goroutine. It reads the libraries of
-// the server, refreshes its due items, and logs its summary. It returns the
+// Run removes the cache of the servers that are not configured. Then it
+// checks each server in its own goroutine. It reads the libraries of the
+// server, refreshes its due items, and logs its summary. It returns the
 // store errors and the errors of the unavailable servers. A store error of
 // one server also stops the other servers. An unavailable server stops only
 // itself. If ctx ends, Run stops and returns nil.
 func (r *Refresher) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	names := make([]string, 0, len(r.servers))
+	for _, srv := range r.servers {
+		names = append(names, srv.Name)
+	}
+	pruned, err := r.store.PruneServers(names)
+	if err != nil {
+		return err
+	}
+	logPruned(pruned, nil)
 
 	errs := make([]error, len(r.servers))
 	var wg sync.WaitGroup

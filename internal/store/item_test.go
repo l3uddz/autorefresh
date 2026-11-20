@@ -626,3 +626,87 @@ func TestApplyReadGoneEpisodeOnlyRowIsNotFixed(t *testing.T) {
 		t.Fatal("row not deleted")
 	}
 }
+
+// seedLibraries reads one incomplete item into each library, and a second
+// one into a/1. Library b/3 has read times but no item row.
+func seedLibraries(t *testing.T, s *Store) {
+	t.Helper()
+	apply(t, s, Read{Server: "a", Section: "1", Full: true, Items: []Item{item("10", NoArt), item("11", NoArt)}})
+	apply(t, s, Read{Server: "a", Section: "2", Full: true, Items: []Item{item("20", NoArt)}})
+	apply(t, s, Read{Server: "b", Section: "1", Full: true, Items: []Item{item("30", NoArt)}})
+	apply(t, s, Read{Server: "b", Section: "3", Full: true})
+}
+
+// libraryState returns the item count of each library that has read times,
+// as "<server>/<section>". It also fails on an item row without read times.
+func libraryState(t *testing.T, s *Store) map[string]int {
+	t.Helper()
+	got := map[string]int{}
+	for _, scope := range [][2]string{{"a", "1"}, {"a", "2"}, {"b", "1"}, {"b", "3"}} {
+		lib, err := s.Library(scope[0], scope[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		items, err := s.Unseen(scope[0], scope[1], nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if lib.LastRead.IsZero() {
+			if len(items) > 0 {
+				t.Fatalf("%s/%s has %d item rows but no read times", scope[0], scope[1], len(items))
+			}
+			continue
+		}
+		got[scope[0]+"/"+scope[1]] = len(items)
+	}
+	return got
+}
+
+func TestPruneServers(t *testing.T) {
+	s := openTest(t)
+	seedLibraries(t, s)
+
+	pruned, err := s.PruneServers([]string{"a", "c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Pruned{{Server: "b", Section: "1", Items: 1}, {Server: "b", Section: "3", Items: 0}}
+	if !reflect.DeepEqual(pruned, want) {
+		t.Fatalf("pruned = %+v, want %+v", pruned, want)
+	}
+	if got, want := libraryState(t, s), map[string]int{"a/1": 2, "a/2": 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("libraries = %v, want %v", got, want)
+	}
+}
+
+func TestPruneSections(t *testing.T) {
+	s := openTest(t)
+	seedLibraries(t, s)
+
+	pruned, err := s.PruneSections("a", []string{"1", "9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []Pruned{{Server: "a", Section: "2", Items: 1}}; !reflect.DeepEqual(pruned, want) {
+		t.Fatalf("pruned = %+v, want %+v", pruned, want)
+	}
+	if got, want := libraryState(t, s), map[string]int{"a/1": 2, "b/1": 1, "b/3": 0}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("libraries = %v, want %v", got, want)
+	}
+}
+
+func TestPruneSectionsWithoutSectionsRemovesServer(t *testing.T) {
+	s := openTest(t)
+	seedLibraries(t, s)
+
+	pruned, err := s.PruneSections("b", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []Pruned{{Server: "b", Section: "1", Items: 1}, {Server: "b", Section: "3", Items: 0}}; !reflect.DeepEqual(pruned, want) {
+		t.Fatalf("pruned = %+v, want %+v", pruned, want)
+	}
+	if got, want := libraryState(t, s), map[string]int{"a/1": 2, "a/2": 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("libraries = %v, want %v", got, want)
+	}
+}

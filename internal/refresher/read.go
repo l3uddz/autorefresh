@@ -37,6 +37,9 @@ func (r *Refresher) readLibraries(ctx context.Context, run *serverRun) error {
 	}
 
 	run.libraries = r.selectLibraries(run.server, libraries)
+	if err := r.pruneSections(run, libraries); err != nil {
+		return err
+	}
 	for _, lib := range run.libraries {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -46,6 +49,37 @@ func (r *Refresher) readLibraries(ctx context.Context, run *serverRun) error {
 		}
 	}
 	return nil
+}
+
+// pruneSections removes the cache of each library of the server that the
+// run did not select. A server that lists no library at all can still be
+// starting, so it keeps its cache.
+func (r *Refresher) pruneSections(run *serverRun, libraries []plex.Library) error {
+	if len(libraries) == 0 {
+		return nil
+	}
+	pruned, err := r.store.PruneSections(run.server.Name, run.sections())
+	if err != nil {
+		return err
+	}
+	titles := make(map[string]string, len(libraries))
+	for _, lib := range libraries {
+		titles[lib.ID] = lib.Title
+	}
+	logPruned(pruned, titles)
+	return nil
+}
+
+// logPruned logs each removed library cache. titles gives the library
+// title by section, if Plex still lists the library.
+func logPruned(pruned []store.Pruned, titles map[string]string) {
+	for _, p := range pruned {
+		ev := log.Info().Str("server", p.Server).Str("section", p.Section)
+		if title, ok := titles[p.Section]; ok {
+			ev = ev.Str("library", title)
+		}
+		ev.Int("items", p.Items).Msg("Removed cache of library")
+	}
 }
 
 // selectLibraries returns the supported libraries, or only the configured
