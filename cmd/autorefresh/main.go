@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -62,12 +63,11 @@ func main() {
 	log.Logger = newLogger(os.Stderr, cli.Log, cli.Verbosity)
 
 	// config
-	file, err := waitForConfig(cli.Config, 5*time.Second)
+	data, err := readConfig(cli.Config, 5*time.Second)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed opening config")
+		log.Fatal().Err(err).Msg("Failed reading config")
 	}
-	cfg, err := config.Decode(file)
-	file.Close()
+	cfg, err := config.Decode(bytes.NewReader(data))
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed decoding config")
 	}

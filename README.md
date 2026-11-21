@@ -305,7 +305,11 @@ request header. Without it, autorefresh sends no request to TMDB.
 
 An unknown key is an error. If the configuration file is missing or empty,
 autorefresh waits for it and checks again every 5 seconds. A container can
-then start before `config.yml` exists.
+then start before `config.yml` exists. A file that appears during the wait
+is read only after it stays the same for one check, so autorefresh does not
+read a file that is still being written. If the path is a directory,
+autorefresh stops with an error. Docker creates such a directory when you
+bind-mount a file that does not exist.
 
 ## Command line
 
