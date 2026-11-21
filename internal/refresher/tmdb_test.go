@@ -593,6 +593,18 @@ func TestYearConfirmRejectsUnconfirmedConflicts(t *testing.T) {
 			wantTMDBCalls:  []string{"Find tvdb 5 true", "Find imdb tt1 true"},
 		},
 		{
+			name: "matched path tmdb id conflicts with a translated tvdb id",
+			setup: func(fp *fakePlex, ft *fakeTMDB) {
+				fp.paths["201"] = []string{"/tv/Show (2022) {tmdb-77} {tvdb-5}"}
+				fp.candidates["201 tmdb-77"] = []plex.Candidate{{GUID: "plex://show/a", Year: 2017}}
+				ft.ids["tvdb 5 true"] = "78"
+				ft.years["77 true"] = 2022
+			},
+			wantConflict:   "year differs",
+			checkTMDBCalls: true,
+			wantTMDBCalls:  []string{"Find tvdb 5 true"},
+		},
+		{
 			name: "already searched empty tmdb id is not searched again",
 			setup: func(fp *fakePlex, ft *fakeTMDB) {
 				fp.paths["201"] = []string{"/tv/Show (2022) {tmdb-77} {tvdb-5}"}

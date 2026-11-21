@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/rs/zerolog/log"
 
@@ -189,21 +190,22 @@ func yearConfirms(itemYear, pathYear, tmdbYear int) bool {
 // resolveOneTMDBID returns the single TMDB ID associated with the item's
 // match, and whether Plex still needs a tmdb-<id> search to verify the GUID.
 func (r *Refresher) resolveOneTMDBID(ctx context.Context, server string, mc matchContext) (string, bool, error) {
-	if id, found := singleTMDBResult(mc.results); found {
+	id, found := singleTMDBResult(mc.results)
+	// A fallback search already considered the external IDs. A search of a
+	// direct path ID can still disagree with a translated IMDb or TVDB ID.
+	if found && (id == "" || !slices.Contains(mc.ids, pathID{"tmdb", id})) {
 		return id, false, nil
 	}
-	only, err := r.singlePathTMDBID(ctx, server, mc)
+	only, err := r.singlePathTMDBID(ctx, server, mc, id)
 	if err != nil || only == "" {
 		return "", false, err
 	}
-	return only, true, nil
+	return only, !found, nil
 }
 
-// singlePathTMDBID translates the item's imdb and (for series) tvdb path IDs
-// to TMDB IDs and returns the unique TMDB ID if exactly one distinct ID is
-// found.
-func (r *Refresher) singlePathTMDBID(ctx context.Context, server string, mc matchContext) (string, error) {
-	var only string
+// singlePathTMDBID checks that the item's translated path IDs agree with
+// each other and with only, the TMDB ID already found, if any.
+func (r *Refresher) singlePathTMDBID(ctx context.Context, server string, mc matchContext, only string) (string, error) {
 	for _, id := range mc.ids {
 		if id.Source != "imdb" && (id.Source != "tvdb" || mc.it.Type != plex.ShowLibrary) {
 			continue
