@@ -212,6 +212,14 @@ func (s Server) validate() error {
 	if u.Hostname() == "" {
 		return errors.New("url has no host")
 	}
+	// The requests replace the query and drop the fragment, so either one
+	// is a silent mistake.
+	if u.RawQuery != "" || u.ForceQuery {
+		return errors.New("url must not have a query")
+	}
+	if strings.Contains(s.URL, "#") {
+		return errors.New("url must not have a fragment")
+	}
 	if s.Token == "" {
 		return errors.New("token is empty")
 	}

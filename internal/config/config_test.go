@@ -164,6 +164,10 @@ func TestDecodeRejectsInvalidConfig(t *testing.T) {
 		{"unsupported scheme", "plex:\n  - name: a\n    url: ftp://plex.example.invalid\n    token: t\n"},
 		{"url without host", "plex:\n  - name: a\n    url: http://\n    token: t\n"},
 		{"url with port but no host", "plex:\n  - name: a\n    url: \"http://:32400\"\n    token: t\n"},
+		{"url with query", "plex:\n  - name: a\n    url: \"http://plex.example.invalid:32400?a=b\"\n    token: t\n"},
+		{"url with empty query", "plex:\n  - name: a\n    url: \"http://plex.example.invalid:32400?\"\n    token: t\n"},
+		{"url with fragment", "plex:\n  - name: a\n    url: \"http://plex.example.invalid:32400/#x\"\n    token: t\n"},
+		{"url with empty fragment", "plex:\n  - name: a\n    url: \"http://plex.example.invalid:32400/#\"\n    token: t\n"},
 		{"empty token", "plex:\n  - name: a\n    url: http://plex.example.invalid\n    token: \"\"\n"},
 		{"invalid schedule", "schedule: every hour\n" + minimalServer},
 		{"zero refresh interval", "refresh-interval: 0s\n" + minimalServer},
@@ -198,6 +202,7 @@ func TestDecodeErrorsOmitSecrets(t *testing.T) {
 	}{
 		{"unsupported scheme", "ftp://secret-host.example.invalid", "secret-token", true},
 		{"url parse failure", "http://secret-host.example.invalid:bad", "secret-token", true},
+		{"url with query", "http://secret-host.example.invalid?secret-token", "secret-token", true},
 		{"yaml type error in token", "http://plex.example.invalid", "!!bool secret-token", false},
 		{"yaml type error with line-like value", "http://plex.example.invalid", "!!bool line 739582", false},
 		{"yaml type error in url", "!!int http://secret-host.example.invalid", "secret-token", false},

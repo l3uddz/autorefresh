@@ -285,7 +285,9 @@ Each entry in `plex` is one Plex server:
 
 - `name` is required and must be unique. Logs and the database use it, so a
   new `url` keeps the state of the server.
-- `url` is required and must use `http` or `https`.
+- `url` is required and must use `http` or `https`. It can have a path,
+  such as `https://example.com/plex` behind a reverse proxy, but no query
+  and no fragment.
 - `token` is required. It is the Plex token of the server.
 - `libraries` is optional. It selects libraries by their title.
 - `timeout` is optional. It limits each request to the server. The default
