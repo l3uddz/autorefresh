@@ -188,38 +188,31 @@ func yearConfirms(itemYear, pathYear, tmdbYear int) bool {
 
 // resolveOneTMDBID returns the single TMDB ID associated with the item's
 // match, and whether Plex still needs a tmdb-<id> search to verify the GUID.
-// If the single ID was already searched in mc.results and found nothing, it
-// returns "" to avoid repeating a search that cannot match.
 func (r *Refresher) resolveOneTMDBID(ctx context.Context, server string, mc matchContext) (string, bool, error) {
-	if id, found := singleMatchedTMDBID(mc.results); found {
+	if id, found := singleTMDBResult(mc.results); found {
 		return id, false, nil
 	}
 	only, err := r.singlePathTMDBID(ctx, server, mc)
-	if err != nil || only == "" || searchedTMDBEmpty(mc.results, only) {
+	if err != nil || only == "" {
 		return "", false, err
 	}
 	return only, true, nil
 }
 
-// singlePathTMDBID resolves all path IDs to TMDB IDs and returns the unique
-// TMDB ID if exactly one distinct ID is found.
+// singlePathTMDBID translates the item's imdb and (for series) tvdb path IDs
+// to TMDB IDs and returns the unique TMDB ID if exactly one distinct ID is
+// found.
 func (r *Refresher) singlePathTMDBID(ctx context.Context, server string, mc matchContext) (string, error) {
 	var only string
 	for _, id := range mc.ids {
-		var tmdbID string
-		switch {
-		case id.Source == "tmdb":
-			tmdbID = id.Value
-		case id.Source == "imdb" || (id.Source == "tvdb" && mc.it.Type == plex.ShowLibrary):
-			var ok bool
-			var err error
-			if tmdbID, ok, err = r.tmdbID(ctx, server, mc.it, id); err != nil {
-				return "", err
-			}
-			if !ok {
-				continue
-			}
-		default:
+		if id.Source != "imdb" && (id.Source != "tvdb" || mc.it.Type != plex.ShowLibrary) {
+			continue
+		}
+		tmdbID, ok, err := r.tmdbID(ctx, server, mc.it, id)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
 			continue
 		}
 		if only != "" && only != tmdbID {
@@ -230,26 +223,15 @@ func (r *Refresher) singlePathTMDBID(ctx context.Context, server string, mc matc
 	return only, nil
 }
 
-// searchedTMDBEmpty reports whether results already searched tmdb-<id> and
-// returned no candidates.
-func searchedTMDBEmpty(results []searchResult, id string) bool {
+// singleTMDBResult inspects all tmdb search results in results. found is true
+// if any tmdb search was run. id is non-empty only if every tmdb search used
+// the same TMDB ID and found a candidate.
+func singleTMDBResult(results []searchResult) (id string, found bool) {
 	for _, res := range results {
-		if res.id.Source == "tmdb" && res.id.Value == id && len(res.candidates) == 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// singleMatchedTMDBID returns the unique TMDB ID if one or more tmdb search
-// results already found a candidate. found is true whenever any tmdb result
-// found a candidate; id is "" if multiple distinct TMDB IDs matched.
-func singleMatchedTMDBID(results []searchResult) (id string, found bool) {
-	for _, res := range results {
-		if res.id.Source != "tmdb" || len(res.candidates) == 0 {
+		if res.id.Source != "tmdb" {
 			continue
 		}
-		if found && res.id.Value != id {
+		if len(res.candidates) == 0 || (found && res.id.Value != id) {
 			return "", true
 		}
 		id, found = res.id.Value, true

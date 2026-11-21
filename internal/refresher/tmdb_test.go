@@ -479,12 +479,14 @@ func TestYearConfirmPathYearMatchesTMDB(t *testing.T) {
 
 func TestYearConfirmRejectsUnconfirmedConflicts(t *testing.T) {
 	tests := []struct {
-		name         string
-		setup        func(fp *fakePlex, ft *fakeTMDB)
-		noTMDB       bool
-		wantConflict string
-		wantTMDBYear float64
-		wantTMDBNone bool
+		name           string
+		setup          func(fp *fakePlex, ft *fakeTMDB)
+		noTMDB         bool
+		wantConflict   string
+		wantTMDBYear   float64
+		wantTMDBCalls  []string
+		checkTMDBCalls bool
+		wantMatchReads []string
 	}{
 		{
 			name: "remake year still differs",
@@ -522,9 +524,9 @@ func TestYearConfirmRejectsUnconfirmedConflicts(t *testing.T) {
 			setup: func(fp *fakePlex, _ *fakeTMDB) {
 				fp.candidates["201 tvdb-5"] = []plex.Candidate{{GUID: "plex://show/a", Name: "Show", Year: 2017}}
 			},
-			noTMDB:       true,
-			wantConflict: "year differs",
-			wantTMDBNone: true,
+			noTMDB:         true,
+			wantConflict:   "year differs",
+			checkTMDBCalls: true,
 		},
 		{
 			name: "multi-id different guids skips tmdb confirmation",
@@ -535,8 +537,8 @@ func TestYearConfirmRejectsUnconfirmedConflicts(t *testing.T) {
 				ft.ids["tvdb 5 true"] = "77"
 				ft.years["77 true"] = 2022
 			},
-			wantConflict: "different candidates",
-			wantTMDBNone: true,
+			wantConflict:   "different candidates",
+			checkTMDBCalls: true,
 		},
 		{
 			name: "stale tmdb path id disagrees with translated tvdb id",
@@ -546,7 +548,8 @@ func TestYearConfirmRejectsUnconfirmedConflicts(t *testing.T) {
 				ft.ids["tvdb 5 true"] = "77"
 				ft.years["77 true"] = 2022
 			},
-			wantConflict: "year differs",
+			wantConflict:   "year differs",
+			checkTMDBCalls: true,
 		},
 		{
 			name: "two different matched tmdb ids stay unconfirmed",
@@ -558,8 +561,36 @@ func TestYearConfirmRejectsUnconfirmedConflicts(t *testing.T) {
 				ft.years["77 true"] = 2022
 				ft.years["78 true"] = 2022
 			},
-			wantConflict: "year differs",
-			wantTMDBNone: true,
+			wantConflict:   "year differs",
+			checkTMDBCalls: true,
+		},
+		{
+			name: "two path tmdb ids with one empty stay unconfirmed",
+			setup: func(fp *fakePlex, ft *fakeTMDB) {
+				fp.paths["201"] = []string{"/tv/Show (2022) {tmdb-77} {tmdb-99}"}
+				fp.candidates["201 tmdb-77"] = []plex.Candidate{{GUID: "plex://show/a", Name: "Show", Year: 2017}}
+				ft.years["77 true"] = 2022
+			},
+			wantConflict:   "year differs",
+			checkTMDBCalls: true,
+			wantMatchReads: []string{
+				"ItemPaths 201",
+				"SearchMatches 201 tmdb-77 tv.plex.agents.series en-US",
+				"SearchMatches 201 tmdb-99 tv.plex.agents.series en-US",
+			},
+		},
+		{
+			name: "tmdb fallback with a second empty tmdb id stays unconfirmed",
+			setup: func(fp *fakePlex, ft *fakeTMDB) {
+				fp.paths["201"] = []string{"/tv/Show (2022) {tvdb-5} {imdb-tt1}"}
+				fp.candidates["201 tmdb-77"] = []plex.Candidate{{GUID: "plex://show/a", Name: "Show", Year: 2017}}
+				ft.ids["tvdb 5 true"] = "77"
+				ft.ids["imdb tt1 true"] = "78"
+				ft.years["77 true"] = 2022
+			},
+			wantConflict:   "year differs",
+			checkTMDBCalls: true,
+			wantTMDBCalls:  []string{"Find tvdb 5 true", "Find imdb tt1 true"},
 		},
 		{
 			name: "already searched empty tmdb id is not searched again",
@@ -569,7 +600,13 @@ func TestYearConfirmRejectsUnconfirmedConflicts(t *testing.T) {
 				ft.ids["tvdb 5 true"] = "77"
 				ft.years["77 true"] = 2022
 			},
-			wantConflict: "year differs",
+			wantConflict:   "year differs",
+			checkTMDBCalls: true,
+			wantMatchReads: []string{
+				"ItemPaths 201",
+				"SearchMatches 201 tmdb-77 tv.plex.agents.series en-US",
+				"SearchMatches 201 tvdb-5 tv.plex.agents.series en-US",
+			},
 		},
 	}
 	for _, tt := range tests {
@@ -589,8 +626,11 @@ func TestYearConfirmRejectsUnconfirmedConflicts(t *testing.T) {
 			f.run(t0)
 
 			wantCalls(t, sends(fp.calls), "Refresh 201")
-			if tt.wantTMDBNone {
-				wantCalls(t, ft.calls)
+			if tt.checkTMDBCalls {
+				wantCalls(t, ft.calls, tt.wantTMDBCalls...)
+			}
+			if tt.wantMatchReads != nil {
+				wantCalls(t, matchReads(fp.calls), tt.wantMatchReads...)
 			}
 			warnings := f.logLines("warn", "Match conflict")
 			if len(warnings) != 1 {
