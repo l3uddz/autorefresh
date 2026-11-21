@@ -11,8 +11,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +27,17 @@ import (
 )
 
 // TestMain silences the global logger. Tests that read it set their own.
+
+// mustURL parses a test server URL.
+func mustURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
 func TestMain(m *testing.M) {
 	log.Logger = zerolog.Nop()
 	os.Exit(m.Run())
@@ -68,7 +81,7 @@ func newServer(t *testing.T, handle http.HandlerFunc) (*recorder, *Client) {
 		handle(w, r)
 	}))
 	t.Cleanup(srv.Close)
-	return rec, New("test", srv.URL, testToken, testTimeout)
+	return rec, New("test", mustURL(t, srv.URL), testToken, testTimeout)
 }
 
 // serveFixture answers each request with the named recorded response.
@@ -145,6 +158,44 @@ func TestRejectsInvalidRatingKey(t *testing.T) {
 	}
 }
 
+func TestRejectsInvalidSection(t *testing.T) {
+	rec, c := newServer(t, func(http.ResponseWriter, *http.Request) {})
+	for _, section := range []string{"", "..", "1/all", "1?x=1"} {
+		if _, err := c.List(context.Background(), section, TypeMovie); err == nil {
+			t.Errorf("List(%q) returned no error", section)
+		}
+	}
+	if n := len(rec.all()); n != 0 {
+		t.Errorf("the server got %d requests, want 0", n)
+	}
+}
+
+// A server behind a reverse proxy can have a path, with or without a
+// trailing slash. Each request keeps that path as its prefix.
+func TestBaseURLPathIsPrefix(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Write([]byte(`{"MediaContainer":{}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	for _, base := range []string{srv.URL + "/plex", srv.URL + "/plex/"} {
+		paths = nil
+		c := New("test", mustURL(t, base), testToken, testTimeout)
+		if _, err := c.Libraries(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Refresh(context.Background(), "1001"); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"/plex/library/sections", "/plex/library/metadata/1001/refresh"}
+		if !reflect.DeepEqual(paths, want) {
+			t.Errorf("base %s: paths = %q, want %q", base, paths, want)
+		}
+	}
+}
+
 func TestStatusMapping(t *testing.T) {
 	tests := []struct {
 		status       int
@@ -181,7 +232,7 @@ func TestStatusMapping(t *testing.T) {
 
 	t.Run("closed server", func(t *testing.T) {
 		srv := httptest.NewServer(http.NotFoundHandler())
-		c := New("test", srv.URL, testToken, testTimeout)
+		c := New("test", mustURL(t, srv.URL), testToken, testTimeout)
 		srv.Close()
 
 		if err := c.Refresh(context.Background(), "1001"); !errors.Is(err, ErrUnavailable) {
@@ -198,7 +249,7 @@ func (f failingTransport) RoundTrip(*http.Request) (*http.Response, error) { ret
 func TestTransportErrorsKeepNoTransportText(t *testing.T) {
 	const host = "private-plex-host.invalid"
 	buf := captureLog(t)
-	c := New("test", "http://"+host+":32400", testToken, testTimeout)
+	c := New("test", mustURL(t, "http://"+host+":32400"), testToken, testTimeout)
 	addr := &net.TCPAddr{IP: net.IPv4(10, 0, 0, 2), Port: 32400}
 
 	tests := []struct {
@@ -254,7 +305,7 @@ func TestErrorsAndTraceOmitSecrets(t *testing.T) {
 		}
 	}))
 	host := strings.TrimPrefix(srv.URL, "http://")
-	c := New("test", srv.URL, testToken, testTimeout)
+	c := New("test", mustURL(t, srv.URL), testToken, testTimeout)
 
 	var errs []error
 	errs = append(errs, c.Refresh(context.Background(), "1")) // succeeds
@@ -314,7 +365,7 @@ func TestRefusesCrossOriginRedirect(t *testing.T) {
 	}))
 	t.Cleanup(origin.Close)
 	buf := captureLog(t)
-	c := New("test", origin.URL, testToken, testTimeout)
+	c := New("test", mustURL(t, origin.URL), testToken, testTimeout)
 
 	err := c.Refresh(context.Background(), "1001")
 	if !errors.Is(err, ErrUnavailable) {
@@ -347,7 +398,7 @@ func TestAllowsSameOriginRedirect(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	if err := New("test", srv.URL, testToken, testTimeout).Refresh(context.Background(), "1001"); err != nil {
+	if err := New("test", mustURL(t, srv.URL), testToken, testTimeout).Refresh(context.Background(), "1001"); err != nil {
 		t.Fatal(err)
 	}
 	if final.Load() != 1 {
@@ -369,7 +420,7 @@ func (p phraseTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func TestStatusErrorsOmitReasonPhrase(t *testing.T) {
-	c := New("test", "http://example.invalid", testToken, testTimeout)
+	c := New("test", mustURL(t, "http://example.invalid"), testToken, testTimeout)
 	for _, code := range []int{503, 404, 500} {
 		c.http.Transport = phraseTransport{code}
 
@@ -408,7 +459,7 @@ func TestTimeoutLimitsRequest(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Cleanup(func() { close(release) })
 
-	c := New("test", srv.URL, testToken, 50*time.Millisecond)
+	c := New("test", mustURL(t, srv.URL), testToken, 50*time.Millisecond)
 	start := time.Now()
 	err := c.Refresh(context.Background(), "1001")
 	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "request timed out") {

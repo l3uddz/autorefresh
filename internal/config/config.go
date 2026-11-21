@@ -41,6 +41,8 @@ type Server struct {
 	Token     string         `yaml:"token"`
 	Libraries []string       `yaml:"libraries"` // empty: all supported libraries
 	Timeout   *time.Duration `yaml:"timeout"`   // nil: DefaultTimeout
+
+	BaseURL *url.URL `yaml:"-"` // URL, parsed by Decode
 }
 
 // RequestTimeout returns the limit of each request to the server.
@@ -127,7 +129,7 @@ func yamlError(err error) error {
 	return fmt.Errorf("decode configuration: invalid YAML at lines %s", strings.Join(lines, ", "))
 }
 
-func (c Config) validate() error {
+func (c *Config) validate() error {
 	if err := validateCron("schedule", c.Schedule); err != nil {
 		return err
 	}
@@ -160,7 +162,8 @@ func (c Config) validate() error {
 	}
 
 	names := make(map[string]struct{}, len(c.Plex))
-	for i, s := range c.Plex {
+	for i := range c.Plex {
+		s := &c.Plex[i]
 		if err := s.validate(); err != nil {
 			return fmt.Errorf("plex server %s: %w", s.label(i), err)
 		}
@@ -194,7 +197,8 @@ func (s Server) label(index int) string {
 	return fmt.Sprintf("%q", s.Name)
 }
 
-func (s Server) validate() error {
+// validate checks the server and sets BaseURL.
+func (s *Server) validate() error {
 	if s.Name == "" {
 		return errors.New("name is empty")
 	}
@@ -220,6 +224,7 @@ func (s Server) validate() error {
 	if strings.Contains(s.URL, "#") {
 		return errors.New("url must not have a fragment")
 	}
+	s.BaseURL = u
 	if s.Token == "" {
 		return errors.New("token is empty")
 	}

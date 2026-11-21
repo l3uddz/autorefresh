@@ -16,7 +16,7 @@ type Candidate struct {
 
 // Refresh asks Plex to refresh the metadata of one item.
 func (c *Client) Refresh(ctx context.Context, ratingKey string) error {
-	endpoint, err := metadataPath(ratingKey, "/refresh")
+	endpoint, err := c.metadataEndpoint(ratingKey, "refresh")
 	if err != nil {
 		return err
 	}
@@ -29,7 +29,7 @@ func (c *Client) Refresh(ctx context.Context, ratingKey string) error {
 
 // SearchMatches asks Plex for the matches of one item.
 func (c *Client) SearchMatches(ctx context.Context, ratingKey, title, agent, language string) ([]Candidate, error) {
-	endpoint, err := metadataPath(ratingKey, "/matches")
+	endpoint, err := c.metadataEndpoint(ratingKey, "matches")
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func (c *Client) SearchMatches(ctx context.Context, ratingKey, title, agent, lan
 
 // Match applies a candidate to one item.
 func (c *Client) Match(ctx context.Context, ratingKey string, cand Candidate) error {
-	endpoint, err := metadataPath(ratingKey, "/match")
+	endpoint, err := c.metadataEndpoint(ratingKey, "match")
 	if err != nil {
 		return err
 	}

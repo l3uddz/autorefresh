@@ -93,7 +93,7 @@ func main() {
 	for _, s := range cfg.Plex {
 		servers = append(servers, refresher.Server{
 			Name:      s.Name,
-			Plex:      plex.New(s.Name, s.URL, s.Token, s.RequestTimeout()),
+			Plex:      plex.New(s.Name, s.BaseURL, s.Token, s.RequestTimeout()),
 			Libraries: s.Libraries,
 		})
 		names = append(names, s.Name)

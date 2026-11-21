@@ -131,6 +131,9 @@ plex:
 	if s.Name != "main" || s.URL != "http://plex.example.invalid:32400" || s.Token != "example-token" {
 		t.Errorf("server = %+v", s)
 	}
+	if s.BaseURL == nil || s.BaseURL.String() != s.URL {
+		t.Errorf("BaseURL = %v, want %s", s.BaseURL, s.URL)
+	}
 	if len(s.Libraries) != 2 || s.Libraries[0] != "Movies" || s.Libraries[1] != "TV" {
 		t.Errorf("Libraries = %v", s.Libraries)
 	}

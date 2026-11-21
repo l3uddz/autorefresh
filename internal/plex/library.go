@@ -107,7 +107,7 @@ func (c *Client) Libraries(ctx context.Context) ([]Library, error) {
 		} `json:"MediaContainer"`
 	}
 
-	if err := c.send(ctx, http.MethodGet, "/library/sections", nil, &resp); err != nil {
+	if err := c.send(ctx, http.MethodGet, c.endpoint("library", "sections"), nil, &resp); err != nil {
 		return nil, fmt.Errorf("libraries: %w", err)
 	}
 
@@ -122,7 +122,10 @@ func (c *Client) Libraries(ctx context.Context) ([]Library, error) {
 
 // List reads every page of one item type in a section.
 func (c *Client) List(ctx context.Context, section string, itemType int, filters ...Filter) ([]Item, error) {
-	endpoint := "/library/sections/" + url.PathEscape(section) + "/all"
+	if !idPattern.MatchString(section) {
+		return nil, errors.New("invalid plex section")
+	}
+	endpoint := c.endpoint("library", "sections", section, "all")
 
 	// The listing needs only item fields, so it leaves out the heavy elements.
 	exclude := "Role,Director,Writer,Genre,Country"
@@ -166,7 +169,7 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 // movie. Only a 404 status gives ErrNotFound. A response without an item
 // gives a plain error.
 func (c *Client) ItemPaths(ctx context.Context, ratingKey string) ([]string, error) {
-	endpoint, err := metadataPath(ratingKey, "")
+	endpoint, err := c.metadataEndpoint(ratingKey)
 	if err != nil {
 		return nil, err
 	}
