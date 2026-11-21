@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,7 +65,7 @@ func readConfigAsync(t *testing.T, path string, interval time.Duration) ([]byte,
 	}
 	done := make(chan result, 1)
 	go func() {
-		data, err := readConfig(path, interval)
+		data, err := readConfig(context.Background(), path, interval)
 		done <- result{data, err}
 	}()
 	select {
@@ -103,21 +105,22 @@ func TestReadConfigWaitsUntilFileIsWritten(t *testing.T) {
 	lines := strings.SplitAfter(full, "\n")
 	original := sleepFunc
 	t.Cleanup(func() { sleepFunc = original })
-	sleepFunc = func(time.Duration) {
+	sleepFunc = func(context.Context, time.Duration) error {
 		if len(lines) == 0 || lines[0] == "" {
-			return
+			return nil
 		}
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 		if err != nil {
 			t.Error(err)
-			return
+			return nil
 		}
 		defer f.Close()
 		f.WriteString(lines[0])
 		lines = lines[1:]
+		return nil
 	}
 
-	data, err := readConfig(path, time.Hour)
+	data, err := readConfig(context.Background(), path, time.Hour)
 	if err != nil || string(data) != full {
 		t.Fatalf("readConfig = %q, %v, want %q", data, err, full)
 	}
@@ -135,7 +138,7 @@ func TestReadConfigRereadsFileChangedDuringRead(t *testing.T) {
 	const full = "plex:\n  - name: a\n"
 	originalSleep, originalRead := sleepFunc, readFileFunc
 	t.Cleanup(func() { sleepFunc, readFileFunc = originalSleep, originalRead })
-	sleepFunc = func(time.Duration) {}
+	sleepFunc = func(context.Context, time.Duration) error { return nil }
 	reads := 0
 	readFileFunc = func(name string) ([]byte, error) {
 		reads++
@@ -149,9 +152,32 @@ func TestReadConfigRereadsFileChangedDuringRead(t *testing.T) {
 		return data, err
 	}
 
-	data, err := readConfig(path, time.Hour)
+	data, err := readConfig(context.Background(), path, time.Hour)
 	if err != nil || string(data) != full || reads != 2 {
 		t.Fatalf("readConfig = %q, %v after %d reads, want %q after 2", data, err, reads, full)
+	}
+}
+
+// A signal during the wait for a missing config ends the wait, so the
+// process can stop.
+func TestReadConfigStopsWhenContextEnds(t *testing.T) {
+	captureLog(t)
+	path := filepath.Join(t.TempDir(), "config.yml")
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := readConfig(ctx, path, time.Hour)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("readConfig error = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("readConfig did not return after the context ended")
 	}
 }
 

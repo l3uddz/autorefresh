@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -34,9 +35,21 @@ func applyDefaultPaths(config, database, logFile *string) {
 
 // Tests replace these functions.
 var (
-	sleepFunc    = time.Sleep  // waits between two checks of the config file
-	readFileFunc = os.ReadFile // reads the config file
+	sleepFunc    = sleepContext // waits between two checks of the config file
+	readFileFunc = os.ReadFile  // reads the config file
 )
+
+// sleepContext waits for d. It returns the error of ctx if ctx ends first.
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
 
 // readConfig returns the content of the config file at path. If the file
 // is missing or empty, it checks again after each interval until the file
@@ -44,8 +57,8 @@ var (
 // config.yml. A file that appears during the wait can still be in writing,
 // so readConfig reads it only after its size and modification time stay
 // the same for one interval. If the file changes during the read, it waits
-// again.
-func readConfig(path string, interval time.Duration) ([]byte, error) {
+// again. If ctx ends during a wait, readConfig returns the error of ctx.
+func readConfig(ctx context.Context, path string, interval time.Duration) ([]byte, error) {
 	waited := false
 	var seen os.FileInfo // the last state of the file with content
 	for {
@@ -79,7 +92,9 @@ func readConfig(path string, interval time.Duration) ([]byte, error) {
 				Msg("Config is missing, empty, or changing, waiting for it")
 			waited = true
 		}
-		sleepFunc(interval)
+		if err := sleepFunc(ctx, interval); err != nil {
+			return nil, err
+		}
 	}
 }
 

@@ -16,7 +16,7 @@ When the design adds packages or rules, update this file.
 
 | Path | Content |
 | --- | --- |
-| `cmd/autorefresh/` | CLI entry point. It holds the flags, the default paths, logging, and the wait for the configuration file. The flags are `--config`, `--database`, `--dry-run`, `--once`, `--log`, `-v`, and `--version`. It wires the internal packages together. It runs the refresher once with `--once`. Otherwise it checks the token of each Plex server and the TMDB token once. Then it runs the refresher once at once and then on the `schedule` cron, with one run at a time. SIGINT and SIGTERM cancel the run and stop the schedule. |
+| `cmd/autorefresh/` | CLI entry point. It holds the flags, the default paths, logging, and the wait for the configuration file. The flags are `--config`, `--database`, `--dry-run`, `--once`, `--log`, `-v`, and `--version`. `run` wires the internal packages together, and tests call it with a temporary config and database. It runs the refresher once with `--once`. Otherwise it checks the token of each Plex server and the TMDB token once. Then it runs the refresher once at once and then on the `schedule` cron, with one run at a time. SIGINT and SIGTERM cancel the run and stop the schedule. |
 | `internal/config/` | Configuration types, defaults, loading, and validation |
 | `internal/plex/` | Plex API client: list libraries and items, get item paths, refresh, search matches, and apply a match |
 | `internal/tmdb/` | TMDB API client: find the TMDB ID of a TVDB or IMDb ID, and check the token. It sends the token only in a header. |
