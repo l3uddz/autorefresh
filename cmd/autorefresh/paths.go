@@ -28,7 +28,8 @@ func defaultConfigDirectory(app string, filename string) string {
 	ucd, err := userConfigDirFunc()
 	if err == nil && ucd != "" {
 		acd := filepath.Join(ucd, app)
-		mkErr := os.MkdirAll(acd, os.ModePerm)
+		// The directory holds the tokens, so only the owner can read it.
+		mkErr := os.MkdirAll(acd, 0o700)
 		if mkErr == nil {
 			return acd
 		}

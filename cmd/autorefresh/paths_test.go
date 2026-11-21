@@ -67,8 +67,12 @@ func TestDefaultConfigDirectoryUsesUserConfigDirWhenAvailable(t *testing.T) {
 		t.Fatalf("expected %s, got %s", want, dir)
 	}
 
-	if _, err := os.Stat(want); err != nil {
+	info, err := os.Stat(want)
+	if err != nil {
 		t.Fatalf("expected config directory %s to exist: %v", want, err)
+	}
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		t.Errorf("config directory mode = %v, want no access for group and others", perm)
 	}
 }
 
