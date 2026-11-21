@@ -123,19 +123,13 @@ func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Ite
 		return ctx.Err()
 	}
 
-	if ctx.Err() == nil && errors.Is(err, plex.ErrNotFound) {
-		if !r.opts.DryRun {
-			return r.store.Delete(run.server.Name, it.RatingKey)
-		}
-	} else {
-		run.failures++
-		if !r.opts.DryRun {
-			if err := r.store.RecordAttempt(run.server.Name, it.RatingKey, r.now(), ""); err != nil {
-				return err
-			}
-		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
+	notFound := ctx.Err() == nil && errors.Is(err, plex.ErrNotFound)
+	switch {
+	case notFound && !r.opts.DryRun:
+		return r.store.Delete(run.server.Name, it.RatingKey)
+	case !notFound:
+		if err := r.countFailure(ctx, run, it); err != nil {
+			return err
 		}
 	}
 
@@ -146,6 +140,19 @@ func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Ite
 		ev.Msg("Match search failed")
 	}
 	return stopError(ctx, err)
+}
+
+// countFailure counts a failure of the item and records its attempt. A
+// dry run records nothing. It returns a store error, or the error of ctx if
+// the run ended.
+func (r *Refresher) countFailure(ctx context.Context, run *serverRun, it store.Item) error {
+	run.failures++
+	if !r.opts.DryRun {
+		if err := r.store.RecordAttempt(run.server.Name, it.RatingKey, r.now(), ""); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
 }
 
 // warnAtLongestWait logs a warning if the refresh that Plex just accepted
