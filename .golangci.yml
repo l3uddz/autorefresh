@@ -2,6 +2,11 @@
 # required build job of CI.
 version: "2"
 
+issues:
+  # Report every finding, not only the first ones of each linter.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
 linters:
   default: none
   enable:

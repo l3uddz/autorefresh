@@ -24,6 +24,7 @@ When the design adds packages or rules, update this file.
 | `internal/refresher/` | The run of each server. It removes the cache of unused servers and libraries, reads the libraries, and refreshes the due items, with the pacing, the limit for each run, and the dry run. It logs the summary of each server. It also holds the rules for missing metadata, path ID parsing, the fix match choice, and the TMDB fallback of fix match. |
 | `docker/Dockerfile` | Container image, built from the goreleaser output in `dist/`. It runs as the non-root user `65532:65532`, which owns `/config`. |
 | `mise.toml` | Tool versions and development tasks |
+| `.golangci.yml` | golangci-lint configuration: the formatter, the linters, and the complexity limit that `mise run lint` checks |
 | `.goreleaser.yml` | Release build configuration |
 
 ## Code changes
