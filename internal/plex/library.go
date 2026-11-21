@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -74,6 +75,7 @@ type metadata struct {
 
 type metadataResponse struct {
 	MediaContainer struct {
+		Size      *int       `json:"size"`
 		TotalSize *int       `json:"totalSize"` // nil when absent
 		Metadata  []metadata `json:"Metadata"`
 	} `json:"MediaContainer"`
@@ -83,7 +85,9 @@ func (m metadata) files() []string {
 	var files []string
 	for _, media := range m.Media {
 		for _, part := range media.Part {
-			files = append(files, part.File)
+			if strings.TrimSpace(part.File) != "" {
+				files = append(files, part.File)
+			}
 		}
 	}
 	return files
@@ -163,8 +167,7 @@ func (c *Client) walkMetadataPages(ctx context.Context, endpoint *url.URL, query
 			return 0, err
 		}
 
-		page, total := resp.MediaContainer.Metadata, resp.MediaContainer.TotalSize
-		rest, err := unreadMetadata(page, total, read, last)
+		rest, err := unreadMetadata(resp, read, last)
 		if err != nil {
 			return 0, err
 		}
@@ -173,20 +176,25 @@ func (c *Client) walkMetadataPages(ctx context.Context, endpoint *url.URL, query
 			last = item.RatingKey
 		}
 		read += len(rest)
+		total := *resp.MediaContainer.TotalSize
 		switch {
-		case read >= *total:
-			return *total, nil
+		case read >= total:
+			return total, nil
 		case len(rest) == 0:
-			return 0, fmt.Errorf("%w: page added no new items at offset %d of %d", errIncompleteListing, read, *total)
+			return 0, fmt.Errorf("%w: page added no new items at offset %d of %d", errIncompleteListing, read, total)
 		}
 	}
 }
 
 // unreadMetadata excludes the overlap anchor. Without totalSize the end of
 // the listing is unknown, since a short page can come before the end.
-func unreadMetadata(page []metadata, total *int, read int, last string) ([]metadata, error) {
+func unreadMetadata(resp metadataResponse, read int, last string) ([]metadata, error) {
+	page, total, size := resp.MediaContainer.Metadata, resp.MediaContainer.TotalSize, resp.MediaContainer.Size
 	if total == nil || *total < 0 {
 		return nil, fmt.Errorf("%w: invalid or missing totalSize", errIncompleteListing)
+	}
+	if size != nil && *size != len(page) {
+		return nil, fmt.Errorf("%w: reported size %d for %d entries", errIncompleteListing, *size, len(page))
 	}
 	if read == 0 {
 		return page, nil

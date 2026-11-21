@@ -118,7 +118,7 @@ func TestEpisodeEvidenceLookupFailures(t *testing.T) {
 		wantAttempt bool
 	}{
 		{name: "Plex read error skips request", plexErr: errServer, wantWarning: "Match search failed", wantAttempt: true},
-		{name: "TMDB read error falls back to refresh", tmdbErr: errors.New("season request failed"), wantSend: []string{"Refresh 201"}, wantWarning: "TMDB lookup failed", wantAttempt: true},
+		{name: "TMDB read error after a matching season falls back to refresh", tmdbErr: errors.New("season request failed"), wantSend: []string{"Refresh 201"}, wantWarning: "TMDB lookup failed", wantAttempt: true},
 		{name: "cancel during season lookup skips request and attempt", cancel: true},
 	}
 	for _, tc := range tests {
@@ -126,10 +126,14 @@ func TestEpisodeEvidenceLookupFailures(t *testing.T) {
 			fp := newFakePlex(showsLib)
 			fp.paths["201"] = []string{"/tv/Show (2003) {tmdb-77}"}
 			fp.candidates["201 tmdb-77"] = []plex.Candidate{{GUID: "plex://show/right", Year: 2011}}
-			fp.episodeNumbers = map[string]map[int][]int{"201": {1: {1, 2, 3}}}
+			fp.episodeNumbers = map[string]map[int][]int{"201": {1: {1, 2, 3}, 2: {1}}}
 			fp.episodeReadErr = tc.plexErr
 			f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
-			ft := &fakeTMDB{years: map[string]int{"77 true": 2011}, seasonErr: tc.tmdbErr}
+			ft := &fakeTMDB{
+				years:      map[string]int{"77 true": 2011},
+				seasons:    map[string][]int{"77 1": {1, 2, 3}, "77 2": {1}},
+				seasonErrs: map[string]error{"77 2": tc.tmdbErr},
+			}
 			f.r.opts.TMDB = ft
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -159,5 +163,26 @@ func TestEpisodeEvidenceLookupFailures(t *testing.T) {
 				t.Error("TMDB season queried without Plex episode evidence")
 			}
 		})
+	}
+}
+
+func TestMovieYearConflictSkipsEpisodeLookup(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	movie := unmatchedItem("101")
+	movie.Year = 2003
+	movie.Files = []string{"/movies/Film (2003) {tmdb-77}/Film (2003).mkv"}
+	fp.lists["1?type=1&unmatched=1"] = []plex.Item{movie}
+	fp.candidates["101 tmdb-77"] = []plex.Candidate{{GUID: "plex://movie/a", Year: 2011}}
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	ft := &fakeTMDB{years: map[string]int{"77 false": 2011}}
+	f.r.opts.TMDB = ft
+	f.seed(testServer, moviesLib, movie, store.Unmatched, 1)
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 101")
+	wantCalls(t, ft.calls, "Year 77 false")
+	if slices.Contains(fp.calls, "EpisodeNumbers 101") {
+		t.Error("read Plex episodes for a movie")
 	}
 }

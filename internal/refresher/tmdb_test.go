@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -17,13 +18,13 @@ var _ TMDB = (*tmdb.Client)(nil)
 // fakeTMDB records each Find and Year call and answers from its maps.
 // Find keys are "<source> <id> <show>"; Year keys are "<id> <show>".
 type fakeTMDB struct {
-	ids       map[string]string
-	errs      map[string]error
-	years     map[string]int
-	yearErrs  map[string]error
-	seasons   map[string][]int
-	seasonErr error
-	calls     []string
+	ids        map[string]string
+	errs       map[string]error
+	years      map[string]int
+	yearErrs   map[string]error
+	seasons    map[string][]int
+	seasonErrs map[string]error
+	calls      []string
 }
 
 func (f *fakeTMDB) Find(_ context.Context, source, id string, show bool) (string, bool, error) {
@@ -49,7 +50,7 @@ func (f *fakeTMDB) Year(_ context.Context, id string, show bool) (int, bool, err
 func (f *fakeTMDB) SeasonEpisodes(_ context.Context, id string, season int) ([]int, error) {
 	key := fmt.Sprintf("%s %d", id, season)
 	f.calls = append(f.calls, "SeasonEpisodes "+key)
-	return f.seasons[key], f.seasonErr
+	return f.seasons[key], f.seasonErrs[key]
 }
 
 // newTMDBFixture returns a refresh fixture with the fake TMDB, and the
@@ -382,6 +383,9 @@ func TestYearConfirmSeriesViaTMDB(t *testing.T) {
 
 	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s")
 	wantCalls(t, ft.calls, "Find tvdb 5 true", "Year 77 true")
+	if slices.Contains(fp.calls, "EpisodeNumbers 201") {
+		t.Error("read Plex episodes after TMDB already confirmed the year")
+	}
 	sent := f.logLines("info", "Sent request")
 	if len(sent) != 1 {
 		t.Fatalf("got %d sent lines, want 1", len(sent))

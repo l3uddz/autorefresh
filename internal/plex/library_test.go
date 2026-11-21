@@ -17,16 +17,20 @@ func TestEpisodeNumbersRequiresCompleteFileBackedEntries(t *testing.T) {
 		{"parentIndex":1,"index":1,"Media":[{"Part":[{"file":"/fixture/Show/S01E01-E02.mkv"}]}]},
 		{"parentIndex":1,"index":2,"Media":[{"Part":[{"file":"/fixture/Show/S01E01-E02.mkv"}]}]}`
 	tests := []struct {
-		name  string
-		total string
-		items string
-		want  map[int][]int
+		name   string
+		fields string
+		items  string
+		want   map[int][]int
 	}{
-		{"separate episode numbers in the same file", "3", episodes, map[int][]int{1: {1, 2}}},
-		{"truncated listing", "4", episodes, nil},
-		{"unreported total", "null", episodes, nil},
-		{"no backing file for a regular episode", "4", episodes + `,{"parentIndex":2,"index":1}`, nil},
-		{"no season number for a file", "4", episodes + `,{"index":1,"Media":[{"Part":[{"file":"/fixture/Show/episode.mkv"}]}]}`, nil},
+		{"truncated listing", `"totalSize":4`, episodes, nil},
+		{"unreported total", `"size":3`, episodes, nil},
+		{"wrong page size", `"totalSize":3,"size":4`, episodes, nil},
+		{"no backing file for a regular episode", `"totalSize":4`, episodes + `,{"parentIndex":2,"index":1}`, nil},
+		{"missing file attribute", `"totalSize":4`, episodes + `,{"parentIndex":2,"index":1,"Media":[{"Part":[{}]}]}`, nil},
+		{"blank file path", `"totalSize":4`, episodes + `,{"parentIndex":2,"index":1,"Media":[{"Part":[{"file":"  " }]}]}`, nil},
+		{"no season number for a file", `"totalSize":4`, episodes + `,{"index":1,"Media":[{"Part":[{"file":"/fixture/Show/episode.mkv"}]}]}`, nil},
+		{"negative season number", `"totalSize":4`, episodes + `,{"parentIndex":-1,"index":1,"Media":[{"Part":[{"file":"/fixture/Show/episode.mkv"}]}]}`, nil},
+		{"zero episode number", `"totalSize":4`, episodes + `,{"parentIndex":1,"index":0,"Media":[{"Part":[{"file":"/fixture/Show/episode.mkv"}]}]}`, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -34,13 +38,22 @@ func TestEpisodeNumbersRequiresCompleteFileBackedEntries(t *testing.T) {
 				if r.Method != http.MethodGet || r.URL.Path != "/library/metadata/201/allLeaves" {
 					t.Errorf("request = %s %s", r.Method, r.URL.Path)
 				}
-				w.Write([]byte(`{"MediaContainer":{"totalSize":` + tt.total + `,"Metadata":[` + tt.items + `]}}`))
+				w.Write([]byte(`{"MediaContainer":{` + tt.fields + `,"Metadata":[` + tt.items + `]}}`))
 			})
 			got, err := c.EpisodeNumbers(context.Background(), "201")
 			if err != nil || !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("EpisodeNumbers = %v, %v, want %v", got, err, tt.want)
 			}
 		})
+	}
+}
+
+func TestEpisodeNumbersCountsNumberedEntriesInSharedFile(t *testing.T) {
+	_, c := newServer(t, serveFixture(t, "show_episode_numbers.json"))
+	got, err := c.EpisodeNumbers(context.Background(), "201")
+	want := map[int][]int{1: {1, 2}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("EpisodeNumbers = %v, %v, want %v", got, err, want)
 	}
 }
 

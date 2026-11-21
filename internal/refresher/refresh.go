@@ -182,8 +182,8 @@ type fixMatch struct {
 // Only an unmatched item that was refreshed before gets a fix match, and
 // only if the unmatched reason is not ignored. If no search found a
 // candidate, a TMDB client gives a second pass with TMDB IDs. err is the
-// error of a failed ItemPaths or SearchMatches request, or of the TMDB ID
-// cache (errCache).
+// error of a failed ItemPaths, SearchMatches, or EpisodeNumbers request,
+// or of the TMDB ID cache (errCache).
 func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Library, it store.Item) (*fixMatch, error) {
 	if it.Reasons&store.Unmatched == 0 || r.opts.IgnoreReasons&store.Unmatched != 0 || it.Refreshes < 1 {
 		return nil, nil

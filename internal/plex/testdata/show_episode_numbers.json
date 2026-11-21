@@ -1,0 +1,37 @@
+{
+  "MediaContainer": {
+    "size": 2,
+    "totalSize": 2,
+    "offset": 0,
+    "Metadata": [
+      {
+        "ratingKey": "11",
+        "parentIndex": 1,
+        "index": 1,
+        "Media": [
+          {
+            "Part": [
+              {
+                "file": "/fixture/Show/S01E01-E02.mkv"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "ratingKey": "12",
+        "parentIndex": 1,
+        "index": 2,
+        "Media": [
+          {
+            "Part": [
+              {
+                "file": "/fixture/Show/S01E01-E02.mkv"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
