@@ -39,7 +39,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # tools: go and goreleaser, at the versions in mise.toml
+      # tools: go, goreleaser, and golangci-lint, at the versions in mise.toml
       - name: mise
         uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
 
@@ -47,6 +47,7 @@ jobs:
         run: |
           go version
           goreleaser --version
+          golangci-lint version
 
       # cache
       - name: cache-go
@@ -71,6 +72,7 @@ jobs:
       - name: tests
         run: mise run test
 
+      # lint: formatting, go vet, staticcheck, and the complexity limit
       - name: lint
         run: mise run lint
 
