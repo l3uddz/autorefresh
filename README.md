@@ -195,11 +195,14 @@ tries a fix match.
      such as `(2018)`, that differs from the item's year in Plex (for
      example when Plex parsed a bare year from a title), autorefresh checks
      the candidate against that path year.
-   - Otherwise, with a `tmdb-token`, autorefresh resolves the item to a
-     single TMDB ID, checks that Plex resolves that `tmdb-<id>` to the same
-     candidate GUID, and compares the item's year against TMDB's canonical
-     year (the earliest regular season air date for a series, ignoring
-     specials, or the earliest release date for a movie).
+   - If that does not confirm the match (either because there is no
+     unambiguous path year or because the path year also disagrees with the
+     candidate) and a `tmdb-token` is set, autorefresh resolves the item to
+     a single TMDB ID, checks that Plex resolves that `tmdb-<id>` to the
+     same candidate GUID, and compares TMDB's canonical year (the earliest
+     regular season air date for a series, ignoring specials, or the
+     earliest release date for a movie) against the item's year or its
+     unambiguous path year.
 
 If no match applies, autorefresh sends a plain refresh. If the IDs disagree,
 it also logs a `Match conflict` warning. The warning has the reason, the
