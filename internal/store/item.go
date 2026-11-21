@@ -114,13 +114,14 @@ func (s *Store) Library(server, section string) (Library, error) {
 // ApplyRead writes r in one transaction. For each row of the section, the
 // final reasons are the item bits from r.Items (or the old item bits if the
 // item is not in r.Items) and, if r.Shows, the episode bits from the two
-// lists and the old bits of r.EpisodeSkipped (or else the old episode bits). It inserts rows for new items with
-// final reasons that are not 0, deletes the rows whose final reasons are 0
-// and returns them as fixed, deletes the r.Gone rows (not in fixed), and
-// sets the read times. LastFullRead changes only if r.Full. The caller must
-// set AddedAt on every item, because a zero time is stored as a negative number.
-// A row of the same rating key in another section moves to r.Section and
-// keeps its history and its reasons that the read does not replace.
+// lists and the old bits of r.EpisodeSkipped (or else the old episode bits).
+// It deletes the r.Gone rows, inserts rows for new items with final reasons
+// that are not 0, deletes the other rows whose final reasons are 0 and
+// returns them as fixed, and sets the read times. LastFullRead changes only
+// if r.Full. The caller must set AddedAt on every item, because a zero time
+// is stored as a negative number, and must not put a key in both r.Items and
+// r.Gone. A row of the same rating key in another section moves to r.Section
+// and keeps its history and its reasons that the read does not replace.
 func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -133,27 +134,15 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 		return nil, err
 	}
 
-	// The newest metadata for each rating key: r.Items first, then the episode lists.
-	latest := map[string]Item{}
-	itemBits := map[string]Reasons{}
-	inItems := map[string]bool{}
-	for _, it := range r.Items {
-		latest[it.RatingKey] = it
-		itemBits[it.RatingKey] = it.Reasons & ItemReasons
-		inItems[it.RatingKey] = true
-	}
-	episodeBits := map[string]Reasons{}
-	for _, list := range []struct {
-		items  []Item
-		reason Reasons
-	}{{r.EpisodeNoSummary, EpisodeNoSummary}, {r.EpisodeUnmatched, EpisodeUnmatched}} {
-		for _, it := range list.items {
-			if _, ok := latest[it.RatingKey]; !ok {
-				latest[it.RatingKey] = it
-			}
-			episodeBits[it.RatingKey] |= list.reason
+	gone := make(map[string]bool, len(r.Gone))
+	for _, key := range r.Gone {
+		gone[key] = true
+		if err := deleteItem(tx, r.Server, key); err != nil {
+			return nil, err
 		}
 	}
+
+	incoming := readKeys(r)
 
 	// The old rows are the rows of the section, and the rows of any section
 	// whose rating key is in the read (a moved item). The server's rows are
@@ -165,73 +154,50 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	}
 	oldByKey := map[string]Item{}
 	for _, it := range stored {
-		if _, incoming := latest[it.RatingKey]; incoming || it.Section == r.Section {
+		if _, ok := incoming[it.RatingKey]; ok || it.Section == r.Section {
 			oldByKey[it.RatingKey] = it
 		}
 	}
-	gone := make(map[string]bool, len(r.Gone))
-	for _, k := range r.Gone {
-		gone[k] = true
-	}
 
-	keys := map[string]bool{}
+	keys := make(map[string]bool, len(oldByKey)+len(incoming))
 	for k := range oldByKey {
 		keys[k] = true
 	}
-	for k := range latest {
+	for k := range incoming {
 		keys[k] = true
 	}
 
-	deleted := map[string]bool{}
 	for key := range keys {
+		if gone[key] {
+			continue
+		}
 		prev, exists := oldByKey[key]
+		in, isIncoming := incoming[key]
+		final := in.reasons(r, prev.Reasons)
 
-		final := itemBits[key]
-		if !inItems[key] {
-			final = prev.Reasons & ItemReasons
-		}
-		if r.Shows {
-			final |= episodeBits[key] | prev.Reasons&r.EpisodeSkipped
-		} else {
-			final |= prev.Reasons &^ ItemReasons
-		}
-
-		meta, hasMeta := latest[key]
 		switch {
-		case exists && final == 0:
+		case final == 0:
+			if !exists {
+				continue
+			}
 			if err := deleteItem(tx, r.Server, key); err != nil {
 				return nil, err
 			}
-			deleted[key] = true
-			if !gone[key] {
-				fixed = append(fixed, prev)
-			}
-		case exists && hasMeta:
+			fixed = append(fixed, prev)
+			continue
+		case !exists:
+			_, err = tx.Exec(`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				r.Server, r.Section, key, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final))
+		case isIncoming:
 			_, err = tx.Exec(`UPDATE item SET section = ?, type = ?, title = ?, year = ?, added_at = ?, reasons = ?
 				WHERE server = ? AND rating_key = ?`,
-				r.Section, meta.Type, meta.Title, meta.Year, meta.AddedAt.Unix(), int(final), r.Server, key)
-		case exists:
+				r.Section, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final), r.Server, key)
+		default:
 			_, err = tx.Exec(`UPDATE item SET reasons = ? WHERE server = ? AND rating_key = ?`, int(final), r.Server, key)
-		case final != 0:
-			// A row of the same key in another section moves here and keeps its history.
-			_, err = tx.Exec(`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-				ON CONFLICT (server, rating_key) DO UPDATE SET section = excluded.section, type = excluded.type,
-					title = excluded.title, year = excluded.year, added_at = excluded.added_at, reasons = excluded.reasons`,
-				r.Server, r.Section, key, meta.Type, meta.Title, meta.Year, meta.AddedAt.Unix(), int(final))
 		}
 		if err != nil {
 			return nil, fmt.Errorf("write item %s: %w", key, err)
-		}
-	}
-
-	// The caller never puts a key in both Items and Gone, so no row is updated and then deleted.
-	for _, key := range r.Gone {
-		if deleted[key] {
-			continue
-		}
-		if err := deleteItem(tx, r.Server, key); err != nil {
-			return nil, err
 		}
 	}
 
@@ -241,6 +207,49 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 		return nil, fmt.Errorf("commit read: %w", err)
 	}
 	return fixed, nil
+}
+
+// readKey is what a read says about one rating key.
+type readKey struct {
+	meta     Item    // the newest metadata: from r.Items, else from an episode list
+	inItems  bool    // r.Items holds the key, so its item reasons replace the old ones
+	episodes Reasons // the episode reasons of the episode lists
+}
+
+// readKeys returns what r says about each rating key that it lists.
+func readKeys(r Read) map[string]readKey {
+	keys := make(map[string]readKey, len(r.Items))
+	for _, it := range r.Items {
+		keys[it.RatingKey] = readKey{meta: it, inItems: true}
+	}
+	for _, list := range []struct {
+		items  []Item
+		reason Reasons
+	}{{r.EpisodeNoSummary, EpisodeNoSummary}, {r.EpisodeUnmatched, EpisodeUnmatched}} {
+		for _, it := range list.items {
+			k, ok := keys[it.RatingKey]
+			if !ok {
+				k.meta = it
+			}
+			k.episodes |= list.reason
+			keys[it.RatingKey] = k
+		}
+	}
+	return keys
+}
+
+// reasons returns the final reasons of a row after the read r. prev is the
+// old reasons of the row, or 0 for a new row. The zero readKey stands for a
+// row that the read does not list.
+func (k readKey) reasons(r Read, prev Reasons) Reasons {
+	final := prev & ItemReasons
+	if k.inItems {
+		final = k.meta.Reasons & ItemReasons
+	}
+	if r.Shows {
+		return final | k.episodes | prev&r.EpisodeSkipped
+	}
+	return final | prev&^ItemReasons
 }
 
 func deleteItem(tx *sql.Tx, server, key string) error {
