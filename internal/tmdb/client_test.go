@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -353,6 +354,44 @@ func TestYearMovie(t *testing.T) {
 	year, ok, err := c.Year(context.Background(), "272165", false)
 	if err != nil || !ok || year != 1984 {
 		t.Fatalf("Year = %d, %v, %v, want earliest release year 1984", year, ok, err)
+	}
+}
+
+func TestSeasonEpisodes(t *testing.T) {
+	fixture := file(t, "tv_season_episodes.json")
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/3/tv/77/season/1":
+			fixture(w, r)
+		case "/3/tv/77/season/2":
+			w.WriteHeader(http.StatusNotFound)
+		case "/3/tv/77/season/3":
+			w.WriteHeader(http.StatusUnauthorized)
+		default:
+			t.Errorf("unexpected request %s", r.URL)
+		}
+	})
+	got, err := c.SeasonEpisodes(context.Background(), "77", 1)
+	if err != nil || !slices.Equal(got, []int{1, 2}) {
+		t.Fatalf("SeasonEpisodes = %v, %v, want [1 2]", got, err)
+	}
+	got, err = c.SeasonEpisodes(context.Background(), "77", 2)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("SeasonEpisodes on 404 = %v, %v, want no evidence", got, err)
+	}
+	_, err = c.SeasonEpisodes(context.Background(), "77", 3)
+	checkError(t, err, true)
+}
+
+func TestSeasonEpisodesRejectsInvalidParameters(t *testing.T) {
+	c := serve(t, func(http.ResponseWriter, *http.Request) { t.Error("sent a request for invalid parameters") })
+	for _, tc := range []struct {
+		id     string
+		season int
+	}{{"1/2", 1}, {"77", 0}, {"77", -1}} {
+		if _, err := c.SeasonEpisodes(context.Background(), tc.id, tc.season); err == nil {
+			t.Errorf("SeasonEpisodes(%q, %d) returned no error", tc.id, tc.season)
+		}
 	}
 }
 

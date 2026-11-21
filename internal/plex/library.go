@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -16,8 +17,10 @@ const (
 	TypeShow  = 2
 )
 
-// pageSize is the number of items that List asks for in each request.
+// pageSize is the number of items requested per metadata page.
 const pageSize = 500
+
+var errIncompleteListing = errors.New("incomplete plex listing")
 
 // Library types.
 const (
@@ -51,6 +54,8 @@ type Filter struct{ Key, Value string }
 
 type metadata struct {
 	RatingKey string `json:"ratingKey"`
+	Index     int    `json:"index"`
+	Season    *int   `json:"parentIndex"`
 	GUID      string `json:"guid"`
 	Title     string `json:"title"`
 	Year      int    `json:"year"`
@@ -70,6 +75,7 @@ type metadata struct {
 
 type metadataResponse struct {
 	MediaContainer struct {
+		Size      *int       `json:"size"`
 		TotalSize *int       `json:"totalSize"` // nil when absent
 		Metadata  []metadata `json:"Metadata"`
 	} `json:"MediaContainer"`
@@ -79,7 +85,9 @@ func (m metadata) files() []string {
 	var files []string
 	for _, media := range m.Media {
 		for _, part := range media.Part {
-			files = append(files, part.File)
+			if strings.TrimSpace(part.File) != "" {
+				files = append(files, part.File)
+			}
 		}
 	}
 	return files
@@ -135,74 +143,83 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 		return nil, errors.New("invalid plex section")
 	}
 	endpoint := c.endpoint("library", "sections", section, "all")
-
 	var items []Item
+	_, err := c.walkMetadataPages(ctx, endpoint, listQuery(itemType, filters), func(m metadata) {
+		items = append(items, m.item())
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing section %s: %w", section, err)
+	}
+	return items, nil
+}
+
+// walkMetadataPages visits one page at a time and returns the final total.
+// Each page after the first overlaps the previous page by one item.
+func (c *Client) walkMetadataPages(ctx context.Context, endpoint *url.URL, query url.Values, visit func(metadata)) (int, error) {
+	query.Set("X-Plex-Container-Size", strconv.Itoa(pageSize))
+	var read int
+	var last string
 	for {
-		// Each page after the first starts at the last item of the previous
-		// page. If that item moved, the items after it moved too, and the
-		// page would skip or repeat an item.
-		start := max(0, len(items)-1)
+		start := max(0, read-1)
+		query.Set("X-Plex-Container-Start", strconv.Itoa(start))
 		var resp metadataResponse
-		if err := c.send(ctx, http.MethodGet, endpoint, listQuery(itemType, start, filters), &resp); err != nil {
-			return nil, fmt.Errorf("listing section %s: %w", section, err)
+		if err := c.send(ctx, http.MethodGet, endpoint, query, &resp); err != nil {
+			return 0, err
 		}
 
-		// Without totalSize, the end of the listing is unknown: a short page
-		// can come before the end, and a server that ignores the offset sends
-		// the same page forever.
-		page, total := resp.MediaContainer.Metadata, resp.MediaContainer.TotalSize
-		if total == nil {
-			return nil, fmt.Errorf("listing section %s: response has no totalSize", section)
+		rest, err := unreadMetadata(resp, read, last)
+		if err != nil {
+			return 0, err
 		}
-		rest, ok := newPageItems(items, page)
-		if !ok {
-			return nil, fmt.Errorf("listing section %s: listing changed during the read at offset %d",
-				section, start)
+		for _, item := range rest {
+			visit(item)
+			last = item.RatingKey
 		}
-		for _, m := range rest {
-			items = append(items, m.item())
-		}
+		read += len(rest)
+		total := *resp.MediaContainer.TotalSize
 		switch {
-		case len(items) >= *total:
-			return items, nil
+		case read >= total:
+			return total, nil
 		case len(rest) == 0:
-			return nil, fmt.Errorf("listing section %s: page added no new items at offset %d of %d",
-				section, len(items), *total)
+			return 0, fmt.Errorf("%w: page added no new items at offset %d of %d", errIncompleteListing, read, total)
 		}
 	}
 }
 
-// listQuery returns the query of the listing page at start.
-func listQuery(itemType, start int, filters []Filter) url.Values {
+// unreadMetadata excludes the overlap anchor. Without totalSize the end of
+// the listing is unknown, since a short page can come before the end.
+func unreadMetadata(resp metadataResponse, read int, last string) ([]metadata, error) {
+	page, total, size := resp.MediaContainer.Metadata, resp.MediaContainer.TotalSize, resp.MediaContainer.Size
+	if total == nil || *total < 0 {
+		return nil, fmt.Errorf("%w: invalid or missing totalSize", errIncompleteListing)
+	}
+	if size != nil && *size != len(page) {
+		return nil, fmt.Errorf("%w: reported size %d for %d entries", errIncompleteListing, *size, len(page))
+	}
+	if read == 0 {
+		return page, nil
+	}
+	if last == "" || len(page) == 0 || page[0].RatingKey != last {
+		return nil, fmt.Errorf("%w: listing changed during the read at offset %d", errIncompleteListing, read-1)
+	}
+	return page[1:], nil
+}
+
+func listQuery(itemType int, filters []Filter) url.Values {
 	// The listing needs only item fields, so it leaves out the heavy elements.
 	exclude := "Role,Director,Writer,Genre,Country"
 	if itemType == TypeShow {
 		exclude = "Media," + exclude
 	}
 	query := url.Values{
-		"type":                   {strconv.Itoa(itemType)},
-		"sort":                   {"addedAt"},
-		"excludeElements":        {exclude},
-		"X-Plex-Container-Start": {strconv.Itoa(start)},
-		"X-Plex-Container-Size":  {strconv.Itoa(pageSize)},
+		"type":            {strconv.Itoa(itemType)},
+		"sort":            {"addedAt"},
+		"excludeElements": {exclude},
 	}
 	for _, f := range filters {
 		query.Add(f.Key, f.Value)
 	}
 	return query
-}
-
-// newPageItems returns the items of page that items does not hold yet. A
-// page after the first must start at the last item of items. ok is false if
-// it does not, because the listing then moved.
-func newPageItems(items []Item, page []metadata) (rest []metadata, ok bool) {
-	if len(items) == 0 {
-		return page, true
-	}
-	if len(page) == 0 || page[0].RatingKey != items[len(items)-1].RatingKey {
-		return nil, false
-	}
-	return page[1:], true
 }
 
 // ItemPaths returns Location[].path of a series, or Media[].Part[].file of a
@@ -231,4 +248,36 @@ func (c *Client) ItemPaths(ctx context.Context, ratingKey string) ([]string, err
 		paths = append(paths, l.Path)
 	}
 	return paths, nil
+}
+
+// EpisodeNumbers returns the file-backed episode numbers in each regular
+// season of a series. An incomplete listing gives no evidence.
+func (c *Client) EpisodeNumbers(ctx context.Context, ratingKey string) (map[int][]int, error) {
+	endpoint, err := c.metadataEndpoint(ratingKey, "allLeaves")
+	if err != nil {
+		return nil, err
+	}
+	seasons := make(map[int][]int)
+	var read int
+	valid := true
+	total, err := c.walkMetadataPages(ctx, endpoint, url.Values{}, func(m metadata) {
+		read++
+		switch {
+		case m.Season != nil && *m.Season == 0:
+		case m.Season == nil || *m.Season < 0 || m.Index <= 0 || len(m.files()) == 0:
+			valid = false
+		default:
+			seasons[*m.Season] = append(seasons[*m.Season], m.Index)
+		}
+	})
+	if errors.Is(err, errIncompleteListing) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("episode numbers: %w", err)
+	}
+	if !valid || read != total {
+		return nil, nil
+	}
+	return seasons, nil
 }

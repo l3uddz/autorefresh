@@ -16,18 +16,20 @@ var _ Plex = (*plex.Client)(nil)
 // empty result. Like plex.Client, it sends nothing once ctx is done: it
 // records no call and returns an unavailable error that wraps ctx.Err().
 type fakePlex struct {
-	libraries    []plex.Library
-	librariesErr error
-	lists        map[string][]plex.Item      // by listKey
-	listErrs     map[string]error            // by listKey
-	paths        map[string][]string         // by rating key
-	pathErrs     map[string]error            // by rating key
-	candidates   map[string][]plex.Candidate // by "<rating key> <search title>"
-	searchErrs   map[string]error            // by "<rating key> <search title>", else by rating key
-	refreshErrs  map[string]error            // by rating key
-	matchErrs    map[string]error            // by rating key
-	calls        []string
-	onCall       func(call string) // runs after each recorded call, if set
+	libraries      []plex.Library
+	librariesErr   error
+	lists          map[string][]plex.Item // by listKey
+	listErrs       map[string]error       // by listKey
+	episodeNumbers map[string]map[int][]int
+	episodeReadErr error
+	paths          map[string][]string         // by rating key
+	pathErrs       map[string]error            // by rating key
+	candidates     map[string][]plex.Candidate // by "<rating key> <search title>"
+	searchErrs     map[string]error            // by "<rating key> <search title>", else by rating key
+	refreshErrs    map[string]error            // by rating key
+	matchErrs      map[string]error            // by rating key
+	calls          []string
+	onCall         func(call string) // runs after each recorded call, if set
 }
 
 func newFakePlex(libraries ...plex.Library) *fakePlex {
@@ -98,6 +100,14 @@ func (f *fakePlex) ItemPaths(ctx context.Context, ratingKey string) ([]string, e
 		return nil, err
 	}
 	return f.paths[ratingKey], nil
+}
+
+func (f *fakePlex) EpisodeNumbers(ctx context.Context, ratingKey string) (map[int][]int, error) {
+	if err := canceled(ctx); err != nil {
+		return nil, err
+	}
+	f.record("EpisodeNumbers " + ratingKey)
+	return f.episodeNumbers[ratingKey], f.episodeReadErr
 }
 
 func (f *fakePlex) Refresh(ctx context.Context, ratingKey string) error {

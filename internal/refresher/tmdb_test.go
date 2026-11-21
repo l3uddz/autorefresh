@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -17,11 +18,13 @@ var _ TMDB = (*tmdb.Client)(nil)
 // fakeTMDB records each Find and Year call and answers from its maps.
 // Find keys are "<source> <id> <show>"; Year keys are "<id> <show>".
 type fakeTMDB struct {
-	ids      map[string]string
-	errs     map[string]error
-	years    map[string]int
-	yearErrs map[string]error
-	calls    []string
+	ids        map[string]string
+	errs       map[string]error
+	years      map[string]int
+	yearErrs   map[string]error
+	seasons    map[string][]int
+	seasonErrs map[string]error
+	calls      []string
 }
 
 func (f *fakeTMDB) Find(_ context.Context, source, id string, show bool) (string, bool, error) {
@@ -42,6 +45,12 @@ func (f *fakeTMDB) Year(_ context.Context, id string, show bool) (int, bool, err
 	}
 	y, ok := f.years[key]
 	return y, ok, nil
+}
+
+func (f *fakeTMDB) SeasonEpisodes(_ context.Context, id string, season int) ([]int, error) {
+	key := fmt.Sprintf("%s %d", id, season)
+	f.calls = append(f.calls, "SeasonEpisodes "+key)
+	return f.seasons[key], f.seasonErrs[key]
 }
 
 // newTMDBFixture returns a refresh fixture with the fake TMDB, and the
@@ -325,6 +334,11 @@ func (c cancelTMDB) Year(context.Context, string, bool) (int, bool, error) {
 	return 0, false, fmt.Errorf("GET /3/tv/77: %w", context.Canceled)
 }
 
+func (c cancelTMDB) SeasonEpisodes(context.Context, string, int) ([]int, error) {
+	c.cancel()
+	return nil, context.Canceled
+}
+
 func TestTMDBFindCanceled(t *testing.T) {
 	fp := newFakePlex(showsLib)
 	f := newTMDBFixture(t, fp, nil, "tvdb-5")
@@ -369,6 +383,9 @@ func TestYearConfirmSeriesViaTMDB(t *testing.T) {
 
 	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s")
 	wantCalls(t, ft.calls, "Find tvdb 5 true", "Year 77 true")
+	if slices.Contains(fp.calls, "EpisodeNumbers 201") {
+		t.Error("read Plex episodes after TMDB already confirmed the year")
+	}
 	sent := f.logLines("info", "Sent request")
 	if len(sent) != 1 {
 		t.Fatalf("got %d sent lines, want 1", len(sent))
@@ -591,6 +608,18 @@ func TestYearConfirmRejectsUnconfirmedConflicts(t *testing.T) {
 			wantConflict:   "year differs",
 			checkTMDBCalls: true,
 			wantTMDBCalls:  []string{"Find tvdb 5 true", "Find imdb tt1 true"},
+		},
+		{
+			name: "matched path tmdb id conflicts with a translated tvdb id",
+			setup: func(fp *fakePlex, ft *fakeTMDB) {
+				fp.paths["201"] = []string{"/tv/Show (2022) {tmdb-77} {tvdb-5}"}
+				fp.candidates["201 tmdb-77"] = []plex.Candidate{{GUID: "plex://show/a", Year: 2017}}
+				ft.ids["tvdb 5 true"] = "78"
+				ft.years["77 true"] = 2022
+			},
+			wantConflict:   "year differs",
+			checkTMDBCalls: true,
+			wantTMDBCalls:  []string{"Find tvdb 5 true"},
 		},
 		{
 			name: "already searched empty tmdb id is not searched again",

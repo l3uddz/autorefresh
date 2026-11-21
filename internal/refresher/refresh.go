@@ -170,19 +170,20 @@ func (r *Refresher) warnAtLongestWait(server string, lib plex.Library, it store.
 
 // fixMatch is the candidate that a fix match applies.
 type fixMatch struct {
-	cand     plex.Candidate
-	links    []string     // the web pages of the IDs that found or confirmed cand
-	action   store.Action // store.ActionMatch, or store.ActionTMDBMatch if TMDB gave the IDs
-	pathYear int          // >0 when the path (YYYY) confirmed a year gap
-	tmdbYear int          // >0 when TMDB confirmed a year gap
+	cand         plex.Candidate
+	links        []string     // the web pages of the IDs that found or confirmed cand
+	action       store.Action // store.ActionMatch, or store.ActionTMDBMatch if TMDB gave the IDs
+	pathYear     int          // >0 when the path (YYYY) confirmed a year gap
+	tmdbYear     int          // >0 when TMDB supplied a year for confirmation
+	episodeCount int          // >0 when regular episodes confirmed a series
 }
 
 // findMatch returns the fix match of the item, or nil for a plain refresh.
 // Only an unmatched item that was refreshed before gets a fix match, and
 // only if the unmatched reason is not ignored. If no search found a
 // candidate, a TMDB client gives a second pass with TMDB IDs. err is the
-// error of a failed ItemPaths or SearchMatches request, or of the TMDB ID
-// cache (errCache).
+// error of a failed ItemPaths, SearchMatches, or EpisodeNumbers request,
+// or of the TMDB ID cache (errCache).
 func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Library, it store.Item) (*fixMatch, error) {
 	if it.Reasons&store.Unmatched == 0 || r.opts.IgnoreReasons&store.Unmatched != 0 || it.Refreshes < 1 {
 		return nil, nil
@@ -237,7 +238,10 @@ func (r *Refresher) resolveMatch(ctx context.Context, run *serverRun, mc matchCo
 	if yr.extraLink != "" && !slices.Contains(links, yr.extraLink) {
 		links = append(links, yr.extraLink)
 	}
-	return &fixMatch{cand: cand, links: links, action: action, pathYear: yr.pathYear, tmdbYear: yr.tmdbYear}, nil
+	return &fixMatch{
+		cand: cand, links: links, action: action,
+		pathYear: yr.pathYear, tmdbYear: yr.tmdbYear, episodeCount: yr.episodeCount,
+	}, nil
 }
 
 // itemPaths returns the paths of the item: the movie files from the reads
@@ -349,6 +353,9 @@ func requestEvent(ev *zerolog.Event, server string, lib plex.Library, it store.I
 	}
 	if fm.tmdbYear != 0 {
 		ev = ev.Int("tmdb_year", fm.tmdbYear)
+	}
+	if fm.episodeCount > 0 {
+		ev = ev.Int("episode_count", fm.episodeCount)
 	}
 	return ev.Strs("links", fm.links)
 }
