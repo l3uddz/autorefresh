@@ -190,14 +190,26 @@ tries a fix match.
 3. If every ID with a result found exactly one candidate, and all of these
    candidates are the same entry, it can apply a match.
 4. If the item and the candidate both have a year, the years must differ by
-   1 or less.
+   1 or less. If only the year disagrees:
+   - If the series folder, or the movie folder and file name, have one
+     unambiguous release year in parentheses, such as `(2018)`, that differs
+     from the item's year in Plex (for example when Plex parsed a bare year
+     from a title), autorefresh checks the candidate against that path year.
+   - If that does not confirm the match (either because there is no
+     unambiguous path year or because the path year also disagrees with the
+     candidate) and a `tmdb-token` is set, autorefresh resolves the item to
+     a single TMDB ID, checks that Plex resolves that `tmdb-<id>` to the
+     same candidate GUID, and compares TMDB's canonical year (the earliest
+     regular season air date for a series, ignoring specials, or the
+     earliest release date for a movie) against the item's year or its
+     unambiguous path year.
 
 If no match applies, autorefresh sends a plain refresh. If the IDs disagree,
 it also logs a `Match conflict` warning. The warning has the reason, the
-year of the item, and each candidate with its year and the web page of the
-ID that found it. If a match search fails, autorefresh sends no
-request for that item in this run. A match request counts as a refresh for
-the wait.
+year of the item, `tmdb_year` if TMDB was checked, and each candidate with
+its year and the web page of the ID that found it. If a match search fails,
+autorefresh sends no request for that item in this run. A match request
+counts as a refresh for the wait.
 
 The `Sent request` line of a match, and its `Dry run` line, has these
 fields, so you can check each match in the log:
@@ -206,9 +218,11 @@ fields, so you can check each match in the log:
 | --- | --- |
 | `action` | `match`, or `tmdb-match` if the TMDB fallback below found the candidate |
 | `item_year` | The year of the item in Plex, or 0 if it has none |
+| `path_year` | Set when an unambiguous `(YYYY)` year in the path confirmed a year gap |
+| `tmdb_year` | Set when TMDB's canonical release year confirmed a year gap |
 | `candidate` | The title of the entry that the match applies |
 | `candidate_year` | The year of that entry, or 0 if it has none |
-| `links` | The web page of each ID whose search found the entry. A `tmdb` ID links to TMDB, an `imdb` ID to IMDb, and a `tvdb` ID to TheTVDB. |
+| `links` | The web page of each ID whose search found or confirmed the entry. A `tmdb` ID links to TMDB, an `imdb` ID to IMDb, and a `tvdb` ID to TheTVDB. |
 
 Plex stops using TheTVDB on December 3, 2026, and can then answer a search
 for a `tvdb` ID with an error. So a failed search for a `tvdb` or an `imdb`

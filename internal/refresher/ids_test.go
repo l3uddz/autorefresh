@@ -67,3 +67,30 @@ func TestPathIDLink(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePathYear(t *testing.T) {
+	tests := []struct {
+		name  string
+		paths []string
+		show  bool
+		want  int
+	}{
+		{"bare year in title and parenthesized release year", []string{"/m/Concert 2000 (2018) {imdb-tt1}/Concert 2000 (2018).mkv"}, false, 2018},
+		{"same year repeated across folder and file", []string{"/m/Film (2020)/Film (2020).mkv"}, false, 2020},
+		{"ignores year in movie library root", []string{"/media/Backup (2019)/Movies/Film/Film.mkv"}, false, 0},
+		{"ignores year in show library root", []string{"/media/TV (2019)/Show"}, true, 0},
+		{"reads year from show folder", []string{"/media/TV (2019)/Show (2022) [tvdbid-5]"}, true, 2022},
+		{"ambiguous parenthesized years", []string{"/m/Film (1984) (2018)/Film.mkv"}, false, 0},
+		{"different years across paths", []string{"/m/A (2018).mkv", "/m/B (2020).mkv"}, false, 0},
+		{"out of plausible year range", []string{"/m/Film (0001) (2640)/Film.mkv"}, false, 0},
+		{"non-four-digit parens and square brackets", []string{"/m/Film [2020] (1080p)/Film.mkv"}, false, 0},
+		{"no year", []string{"/m/Film/Film.mkv"}, false, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parsePathYear(tt.paths, tt.show); got != tt.want {
+				t.Errorf("parsePathYear(%v, %v) = %d, want %d", tt.paths, tt.show, got, tt.want)
+			}
+		})
+	}
+}

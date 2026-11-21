@@ -2,34 +2,52 @@ package refresher
 
 import "github.com/l3uddz/autorefresh/internal/plex"
 
+const (
+	conflictSeveral   = "several candidates"
+	conflictNoGUID    = "candidate without guid"
+	conflictDifferent = "different candidates"
+	conflictYear      = "year differs"
+)
+
 // searchResult holds the match candidates that one path ID found.
 type searchResult struct {
 	id         pathID
 	candidates []plex.Candidate
 }
 
-// chooseMatch applies fix match steps 4 to 7 of the spec. ok is true only
-// for a match to apply. conflict is "" or a short reason for the log.
-func chooseMatch(itemYear int, results []searchResult) (cand plex.Candidate, ok bool, conflict string) {
+// chooseCandidate checks that every non-empty result has one candidate with
+// a GUID and that all such candidates share the same GUID. It does not check
+// the year.
+func chooseCandidate(results []searchResult) (cand plex.Candidate, ok bool, conflict string) {
 	found := false
 	for _, r := range results {
 		switch {
 		case len(r.candidates) == 0:
 			continue
 		case len(r.candidates) > 1:
-			return plex.Candidate{}, false, "several candidates"
+			return plex.Candidate{}, false, conflictSeveral
 		case r.candidates[0].GUID == "":
-			return plex.Candidate{}, false, "candidate without guid"
+			return plex.Candidate{}, false, conflictNoGUID
 		case found && r.candidates[0].GUID != cand.GUID:
-			return plex.Candidate{}, false, "different candidates"
-		}
-		if yearDiffers(itemYear, r.candidates[0].Year) {
-			return plex.Candidate{}, false, "year differs"
+			return plex.Candidate{}, false, conflictDifferent
 		}
 		cand, found = r.candidates[0], true
 	}
-	if !found {
-		return plex.Candidate{}, false, ""
+	return cand, found, ""
+}
+
+// chooseMatch checks candidate agreement across all results first, then
+// checks the year of every returned candidate against itemYear. ok is true
+// only for a match to apply. conflict is "" or a short reason for the log.
+func chooseMatch(itemYear int, results []searchResult) (cand plex.Candidate, ok bool, conflict string) {
+	cand, found, conflict := chooseCandidate(results)
+	if !found || conflict != "" {
+		return plex.Candidate{}, false, conflict
+	}
+	for _, r := range results {
+		if len(r.candidates) == 1 && yearDiffers(itemYear, r.candidates[0].Year) {
+			return plex.Candidate{}, false, conflictYear
+		}
 	}
 	return cand, true, ""
 }
