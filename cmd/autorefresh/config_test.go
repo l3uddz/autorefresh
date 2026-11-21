@@ -123,6 +123,38 @@ func TestReadConfigWaitsUntilFileIsWritten(t *testing.T) {
 	}
 }
 
+// A writer can change the file between the last check and the read. The
+// bytes of that read do not match the checked state, so readConfig waits for
+// the file to stop changing and reads it again.
+func TestReadConfigRereadsFileChangedDuringRead(t *testing.T) {
+	captureLog(t)
+	path := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(path, []byte("plex:\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const full = "plex:\n  - name: a\n"
+	originalSleep, originalRead := sleepFunc, readFileFunc
+	t.Cleanup(func() { sleepFunc, readFileFunc = originalSleep, originalRead })
+	sleepFunc = func(time.Duration) {}
+	reads := 0
+	readFileFunc = func(name string) ([]byte, error) {
+		reads++
+		data, err := os.ReadFile(name)
+		if reads == 1 {
+			// The writer finishes after the first read.
+			if err := os.WriteFile(name, []byte(full), 0o600); err != nil {
+				t.Error(err)
+			}
+		}
+		return data, err
+	}
+
+	data, err := readConfig(path, time.Hour)
+	if err != nil || string(data) != full || reads != 2 {
+		t.Fatalf("readConfig = %q, %v after %d reads, want %q after 2", data, err, reads, full)
+	}
+}
+
 func TestReadConfigReadsExistingFileAtOnce(t *testing.T) {
 	buf := captureLog(t)
 	path := filepath.Join(t.TempDir(), "config.yml")
