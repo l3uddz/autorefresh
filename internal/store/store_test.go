@@ -389,6 +389,65 @@ func TestMigrationRejectsBrokenForeignKey(t *testing.T) {
 	}
 }
 
+// A migration script that fails part way changes nothing: its earlier
+// statements roll back, its version is not recorded, and foreign keys are
+// on again.
+func TestFailedMigrationScriptLeavesNoTrace(t *testing.T) {
+	s := openTest(t)
+	script := `CREATE TABLE half (a INTEGER); INSERT INTO missing_table VALUES (1);`
+
+	if err := applyMigration(s.db, 99, script); err == nil {
+		t.Fatal("applyMigration succeeded, want the error of the script")
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name = 'half'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("tables named half = %d, %v, want 0 after the rollback", n, err)
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migration WHERE version = 99`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("schema_migration rows of 99 = %d, %v, want 0", n, err)
+	}
+	var on int
+	if err := s.db.QueryRow(`PRAGMA foreign_keys`).Scan(&on); err != nil || on != 1 {
+		t.Errorf("foreign_keys after the failed migration = %d, %v, want 1", on, err)
+	}
+}
+
+// Open must not take over a file that is not a SQLite database, such as a
+// wrong --database path, and must leave its content as it was.
+func TestOpenRejectsFileThatIsNotADatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "notes.txt")
+	content := []byte(strings.Repeat("These are notes, not a database.\n", 200))
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if s, err := Open(path); err == nil {
+		s.Close()
+		t.Fatal("Open succeeded, want an error")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(content) {
+		t.Error("Open changed the file")
+	}
+}
+
+// Open does not create a missing directory. The CLI creates only the
+// default config directory.
+func TestOpenFailsInMissingDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "missing")
+
+	if s, err := Open(filepath.Join(dir, "store.db")); err == nil {
+		s.Close()
+		t.Fatal("Open succeeded, want an error")
+	}
+	if _, err := os.Stat(dir); err == nil {
+		t.Error("Open created the missing directory")
+	}
+}
+
 // A database failure must reach the caller, so the refresher can stop the
 // run instead of acting on a cache that it did not read or write.
 func TestMethodsReportDatabaseFailure(t *testing.T) {
