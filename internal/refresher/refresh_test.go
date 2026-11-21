@@ -939,3 +939,14 @@ func TestStoreErrorAfterUnavailableServer(t *testing.T) {
 		t.Errorf("got %d unavailable errors, want 1", len(errs))
 	}
 }
+
+func TestSleepWaitsOrStops(t *testing.T) {
+	if err := sleep(context.Background(), time.Millisecond); err != nil {
+		t.Errorf("sleep = %v, want nil", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := sleep(ctx, time.Hour); !errors.Is(err, context.Canceled) {
+		t.Errorf("sleep after cancel = %v, want context.Canceled", err)
+	}
+}
