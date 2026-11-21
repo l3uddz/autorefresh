@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
-	"github.com/robfig/cron/v3"
 	"github.com/rs/zerolog/log"
 
 	"github.com/l3uddz/autorefresh/internal/config"
@@ -135,22 +134,15 @@ func main() {
 		return
 	}
 
-	// schedule. The first run waits for the schedule, so a check of each
-	// server shows a wrong token or URL at once.
+	// schedule. A check of each server shows a wrong token or URL at once,
+	// before the first run.
 	checkServers(ctx, servers)
 	if tmdbClient != nil {
 		checkTMDB(ctx, tmdbClient)
 	}
-	run := &runner{run: r.Run}
-	c := cron.New()
-	c.Schedule(cfg.RunSchedule, cron.FuncJob(func() { run.start(ctx) }))
-	c.Start()
-
-	<-ctx.Done()
-	// A second signal now ends the process at once.
-	stop()
-	// Stop waits for a busy run to return.
-	<-c.Stop().Done()
+	// After the first signal, a second signal ends the process at once.
+	context.AfterFunc(ctx, stop)
+	serve(ctx, &runner{run: r.Run}, cfg.RunSchedule)
 	closeStore(st)
 	log.Info().Msg("Stopped")
 }

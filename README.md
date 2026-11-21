@@ -341,7 +341,8 @@ check while the service runs. A process waits up to 30 seconds for the
 other one to finish a write. An older version of autorefresh does not open
 a database that a newer version migrated to a newer schema.
 
-Without `--once`, the first run starts at the next `schedule` time. With
+Without `--once`, autorefresh starts the first run at once, after the
+token checks below. Then it starts a run at each `schedule` time. With
 `--once`, autorefresh runs one check at once and exits. If the check logs an
 error, such as a database error or an unavailable Plex server, the exit code
 is 1.
@@ -351,7 +352,7 @@ busy run. The run stops before its next request to Plex. Autorefresh then
 closes the database and exits.
 
 Without `--once`, autorefresh lists the libraries of each Plex server once
-at the start, before the first scheduled run. A wrong token or URL then
+at the start, before the first run. A wrong token or URL then
 shows at once:
 
 - If the server accepts the token, autorefresh logs the number of
