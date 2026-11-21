@@ -12,22 +12,11 @@ import (
 	"github.com/l3uddz/autorefresh/internal/store"
 )
 
-// refreshStep is the state of the refresh step of one server.
-type refreshStep struct {
-	run       *serverRun
-	libraries map[string]plex.Library // by section
-}
-
 // refreshDue handles the first MaxRefreshesPerRun due items of the server,
 // in Due order, and waits RefreshDelay between two items. Each item gets at
 // most one refresh or match request. It returns only the error of
 // stopError, a sleep error, or a store error.
 func (r *Refresher) refreshDue(ctx context.Context, run *serverRun) error {
-	s := &refreshStep{run: run, libraries: map[string]plex.Library{}}
-	for _, lib := range run.libraries {
-		s.libraries[lib.ID] = lib
-	}
-
 	due, total, err := r.store.Due(store.DueQuery{
 		Server:             run.server.Name,
 		Sections:           run.sections(),
@@ -49,7 +38,7 @@ func (r *Refresher) refreshDue(ctx context.Context, run *serverRun) error {
 			}
 		}
 		run.remaining-- // the item is reached, also if it stops the server
-		if err := r.refreshItem(ctx, s, it); err != nil {
+		if err := r.refreshItem(ctx, run, it); err != nil {
 			return err
 		}
 	}
@@ -74,11 +63,11 @@ func (r *Refresher) logSummary(run *serverRun) error {
 
 // refreshItem chooses the action of one due item and sends it, or logs it
 // in a dry run.
-func (r *Refresher) refreshItem(ctx context.Context, s *refreshStep, it store.Item) error {
-	lib := s.libraries[it.Section]
-	cand, match, err := r.findMatch(ctx, s.run, lib, it)
+func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.Item) error {
+	lib := run.library(it.Section)
+	cand, match, err := r.findMatch(ctx, run, lib, it)
 	if err != nil {
-		return r.matchSearchFailed(ctx, s, lib, it, err)
+		return r.itemFailed(ctx, run, it, "", err)
 	}
 
 	action := "refresh"
@@ -86,7 +75,7 @@ func (r *Refresher) refreshItem(ctx context.Context, s *refreshStep, it store.It
 		action = "match"
 	}
 	if r.opts.DryRun {
-		itemEvent(log.Info(), s.run.server.Name, lib, it).Str("action", action).Msg("Dry run")
+		itemEvent(log.Info(), run.server.Name, lib, it).Str("action", action).Msg("Dry run")
 		return nil
 	}
 
@@ -94,37 +83,67 @@ func (r *Refresher) refreshItem(ctx context.Context, s *refreshStep, it store.It
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	client := s.run.server.Plex
 	if match {
-		s.run.matches++
-		err = client.Match(ctx, it.RatingKey, cand)
+		run.matches++
+		err = run.server.Plex.Match(ctx, it.RatingKey, cand)
 	} else {
-		s.run.refreshes++
-		err = client.Refresh(ctx, it.RatingKey)
+		run.refreshes++
+		err = run.server.Plex.Refresh(ctx, it.RatingKey)
+	}
+	if err != nil {
+		return r.itemFailed(ctx, run, it, action, err)
 	}
 
-	name := s.run.server.Name
-	if err == nil {
-		if err := r.store.RecordAttempt(name, it.RatingKey, r.now(), true); err != nil {
-			return err
-		}
-		itemEvent(log.Info(), name, lib, it).Str("action", action).Msg("Sent request")
-		r.warnAtLongestWait(name, lib, it)
-		return nil
-	}
-	if ctx.Err() == nil && errors.Is(err, plex.ErrNotFound) {
-		return r.store.Delete(name, it.RatingKey)
-	}
-	// Plex can apply a request before its response fails, so each failed
-	// request counts as an attempt, also when it stops the server.
-	if err := r.store.RecordAttempt(name, it.RatingKey, r.now(), false); err != nil {
+	if err := r.store.RecordAttempt(run.server.Name, it.RatingKey, r.now(), true); err != nil {
 		return err
 	}
-	s.run.failures++
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return ctxErr
+	itemEvent(log.Info(), run.server.Name, lib, it).Str("action", action).Msg("Sent request")
+	r.warnAtLongestWait(run.server.Name, lib, it)
+	return nil
+}
+
+// itemFailed handles the failure of a due item: a failed refresh or match
+// request, with its action, or a failed match search, with no action.
+//
+//   - A 404 answer removes the row. A dry run keeps it and logs a warning.
+//   - Each other failure counts and records an attempt, also when it stops
+//     the server. Plex can apply a request before its response fails, and
+//     the attempt moves the item to the end of the queue, so it cannot stop
+//     the server at the same item in every run. A dry run records nothing.
+//   - A match search that the end of the run interrupted changes nothing.
+//
+// It returns the error of stopError or a store error.
+func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Item, action string, err error) error {
+	sent := action != ""
+	if errors.Is(err, errCache) {
+		return err
 	}
-	itemEvent(log.Warn(), name, lib, it).Str("action", action).Err(err).Msg("Request failed")
+	if !sent && ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	if ctx.Err() == nil && errors.Is(err, plex.ErrNotFound) {
+		if !r.opts.DryRun {
+			return r.store.Delete(run.server.Name, it.RatingKey)
+		}
+	} else {
+		run.failures++
+		if !r.opts.DryRun {
+			if err := r.store.RecordAttempt(run.server.Name, it.RatingKey, r.now(), false); err != nil {
+				return err
+			}
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+	}
+
+	ev := itemEvent(log.Warn(), run.server.Name, run.library(it.Section), it).Err(err)
+	if sent {
+		ev.Str("action", action).Msg("Request failed")
+	} else {
+		ev.Msg("Match search failed")
+	}
 	return stopError(ctx, err)
 }
 
@@ -214,42 +233,6 @@ func searchFailureIsEmpty(ctx context.Context, id pathID, err error) bool {
 		return false
 	}
 	return stopError(ctx, err) == nil && !errors.Is(err, plex.ErrNotFound)
-}
-
-// matchSearchFailed handles a failed ItemPaths or SearchMatches request of
-// a fix match. The item gets no request in this run.
-// It returns the error of stopError or a store error.
-func (r *Refresher) matchSearchFailed(ctx context.Context, s *refreshStep, lib plex.Library, it store.Item, err error) error {
-	if errors.Is(err, errCache) {
-		return err
-	}
-	name := s.run.server.Name
-	if stop := stopError(ctx, err); stop != nil {
-		if ctx.Err() != nil {
-			return stop
-		}
-		s.run.failures++ // unavailable: the summary still counts it
-		// The attempt moves the item to the end of the queue, so it cannot
-		// stop the server at the same item in every run.
-		if !r.opts.DryRun {
-			if err := r.store.RecordAttempt(name, it.RatingKey, r.now(), false); err != nil {
-				return err
-			}
-		}
-		return stop
-	}
-	notFound := errors.Is(err, plex.ErrNotFound)
-	if notFound && !r.opts.DryRun {
-		return r.store.Delete(name, it.RatingKey)
-	}
-	if !notFound {
-		s.run.failures++
-	}
-	itemEvent(log.Warn(), name, lib, it).Err(err).Msg("Match search failed")
-	if r.opts.DryRun {
-		return nil
-	}
-	return r.store.RecordAttempt(name, it.RatingKey, r.now(), false)
 }
 
 // itemEvent adds the server, the library, the title, and the reasons of an

@@ -127,6 +127,16 @@ func logCompleted(run *serverRun) {
 	}
 }
 
+// library returns the selected library of a section.
+func (run *serverRun) library(section string) plex.Library {
+	for _, lib := range run.libraries {
+		if lib.ID == section {
+			return lib
+		}
+	}
+	return plex.Library{}
+}
+
 // sections returns the section IDs of the selected libraries.
 func (run *serverRun) sections() []string {
 	sections := make([]string, 0, len(run.libraries))
