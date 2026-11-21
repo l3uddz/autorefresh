@@ -172,7 +172,7 @@ func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Libr
 	srv := run.server
 
 	var paths []string
-	if it.Type == "movie" {
+	if it.Type == plex.MovieLibrary {
 		paths = run.files[it.RatingKey]
 	}
 	if len(paths) == 0 {

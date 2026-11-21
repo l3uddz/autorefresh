@@ -15,8 +15,8 @@ import (
 
 // supportedAgents gives the agent that each supported library type must use.
 var supportedAgents = map[string]string{
-	"movie": "tv.plex.agents.movie",
-	"show":  "tv.plex.agents.series",
+	plex.MovieLibrary: "tv.plex.agents.movie",
+	plex.ShowLibrary:  "tv.plex.agents.series",
 }
 
 func supported(lib plex.Library) bool {
@@ -119,7 +119,6 @@ func (r *Refresher) selectLibraries(srv Server, libraries []plex.Library) []plex
 // readLibrary stages all requests of one library and applies them to the
 // cache only if every request succeeds.
 func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Library) error {
-	began := time.Now()
 	at := r.now()
 	name, client := run.server.Name, run.server.Plex
 
@@ -132,7 +131,7 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 		Section: lib.ID,
 		At:      at,
 		Full:    state.LastFullRead.IsZero() || !r.opts.CacheRefresh.Next(state.LastFullRead).After(at),
-		Shows:   lib.Type == "show",
+		Shows:   lib.Type == plex.ShowLibrary,
 	}
 	itemType := plex.TypeMovie
 	if rd.Shows {
@@ -189,7 +188,7 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 			run.files[it.RatingKey] = it.Files
 		}
 	}
-	r.logRead(rd, lib, time.Since(began))
+	r.logRead(rd, lib, r.now().Sub(at))
 	return nil
 }
 

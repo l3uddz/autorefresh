@@ -19,9 +19,15 @@ const (
 // pageSize is the number of items that List asks for in each request.
 const pageSize = 500
 
+// Library types.
+const (
+	MovieLibrary = "movie"
+	ShowLibrary  = "show"
+)
+
 // Library is one Plex library section.
 type Library struct {
-	ID, Title, Type, Agent, Language string // Type: "movie" or "show"
+	ID, Title, Type, Agent, Language string // Type: MovieLibrary or ShowLibrary
 }
 
 // Item is one movie or series in a section listing.

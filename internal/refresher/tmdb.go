@@ -49,7 +49,7 @@ func (r *Refresher) tmdbResults(ctx context.Context, srv Server, lib plex.Librar
 	var results []searchResult
 	searched := map[string]bool{}
 	for _, from := range ids {
-		if from.Source != "imdb" && (from.Source != "tvdb" || it.Type != "show") {
+		if from.Source != "imdb" && (from.Source != "tvdb" || it.Type != plex.ShowLibrary) {
 			continue
 		}
 		tmdbID, ok, err := r.tmdbID(ctx, srv.Name, it, from)
@@ -84,7 +84,7 @@ func (r *Refresher) tmdbID(ctx context.Context, server string, it store.Item, fr
 		return tmdbID, true, nil
 	}
 
-	tmdbID, ok, err = r.opts.TMDB.Find(ctx, from.Source, from.Value, it.Type == "show")
+	tmdbID, ok, err = r.opts.TMDB.Find(ctx, from.Source, from.Value, it.Type == plex.ShowLibrary)
 	if err != nil {
 		return "", false, fmt.Errorf("%w: %s: %w", errTMDB, from.title(), err)
 	}
