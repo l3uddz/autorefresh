@@ -46,3 +46,24 @@ func TestPathIDTitle(t *testing.T) {
 		t.Errorf("title() = %q", got)
 	}
 }
+
+func TestPathIDLink(t *testing.T) {
+	tests := []struct {
+		id   pathID
+		show bool
+		want string
+	}{
+		{pathID{"tmdb", "747059"}, false, "https://www.themoviedb.org/movie/747059"},
+		{pathID{"tmdb", "77"}, true, "https://www.themoviedb.org/tv/77"},
+		{pathID{"imdb", "tt0115097"}, false, "https://www.imdb.com/title/tt0115097"},
+		{pathID{"tvdb", "5"}, true, "https://thetvdb.com/dereferrer/series/5"},
+		{pathID{"tvdb", "5"}, false, "https://thetvdb.com/dereferrer/movie/5"},
+		// A value from outside stays one escaped segment.
+		{pathID{"tmdb", "1/../x"}, false, "https://www.themoviedb.org/movie/1%2F..%2Fx"},
+	}
+	for _, tt := range tests {
+		if got := tt.id.link(tt.show); got != tt.want {
+			t.Errorf("link(%v, %v) = %q, want %q", tt.id, tt.show, got, tt.want)
+		}
+	}
+}

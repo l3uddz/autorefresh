@@ -56,7 +56,7 @@ func (r *Refresher) logSummary(run *serverRun) error {
 		Int("incomplete_items", incomplete).Int("due_items", run.due).
 		Int("refresh_requests", run.refreshes).Int("match_requests", run.matches).Int("failed_requests", run.failures).
 		Int("remaining_items", run.remaining).Int("completed_items", len(run.completed)).
-		Int("completed_after_request", run.fixed).
+		Int("completed_after_request", run.fixed).Int("completed_after_match", run.fixedAfterMatch).
 		Dur("duration", r.now().Sub(run.began).Round(time.Millisecond)).Msg("Run summary")
 	return nil
 }
@@ -65,17 +65,17 @@ func (r *Refresher) logSummary(run *serverRun) error {
 // in a dry run.
 func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.Item) error {
 	lib := run.library(it.Section)
-	cand, match, err := r.findMatch(ctx, run, lib, it)
+	fm, err := r.findMatch(ctx, run, lib, it)
 	if err != nil {
 		return r.itemFailed(ctx, run, it, "", err)
 	}
 
 	action := store.ActionRefresh
-	if match {
-		action = store.ActionMatch
+	if fm != nil {
+		action = fm.action
 	}
 	if r.opts.DryRun {
-		itemEvent(log.Info(), run.server.Name, lib, it).Str("action", string(action)).Msg("Dry run")
+		requestEvent(log.Info(), run.server.Name, lib, it, action, fm).Msg("Dry run")
 		return nil
 	}
 
@@ -83,9 +83,9 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if match {
+	if fm != nil {
 		run.matches++
-		err = run.server.Plex.Match(ctx, it.RatingKey, cand)
+		err = run.server.Plex.Match(ctx, it.RatingKey, fm.cand)
 	} else {
 		run.refreshes++
 		err = run.server.Plex.Refresh(ctx, it.RatingKey)
@@ -97,7 +97,7 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	if err := r.store.RecordAttempt(run.server.Name, it.RatingKey, r.now(), action); err != nil {
 		return err
 	}
-	itemEvent(log.Info(), run.server.Name, lib, it).Str("action", string(action)).Msg("Sent request")
+	requestEvent(log.Info(), run.server.Name, lib, it, action, fm).Msg("Sent request")
 	r.warnAtLongestWait(run.server.Name, lib, it)
 	return nil
 }
@@ -159,25 +159,35 @@ func (r *Refresher) warnAtLongestWait(server string, lib plex.Library, it store.
 		Msg("Item reached the longest wait")
 }
 
-// findMatch returns the candidate of a fix match. match is false for a plain
-// refresh. Only an unmatched item that was refreshed before gets a fix
-// match, and only if the unmatched reason is not ignored. If no search found
-// a candidate, a TMDB client gives a second pass with TMDB IDs. err is the
+// fixMatch is the candidate that a fix match applies.
+type fixMatch struct {
+	cand   plex.Candidate
+	links  []string     // the web pages of the search IDs that found cand
+	action store.Action // store.ActionMatch, or store.ActionTMDBMatch if TMDB gave the IDs
+}
+
+// findMatch returns the fix match of the item, or nil for a plain refresh.
+// Only an unmatched item that was refreshed before gets a fix match, and
+// only if the unmatched reason is not ignored. If no search found a
+// candidate, a TMDB client gives a second pass with TMDB IDs. err is the
 // error of a failed ItemPaths or SearchMatches request, or of the TMDB ID
 // cache (errCache).
-func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Library, it store.Item) (cand plex.Candidate, match bool, err error) {
+func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Library, it store.Item) (*fixMatch, error) {
 	if it.Reasons&store.Unmatched == 0 || r.opts.IgnoreReasons&store.Unmatched != 0 || it.Refreshes < 1 {
-		return plex.Candidate{}, false, nil
+		return nil, nil
 	}
 	srv := run.server
 
-	var paths []string
+	var (
+		paths []string
+		err   error
+	)
 	if it.Type == plex.MovieLibrary {
 		paths = run.files[it.RatingKey]
 	}
 	if len(paths) == 0 {
 		if paths, err = srv.Plex.ItemPaths(ctx, it.RatingKey); err != nil {
-			return plex.Candidate{}, false, err
+			return nil, err
 		}
 	}
 
@@ -186,7 +196,7 @@ func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Libr
 	for _, id := range ids {
 		candidates, err := srv.Plex.SearchMatches(ctx, it.RatingKey, id.title(), lib.Agent, lib.Language)
 		if err != nil && !searchFailureIsEmpty(ctx, id, err) {
-			return plex.Candidate{}, false, err
+			return nil, err
 		}
 		if err != nil {
 			itemEvent(log.Debug(), srv.Name, lib, it).Str("id", id.title()).Err(err).Msg("Match search failed")
@@ -196,17 +206,28 @@ func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Libr
 		results = append(results, searchResult{id: id, candidates: candidates})
 	}
 
+	action := store.ActionMatch
 	if !run.tmdbFailed && r.useTMDB(ids, results) {
 		if results, err = r.tmdbFallback(ctx, run, lib, it, ids); err != nil {
-			return plex.Candidate{}, false, err
+			return nil, err
 		}
+		action = store.ActionTMDBMatch
 	}
 
 	cand, match, conflict := chooseMatch(it.Year, results)
 	if conflict != "" {
 		itemEvent(log.Warn(), srv.Name, lib, it).Str("conflict", conflict).Msg("Match conflict")
 	}
-	return cand, match, nil
+	if !match {
+		return nil, nil
+	}
+	fm := &fixMatch{cand: cand, action: action}
+	for _, res := range results {
+		if len(res.candidates) > 0 {
+			fm.links = append(fm.links, res.id.link(it.Type == plex.ShowLibrary))
+		}
+	}
+	return fm, nil
 }
 
 // tmdbFallback returns the results of the second pass with TMDB IDs. If a
@@ -239,4 +260,16 @@ func searchFailureIsEmpty(ctx context.Context, id pathID, err error) bool {
 // item to ev.
 func itemEvent(ev *zerolog.Event, server string, lib plex.Library, it store.Item) *zerolog.Event {
 	return ev.Str("server", server).Str("library", lib.Title).Str("title", it.Title).Str("reasons", it.Reasons.String())
+}
+
+// requestEvent adds the item and the action of a request. For a fix match,
+// it also adds the year of the item, the candidate, and the web pages of the
+// IDs that found it, so a wrong match can be found in the log.
+func requestEvent(ev *zerolog.Event, server string, lib plex.Library, it store.Item, action store.Action, fm *fixMatch) *zerolog.Event {
+	ev = itemEvent(ev, server, lib, it).Str("action", string(action))
+	if fm == nil {
+		return ev
+	}
+	return ev.Int("item_year", it.Year).Str("candidate", fm.cand.Name).Int("candidate_year", fm.cand.Year).
+		Strs("links", fm.links)
 }

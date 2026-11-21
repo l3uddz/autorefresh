@@ -181,6 +181,9 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 		if it.Refreshes > 0 {
 			run.fixed++
 		}
+		if it.LastMatch != "" {
+			run.fixedAfterMatch++
+		}
 		run.completed = append(run.completed, completedItem{library: lib.Title, item: it})
 	}
 	if !rd.Shows {

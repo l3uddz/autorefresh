@@ -63,6 +63,14 @@ func TestTMDBFallbackMatchesSeries(t *testing.T) {
 
 	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s")
 	wantCalls(t, ft.calls, "Find tvdb 5 true")
+	sent := f.logLines("info", "Sent request")
+	if len(sent) != 1 {
+		t.Fatalf("got %d sent lines, want 1", len(sent))
+	}
+	wantMatchFields(t, sent[0], "tmdb-match", "Show", 2020, "https://www.themoviedb.org/tv/77")
+	if row, _ := f.row(testServer, "2", "201"); row.LastMatch != store.ActionTMDBMatch {
+		t.Errorf("LastMatch = %q, want tmdb-match", row.LastMatch)
+	}
 	if id, ok, err := f.store.TMDBID(testServer, "201", "tvdb", "5"); err != nil || !ok || id != "77" {
 		t.Errorf("cached TMDB ID = %q, %v, %v, want 77", id, ok, err)
 	}
@@ -261,13 +269,13 @@ func TestTMDBFallbackDryRun(t *testing.T) {
 		if len(lines) != 1 {
 			t.Fatalf("got %d dry run lines, want 1", len(lines))
 		}
-		wantField(t, lines[0], "action", "match")
+		wantMatchFields(t, lines[0], "tmdb-match", "Show", 2020, "https://www.themoviedb.org/tv/77")
 		// A dry run caches the TMDB ID, as its reads update the cache.
 		if id, ok, err := f.store.TMDBID(testServer, "201", "tvdb", "5"); err != nil || !ok || id != "77" {
 			t.Errorf("cached TMDB ID = %q, %v, %v, want 77", id, ok, err)
 		}
-		if row, _ := f.row(testServer, "2", "201"); row.LastAttempt.Equal(t0) || row.Refreshes != 1 {
-			t.Errorf("row = %+v, want no new attempt", row)
+		if row, _ := f.row(testServer, "2", "201"); row.LastAttempt.Equal(t0) || row.Refreshes != 1 || row.LastMatch != "" {
+			t.Errorf("row = %+v, want no new attempt and no match", row)
 		}
 	})
 	t.Run("failed", func(t *testing.T) {

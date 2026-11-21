@@ -191,6 +191,17 @@ it also logs the conflict. If a match search fails, autorefresh sends no
 request for that item in this run. A match request counts as a refresh for
 the wait.
 
+The `Sent request` line of a match, and its `Dry run` line, has these
+fields, so you can check each match in the log:
+
+| Field | Content |
+| --- | --- |
+| `action` | `match`, or `tmdb-match` if the TMDB fallback below found the candidate |
+| `item_year` | The year of the item in Plex, or 0 if it has none |
+| `candidate` | The title of the entry that the match applies |
+| `candidate_year` | The year of that entry, or 0 if it has none |
+| `links` | The web page of each ID whose search found the entry. A `tmdb` ID links to TMDB, an `imdb` ID to IMDb, and a `tvdb` ID to TheTVDB. |
+
 Plex stops using TheTVDB on December 3, 2026, and can then answer a search
 for a `tvdb` ID with an error. So a failed search for a `tvdb` or an `imdb`
 ID counts as a search without a candidate. Two errors keep their meaning:
@@ -423,6 +434,20 @@ library, the title, and the number of refreshes. These lines come after the
 refresh step, so they stay next to the summary in the log. A run without a
 summary line also logs them.
 
+If Plex accepted a request for the item, the line also has these fields:
+
+- `last_action`: the last request that Plex accepted, `refresh`, `match`,
+  or `tmdb-match`.
+- `last_match`: the last match request that Plex accepted, `match` or
+  `tmdb-match`. A later refresh does not replace it, so an item that a match
+  linked and a refresh then completed still shows the match.
+
+These fields show the last requests before the read found the item
+complete. They do not prove that the request fixed the item, because Plex
+can also fill in metadata by its own refresh. Versions up to 0.4.1 did not
+record the kind of a request, so an item whose requests came only from
+such a version has neither field.
+
 The summary line has these fields:
 
 | Field | Content |
@@ -437,6 +462,7 @@ The summary line has these fields:
 | `remaining_items` | The due items that the run did not reach, because of `max-refreshes-per-run` or because the server became unavailable. They stay due for later runs. |
 | `completed_items` | The items in the cache that the reads of the run found complete. The run removes them from the cache. Each one also has an `Item complete` line. |
 | `completed_after_request` | The items in `completed_items` that had at least one request from autorefresh that Plex accepted. Plex runs a refresh in the background, so the effect of a request shows in a later run. |
+| `completed_after_match` | The items in `completed_items` that had a match request that Plex accepted. Each one has a `last_match` field on its `Item complete` line. |
 | `duration` | The time of the run of the server, with the reads, rounded to milliseconds, such as `11m3.814s` |
 
 ## Docker

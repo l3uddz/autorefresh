@@ -103,6 +103,25 @@ func matchReads(calls []string) []string {
 	return got
 }
 
+// wantMatchFields checks the action and the match fields of a request line.
+func wantMatchFields(t *testing.T, ev map[string]any, action, name string, year int, links ...string) {
+	t.Helper()
+	wantField(t, ev, "action", action)
+	wantField(t, ev, "item_year", float64(2020))
+	wantField(t, ev, "candidate", name)
+	wantField(t, ev, "candidate_year", float64(year))
+	var want []any
+	for _, l := range links {
+		want = append(want, l)
+	}
+	if got, _ := ev["links"].([]any); !reflect.DeepEqual(got, want) {
+		t.Errorf("links = %v, want %v", ev["links"], want)
+	}
+	if _, ok := ev["guid"]; ok {
+		t.Errorf("request line has a guid: %v", ev)
+	}
+}
+
 // lastSummary returns the last summary line of the server.
 func (f *fixture) lastSummary(server string) map[string]any {
 	f.t.Helper()
@@ -389,6 +408,12 @@ func TestFixMatchMovie(t *testing.T) {
 	summary := f.lastSummary(testServer)
 	wantField(t, summary, "match_requests", float64(1))
 	wantField(t, summary, "refresh_requests", float64(0))
+	// A tmdb ID from the path is a plain match, not a TMDB match.
+	sent := f.logLines("info", "Sent request")
+	if len(sent) != 1 {
+		t.Fatalf("got %d sent lines, want 1", len(sent))
+	}
+	wantMatchFields(t, sent[0], "match", "Film", 2020, "https://www.themoviedb.org/movie/1")
 	results := f.logLines("debug", "Match search result")
 	if len(results) != 1 {
 		t.Fatalf("got %d search result lines, want 1", len(results))
@@ -687,7 +712,10 @@ func TestDryRunSendsAndRecordsNothing(t *testing.T) {
 	wantField(t, lines[0], "action", "refresh")
 	wantField(t, lines[1], "title", "Title 102")
 	wantField(t, lines[1], "reasons", "unmatched")
-	wantField(t, lines[1], "action", "match")
+	wantMatchFields(t, lines[1], "match", "Film", 2020, "https://www.themoviedb.org/movie/102")
+	if _, ok := lines[0]["candidate"]; ok {
+		t.Errorf("a refresh line has match fields: %v", lines[0])
+	}
 	if warnings := f.logLines("warn", "Match search failed"); len(warnings) != 2 {
 		t.Errorf("got %d search failure warnings, want 2", len(warnings))
 	}
@@ -737,7 +765,7 @@ func TestSummaryLine(t *testing.T) {
 	for field, want := range map[string]float64{
 		"full_read_items": 2, "incremental_read_items": 1, "incomplete_items": 3, "due_items": 3,
 		"refresh_requests": 1, "match_requests": 1, "failed_requests": 1, "remaining_items": 0,
-		"completed_items": 1, "completed_after_request": 1,
+		"completed_items": 1, "completed_after_request": 1, "completed_after_match": 0,
 	} {
 		wantField(t, summary, field, want)
 	}
