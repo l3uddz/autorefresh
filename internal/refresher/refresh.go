@@ -142,11 +142,11 @@ func (r *Refresher) warnAtLongestWait(server string, lib plex.Library, it store.
 
 // findMatch returns the candidate of a fix match. match is false for a plain
 // refresh. Only an unmatched item that was refreshed before gets a fix
-// match. If no search found a candidate, a TMDB client gives a second pass
+// match, and only if the unmatched reason is not ignored. If no search found a candidate, a TMDB client gives a second pass
 // with TMDB IDs. err is the error of a failed ItemPaths or SearchMatches
 // request, of a TMDB lookup (errTMDB), or of the TMDB ID cache (errCache).
 func (r *Refresher) findMatch(ctx context.Context, srv Server, lib plex.Library, it store.Item, files map[string][]string) (cand plex.Candidate, match bool, err error) {
-	if it.Reasons&store.Unmatched == 0 || it.Refreshes < 1 {
+	if it.Reasons&store.Unmatched == 0 || r.opts.IgnoreReasons&store.Unmatched != 0 || it.Refreshes < 1 {
 		return plex.Candidate{}, false, nil
 	}
 

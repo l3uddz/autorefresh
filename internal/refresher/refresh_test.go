@@ -393,6 +393,25 @@ func TestFixMatchMovie(t *testing.T) {
 	wantField(t, results[0], "candidates", float64(1))
 }
 
+// An ignored unmatched reason gets no fix match. The item is still due for
+// its other reason, so it gets a plain refresh.
+func TestIgnoredUnmatchedGetsNoFixMatch(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	movie := unmatchedItem("101")
+	movie.Summary = ""
+	movie.Files = []string{"/m/Film (2020) {tmdb-1}/Film.mkv"}
+	fp.lists["1?type=1&unmatched=1"] = []plex.Item{movie}
+	fp.candidates["101 tmdb-1"] = []plex.Candidate{{GUID: "plex://movie/a", Name: "Film", Year: 2020}}
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.opts.IgnoreReasons = store.Unmatched
+	f.seed(testServer, moviesLib, movie, store.Unmatched|store.NoSummary, 1)
+
+	f.run(t0)
+
+	wantCalls(t, matchReads(fp.calls))
+	wantCalls(t, sends(fp.calls), "Refresh 101")
+}
+
 func TestFixMatchMovieWithoutListingUsesItemPaths(t *testing.T) {
 	fp := newFakePlex(moviesLib)
 	fp.paths["101"] = []string{"/m/Film (2020) {tmdb-1}/Film.mkv"}

@@ -166,7 +166,8 @@ with a database error or an unavailable server, autorefresh also logs one
 A fix match links an unmatched item to a specific entry in the Plex metadata
 database. Autorefresh tries a fix match only for an unmatched movie or series
 that it refreshed at least once before. So the first attempt is always a
-plain refresh.
+plain refresh. If `ignore-reasons` holds `unmatched`, autorefresh never
+tries a fix match.
 
 1. Autorefresh reads IDs from the folder names and the file names of the
    item. An ID is in curly brackets, square brackets, or parentheses, for
