@@ -118,6 +118,16 @@ plex:
 	if want := []string{"no-art", "episode-no-summary"}; !reflect.DeepEqual(cfg.IgnoreReasons, want) {
 		t.Errorf("IgnoreReasons = %v, want %v", cfg.IgnoreReasons, want)
 	}
+	if want := store.NoArt | store.EpisodeNoSummary; cfg.Ignored != want {
+		t.Errorf("Ignored = %v, want %v", cfg.Ignored, want)
+	}
+	from := time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC) // a Monday
+	if got, want := cfg.RunSchedule.Next(from), from.Add(30*time.Minute); !got.Equal(want) {
+		t.Errorf("RunSchedule.Next = %v, want %v", got, want)
+	}
+	if got, want := cfg.CacheRefreshSchedule.Next(from), from.Add(4*time.Hour); !got.Equal(want) {
+		t.Errorf("CacheRefreshSchedule.Next = %v, want %v", got, want)
+	}
 	if cfg.MaxRefreshesPerRun != 100 {
 		t.Errorf("MaxRefreshesPerRun = %d, want 100", cfg.MaxRefreshesPerRun)
 	}
@@ -130,6 +140,9 @@ plex:
 	s := cfg.Plex[0]
 	if s.Name != "main" || s.URL != "http://plex.example.invalid:32400" || s.Token != "example-token" {
 		t.Errorf("server = %+v", s)
+	}
+	if s.BaseURL == nil || s.BaseURL.String() != s.URL {
+		t.Errorf("BaseURL = %v, want %s", s.BaseURL, s.URL)
 	}
 	if len(s.Libraries) != 2 || s.Libraries[0] != "Movies" || s.Libraries[1] != "TV" {
 		t.Errorf("Libraries = %v", s.Libraries)
@@ -164,6 +177,10 @@ func TestDecodeRejectsInvalidConfig(t *testing.T) {
 		{"unsupported scheme", "plex:\n  - name: a\n    url: ftp://plex.example.invalid\n    token: t\n"},
 		{"url without host", "plex:\n  - name: a\n    url: http://\n    token: t\n"},
 		{"url with port but no host", "plex:\n  - name: a\n    url: \"http://:32400\"\n    token: t\n"},
+		{"url with query", "plex:\n  - name: a\n    url: \"http://plex.example.invalid:32400?a=b\"\n    token: t\n"},
+		{"url with empty query", "plex:\n  - name: a\n    url: \"http://plex.example.invalid:32400?\"\n    token: t\n"},
+		{"url with fragment", "plex:\n  - name: a\n    url: \"http://plex.example.invalid:32400/#x\"\n    token: t\n"},
+		{"url with empty fragment", "plex:\n  - name: a\n    url: \"http://plex.example.invalid:32400/#\"\n    token: t\n"},
 		{"empty token", "plex:\n  - name: a\n    url: http://plex.example.invalid\n    token: \"\"\n"},
 		{"invalid schedule", "schedule: every hour\n" + minimalServer},
 		{"zero refresh interval", "refresh-interval: 0s\n" + minimalServer},
@@ -198,6 +215,7 @@ func TestDecodeErrorsOmitSecrets(t *testing.T) {
 	}{
 		{"unsupported scheme", "ftp://secret-host.example.invalid", "secret-token", true},
 		{"url parse failure", "http://secret-host.example.invalid:bad", "secret-token", true},
+		{"url with query", "http://secret-host.example.invalid?secret-token", "secret-token", true},
 		{"yaml type error in token", "http://plex.example.invalid", "!!bool secret-token", false},
 		{"yaml type error with line-like value", "http://plex.example.invalid", "!!bool line 739582", false},
 		{"yaml type error in url", "!!int http://secret-host.example.invalid", "secret-token", false},

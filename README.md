@@ -94,7 +94,8 @@ After autorefresh lists the libraries of a server, it removes the cache of
 each library of that server that the run does not check. Such a library is
 not in the `libraries` list, has an unsupported agent, or is gone from Plex.
 If the listing fails, or if Plex lists no library at all, autorefresh keeps
-the cache of that server, because the server can still be starting.
+the cache of that server, because the server can still be starting. A
+failed listing also counts as an unavailable server for the run.
 
 The cache of a library is its incomplete items and its read times.
 Autorefresh logs one `Removed cache of library` line for each removed
@@ -105,8 +106,7 @@ read of it, and its items start with no refreshes.
 
 If an incomplete item has no attempt in its wait, the item is due. An
 attempt is a refresh or match request, successful or failed. A failed match
-search also counts as an attempt, but it does not count toward
-`max-refreshes-per-run`. A dry run records no attempts.
+search also counts as an attempt. A dry run records no attempts.
 
 The wait backs off, because an item that many refreshes did not fix is
 less likely to become complete. For an item with no refresh or one refresh,
@@ -135,19 +135,24 @@ the wait never grows, autorefresh logs no such warning.
 
 Each run refreshes the due items in this order:
 
-1. Items with the fewest refreshes. A refresh is a refresh or match request
-   that Plex accepted. Items that Plex never refreshed therefore go first.
+1. Items with the fewest attempts. An attempt is a refresh or match
+   request, successful or failed, or a failed match search. Items that
+   autorefresh never tried therefore go first.
 2. Items with no attempt.
 3. Items with the oldest last attempt.
 
-If two items are equal, the item that Plex added first goes first. A failing
-item therefore moves to the end of the items with the same number of
-refreshes.
+If two items are equal, the item that Plex added first goes first. A failed
+attempt counts in this order, but not in the wait. An item that keeps
+failing therefore moves behind the other due items, one attempt at a time,
+and it cannot take the first place in every run. For example, an item that
+fails with 1 refresh takes the first place for 4 runs before an item with 5
+refreshes gets it.
 
-Autorefresh sends one refresh or match request at a time on each server. It
-waits `refresh-delay` between two of these requests. A run sends at most
-`max-refreshes-per-run` refresh and match requests on each server. If you
-set it to 0, a run has no limit.
+Autorefresh handles one due item at a time on each server, and each item
+gets at most one refresh or match request. It waits `refresh-delay` between
+two items. A run handles at most `max-refreshes-per-run` due items on each
+server. An item whose match search fails also counts, although it gets no
+request. If you set `max-refreshes-per-run` to 0, a run has no limit.
 
 Runs do not overlap. If a run is still busy when the schedule starts the
 next run, autorefresh skips that start and logs a warning. The first run on
@@ -166,7 +171,8 @@ with a database error or an unavailable server, autorefresh also logs one
 A fix match links an unmatched item to a specific entry in the Plex metadata
 database. Autorefresh tries a fix match only for an unmatched movie or series
 that it refreshed at least once before. So the first attempt is always a
-plain refresh.
+plain refresh. If `ignore-reasons` holds `unmatched`, autorefresh never
+tries a fix match.
 
 1. Autorefresh reads IDs from the folder names and the file names of the
    item. An ID is in curly brackets, square brackets, or parentheses, for
@@ -183,7 +189,7 @@ plain refresh.
 If no match applies, autorefresh sends a plain refresh. If the IDs disagree,
 it also logs the conflict. If a match search fails, autorefresh sends no
 request for that item in this run. A match request counts as a refresh for
-the wait and for `max-refreshes-per-run`.
+the wait.
 
 Plex stops using TheTVDB on December 3, 2026, and can then answer a search
 for a `tvdb` ID with an error. So a failed search for a `tvdb` or an `imdb`
@@ -208,14 +214,17 @@ Plex once for each TMDB ID, for example `tmdb-1396`, with the same rules for
 the candidates.
 
 - If TMDB has no entry for an ID, autorefresh skips that ID. If no ID gives
-  a match, the item gets a plain refresh.
+  a match, the item gets a plain refresh. Autorefresh does not remember
+  that TMDB had no entry, because TMDB can add it later, so it asks again
+  at the next attempt of the item.
 - Autorefresh keeps each TMDB ID that it finds in the cache of the item, so
   it asks TMDB for an ID only once. The cache removes these IDs with the
   item.
-- If a TMDB request fails, autorefresh sends no request for the item in
-  this run, as for a failed match search. The item is due again after its
-  current wait, and the failed request does not make the wait longer.
-  Autorefresh logs a `TMDB lookup failed` warning.
+- If a TMDB request fails, autorefresh logs a `TMDB lookup failed` warning
+  and the item gets a plain refresh, as without a `tmdb-token`. The rest of
+  the run on that server asks TMDB nothing more, so a rejected token sends
+  one failing request in each run, not one for each item. The next run asks
+  TMDB again.
 
 The debug line of each second pass search has a `from` field with the ID
 that TMDB translated, for example `tvdb-81189`.
@@ -237,8 +246,8 @@ refresh-interval: 24h         # wait at least this long between attempts on one 
 max-refresh-interval: 168h    # the longest wait between attempts after the backoff
 cache-refresh: "0 3 * * 0"    # cron expression for full reads of each library
 oversample: 48h               # each incremental read also gets changes from this far back
-refresh-delay: 5s             # wait between two refreshes on one server
-max-refreshes-per-run: 250    # the most refresh and match requests in each run; 0 for no limit
+refresh-delay: 5s             # wait between two due items on one server
+max-refreshes-per-run: 250    # the most due items in each run on each server; 0 for no limit
 ignore-reasons: []            # reasons that never cause a refresh, for example [no-art]
 tmdb-token: ""                # optional; the TMDB API Read Access Token for the fix match fallback
 
@@ -282,7 +291,9 @@ Each entry in `plex` is one Plex server:
 
 - `name` is required and must be unique. Logs and the database use it, so a
   new `url` keeps the state of the server.
-- `url` is required and must use `http` or `https`.
+- `url` is required and must use `http` or `https`. It can have a path,
+  such as `https://example.com/plex` behind a reverse proxy, but no query
+  and no fragment.
 - `token` is required. It is the Plex token of the server.
 - `libraries` is optional. It selects libraries by their title.
 - `timeout` is optional. It limits each request to the server. The default
@@ -300,7 +311,12 @@ request header. Without it, autorefresh sends no request to TMDB.
 
 An unknown key is an error. If the configuration file is missing or empty,
 autorefresh waits for it and checks again every 5 seconds. A container can
-then start before `config.yml` exists.
+then start before `config.yml` exists. A file that appears during the wait
+is read only after it stays the same for one check, so autorefresh does not
+read a file that is still being written. If the file changes while
+autorefresh reads it, autorefresh waits again. If the path is a directory,
+autorefresh stops with an error. Docker creates such a directory when you
+bind-mount a file that does not exist.
 
 ## Command line
 
@@ -317,7 +333,13 @@ then start before `config.yml` exists.
 If the directory of the binary contains `config.yml`, the default
 configuration directory is that directory. Otherwise it is `autorefresh` in
 the user configuration directory, for example `~/.config/autorefresh` on
-Linux.
+Linux. Autorefresh creates that directory with access for its owner only,
+because the configuration holds the tokens.
+
+Two processes can use the same database, for example a `--once --dry-run`
+check while the service runs. A process waits up to 30 seconds for the
+other one to finish a write. An older version of autorefresh does not open
+a database that a newer version migrated to a newer schema.
 
 Without `--once`, the first run starts at the next `schedule` time. With
 `--once`, autorefresh runs one check at once and exits. If the check logs an
@@ -359,7 +381,7 @@ run does these things:
 - It logs one `Dry run` line at info level for each due item. The line has
   the server, the library, the title, the reasons, and the action, which is
   `refresh` or `match`.
-- It applies `max-refreshes-per-run` to the logged items.
+- It applies `max-refreshes-per-run` to the due items.
 
 A dry run sends no refresh or match request and does not wait
 `refresh-delay`. It records no attempts, so a later real run refreshes the

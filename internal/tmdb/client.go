@@ -22,18 +22,18 @@ var externalSources = map[string]string{"tvdb": "tvdb_id", "imdb": "imdb_id"}
 
 // Client sends requests to TMDB.
 type Client struct {
-	baseURL string
-	token   string
-	http    *http.Client
+	base  *url.URL
+	token string
+	http  *http.Client
 }
 
 // New returns a Client. token is the API Read Access Token. timeout limits
 // each request, with the response body.
 func New(token string, timeout time.Duration) *Client {
 	return &Client{
-		baseURL: "https://api.themoviedb.org",
-		token:   token,
-		http:    &http.Client{Timeout: timeout},
+		base:  &url.URL{Scheme: "https", Host: "api.themoviedb.org", Path: "/"},
+		token: token,
+		http:  &http.Client{Timeout: timeout},
 	}
 }
 
@@ -55,7 +55,7 @@ func (c *Client) Find(ctx context.Context, source, id string, show bool) (tmdbID
 		} `json:"tv_results"`
 	}
 	query := url.Values{"external_source": {external}}
-	if err := c.get(ctx, "/3/find/"+url.PathEscape(id), query, &resp); err != nil {
+	if err := c.get(ctx, []string{"3", "find", id}, query, &resp); err != nil {
 		return "", false, err
 	}
 
@@ -71,13 +71,23 @@ func (c *Client) Find(ctx context.Context, source, id string, show bool) (tmdbID
 
 // Check asks TMDB whether it accepts the token.
 func (c *Client) Check(ctx context.Context) error {
-	return c.get(ctx, "/3/authentication", nil, nil)
+	return c.get(ctx, []string{"3", "authentication"}, nil, nil)
 }
 
-// get sends a GET request and decodes the JSON answer into out, if out is
-// not nil. Errors name the path, never the token.
-func (c *Client) get(ctx context.Context, path string, query url.Values, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path+"?"+query.Encode(), nil)
+// get sends a GET request to the path segments below the base URL and
+// decodes the JSON answer into out, if out is not nil. It escapes each
+// segment, so a segment cannot add a level to the path. Errors name the
+// path, never the token.
+func (c *Client) get(ctx context.Context, segments []string, query url.Values, out any) error {
+	escaped := make([]string, len(segments))
+	for i, seg := range segments {
+		escaped[i] = url.PathEscape(seg)
+	}
+	u := c.base.JoinPath(escaped...)
+	u.RawQuery = query.Encode()
+	path := u.Path
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return fmt.Errorf("GET %s: %w", path, err)
 	}

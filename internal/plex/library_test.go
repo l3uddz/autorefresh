@@ -120,12 +120,19 @@ func serveOnePage(t *testing.T, name string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) { w.Write(body) }
 }
 
-func TestListReadsEveryPage(t *testing.T) {
-	const total = 1001
-	rec, c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
+// pagedServer answers each listing with the page at X-Plex-Container-Start
+// of total items, with at most size items. The pages have totalSize only if
+// withTotal is set.
+func pagedServer(t *testing.T, total, size int, withTotal bool) (*recorder, *Client) {
+	t.Helper()
+	return newServer(t, func(w http.ResponseWriter, r *http.Request) {
 		start, _ := strconv.Atoi(r.URL.Query().Get("X-Plex-Container-Start"))
-		n := min(500, total-start)
-		w.Write([]byte(`{"MediaContainer":{"totalSize":1001,"Metadata":[`))
+		n := max(0, min(size, total-start))
+		w.Write([]byte(`{"MediaContainer":{`))
+		if withTotal {
+			w.Write([]byte(`"totalSize":` + strconv.Itoa(total) + `,`))
+		}
+		w.Write([]byte(`"Metadata":[`))
 		for i := 0; i < n; i++ {
 			if i > 0 {
 				w.Write([]byte(","))
@@ -134,26 +141,57 @@ func TestListReadsEveryPage(t *testing.T) {
 		}
 		w.Write([]byte(`]}}`))
 	})
+}
 
-	items, err := c.List(context.Background(), "1", TypeMovie)
-	if err != nil {
-		t.Fatal(err)
+func TestListReadsEveryPage(t *testing.T) {
+	tests := []struct {
+		name   string
+		total  int
+		size   int // the most items in one answer
+		starts []string
+	}{
+		{"full pages", 1001, 500, []string{"0", "500", "1000"}},
+		{"empty library", 0, 500, []string{"0"}},
+		{"short pages", 450, 200, []string{"0", "200", "400"}},
 	}
-	if len(items) != total {
-		t.Errorf("got %d items, want %d", len(items), total)
-	}
-	for i, it := range items {
-		if it.RatingKey != strconv.Itoa(i) {
-			t.Fatalf("item %d has rating key %s", i, it.RatingKey)
-		}
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec, c := pagedServer(t, tt.total, tt.size, true)
 
-	var starts []string
-	for _, r := range rec.all() {
-		starts = append(starts, r.URL.Query().Get("X-Plex-Container-Start"))
+			items, err := c.List(context.Background(), "1", TypeMovie)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(items) != tt.total {
+				t.Errorf("got %d items, want %d", len(items), tt.total)
+			}
+			for i, it := range items {
+				if it.RatingKey != strconv.Itoa(i) {
+					t.Fatalf("item %d has rating key %s", i, it.RatingKey)
+				}
+			}
+
+			var starts []string
+			for _, r := range rec.all() {
+				starts = append(starts, r.URL.Query().Get("X-Plex-Container-Start"))
+			}
+			if !reflect.DeepEqual(starts, tt.starts) {
+				t.Errorf("starts = %v, want %v", starts, tt.starts)
+			}
+		})
 	}
-	if want := []string{"0", "500", "1000"}; !reflect.DeepEqual(starts, want) {
-		t.Errorf("starts = %v, want %v", starts, want)
+}
+
+// Without totalSize, the end of a listing is unknown, so the listing fails
+// after one request instead of returning part of the library.
+func TestListRejectsPageWithoutTotalSize(t *testing.T) {
+	rec, c := pagedServer(t, 1001, 200, false)
+
+	if _, err := c.List(context.Background(), "1", TypeMovie); err == nil {
+		t.Fatal("no error")
+	}
+	if n := len(rec.all()); n != 1 {
+		t.Errorf("got %d requests, want 1", n)
 	}
 }
 
@@ -179,7 +217,7 @@ func TestListEncodesFilters(t *testing.T) {
 	}{
 		{
 			"show", TypeShow,
-			[]Filter{{"addedAt", ">>=", "100"}, {"episode.summary", "=", ""}},
+			[]Filter{{"addedAt>>", "100"}, {"episode.summary", ""}},
 			"X-Plex-Container-Size=500&X-Plex-Container-Start=0&addedAt%3E%3E=100&episode.summary=" +
 				"&excludeElements=Media%2CRole%2CDirector%2CWriter%2CGenre%2CCountry&sort=addedAt&type=2",
 		},

@@ -20,7 +20,7 @@ When the design adds packages or rules, update this file.
 | `internal/config/` | Configuration types, defaults, loading, and validation |
 | `internal/plex/` | Plex API client: list libraries and items, get item paths, refresh, search matches, and apply a match |
 | `internal/tmdb/` | TMDB API client: find the TMDB ID of a TVDB or IMDb ID, and check the token. It sends the token only in a header. |
-| `internal/store/` | SQLite cache of incomplete items, the read times of each library, and the TMDB IDs of items. It removes the cache of unused servers and libraries. Foreign keys with `ON DELETE CASCADE` remove the rows of an item or a library with it. |
+| `internal/store/` | SQLite cache of incomplete items, the read times of each library, and the TMDB IDs of items. It removes the cache of unused servers and libraries. Foreign keys with `ON DELETE CASCADE` remove the rows of an item or a library with it. A connection waits for the locks of another process and keeps temporary data in memory. |
 | `internal/refresher/` | The run of each server. It removes the cache of unused servers and libraries, reads the libraries, and refreshes the due items, with the pacing, the limit for each run, and the dry run. It logs the summary of each server. It also holds the rules for missing metadata, path ID parsing, the fix match choice, and the TMDB fallback of fix match. |
 | `docker/Dockerfile` | Container image, built from the goreleaser output in `dist/`. It runs as the non-root user `65532:65532`, which owns `/config`. |
 | `mise.toml` | Tool versions and development tasks |
@@ -51,6 +51,10 @@ Apply SOLID, KISS, DRY, and YAGNI to each code change.
   the `testdata/` directory of the package that reads them.
 - Remove server addresses, tokens, and other private values from recorded
   responses before you commit them.
+- Build URLs with `net/url`: `url.URL`, `URL.JoinPath`, `url.Values`, and
+  `url.PathEscape`. Do not join strings to make a URL. `JoinPath` does not
+  escape its segments and removes `..`, so escape each segment and check
+  each ID that comes from outside.
 - Log with the zerolog global logger, `github.com/rs/zerolog/log`. `main`
   configures it in `cmd/autorefresh/logging.go`. Put values in fields, for
   example `log.Info().Str("item", title).Msg("Refreshed item")`, not in the

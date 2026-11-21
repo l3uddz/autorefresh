@@ -3,6 +3,7 @@ package refresher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -14,8 +15,8 @@ import (
 
 // supportedAgents gives the agent that each supported library type must use.
 var supportedAgents = map[string]string{
-	"movie": "tv.plex.agents.movie",
-	"show":  "tv.plex.agents.series",
+	plex.MovieLibrary: "tv.plex.agents.movie",
+	plex.ShowLibrary:  "tv.plex.agents.series",
 }
 
 func supported(lib plex.Library) bool {
@@ -24,16 +25,16 @@ func supported(lib plex.Library) bool {
 }
 
 // readLibraries selects the libraries of the server and reads each one into
-// the cache. It returns only the error of stopError or a store error. It logs
-// and skips the other failures.
+// the cache. It returns only the error of stopError, the error of a failed
+// library listing, or a store error. It logs and skips the other failures.
 func (r *Refresher) readLibraries(ctx context.Context, run *serverRun) error {
 	libraries, err := run.server.Plex.Libraries(ctx)
 	if err != nil {
 		if stop := stopError(ctx, err); stop != nil {
 			return stop
 		}
-		log.Warn().Str("server", run.server.Name).Err(err).Msg("Listing libraries failed")
-		return nil
+		// Without its libraries, the run can check nothing on the server.
+		return fmt.Errorf("%w: %w", err, plex.ErrUnavailable)
 	}
 
 	run.libraries = r.selectLibraries(run.server, libraries)
@@ -118,7 +119,6 @@ func (r *Refresher) selectLibraries(srv Server, libraries []plex.Library) []plex
 // readLibrary stages all requests of one library and applies them to the
 // cache only if every request succeeds.
 func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Library) error {
-	began := time.Now()
 	at := r.now()
 	name, client := run.server.Name, run.server.Plex
 
@@ -131,7 +131,7 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 		Section: lib.ID,
 		At:      at,
 		Full:    state.LastFullRead.IsZero() || !r.opts.CacheRefresh.Next(state.LastFullRead).After(at),
-		Shows:   lib.Type == "show",
+		Shows:   lib.Type == plex.ShowLibrary,
 	}
 	itemType := plex.TypeMovie
 	if rd.Shows {
@@ -188,7 +188,7 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 			run.files[it.RatingKey] = it.Files
 		}
 	}
-	r.logRead(rd, lib, time.Since(began))
+	r.logRead(rd, lib, r.now().Sub(at))
 	return nil
 }
 
@@ -219,9 +219,6 @@ func readFailed(ctx context.Context, server string, lib plex.Library, err error)
 // listings by rating key.
 func (r *Refresher) listItems(ctx context.Context, client Plex, section string, itemType int, full bool, lastRead time.Time) ([]plex.Item, error) {
 	if full {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		return client.List(ctx, section, itemType)
 	}
 
@@ -229,13 +226,10 @@ func (r *Refresher) listItems(ctx context.Context, client Plex, section string, 
 	var items []plex.Item
 	seen := map[string]bool{}
 	for _, f := range []plex.Filter{
-		filter("updatedAt", ">>=", since),
-		filter("addedAt", ">>=", since),
-		filter("unmatched", "=", "1"),
+		filter("updatedAt>>", since),
+		filter("addedAt>>", since),
+		filter("unmatched", "1"),
 	} {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		list, err := client.List(ctx, section, itemType, f)
 		if err != nil {
 			return nil, err
@@ -255,9 +249,6 @@ func (r *Refresher) listItems(ctx context.Context, client Plex, section string, 
 func goneKeys(ctx context.Context, client Plex, server string, lib plex.Library, unseen []store.Item) ([]string, error) {
 	var gone []string
 	for _, it := range unseen {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		_, err := client.ItemPaths(ctx, it.RatingKey)
 		if err == nil {
 			continue
@@ -282,11 +273,11 @@ func (r *Refresher) episodeSeries(ctx context.Context, client Plex, server strin
 	addedBefore := unixString(at.Add(-r.opts.MinimumAge))
 	if r.opts.IgnoreReasons&store.EpisodeNoSummary == 0 {
 		noSummary, err = listSeries(ctx, client, server, lib, store.EpisodeNoSummary,
-			filter("unmatched", "=", "0"),
-			filter("episode.unmatched", "=", "0"),
-			filter("episode.summary", "=", ""),
-			filter("episode.addedAt", "<<=", addedBefore),
-			filter("season.index", ">>=", "1"),
+			filter("unmatched", "0"),
+			filter("episode.unmatched", "0"),
+			filter("episode.summary", ""),
+			filter("episode.addedAt<<", addedBefore),
+			filter("season.index>>", "1"),
 		)
 		if err != nil {
 			return nil, nil, err
@@ -294,10 +285,10 @@ func (r *Refresher) episodeSeries(ctx context.Context, client Plex, server strin
 	}
 	if r.opts.IgnoreReasons&store.EpisodeUnmatched == 0 {
 		unmatched, err = listSeries(ctx, client, server, lib, store.EpisodeUnmatched,
-			filter("unmatched", "=", "0"),
-			filter("episode.unmatched", "=", "1"),
-			filter("episode.addedAt", "<<=", addedBefore),
-			filter("season.index", ">>=", "1"),
+			filter("unmatched", "0"),
+			filter("episode.unmatched", "1"),
+			filter("episode.addedAt<<", addedBefore),
+			filter("season.index>>", "1"),
 		)
 		if err != nil {
 			return nil, nil, err
@@ -307,9 +298,6 @@ func (r *Refresher) episodeSeries(ctx context.Context, client Plex, server strin
 }
 
 func listSeries(ctx context.Context, client Plex, server string, lib plex.Library, reason store.Reasons, filters ...plex.Filter) ([]store.Item, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	series, err := client.List(ctx, lib.ID, plex.TypeShow, filters...)
 	if err != nil {
 		return nil, err
@@ -357,8 +345,8 @@ func storeItem(server string, lib plex.Library, it plex.Item, reasons store.Reas
 	}
 }
 
-func filter(field, op, value string) plex.Filter {
-	return plex.Filter{Field: field, Op: op, Value: value}
+func filter(key, value string) plex.Filter {
+	return plex.Filter{Key: key, Value: value}
 }
 
 func unixString(t time.Time) string { return strconv.FormatInt(t.Unix(), 10) }

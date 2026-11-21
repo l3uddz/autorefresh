@@ -17,7 +17,7 @@ type TMDB interface {
 }
 
 var (
-	// errTMDB marks a failed TMDB request. The item gets no request in the run.
+	// errTMDB marks a failed TMDB request.
 	errTMDB = errors.New("tmdb lookup")
 	// errCache marks a failed read or write of the TMDB ID cache, a store error.
 	errCache = errors.New("tmdb cache")
@@ -49,7 +49,7 @@ func (r *Refresher) tmdbResults(ctx context.Context, srv Server, lib plex.Librar
 	var results []searchResult
 	searched := map[string]bool{}
 	for _, from := range ids {
-		if from.Source != "imdb" && (from.Source != "tvdb" || it.Type != "show") {
+		if from.Source != "imdb" && (from.Source != "tvdb" || it.Type != plex.ShowLibrary) {
 			continue
 		}
 		tmdbID, ok, err := r.tmdbID(ctx, srv.Name, it, from)
@@ -61,9 +61,6 @@ func (r *Refresher) tmdbResults(ctx context.Context, srv Server, lib plex.Librar
 		}
 		searched[tmdbID] = true
 
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		id := pathID{"tmdb", tmdbID}
 		candidates, err := srv.Plex.SearchMatches(ctx, it.RatingKey, id.title(), lib.Agent, lib.Language)
 		if err != nil {
@@ -87,7 +84,7 @@ func (r *Refresher) tmdbID(ctx context.Context, server string, it store.Item, fr
 		return tmdbID, true, nil
 	}
 
-	tmdbID, ok, err = r.opts.TMDB.Find(ctx, from.Source, from.Value, it.Type == "show")
+	tmdbID, ok, err = r.opts.TMDB.Find(ctx, from.Source, from.Value, it.Type == plex.ShowLibrary)
 	if err != nil {
 		return "", false, fmt.Errorf("%w: %s: %w", errTMDB, from.title(), err)
 	}

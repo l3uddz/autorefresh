@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"testing"
 	"time"
@@ -34,7 +35,17 @@ func checkTarget(t *testing.T, name string, status int) refresher.Server {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	return refresher.Server{Name: name, Plex: plex.New(name, srv.URL, "token", time.Second)}
+	return refresher.Server{Name: name, Plex: plex.New(name, mustURL(t, srv.URL), "token", time.Second)}
+}
+
+// mustURL parses a test server URL.
+func mustURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
 }
 
 // logEvents returns "<level> <message> <server>" for each logged line above
@@ -59,7 +70,7 @@ func logEvents(t *testing.T, buf *bytes.Buffer) map[string]bool {
 func TestCheckServersLogsEachResult(t *testing.T) {
 	buf := captureLog(t)
 	closed := checkTarget(t, "closed", http.StatusOK)
-	closed.Plex = plex.New("closed", "http://127.0.0.1:1", "token", time.Second)
+	closed.Plex = plex.New("closed", mustURL(t, "http://127.0.0.1:1"), "token", time.Second)
 
 	checkServers(context.Background(), []refresher.Server{
 		checkTarget(t, "ok", http.StatusOK),

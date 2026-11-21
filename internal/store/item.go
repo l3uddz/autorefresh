@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -114,13 +115,14 @@ func (s *Store) Library(server, section string) (Library, error) {
 // ApplyRead writes r in one transaction. For each row of the section, the
 // final reasons are the item bits from r.Items (or the old item bits if the
 // item is not in r.Items) and, if r.Shows, the episode bits from the two
-// lists and the old bits of r.EpisodeSkipped (or else the old episode bits). It inserts rows for new items with
-// final reasons that are not 0, deletes the rows whose final reasons are 0
-// and returns them as fixed, deletes the r.Gone rows (not in fixed), and
-// sets the read times. LastFullRead changes only if r.Full. The caller must
-// set AddedAt on every item, because a zero time is stored as a negative number.
-// A row of the same rating key in another section moves to r.Section and
-// keeps its history and its reasons that the read does not replace.
+// lists and the old bits of r.EpisodeSkipped (or else the old episode bits).
+// It deletes the r.Gone rows, inserts rows for new items with final reasons
+// that are not 0, deletes the other rows whose final reasons are 0 and
+// returns them as fixed, and sets the read times. LastFullRead changes only
+// if r.Full. The caller must set AddedAt on every item, because a zero time
+// is stored as a negative number, and must not put a key in both r.Items and
+// r.Gone. A row of the same rating key in another section moves to r.Section
+// and keeps its history and its reasons that the read does not replace.
 func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -133,27 +135,15 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 		return nil, err
 	}
 
-	// The newest metadata for each rating key: r.Items first, then the episode lists.
-	latest := map[string]Item{}
-	itemBits := map[string]Reasons{}
-	inItems := map[string]bool{}
-	for _, it := range r.Items {
-		latest[it.RatingKey] = it
-		itemBits[it.RatingKey] = it.Reasons & ItemReasons
-		inItems[it.RatingKey] = true
-	}
-	episodeBits := map[string]Reasons{}
-	for _, list := range []struct {
-		items  []Item
-		reason Reasons
-	}{{r.EpisodeNoSummary, EpisodeNoSummary}, {r.EpisodeUnmatched, EpisodeUnmatched}} {
-		for _, it := range list.items {
-			if _, ok := latest[it.RatingKey]; !ok {
-				latest[it.RatingKey] = it
-			}
-			episodeBits[it.RatingKey] |= list.reason
+	gone := make(map[string]bool, len(r.Gone))
+	for _, key := range r.Gone {
+		gone[key] = true
+		if err := deleteItem(tx, r.Server, key); err != nil {
+			return nil, err
 		}
 	}
+
+	incoming := readKeys(r)
 
 	// The old rows are the rows of the section, and the rows of any section
 	// whose rating key is in the read (a moved item). The server's rows are
@@ -165,73 +155,50 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	}
 	oldByKey := map[string]Item{}
 	for _, it := range stored {
-		if _, incoming := latest[it.RatingKey]; incoming || it.Section == r.Section {
+		if _, ok := incoming[it.RatingKey]; ok || it.Section == r.Section {
 			oldByKey[it.RatingKey] = it
 		}
 	}
-	gone := make(map[string]bool, len(r.Gone))
-	for _, k := range r.Gone {
-		gone[k] = true
-	}
 
-	keys := map[string]bool{}
+	keys := make(map[string]bool, len(oldByKey)+len(incoming))
 	for k := range oldByKey {
 		keys[k] = true
 	}
-	for k := range latest {
+	for k := range incoming {
 		keys[k] = true
 	}
 
-	deleted := map[string]bool{}
 	for key := range keys {
+		if gone[key] {
+			continue
+		}
 		prev, exists := oldByKey[key]
+		in, isIncoming := incoming[key]
+		final := in.reasons(r, prev.Reasons)
 
-		final := itemBits[key]
-		if !inItems[key] {
-			final = prev.Reasons & ItemReasons
-		}
-		if r.Shows {
-			final |= episodeBits[key] | prev.Reasons&r.EpisodeSkipped
-		} else {
-			final |= prev.Reasons &^ ItemReasons
-		}
-
-		meta, hasMeta := latest[key]
 		switch {
-		case exists && final == 0:
+		case final == 0:
+			if !exists {
+				continue
+			}
 			if err := deleteItem(tx, r.Server, key); err != nil {
 				return nil, err
 			}
-			deleted[key] = true
-			if !gone[key] {
-				fixed = append(fixed, prev)
-			}
-		case exists && hasMeta:
+			fixed = append(fixed, prev)
+			continue
+		case !exists:
+			_, err = tx.Exec(`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				r.Server, r.Section, key, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final))
+		case isIncoming:
 			_, err = tx.Exec(`UPDATE item SET section = ?, type = ?, title = ?, year = ?, added_at = ?, reasons = ?
 				WHERE server = ? AND rating_key = ?`,
-				r.Section, meta.Type, meta.Title, meta.Year, meta.AddedAt.Unix(), int(final), r.Server, key)
-		case exists:
+				r.Section, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final), r.Server, key)
+		default:
 			_, err = tx.Exec(`UPDATE item SET reasons = ? WHERE server = ? AND rating_key = ?`, int(final), r.Server, key)
-		case final != 0:
-			// A row of the same key in another section moves here and keeps its history.
-			_, err = tx.Exec(`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-				ON CONFLICT (server, rating_key) DO UPDATE SET section = excluded.section, type = excluded.type,
-					title = excluded.title, year = excluded.year, added_at = excluded.added_at, reasons = excluded.reasons`,
-				r.Server, r.Section, key, meta.Type, meta.Title, meta.Year, meta.AddedAt.Unix(), int(final))
 		}
 		if err != nil {
 			return nil, fmt.Errorf("write item %s: %w", key, err)
-		}
-	}
-
-	// The caller never puts a key in both Items and Gone, so no row is updated and then deleted.
-	for _, key := range r.Gone {
-		if deleted[key] {
-			continue
-		}
-		if err := deleteItem(tx, r.Server, key); err != nil {
-			return nil, err
 		}
 	}
 
@@ -241,6 +208,49 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 		return nil, fmt.Errorf("commit read: %w", err)
 	}
 	return fixed, nil
+}
+
+// readKey is what a read says about one rating key.
+type readKey struct {
+	meta     Item    // the newest metadata: from r.Items, else from an episode list
+	inItems  bool    // r.Items holds the key, so its item reasons replace the old ones
+	episodes Reasons // the episode reasons of the episode lists
+}
+
+// readKeys returns what r says about each rating key that it lists.
+func readKeys(r Read) map[string]readKey {
+	keys := make(map[string]readKey, len(r.Items))
+	for _, it := range r.Items {
+		keys[it.RatingKey] = readKey{meta: it, inItems: true}
+	}
+	for _, list := range []struct {
+		items  []Item
+		reason Reasons
+	}{{r.EpisodeNoSummary, EpisodeNoSummary}, {r.EpisodeUnmatched, EpisodeUnmatched}} {
+		for _, it := range list.items {
+			k, ok := keys[it.RatingKey]
+			if !ok {
+				k.meta = it
+			}
+			k.episodes |= list.reason
+			keys[it.RatingKey] = k
+		}
+	}
+	return keys
+}
+
+// reasons returns the final reasons of a row after the read r. prev is the
+// old reasons of the row, or 0 for a new row. The zero readKey stands for a
+// row that the read does not list.
+func (k readKey) reasons(r Read, prev Reasons) Reasons {
+	final := prev & ItemReasons
+	if k.inItems {
+		final = k.meta.Reasons & ItemReasons
+	}
+	if r.Shows {
+		return final | k.episodes | prev&r.EpisodeSkipped
+	}
+	return final | prev&^ItemReasons
 }
 
 func deleteItem(tx *sql.Tx, server, key string) error {
@@ -313,35 +323,70 @@ func LongestWaitRefreshes(refreshInterval, maxRefreshInterval time.Duration) int
 	return doublings + 1
 }
 
-// Due returns the rows of the sections that are incomplete, added at or
-// before now-minimumAge, and with no attempt in their wait before now.
+// DueQuery selects the due rows of some sections of a server.
+type DueQuery struct {
+	Server          string
+	Sections        []string
+	Now             time.Time
+	MinimumAge      time.Duration // a row added after Now-MinimumAge is not due
+	RefreshInterval time.Duration
+	// MaxRefreshInterval is the longest wait. Below RefreshInterval, the
+	// wait does not back off.
+	MaxRefreshInterval time.Duration
+	Ignored            Reasons // a row whose reasons are all in Ignored is never due
+	Limit              int     // the most rows that Due returns; 0: no limit
+}
+
+// Due returns the first q.Limit rows of the sections that are incomplete,
+// added at or before Now-MinimumAge, and with no attempt in their wait
+// before Now. total is the number of all such rows.
 //
-// The wait backs off: it is refreshInterval for a row with at most 1
+// The wait backs off: it is RefreshInterval for a row with at most 1
 // refresh, and it doubles with each later refresh, up to
-// maxRefreshInterval. A maxRefreshInterval below refreshInterval means no
-// backoff. A row whose reasons are all in ignored is never due.
+// MaxRefreshInterval.
 //
-// Order: the fewest Refreshes first, then no attempt, then the oldest
-// LastAttempt, then the oldest AddedAt.
-func (s *Store) Due(server string, sections []string, now time.Time, minimumAge, refreshInterval, maxRefreshInterval time.Duration, ignored Reasons) ([]Item, error) {
-	if len(sections) == 0 {
-		return nil, nil
+// Order: the fewest attempts first, then no attempt, then the oldest
+// LastAttempt, then the oldest AddedAt. Each RecordAttempt counts as an
+// attempt, also a failed one, so an item that keeps failing moves back
+// instead of taking the first place in every run.
+func (s *Store) Due(q DueQuery) (items []Item, total int, err error) {
+	if len(q.Sections) == 0 {
+		return nil, 0, nil
 	}
-	interval, maxWait, doublings := backoff(refreshInterval, maxRefreshInterval)
+	interval, maxWait, doublings := backoff(q.RefreshInterval, q.MaxRefreshInterval)
 
 	// The query rounds the cutoff down to whole seconds, like the stored times.
-	args := append([]any{server}, stringArgs(sections)...)
-	args = append(args, int(ignored), now.Add(-minimumAge).Unix(), now.UnixMilli(), maxWait, interval, doublings)
-
-	items, err := queryItems(s.db, `SELECT `+itemColumns+` FROM item
-		WHERE server = ? AND section IN (`+placeholders(len(sections))+`)
+	where := `server = ? AND section IN (` + placeholders(len(q.Sections)) + `)
 		AND reasons & ~? != 0 AND added_at <= ?
-		AND (last_attempt IS NULL OR last_attempt <= (? - MIN(?, ? << MIN(MAX(refreshes - 1, 0), ?))) / 1000)
-		ORDER BY refreshes, last_attempt IS NOT NULL, last_attempt, added_at, rating_key`, args...)
+		AND (last_attempt IS NULL OR last_attempt <= (? - MIN(?, ? << MIN(MAX(refreshes - 1, 0), ?))) / 1000)`
+	args := append([]any{q.Server}, stringArgs(q.Sections)...)
+	args = append(args, int(q.Ignored), q.Now.Add(-q.MinimumAge).Unix(), q.Now.UnixMilli(), maxWait, interval, doublings)
+
+	// One read transaction gives the count and the rows the same snapshot,
+	// also while another process writes. A read-only transaction does not
+	// take the write lock.
+	tx, err := s.db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, fmt.Errorf("read due items: %w", err)
+		return nil, 0, fmt.Errorf("begin due items: %w", err)
 	}
-	return items, nil
+	defer tx.Rollback()
+
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM item WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count due items: %w", err)
+	}
+
+	// SQLite reads a negative LIMIT as no limit.
+	limit := q.Limit
+	if limit <= 0 {
+		limit = -1
+	}
+	items, err = queryItems(tx, `SELECT `+itemColumns+` FROM item WHERE `+where+`
+		ORDER BY attempts, last_attempt IS NOT NULL, last_attempt, added_at, rating_key LIMIT ?`,
+		append(args, limit)...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("read due items: %w", err)
+	}
+	return items, total, nil
 }
 
 // CountIncomplete counts the stored rows of the sections that have a reason
@@ -362,15 +407,15 @@ func (s *Store) CountIncomplete(server string, sections []string, ignored Reason
 	return n, nil
 }
 
-// RecordAttempt sets LastAttempt. If refreshed, it also sets LastRefresh
-// and adds 1 to Refreshes.
+// RecordAttempt sets LastAttempt and counts the attempt. If refreshed, it
+// also sets LastRefresh and adds 1 to Refreshes.
 func (s *Store) RecordAttempt(server, ratingKey string, at time.Time, refreshed bool) error {
 	var err error
 	if refreshed {
-		_, err = s.db.Exec(`UPDATE item SET last_attempt = ?, last_refresh = ?, refreshes = refreshes + 1
-			WHERE server = ? AND rating_key = ?`, at.Unix(), at.Unix(), server, ratingKey)
+		_, err = s.db.Exec(`UPDATE item SET last_attempt = ?, last_refresh = ?, refreshes = refreshes + 1,
+			attempts = attempts + 1 WHERE server = ? AND rating_key = ?`, at.Unix(), at.Unix(), server, ratingKey)
 	} else {
-		_, err = s.db.Exec(`UPDATE item SET last_attempt = ? WHERE server = ? AND rating_key = ?`,
+		_, err = s.db.Exec(`UPDATE item SET last_attempt = ?, attempts = attempts + 1 WHERE server = ? AND rating_key = ?`,
 			at.Unix(), server, ratingKey)
 	}
 	if err != nil {

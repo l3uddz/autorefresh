@@ -2,8 +2,10 @@ package store
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -158,6 +160,24 @@ func TestMigrationKeepsItemsWithoutLibrary(t *testing.T) {
 	}
 }
 
+// The attempts of an older row start at its refreshes, so the order of the
+// queue stays the same after the upgrade.
+func TestMigrationCountsRefreshesAsAttempts(t *testing.T) {
+	s, err := Open(openVersion1(t))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	var attempts int
+	if err := s.db.QueryRow(`SELECT attempts FROM item WHERE server = 'home' AND rating_key = '101'`).Scan(&attempts); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want the 3 refreshes", attempts)
+	}
+}
+
 func TestPruneRemovesMigratedLibrary(t *testing.T) {
 	s, err := Open(openVersion1(t))
 	if err != nil {
@@ -189,13 +209,125 @@ func TestItemNeedsLibrary(t *testing.T) {
 	}
 }
 
-// A "?" in the path ends the file name for the driver, and the rest turns
-// into parameters, so foreign keys would be off without an error.
-func TestOpenRejectsPathWithoutForeignKeys(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "we?rd.db"))
+// The data source name escapes the path, so a character such as "?" or "#"
+// stays part of the file name and the settings still apply.
+func TestOpenAcceptsAnyPath(t *testing.T) {
+	for _, name := range []string{"we?rd.db", "per%cent.db", "hash#tag.db", "with space.db"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			s, err := Open(filepath.Join(dir, name))
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			s.Close()
+			if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+				t.Fatalf("database file: %v", err)
+			}
+		})
+	}
+}
+
+func TestOpenAcceptsRelativePath(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	s, err := Open(filepath.Join("sub", "..", "store.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	s.Close()
+	if _, err := os.Stat(filepath.Join(dir, "store.db")); err != nil {
+		t.Fatalf("database file: %v", err)
+	}
+}
+
+// The container image has no writable temporary directory, so a large sort
+// must stay in memory.
+func TestOpenKeepsTemporaryDataInMemory(t *testing.T) {
+	s := openTest(t)
+	var store int
+	if err := s.db.QueryRow(`PRAGMA temp_store`).Scan(&store); err != nil {
+		t.Fatal(err)
+	}
+	if store != 2 {
+		t.Fatalf("temp_store = %d, want 2 (memory)", store)
+	}
+}
+
+// A second process, such as a dry run, waits for the write lock of the
+// first one instead of failing at once.
+func TestSecondStoreWaitsForLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.db")
+	first, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	if _, err := second.ApplyRead(Read{Server: "s", Section: "1", At: base, Full: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		call func() error
+	}{
+		{"ApplyRead", func() error {
+			_, err := second.ApplyRead(Read{Server: "s", Section: "1", At: base, Full: true})
+			return err
+		}},
+		// The prune reads before it deletes. Without a write lock at the
+		// start of the transaction, SQLite returns SQLITE_BUSY at once
+		// instead of waiting. It runs last, because it removes the library.
+		{"PruneSections", func() error {
+			_, err := second.PruneSections("s", nil)
+			return err
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tx, err := first.db.Begin()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Exec(`INSERT INTO library (server, section) VALUES ('other', '1')
+				ON CONFLICT DO NOTHING`); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- tt.call() }()
+			time.Sleep(200 * time.Millisecond)
+			if err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil {
+				t.Fatalf("%s while another store held the lock: %v", tt.name, err)
+			}
+		})
+	}
+}
+
+// An older binary must not use a database that a newer one migrated.
+func TestOpenRejectsNewerSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO schema_migration (version) VALUES (9999)`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s, err = Open(path)
 	if err == nil {
 		s.Close()
 		t.Fatal("Open succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "9999") {
+		t.Fatalf("error = %v, want the schema version", err)
 	}
 }
 
@@ -254,5 +386,37 @@ func TestMigrationRejectsBrokenForeignKey(t *testing.T) {
 	var n int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migration WHERE version = 99`).Scan(&n); err != nil || n != 0 {
 		t.Errorf("schema_migration rows of 99 = %d, %v, want 0", n, err)
+	}
+}
+
+// A database failure must reach the caller, so the refresher can stop the
+// run instead of acting on a cache that it did not read or write.
+func TestMethodsReportDatabaseFailure(t *testing.T) {
+	s := openTest(t)
+	s.Close()
+
+	calls := map[string]func() error{
+		"Library": func() error { _, err := s.Library(srv, sec); return err },
+		"ApplyRead": func() error {
+			_, err := s.ApplyRead(Read{Server: srv, Section: sec, At: base})
+			return err
+		},
+		"Unseen": func() error { _, err := s.Unseen(srv, sec, nil); return err },
+		"Due": func() error {
+			_, _, err := s.Due(DueQuery{Server: srv, Sections: []string{sec}, Now: base})
+			return err
+		},
+		"CountIncomplete": func() error { _, err := s.CountIncomplete(srv, []string{sec}, 0); return err },
+		"RecordAttempt":   func() error { return s.RecordAttempt(srv, "101", base, true) },
+		"Delete":          func() error { return s.Delete(srv, "101") },
+		"PruneServers":    func() error { _, err := s.PruneServers(nil); return err },
+		"PruneSections":   func() error { _, err := s.PruneSections(srv, nil); return err },
+		"TMDBID":          func() error { _, _, err := s.TMDBID(srv, "101", "tvdb", "5"); return err },
+		"SaveTMDBID":      func() error { return s.SaveTMDBID(srv, "101", "tvdb", "5", "77") },
+	}
+	for name, call := range calls {
+		if err := call(); err == nil {
+			t.Errorf("%s on a closed database returned no error", name)
+		}
 	}
 }

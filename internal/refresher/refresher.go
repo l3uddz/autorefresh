@@ -28,7 +28,7 @@ type Store interface {
 	Library(server, section string) (store.Library, error)
 	ApplyRead(r store.Read) (fixed []store.Item, err error)
 	Unseen(server, section string, seen []string) ([]store.Item, error)
-	Due(server string, sections []string, now time.Time, minimumAge, refreshInterval, maxRefreshInterval time.Duration, ignored store.Reasons) ([]store.Item, error)
+	Due(q store.DueQuery) (items []store.Item, total int, err error)
 	CountIncomplete(server string, sections []string, ignored store.Reasons) (int, error)
 	RecordAttempt(server, ratingKey string, at time.Time, refreshed bool) error
 	TMDBID(server, ratingKey, source, externalID string) (tmdbID string, ok bool, err error)
@@ -53,7 +53,7 @@ type Options struct {
 	MinimumAge, RefreshInterval, Oversample, RefreshDelay time.Duration
 	MaxRefreshInterval                                    time.Duration // below RefreshInterval: no backoff
 	CacheRefresh                                          Schedule
-	MaxRefreshesPerRun                                    int           // 0: no limit
+	MaxRefreshesPerRun                                    int           // the most due items in each run; 0: no limit
 	IgnoreReasons                                         store.Reasons // never refreshed for, and not counted
 	DryRun                                                bool
 	TMDB                                                  TMDB // nil: no TMDB fallback in fix match
@@ -105,10 +105,11 @@ type serverRun struct {
 	completed            []completedItem     // rows that became complete, logged after the refresh step
 	fixed                int                 // completed rows that had a request that Plex accepted
 	due                  int
-	refreshes            int // refresh requests sent, also failed ones
-	matches              int // match requests sent, also failed ones
-	failures             int // failed requests and match searches, without 404 answers
-	remaining            int // due items that the limit or a stop kept from this run
+	refreshes            int  // refresh requests sent, also failed ones
+	matches              int  // match requests sent, also failed ones
+	failures             int  // failed requests and match searches, without 404 answers
+	remaining            int  // due items that the limit or a stop kept from this run
+	tmdbFailed           bool // a TMDB lookup failed, so the run asks TMDB nothing more
 }
 
 // completedItem is a row that a read of the run found complete.
@@ -124,6 +125,16 @@ func logCompleted(run *serverRun) {
 		log.Info().Str("server", run.server.Name).Str("library", c.library).Str("title", c.item.Title).
 			Int("refreshes", c.item.Refreshes).Msg("Item complete")
 	}
+}
+
+// library returns the selected library of a section.
+func (run *serverRun) library(section string) plex.Library {
+	for _, lib := range run.libraries {
+		if lib.ID == section {
+			return lib
+		}
+	}
+	return plex.Library{}
 }
 
 // sections returns the section IDs of the selected libraries.
@@ -193,21 +204,17 @@ func (r *Refresher) runServer(ctx context.Context, srv Server) error {
 		return nil
 	}
 	unavailable := errors.Is(err, plex.ErrUnavailable)
-	switch {
-	case unavailable:
+	if unavailable {
 		// The run can take long, so the error shows at once.
 		log.Error().Str("server", srv.Name).Err(err).Msg("Plex server unavailable")
-		if !readsDone {
-			return fmt.Errorf("server %s: %w", srv.Name, err)
-		}
-	case err != nil:
-		return fmt.Errorf("server %s: %w", srv.Name, err)
 	}
 	// A server that the refresh step stopped also gets its summary.
-	if err := r.logSummary(run); err != nil {
-		return fmt.Errorf("server %s: %w", srv.Name, err)
+	if err == nil || unavailable && readsDone {
+		if summaryErr := r.logSummary(run); summaryErr != nil {
+			err = summaryErr
+		}
 	}
-	if unavailable {
+	if err != nil {
 		return fmt.Errorf("server %s: %w", srv.Name, err)
 	}
 	return nil

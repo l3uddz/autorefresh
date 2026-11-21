@@ -393,6 +393,25 @@ func TestFixMatchMovie(t *testing.T) {
 	wantField(t, results[0], "candidates", float64(1))
 }
 
+// An ignored unmatched reason gets no fix match. The item is still due for
+// its other reason, so it gets a plain refresh.
+func TestIgnoredUnmatchedGetsNoFixMatch(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	movie := unmatchedItem("101")
+	movie.Summary = ""
+	movie.Files = []string{"/m/Film (2020) {tmdb-1}/Film.mkv"}
+	fp.lists["1?type=1&unmatched=1"] = []plex.Item{movie}
+	fp.candidates["101 tmdb-1"] = []plex.Candidate{{GUID: "plex://movie/a", Name: "Film", Year: 2020}}
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.opts.IgnoreReasons = store.Unmatched
+	f.seed(testServer, moviesLib, movie, store.Unmatched|store.NoSummary, 1)
+
+	f.run(t0)
+
+	wantCalls(t, matchReads(fp.calls))
+	wantCalls(t, sends(fp.calls), "Refresh 101")
+}
+
 func TestFixMatchMovieWithoutListingUsesItemPaths(t *testing.T) {
 	fp := newFakePlex(moviesLib)
 	fp.paths["101"] = []string{"/m/Film (2020) {tmdb-1}/Film.mkv"}
@@ -585,6 +604,10 @@ func TestDryRunUnavailableSearchRecordsNothing(t *testing.T) {
 	}
 }
 
+// A failed match search sends nothing, but the item counts toward the limit,
+// so failing searches cannot run without bound. The failed attempt starts
+// the wait of the item, so the next run reaches an item with more refreshes,
+// which the queue puts after it.
 func TestFailedSearchSendsNothing(t *testing.T) {
 	fp := newFakePlex(moviesLib)
 	fp.paths["101"] = []string{"/m/Film (2020) {tmdb-1}/Film.mkv"}
@@ -594,15 +617,20 @@ func TestFailedSearchSendsNothing(t *testing.T) {
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
 	f.r.opts.MaxRefreshesPerRun = 1
 	f.seed(testServer, moviesLib, unmatchedItem("101"), store.Unmatched, 1)
-	f.seed(testServer, moviesLib, second, store.NoSummary, 1)
+	f.seed(testServer, moviesLib, second, store.NoSummary, 2)
 
 	f.run(t0)
 
-	wantCalls(t, sends(fp.calls), "Refresh 102")
+	wantCalls(t, sends(fp.calls))
 	if row, _ := f.row(testServer, "1", "101"); row.Refreshes != 1 || !row.LastAttempt.Equal(t0) {
 		t.Errorf("row = %+v, want 1 refresh and LastAttempt %v", row, t0)
 	}
-	wantField(t, f.lastSummary(testServer), "remaining_items", float64(0))
+	wantField(t, f.lastSummary(testServer), "remaining_items", float64(1))
+
+	// The failed item waits, so the next run refreshes the other item.
+	fp.calls = nil
+	f.run(t0.Add(time.Minute))
+	wantCalls(t, sends(fp.calls), "Refresh 102")
 }
 
 func TestEpisodeReasonGetsPlainRefresh(t *testing.T) {
@@ -813,8 +841,8 @@ func TestAttemptTimeIsRequestTime(t *testing.T) {
 	f.run(t0)
 
 	wantCalls(t, sends(fp.calls), "Refresh 101", "Refresh 102")
-	later := t0.Add(refreshDelay)
-	want := map[string]time.Time{"101": t0, "102": later, "103": later}
+	later, last := t0.Add(refreshDelay), t0.Add(2*refreshDelay)
+	want := map[string]time.Time{"101": t0, "102": later, "103": last}
 	for key, at := range want {
 		if row, _ := f.row(testServer, "1", key); !row.LastAttempt.Equal(at) {
 			t.Errorf("row %s = %+v, want LastAttempt %v", key, row, at)
@@ -824,7 +852,7 @@ func TestAttemptTimeIsRequestTime(t *testing.T) {
 		t.Errorf("row 102 = %+v, want LastRefresh %v", row, later)
 	}
 	// zerolog writes a duration in milliseconds.
-	wantField(t, f.lastSummary(testServer), "duration", float64(refreshDelay.Milliseconds()))
+	wantField(t, f.lastSummary(testServer), "duration", float64(2*refreshDelay.Milliseconds()))
 }
 
 func TestSummaryDurationRoundsToMilliseconds(t *testing.T) {
@@ -911,5 +939,64 @@ func TestStoreErrorAfterUnavailableServer(t *testing.T) {
 	}
 	if errs := f.logLines("error", "Plex server unavailable"); len(errs) != 1 {
 		t.Errorf("got %d unavailable errors, want 1", len(errs))
+	}
+}
+
+func TestSleepWaitsOrStops(t *testing.T) {
+	if err := sleep(context.Background(), time.Millisecond); err != nil {
+		t.Errorf("sleep = %v, want nil", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := sleep(ctx, time.Hour); !errors.Is(err, context.Canceled) {
+		t.Errorf("sleep after cancel = %v, want context.Canceled", err)
+	}
+}
+
+// An item that keeps failing must not keep the only slot of each run. Runs
+// come more often than the wait of the items here, so both items are due in
+// every run. The failing item starts 4 refreshes behind the other item. Each
+// attempt counts in the order, also a failed one, so the failing item gives
+// up the slot after 4 failed attempts.
+func TestFailingItemGivesUpTheSlot(t *testing.T) {
+	tests := []struct {
+		name    string
+		reasons store.Reasons
+		item    plex.Item
+		fail    func(fp *fakePlex)
+	}{
+		{"failed search", store.Unmatched, unmatchedItem("101"), func(fp *fakePlex) {
+			fp.paths["101"] = []string{"/m/Film (2020) {tmdb-1}/Film.mkv"}
+			fp.searchErrs["101"] = serverErr
+		}},
+		{"failed request", store.NoSummary, incompleteItem("101"), func(fp *fakePlex) {
+			fp.refreshErrs["101"] = serverErr
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := newFakePlex(moviesLib)
+			tt.fail(fp)
+			f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+			f.r.opts.MaxRefreshesPerRun = 1
+			f.r.opts.RefreshInterval = time.Minute
+			f.r.opts.MaxRefreshInterval = time.Minute
+			f.seed(testServer, moviesLib, tt.item, tt.reasons, 1)
+			f.seed(testServer, moviesLib, incompleteItem("102"), store.NoSummary, 5)
+
+			var got []string
+			for run := range 6 {
+				fp.calls = nil
+				f.run(t0.Add(time.Duration(run) * 2 * time.Minute))
+				if row, _ := f.row(testServer, "1", "102"); row.LastAttempt.Equal(t0.Add(time.Duration(run) * 2 * time.Minute)) {
+					got = append(got, "102")
+				} else {
+					got = append(got, "101")
+				}
+			}
+			if want := []string{"101", "101", "101", "101", "102", "101"}; !reflect.DeepEqual(got, want) {
+				t.Errorf("slot by run = %v, want %v", got, want)
+			}
+		})
 	}
 }

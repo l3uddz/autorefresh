@@ -177,7 +177,10 @@ func TestTMDBFallbackConflict(t *testing.T) {
 	}
 }
 
-func TestTMDBFailureSkipsItem(t *testing.T) {
+// A failed TMDB lookup must not block the plain refresh that the item gets
+// without a TMDB client. The rest of the run then asks TMDB nothing, so a
+// rejected token sends one failing request per run, not one per item.
+func TestTMDBFailureSendsPlainRefresh(t *testing.T) {
 	for _, tmdbErr := range []error{
 		errors.New("GET /3/find/5: 500 Internal Server Error"),
 		fmt.Errorf("GET /3/find/5: 401 Unauthorized: %w", tmdb.ErrUnauthorized),
@@ -185,17 +188,22 @@ func TestTMDBFailureSkipsItem(t *testing.T) {
 	} {
 		t.Run(tmdbErr.Error(), func(t *testing.T) {
 			fp := newFakePlex(showsLib)
-			ft := &fakeTMDB{errs: map[string]error{"tvdb 5 true": tmdbErr}}
+			ft := &fakeTMDB{
+				ids:  map[string]string{"tvdb 6 true": "78"},
+				errs: map[string]error{"tvdb 5 true": tmdbErr},
+			}
 			f := newTMDBFixture(t, fp, ft, "tvdb-5")
-			second := incompleteItem("202")
+			second := unmatchedItem("202")
 			second.AddedAt = addedAt.Add(time.Hour)
-			f.seed(testServer, showsLib, second, store.NoSummary, 1)
+			fp.paths["202"] = []string{"/tv/Other (2020) {tvdb-6}"}
+			f.seed(testServer, showsLib, second, store.Unmatched, 1)
 
 			f.run(t0)
 
-			wantCalls(t, sends(fp.calls), "Refresh 202")
-			if row, ok := f.row(testServer, "2", "201"); !ok || row.Refreshes != 1 || !row.LastAttempt.Equal(t0) {
-				t.Errorf("row = %+v (exists %v), want 1 refresh and LastAttempt %v", row, ok, t0)
+			wantCalls(t, ft.calls, "Find tvdb 5 true")
+			wantCalls(t, sends(fp.calls), "Refresh 201", "Refresh 202")
+			if row, _ := f.row(testServer, "2", "201"); row.Refreshes != 2 || !row.LastAttempt.Equal(t0) {
+				t.Errorf("row = %+v, want 2 refreshes and LastAttempt %v", row, t0)
 			}
 			warnings := f.logLines("warn", "TMDB lookup failed")
 			if len(warnings) != 1 {
@@ -203,6 +211,11 @@ func TestTMDBFailureSkipsItem(t *testing.T) {
 			}
 			wantField(t, warnings[0], "title", "Title 201")
 			wantField(t, f.lastSummary(testServer), "failed_requests", float64(1))
+
+			// The next run asks TMDB again.
+			ft.calls = nil
+			f.run(t0.Add(48 * time.Hour))
+			wantCalls(t, ft.calls, "Find tvdb 5 true")
 		})
 	}
 }
@@ -268,6 +281,11 @@ func TestTMDBFallbackDryRun(t *testing.T) {
 		if warnings := f.logLines("warn", "TMDB lookup failed"); len(warnings) != 1 {
 			t.Errorf("got %d TMDB warnings, want 1", len(warnings))
 		}
+		lines := f.logLines("info", "Dry run")
+		if len(lines) != 1 {
+			t.Fatalf("got %d dry run lines, want 1", len(lines))
+		}
+		wantField(t, lines[0], "action", "refresh")
 		if row, _ := f.row(testServer, "2", "201"); row.LastAttempt.Equal(t0) || row.Refreshes != 1 {
 			t.Errorf("row = %+v, want no new attempt", row)
 		}

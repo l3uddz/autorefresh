@@ -29,6 +29,11 @@ type Config struct {
 	IgnoreReasons      []string      `yaml:"ignore-reasons"`        // reason names such as "no-art"
 	TMDBToken          string        `yaml:"tmdb-token"`            // "": no TMDB fallback in fix match
 	Plex               []Server      `yaml:"plex"`
+
+	// Decode parses these values from the keys above.
+	RunSchedule          cron.Schedule `yaml:"-"` // Schedule
+	CacheRefreshSchedule cron.Schedule `yaml:"-"` // CacheRefresh
+	Ignored              store.Reasons `yaml:"-"` // IgnoreReasons
 }
 
 // DefaultTimeout limits each request to a server without a timeout key.
@@ -41,6 +46,8 @@ type Server struct {
 	Token     string         `yaml:"token"`
 	Libraries []string       `yaml:"libraries"` // empty: all supported libraries
 	Timeout   *time.Duration `yaml:"timeout"`   // nil: DefaultTimeout
+
+	BaseURL *url.URL `yaml:"-"` // URL, parsed by Decode
 }
 
 // RequestTimeout returns the limit of each request to the server.
@@ -64,8 +71,8 @@ func defaults() Config {
 	}
 }
 
-// Decode reads YAML from r over the defaults, rejects unknown keys, and
-// validates the result.
+// Decode reads YAML from r over the defaults, rejects unknown keys,
+// validates the result, and sets the parsed values.
 func Decode(r io.Reader) (Config, error) {
 	cfg := defaults()
 
@@ -127,11 +134,13 @@ func yamlError(err error) error {
 	return fmt.Errorf("decode configuration: invalid YAML at lines %s", strings.Join(lines, ", "))
 }
 
-func (c Config) validate() error {
-	if err := validateCron("schedule", c.Schedule); err != nil {
+// validate checks the configuration and sets the parsed values.
+func (c *Config) validate() error {
+	var err error
+	if c.RunSchedule, err = parseCron("schedule", c.Schedule); err != nil {
 		return err
 	}
-	if err := validateCron("cache-refresh", c.CacheRefresh); err != nil {
+	if c.CacheRefreshSchedule, err = parseCron("cache-refresh", c.CacheRefresh); err != nil {
 		return err
 	}
 	if c.RefreshInterval <= 0 {
@@ -152,7 +161,7 @@ func (c Config) validate() error {
 	if c.MaxRefreshesPerRun < 0 {
 		return errors.New("max-refreshes-per-run must not be negative")
 	}
-	if _, err := store.ParseReasons(c.IgnoreReasons); err != nil {
+	if c.Ignored, err = store.ParseReasons(c.IgnoreReasons); err != nil {
 		return fmt.Errorf("ignore-reasons: %w", err)
 	}
 	if len(c.Plex) == 0 {
@@ -160,7 +169,8 @@ func (c Config) validate() error {
 	}
 
 	names := make(map[string]struct{}, len(c.Plex))
-	for i, s := range c.Plex {
+	for i := range c.Plex {
+		s := &c.Plex[i]
 		if err := s.validate(); err != nil {
 			return fmt.Errorf("plex server %s: %w", s.label(i), err)
 		}
@@ -172,18 +182,18 @@ func (c Config) validate() error {
 	return nil
 }
 
-// validateCron checks that expr is a standard cron expression that fires.
-// For an expression that never fires, such as February 30, Next returns the
-// zero time.
-func validateCron(key, expr string) error {
+// parseCron parses expr as a standard cron expression that fires. For an
+// expression that never fires, such as February 30, Next returns the zero
+// time.
+func parseCron(key, expr string) (cron.Schedule, error) {
 	sched, err := cron.ParseStandard(expr)
 	if err != nil {
-		return fmt.Errorf("%s %q: %w", key, expr, err)
+		return nil, fmt.Errorf("%s %q: %w", key, expr, err)
 	}
 	if sched.Next(time.Now()).IsZero() {
-		return fmt.Errorf("%s %q: the expression never fires", key, expr)
+		return nil, fmt.Errorf("%s %q: the expression never fires", key, expr)
 	}
-	return nil
+	return sched, nil
 }
 
 // label names a server in errors. It never uses the URL or the token.
@@ -194,7 +204,8 @@ func (s Server) label(index int) string {
 	return fmt.Sprintf("%q", s.Name)
 }
 
-func (s Server) validate() error {
+// validate checks the server and sets BaseURL.
+func (s *Server) validate() error {
 	if s.Name == "" {
 		return errors.New("name is empty")
 	}
@@ -212,6 +223,15 @@ func (s Server) validate() error {
 	if u.Hostname() == "" {
 		return errors.New("url has no host")
 	}
+	// The requests replace the query and drop the fragment, so either one
+	// is a silent mistake.
+	if u.RawQuery != "" || u.ForceQuery {
+		return errors.New("url must not have a query")
+	}
+	if strings.Contains(s.URL, "#") {
+		return errors.New("url must not have a fragment")
+	}
+	s.BaseURL = u
 	if s.Token == "" {
 		return errors.New("token is empty")
 	}

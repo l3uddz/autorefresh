@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -62,25 +63,14 @@ func main() {
 	log.Logger = newLogger(os.Stderr, cli.Log, cli.Verbosity)
 
 	// config
-	file, err := waitForConfig(cli.Config, 5*time.Second)
+	data, err := readConfig(cli.Config, 5*time.Second)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed opening config")
+		log.Fatal().Err(err).Msg("Failed reading config")
 	}
-	cfg, err := config.Decode(file)
-	file.Close()
+	cfg, err := config.Decode(bytes.NewReader(data))
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed decoding config")
 	}
-	cacheRefresh, err := cron.ParseStandard(cfg.CacheRefresh)
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed parsing cache-refresh")
-	}
-
-	ignoreReasons, err := store.ParseReasons(cfg.IgnoreReasons)
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed parsing ignore-reasons")
-	}
-
 	// database
 	st, err := store.Open(cli.Database)
 	if err != nil {
@@ -93,7 +83,7 @@ func main() {
 	for _, s := range cfg.Plex {
 		servers = append(servers, refresher.Server{
 			Name:      s.Name,
-			Plex:      plex.New(s.Name, s.URL, s.Token, s.RequestTimeout()),
+			Plex:      plex.New(s.Name, s.BaseURL, s.Token, s.RequestTimeout()),
 			Libraries: s.Libraries,
 		})
 		names = append(names, s.Name)
@@ -114,9 +104,9 @@ func main() {
 		MaxRefreshInterval: cfg.MaxRefreshInterval,
 		Oversample:         cfg.Oversample,
 		RefreshDelay:       cfg.RefreshDelay,
-		CacheRefresh:       cacheRefresh,
+		CacheRefresh:       cfg.CacheRefreshSchedule,
 		MaxRefreshesPerRun: cfg.MaxRefreshesPerRun,
-		IgnoreReasons:      ignoreReasons,
+		IgnoreReasons:      cfg.Ignored,
 		DryRun:             cli.DryRun,
 		TMDB:               lookup,
 	})
@@ -153,10 +143,7 @@ func main() {
 	}
 	run := &runner{run: r.Run}
 	c := cron.New()
-	if _, err := c.AddFunc(cfg.Schedule, func() { run.start(ctx) }); err != nil {
-		closeStore(st)
-		log.Fatal().Err(err).Msg("Failed adding schedule")
-	}
+	c.Schedule(cfg.RunSchedule, cron.FuncJob(func() { run.start(ctx) }))
 	c.Start()
 
 	<-ctx.Done()

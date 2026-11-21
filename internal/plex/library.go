@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -20,9 +19,15 @@ const (
 // pageSize is the number of items that List asks for in each request.
 const pageSize = 500
 
+// Library types.
+const (
+	MovieLibrary = "movie"
+	ShowLibrary  = "show"
+)
+
 // Library is one Plex library section.
 type Library struct {
-	ID, Title, Type, Agent, Language string // Type: "movie" or "show"
+	ID, Title, Type, Agent, Language string // Type: MovieLibrary or ShowLibrary
 }
 
 // Item is one movie or series in a section listing.
@@ -38,10 +43,11 @@ type Item struct {
 	Files     []string // movie listings: Media[].Part[].file
 }
 
-// Filter is one Plex filter, sent as Field+Op+Value, for example
-// {Field: "addedAt", Op: ">>=", Value: "1795025872"} or
-// {Field: "episode.summary", Op: "=", Value: ""}.
-type Filter struct{ Field, Op, Value string }
+// Filter is one Plex filter, sent as the query parameter Key=Value. The key
+// holds the field and the operator without its "=", for example
+// {Key: "addedAt>>", Value: "1795025872"} sends addedAt>>=1795025872, and
+// {Key: "episode.summary", Value: ""} sends episode.summary=.
+type Filter struct{ Key, Value string }
 
 type metadata struct {
 	RatingKey string `json:"ratingKey"`
@@ -64,7 +70,7 @@ type metadata struct {
 
 type metadataResponse struct {
 	MediaContainer struct {
-		TotalSize int        `json:"totalSize"`
+		TotalSize *int       `json:"totalSize"` // nil when absent
 		Metadata  []metadata `json:"Metadata"`
 	} `json:"MediaContainer"`
 }
@@ -107,7 +113,7 @@ func (c *Client) Libraries(ctx context.Context) ([]Library, error) {
 		} `json:"MediaContainer"`
 	}
 
-	if err := c.send(ctx, http.MethodGet, "/library/sections", nil, &resp); err != nil {
+	if err := c.send(ctx, http.MethodGet, c.endpoint("library", "sections"), nil, &resp); err != nil {
 		return nil, fmt.Errorf("libraries: %w", err)
 	}
 
@@ -122,7 +128,10 @@ func (c *Client) Libraries(ctx context.Context) ([]Library, error) {
 
 // List reads every page of one item type in a section.
 func (c *Client) List(ctx context.Context, section string, itemType int, filters ...Filter) ([]Item, error) {
-	endpoint := "/library/sections/" + url.PathEscape(section) + "/all"
+	if !idPattern.MatchString(section) {
+		return nil, errors.New("invalid plex section")
+	}
+	endpoint := c.endpoint("library", "sections", section, "all")
 
 	// The listing needs only item fields, so it leaves out the heavy elements.
 	exclude := "Role,Director,Writer,Genre,Country"
@@ -140,7 +149,7 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 			"X-Plex-Container-Size":  {strconv.Itoa(pageSize)},
 		}
 		for _, f := range filters {
-			query.Add(f.Field+strings.TrimSuffix(f.Op, "="), f.Value)
+			query.Add(f.Key, f.Value)
 		}
 
 		var resp metadataResponse
@@ -148,16 +157,22 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 			return nil, fmt.Errorf("listing section %s: %w", section, err)
 		}
 
-		page := resp.MediaContainer.Metadata
-		if len(page) == 0 && len(items) < resp.MediaContainer.TotalSize {
-			return nil, fmt.Errorf("listing section %s: empty page at offset %d of %d",
-				section, len(items), resp.MediaContainer.TotalSize)
+		// Without totalSize, the end of the listing is unknown: a short page
+		// can come before the end, and a server that ignores the offset sends
+		// the same page forever.
+		page, total := resp.MediaContainer.Metadata, resp.MediaContainer.TotalSize
+		if total == nil {
+			return nil, fmt.Errorf("listing section %s: response has no totalSize", section)
 		}
 		for _, m := range page {
 			items = append(items, m.item())
 		}
-		if len(items) >= resp.MediaContainer.TotalSize {
+		switch {
+		case len(items) >= *total:
 			return items, nil
+		case len(page) == 0:
+			return nil, fmt.Errorf("listing section %s: empty page at offset %d of %d",
+				section, len(items), *total)
 		}
 	}
 }
@@ -166,7 +181,7 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 // movie. Only a 404 status gives ErrNotFound. A response without an item
 // gives a plain error.
 func (c *Client) ItemPaths(ctx context.Context, ratingKey string) ([]string, error) {
-	endpoint, err := metadataPath(ratingKey, "")
+	endpoint, err := c.metadataEndpoint(ratingKey)
 	if err != nil {
 		return nil, err
 	}

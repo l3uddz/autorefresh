@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"strings"
 	"syscall"
 	"time"
 
@@ -33,25 +32,51 @@ var (
 	ErrUnauthorized = errors.New("plex token rejected")
 )
 
-var ratingKeyPattern = regexp.MustCompile(`^[0-9]+$`)
+// idPattern matches a rating key or a section ID. Each one is a single path
+// segment, so it must not be "." or "..".
+var idPattern = regexp.MustCompile(`^[0-9]+$`)
 
 // Client sends requests to one Plex server.
 type Client struct {
-	name    string
-	baseURL string
-	token   string
-	http    *http.Client
+	name  string
+	base  *url.URL
+	token string
+	http  *http.Client
 }
 
 // New returns a Client. name is the server name from the configuration. It
-// labels trace lines. timeout limits each request, with the response body.
-func New(name, baseURL, token string, timeout time.Duration) *Client {
-	return &Client{
-		name:    name,
-		baseURL: strings.TrimRight(baseURL, "/"),
-		token:   token,
-		http:    &http.Client{Timeout: timeout, CheckRedirect: sameOrigin},
+// labels trace lines. base is the server URL, which can have a path. timeout
+// limits each request, with the response body.
+func New(name string, base *url.URL, token string, timeout time.Duration) *Client {
+	b := *base
+	if b.Path == "" {
+		b.Path = "/" // the request paths then start with "/"
 	}
+	return &Client{
+		name:  name,
+		base:  &b,
+		token: token,
+		http:  &http.Client{Timeout: timeout, CheckRedirect: sameOrigin},
+	}
+}
+
+// endpoint returns the URL of the path segments below the base URL. It
+// escapes each segment, so a segment cannot add a level to the path.
+func (c *Client) endpoint(segments ...string) *url.URL {
+	escaped := make([]string, len(segments))
+	for i, seg := range segments {
+		escaped[i] = url.PathEscape(seg)
+	}
+	return c.base.JoinPath(escaped...)
+}
+
+// metadataEndpoint checks ratingKey and returns the URL of the item, with
+// the segments after it.
+func (c *Client) metadataEndpoint(ratingKey string, segments ...string) (*url.URL, error) {
+	if !idPattern.MatchString(ratingKey) {
+		return nil, errors.New("invalid plex rating key")
+	}
+	return c.endpoint(append([]string{"library", "metadata", ratingKey}, segments...)...), nil
 }
 
 // errRedirectRefused marks a redirect that sameOrigin refuses.
@@ -70,14 +95,15 @@ func sameOrigin(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
-// send sends a request to endpoint, which is relative to the base URL. If out
-// is not nil, it decodes the JSON response body into out.
-func (c *Client) send(ctx context.Context, method, endpoint string, query url.Values, out any) error {
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+endpoint, nil)
+// send sends a request to endpoint with the query. If out is not nil, it
+// decodes the JSON response body into out.
+func (c *Client) send(ctx context.Context, method string, endpoint *url.URL, query url.Values, out any) error {
+	u := *endpoint
+	u.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), nil)
 	if err != nil {
 		return errors.New("creating request: invalid server URL")
 	}
-	req.URL.RawQuery = query.Encode()
 	req.Header.Set("X-Plex-Token", c.token)
 	req.Header.Set("Accept", "application/json")
 
@@ -186,12 +212,4 @@ func transportReason(err error) string {
 	default:
 		return "request failed"
 	}
-}
-
-// metadataPath checks ratingKey and returns the path of the item with suffix.
-func metadataPath(ratingKey, suffix string) (string, error) {
-	if !ratingKeyPattern.MatchString(ratingKey) {
-		return "", errors.New("invalid plex rating key")
-	}
-	return "/library/metadata/" + ratingKey + suffix, nil
 }
