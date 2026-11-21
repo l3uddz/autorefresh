@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -284,6 +285,28 @@ func TestSecondStoreWaitsForLock(t *testing.T) {
 				t.Fatalf("%s while another store held the lock: %v", tt.name, err)
 			}
 		})
+	}
+}
+
+// An older binary must not use a database that a newer one migrated.
+func TestOpenRejectsNewerSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO schema_migration (version) VALUES (9999)`); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s, err = Open(path)
+	if err == nil {
+		s.Close()
+		t.Fatal("Open succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "9999") {
+		t.Fatalf("error = %v, want the schema version", err)
 	}
 }
 

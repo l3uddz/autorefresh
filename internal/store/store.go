@@ -125,6 +125,14 @@ func migrate(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
+	// An older binary cannot know the schema of a newer one.
+	latest := list[len(list)-1].version
+	for v := range applied {
+		if v > latest {
+			return fmt.Errorf("the database has schema version %d, but this version of autorefresh knows only up to %d", v, latest)
+		}
+	}
+
 	for _, m := range list {
 		if applied[m.version] {
 			continue
