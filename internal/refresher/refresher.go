@@ -204,21 +204,17 @@ func (r *Refresher) runServer(ctx context.Context, srv Server) error {
 		return nil
 	}
 	unavailable := errors.Is(err, plex.ErrUnavailable)
-	switch {
-	case unavailable:
+	if unavailable {
 		// The run can take long, so the error shows at once.
 		log.Error().Str("server", srv.Name).Err(err).Msg("Plex server unavailable")
-		if !readsDone {
-			return fmt.Errorf("server %s: %w", srv.Name, err)
-		}
-	case err != nil:
-		return fmt.Errorf("server %s: %w", srv.Name, err)
 	}
 	// A server that the refresh step stopped also gets its summary.
-	if err := r.logSummary(run); err != nil {
-		return fmt.Errorf("server %s: %w", srv.Name, err)
+	if err == nil || unavailable && readsDone {
+		if summaryErr := r.logSummary(run); summaryErr != nil {
+			err = summaryErr
+		}
 	}
-	if unavailable {
+	if err != nil {
 		return fmt.Errorf("server %s: %w", srv.Name, err)
 	}
 	return nil
