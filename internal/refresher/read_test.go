@@ -524,6 +524,9 @@ func TestUnavailableSkipsServer(t *testing.T) {
 		fail func(*fakePlex)
 	}{
 		{"libraries", func(fp *fakePlex) { fp.librariesErr = fmt.Errorf("libraries: %w", plex.ErrUnavailable) }},
+		// A run that cannot list the libraries can check nothing, so it
+		// must not log an empty summary and succeed.
+		{"libraries failed", func(fp *fakePlex) { fp.librariesErr = errors.New("libraries: 500 Internal Server Error") }},
 		{"list", func(fp *fakePlex) {
 			fp.listErrs["1?type=1"] = fmt.Errorf("listing section 1: %w", plex.ErrUnavailable)
 		}},
@@ -570,6 +573,11 @@ func TestUnavailableSkipsServer(t *testing.T) {
 				t.Fatalf("got %d unavailable errors, want 1", len(errs))
 			}
 			wantField(t, errs[0], "server", "down")
+			for _, line := range f.logLines("info", "Run summary") {
+				if line["server"] == "down" {
+					t.Errorf("the unavailable server logged a summary: %v", line)
+				}
+			}
 			if got := keys(f.rows("up", "1")); !reflect.DeepEqual(got, []string{"101"}) {
 				t.Errorf("rows of the next server = %v, want [101]", got)
 			}

@@ -3,6 +3,7 @@ package refresher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -24,16 +25,16 @@ func supported(lib plex.Library) bool {
 }
 
 // readLibraries selects the libraries of the server and reads each one into
-// the cache. It returns only the error of stopError or a store error. It logs
-// and skips the other failures.
+// the cache. It returns only the error of stopError, the error of a failed
+// library listing, or a store error. It logs and skips the other failures.
 func (r *Refresher) readLibraries(ctx context.Context, run *serverRun) error {
 	libraries, err := run.server.Plex.Libraries(ctx)
 	if err != nil {
 		if stop := stopError(ctx, err); stop != nil {
 			return stop
 		}
-		log.Warn().Str("server", run.server.Name).Err(err).Msg("Listing libraries failed")
-		return nil
+		// Without its libraries, the run can check nothing on the server.
+		return fmt.Errorf("%w: %w", err, plex.ErrUnavailable)
 	}
 
 	run.libraries = r.selectLibraries(run.server, libraries)

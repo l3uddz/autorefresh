@@ -94,7 +94,8 @@ After autorefresh lists the libraries of a server, it removes the cache of
 each library of that server that the run does not check. Such a library is
 not in the `libraries` list, has an unsupported agent, or is gone from Plex.
 If the listing fails, or if Plex lists no library at all, autorefresh keeps
-the cache of that server, because the server can still be starting.
+the cache of that server, because the server can still be starting. A
+failed listing also counts as an unavailable server for the run.
 
 The cache of a library is its incomplete items and its read times.
 Autorefresh logs one `Removed cache of library` line for each removed

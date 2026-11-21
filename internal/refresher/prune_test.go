@@ -97,13 +97,14 @@ func TestRunPrunesUnselectedLibraries(t *testing.T) {
 
 func TestRunKeepsCacheWithoutLibraryListing(t *testing.T) {
 	tests := []struct {
-		name string
-		fail func(*fakePlex)
+		name   string
+		fail   func(*fakePlex)
+		failed bool // the server counts as unavailable in the run
 	}{
 		{"listing failed", func(fp *fakePlex) {
 			fp.librariesErr = errors.New("libraries: 500 Internal Server Error")
-		}},
-		{"no library listed", func(fp *fakePlex) { fp.libraries = nil }},
+		}, true},
+		{"no library listed", func(fp *fakePlex) { fp.libraries = nil }, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -112,7 +113,11 @@ func TestRunKeepsCacheWithoutLibraryListing(t *testing.T) {
 			f := newFixture(t, Server{Name: testServer, Plex: fp})
 			f.seed(testServer, moviesLib, incompleteItem("101"), store.NoSummary, 1)
 
-			f.run(t0)
+			if tt.failed {
+				f.runUnavailable(t0)
+			} else {
+				f.run(t0)
+			}
 
 			if got := f.cached("home/1"); !got["home/1"] {
 				t.Error("cache of home/1 was removed")
