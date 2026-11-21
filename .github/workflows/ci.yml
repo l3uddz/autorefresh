@@ -12,9 +12,10 @@ on:
     branches:
       - main
 
-# goreleaser needs write access to publish a GitHub release for a v* tag.
+# Runs only read the repository. The release job of a v* tag gets write
+# access, because goreleaser publishes a GitHub release.
 permissions:
-  contents: write
+  contents: read
 
 # A new run cancels the older run for the same ref, so an older commit never
 # replaces the image of a newer commit.
@@ -26,9 +27,12 @@ env:
   IMAGE: l3uddz/autorefresh
 
 jobs:
+  # The ruleset of main requires a check named build, so this job keeps its
+  # name. A v* tag runs the release job instead, with the same steps.
   build:
+    if: github.ref_type != 'tag'
     runs-on: ubuntu-latest
-    steps:
+    steps: &steps
       # checkout
       - name: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -148,3 +152,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: ${{ steps.image.outputs.tags }}
+
+  release:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps: *steps

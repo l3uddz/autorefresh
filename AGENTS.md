@@ -92,6 +92,11 @@ The `ci` workflow in `.github/workflows/ci.yml` runs on pushes to
 `main`, on `v*` tags, and on PRs into `main`. A push to another branch, such
 as `fix/<issue>-<slug>`, runs CI only after you open a PR into `main`.
 
+Pushes to `main` and PRs run the `build` job, which only reads the
+repository. A `v*` tag runs the `release` job instead. It has the same
+steps through a YAML anchor, and it alone gets write access to publish the
+GitHub release. Keep the name `build`, because the ruleset requires it.
+
 - If a run is not from a fork, CI publishes a public Docker image tag,
   `l3uddz/autorefresh:<branch>`. For a PR, the image contains the PR merge
   commit. `.github/scripts/docker-branch-tag.sh` makes the tag from the
