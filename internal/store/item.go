@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -359,7 +360,16 @@ func (s *Store) Due(q DueQuery) (items []Item, total int, err error) {
 	args := append([]any{q.Server}, stringArgs(q.Sections)...)
 	args = append(args, int(q.Ignored), q.Now.Add(-q.MinimumAge).Unix(), q.Now.UnixMilli(), maxWait, interval, doublings)
 
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM item WHERE `+where, args...).Scan(&total); err != nil {
+	// One read transaction gives the count and the rows the same snapshot,
+	// also while another process writes. A read-only transaction does not
+	// take the write lock.
+	tx, err := s.db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, 0, fmt.Errorf("begin due items: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM item WHERE `+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count due items: %w", err)
 	}
 
@@ -368,7 +378,7 @@ func (s *Store) Due(q DueQuery) (items []Item, total int, err error) {
 	if limit <= 0 {
 		limit = -1
 	}
-	items, err = queryItems(s.db, `SELECT `+itemColumns+` FROM item WHERE `+where+`
+	items, err = queryItems(tx, `SELECT `+itemColumns+` FROM item WHERE `+where+`
 		ORDER BY refreshes, last_attempt IS NOT NULL, last_attempt, added_at, rating_key LIMIT ?`,
 		append(args, limit)...)
 	if err != nil {
