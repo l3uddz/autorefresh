@@ -196,7 +196,9 @@ func (run *serverRun) recordRead(rd store.Read, lib plex.Library, items []plex.I
 	}
 	if !rd.Shows {
 		for _, it := range items {
-			run.files[it.RatingKey] = it.Files
+			if len(it.Files) > 0 && itemReasons(it)&store.Unmatched != 0 {
+				run.files[it.RatingKey] = it.Files
+			}
 		}
 	}
 }
