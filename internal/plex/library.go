@@ -136,31 +136,14 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 	}
 	endpoint := c.endpoint("library", "sections", section, "all")
 
-	// The listing needs only item fields, so it leaves out the heavy elements.
-	exclude := "Role,Director,Writer,Genre,Country"
-	if itemType == TypeShow {
-		exclude = "Media," + exclude
-	}
-
 	var items []Item
 	for {
 		// Each page after the first starts at the last item of the previous
 		// page. If that item moved, the items after it moved too, and the
 		// page would skip or repeat an item.
 		start := max(0, len(items)-1)
-		query := url.Values{
-			"type":                   {strconv.Itoa(itemType)},
-			"sort":                   {"addedAt"},
-			"excludeElements":        {exclude},
-			"X-Plex-Container-Start": {strconv.Itoa(start)},
-			"X-Plex-Container-Size":  {strconv.Itoa(pageSize)},
-		}
-		for _, f := range filters {
-			query.Add(f.Key, f.Value)
-		}
-
 		var resp metadataResponse
-		if err := c.send(ctx, http.MethodGet, endpoint, query, &resp); err != nil {
+		if err := c.send(ctx, http.MethodGet, endpoint, listQuery(itemType, start, filters), &resp); err != nil {
 			return nil, fmt.Errorf("listing section %s: %w", section, err)
 		}
 
@@ -171,12 +154,10 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 		if total == nil {
 			return nil, fmt.Errorf("listing section %s: response has no totalSize", section)
 		}
-		if len(items) > 0 {
-			if len(page) == 0 || page[0].RatingKey != items[len(items)-1].RatingKey {
-				return nil, fmt.Errorf("listing section %s: listing changed during the read at offset %d",
-					section, start)
-			}
-			page = page[1:]
+		page, ok := newPageItems(items, page)
+		if !ok {
+			return nil, fmt.Errorf("listing section %s: listing changed during the read at offset %d",
+				section, start)
 		}
 		for _, m := range page {
 			items = append(items, m.item())
@@ -189,6 +170,39 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 				section, len(items), *total)
 		}
 	}
+}
+
+// listQuery returns the query of the listing page at start.
+func listQuery(itemType, start int, filters []Filter) url.Values {
+	// The listing needs only item fields, so it leaves out the heavy elements.
+	exclude := "Role,Director,Writer,Genre,Country"
+	if itemType == TypeShow {
+		exclude = "Media," + exclude
+	}
+	query := url.Values{
+		"type":                   {strconv.Itoa(itemType)},
+		"sort":                   {"addedAt"},
+		"excludeElements":        {exclude},
+		"X-Plex-Container-Start": {strconv.Itoa(start)},
+		"X-Plex-Container-Size":  {strconv.Itoa(pageSize)},
+	}
+	for _, f := range filters {
+		query.Add(f.Key, f.Value)
+	}
+	return query
+}
+
+// newPageItems returns the items of page that items does not hold yet. A
+// page after the first must start at the last item of items. ok is false if
+// it does not, because the listing then moved.
+func newPageItems(items []Item, page []metadata) (rest []metadata, ok bool) {
+	if len(items) == 0 {
+		return page, true
+	}
+	if len(page) == 0 || page[0].RatingKey != items[len(items)-1].RatingKey {
+		return nil, false
+	}
+	return page[1:], true
 }
 
 // ItemPaths returns Location[].path of a series, or Media[].Part[].file of a
