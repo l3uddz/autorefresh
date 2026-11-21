@@ -43,11 +43,11 @@ func newFakePlex(libraries ...plex.Library) *fakePlex {
 }
 
 // listKey renders a listing as "<section>?type=<type>&<filter>&...", with
-// each filter written as Field+Op+Value, for example "season.index>>=1".
+// each filter written as Key=Value, for example "season.index>>=1".
 func listKey(section string, itemType int, filters ...plex.Filter) string {
 	parts := []string{"type=" + strconv.Itoa(itemType)}
 	for _, f := range filters {
-		parts = append(parts, f.Field+f.Op+f.Value)
+		parts = append(parts, f.Key+"="+f.Value)
 	}
 	return section + "?" + strings.Join(parts, "&")
 }

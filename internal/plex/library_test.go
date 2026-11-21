@@ -205,7 +205,7 @@ func TestListEncodesFilters(t *testing.T) {
 	}{
 		{
 			"show", TypeShow,
-			[]Filter{{"addedAt", ">>=", "100"}, {"episode.summary", "=", ""}},
+			[]Filter{{"addedAt>>", "100"}, {"episode.summary", ""}},
 			"X-Plex-Container-Size=500&X-Plex-Container-Start=0&addedAt%3E%3E=100&episode.summary=" +
 				"&excludeElements=Media%2CRole%2CDirector%2CWriter%2CGenre%2CCountry&sort=addedAt&type=2",
 		},

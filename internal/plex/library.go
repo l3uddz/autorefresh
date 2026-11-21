@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -38,10 +37,11 @@ type Item struct {
 	Files     []string // movie listings: Media[].Part[].file
 }
 
-// Filter is one Plex filter, sent as Field+Op+Value, for example
-// {Field: "addedAt", Op: ">>=", Value: "1795025872"} or
-// {Field: "episode.summary", Op: "=", Value: ""}.
-type Filter struct{ Field, Op, Value string }
+// Filter is one Plex filter, sent as the query parameter Key=Value. The key
+// holds the field and the operator without its "=", for example
+// {Key: "addedAt>>", Value: "1795025872"} sends addedAt>>=1795025872, and
+// {Key: "episode.summary", Value: ""} sends episode.summary=.
+type Filter struct{ Key, Value string }
 
 type metadata struct {
 	RatingKey string `json:"ratingKey"`
@@ -143,7 +143,7 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 			"X-Plex-Container-Size":  {strconv.Itoa(pageSize)},
 		}
 		for _, f := range filters {
-			query.Add(f.Field+strings.TrimSuffix(f.Op, "="), f.Value)
+			query.Add(f.Key, f.Value)
 		}
 
 		var resp metadataResponse

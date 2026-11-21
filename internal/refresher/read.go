@@ -230,9 +230,9 @@ func (r *Refresher) listItems(ctx context.Context, client Plex, section string, 
 	var items []plex.Item
 	seen := map[string]bool{}
 	for _, f := range []plex.Filter{
-		filter("updatedAt", ">>=", since),
-		filter("addedAt", ">>=", since),
-		filter("unmatched", "=", "1"),
+		filter("updatedAt>>", since),
+		filter("addedAt>>", since),
+		filter("unmatched", "1"),
 	} {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -283,11 +283,11 @@ func (r *Refresher) episodeSeries(ctx context.Context, client Plex, server strin
 	addedBefore := unixString(at.Add(-r.opts.MinimumAge))
 	if r.opts.IgnoreReasons&store.EpisodeNoSummary == 0 {
 		noSummary, err = listSeries(ctx, client, server, lib, store.EpisodeNoSummary,
-			filter("unmatched", "=", "0"),
-			filter("episode.unmatched", "=", "0"),
-			filter("episode.summary", "=", ""),
-			filter("episode.addedAt", "<<=", addedBefore),
-			filter("season.index", ">>=", "1"),
+			filter("unmatched", "0"),
+			filter("episode.unmatched", "0"),
+			filter("episode.summary", ""),
+			filter("episode.addedAt<<", addedBefore),
+			filter("season.index>>", "1"),
 		)
 		if err != nil {
 			return nil, nil, err
@@ -295,10 +295,10 @@ func (r *Refresher) episodeSeries(ctx context.Context, client Plex, server strin
 	}
 	if r.opts.IgnoreReasons&store.EpisodeUnmatched == 0 {
 		unmatched, err = listSeries(ctx, client, server, lib, store.EpisodeUnmatched,
-			filter("unmatched", "=", "0"),
-			filter("episode.unmatched", "=", "1"),
-			filter("episode.addedAt", "<<=", addedBefore),
-			filter("season.index", ">>=", "1"),
+			filter("unmatched", "0"),
+			filter("episode.unmatched", "1"),
+			filter("episode.addedAt<<", addedBefore),
+			filter("season.index>>", "1"),
 		)
 		if err != nil {
 			return nil, nil, err
@@ -358,8 +358,8 @@ func storeItem(server string, lib plex.Library, it plex.Item, reasons store.Reas
 	}
 }
 
-func filter(field, op, value string) plex.Filter {
-	return plex.Filter{Field: field, Op: op, Value: value}
+func filter(key, value string) plex.Filter {
+	return plex.Filter{Key: key, Value: value}
 }
 
 func unixString(t time.Time) string { return strconv.FormatInt(t.Unix(), 10) }
