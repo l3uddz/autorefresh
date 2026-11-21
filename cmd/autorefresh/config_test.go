@@ -181,6 +181,36 @@ func TestReadConfigStopsWhenContextEnds(t *testing.T) {
 	}
 }
 
+// A path that cannot be checked, such as a path through a regular file,
+// fails at once instead of a wait for a file that can never appear.
+func TestReadConfigFailsOnStatError(t *testing.T) {
+	captureLog(t)
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := readConfigAsync(t, filepath.Join(file, "config.yml"), time.Hour); err == nil {
+		t.Fatal("readConfig = nil error, want the error of the path")
+	}
+}
+
+func TestReadConfigReturnsReadError(t *testing.T) {
+	captureLog(t)
+	path := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(path, []byte("plex: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	original := readFileFunc
+	t.Cleanup(func() { readFileFunc = original })
+	errRead := errors.New("read failed")
+	readFileFunc = func(string) ([]byte, error) { return nil, errRead }
+
+	if _, err := readConfigAsync(t, path, time.Hour); !errors.Is(err, errRead) {
+		t.Fatalf("readConfig error = %v, want the read error", err)
+	}
+}
+
 func TestReadConfigReadsExistingFileAtOnce(t *testing.T) {
 	buf := captureLog(t)
 	path := filepath.Join(t.TempDir(), "config.yml")
