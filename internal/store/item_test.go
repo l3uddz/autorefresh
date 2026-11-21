@@ -495,6 +495,30 @@ func TestApplyReadKeepsHistoryOnSecondRead(t *testing.T) {
 	}
 }
 
+// An incremental read that does not list an existing incomplete row and does
+// not change its reasons must not issue a no-op UPDATE on item.
+func TestApplyReadSkipsNoOpUpdate(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Full: true, Items: []Item{item("a", NoArt), item("b", NoSummary)}})
+	if _, err := s.db.Exec(`CREATE TABLE item_updates (n INTEGER)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`CREATE TRIGGER count_item_updates AFTER UPDATE ON item
+		BEGIN INSERT INTO item_updates VALUES (1); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	apply(t, s, Read{At: base.Add(time.Hour)})
+
+	var updates int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM item_updates`).Scan(&updates); err != nil {
+		t.Fatal(err)
+	}
+	if updates != 0 {
+		t.Fatalf("item updates = %d, want 0", updates)
+	}
+}
+
 func TestApplyReadReturnsFixedInKeyOrder(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("c", NoArt), item("a", NoArt), item("b", NoArt)}})

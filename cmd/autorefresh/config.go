@@ -72,9 +72,7 @@ func readConfig(ctx context.Context, path string, interval time.Duration) ([]byt
 			}
 			return data, nil
 		}
-		if state != nil {
-			seen = state
-		}
+		seen = state
 
 		if !waited {
 			log.Warn().
@@ -110,11 +108,18 @@ func checkConfig(path string, waited bool, seen os.FileInfo) (data []byte, state
 	}
 
 	data, err = readFileFunc(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil, nil
+	}
 	if err != nil {
 		return nil, nil, err
 	}
-	if after, err := os.Stat(path); err != nil || len(data) == 0 || !sameState(info, after) {
-		return nil, info, nil
+	after, err := os.Stat(path)
+	if err != nil || len(data) == 0 || !sameState(info, after) {
+		if err == nil && after.Mode().IsRegular() && after.Size() > 0 {
+			return nil, after, nil
+		}
+		return nil, nil, nil
 	}
 	return data, info, nil
 }

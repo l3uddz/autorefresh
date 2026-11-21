@@ -165,6 +165,9 @@ func (run *serverRun) sections() []string {
 // one server also stops the other servers. An unavailable server stops only
 // itself. If ctx ends, Run stops and returns nil.
 func (r *Refresher) Run(ctx context.Context) error {
+	if ctx.Err() != nil {
+		return nil
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

@@ -121,13 +121,13 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 		names = append(names, s.Name)
 	}
 
-	// The interface stays nil without a token, so the refresher sends no
-	// TMDB requests.
-	var tmdbClient *tmdb.Client
+	// The interfaces stay nil without a token, so no TMDB request is sent.
 	var lookup refresher.TMDB
+	var tmdbCheck interface{ Check(context.Context) error }
 	if cfg.TMDBToken != "" {
-		tmdbClient = tmdb.New(cfg.TMDBToken, config.DefaultTimeout)
+		tmdbClient := tmdb.New(cfg.TMDBToken, config.DefaultTimeout)
 		lookup = tmdbClient
+		tmdbCheck = tmdbClient
 	}
 
 	r := refresher.New(servers, st, refresher.Options{
@@ -148,8 +148,11 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 		Strs("servers", names).
 		Str("schedule", cfg.Schedule).
 		Bool("dry_run", opts.DryRun).
-		Bool("tmdb", tmdbClient != nil).
+		Bool("tmdb", lookup != nil).
 		Msg("Initialised")
+
+	// After the first signal, a second signal ends the process at once.
+	defer context.AfterFunc(ctx, stop)()
 
 	if opts.Once {
 		err := r.Run(ctx)
@@ -162,15 +165,12 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 		return err
 	}
 
-	// schedule. A check of each server shows a wrong token or URL at once,
-	// before the first run.
-	checkServers(ctx, servers)
-	if tmdbClient != nil {
-		checkTMDB(ctx, tmdbClient)
+	// schedule. A check of each server and TMDB shows a wrong token or URL at
+	// once, before the first run.
+	checkTokens(ctx, servers, tmdbCheck)
+	if ctx.Err() == nil {
+		serve(ctx, &runner{run: r.Run}, cfg.RunSchedule)
 	}
-	// After the first signal, a second signal ends the process at once.
-	context.AfterFunc(ctx, stop)
-	serve(ctx, &runner{run: r.Run}, cfg.RunSchedule)
 	closeStore(st)
 	log.Info().Msg("Stopped")
 	return nil

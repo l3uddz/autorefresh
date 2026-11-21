@@ -163,3 +163,26 @@ func TestRunStopsDuringConfigWait(t *testing.T) {
 		t.Errorf("want a Stopped line and no fatal line:\n%s", logs)
 	}
 }
+
+// A signal during startup token checks stops before starting the schedule or
+// first run.
+func TestRunStopsDuringTokenCheck(t *testing.T) {
+	buf := captureLog(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var calls atomic.Int32
+	opts := runOptions(t, runTarget(t, http.StatusOK, func(n int32) {
+		calls.Store(n)
+		cancel()
+	}).URL)
+
+	if err := run(ctx, cancel, opts, "test"); err != nil {
+		t.Fatalf("run = %v, want nil", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Errorf("requests = %d, want only the 1 token check", got)
+	}
+	if logs := buf.String(); !strings.Contains(logs, `"message":"Stopped"`) || strings.Contains(logs, `"message":"Run summary"`) {
+		t.Errorf("want Stopped and no Run summary:\n%s", logs)
+	}
+}

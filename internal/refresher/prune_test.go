@@ -1,6 +1,7 @@
 package refresher
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strings"
@@ -135,5 +136,20 @@ func TestRunKeepsCacheWithoutLibraryListing(t *testing.T) {
 				t.Error("cache of home/1 stayed after a listing without it")
 			}
 		})
+	}
+}
+
+func TestRunCanceledBeforeStartDoesNotPrune(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	f := newFixture(t, Server{Name: testServer, Plex: fp})
+	f.seed("old", moviesLib, incompleteItem("101"), store.NoSummary, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := f.r.Run(ctx); err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+	if got := f.cached("old/1"); !got["old/1"] {
+		t.Error("canceled Run pruned old/1")
 	}
 }

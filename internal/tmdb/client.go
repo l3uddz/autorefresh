@@ -8,17 +8,36 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"time"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 // ErrUnauthorized marks a 401 status, which means that TMDB rejected the token.
 var ErrUnauthorized = errors.New("tmdb token rejected")
 
-// externalSources maps a path ID source to the external_source value of TMDB.
-var externalSources = map[string]string{"tvdb": "tvdb_id", "imdb": "imdb_id"}
+// maxDrainBytes bounds unread response body draining so normal responses
+// reuse connections without letting a misbehaving server stall a request.
+const maxDrainBytes = 64 << 10
+
+type externalSource struct {
+	param string
+	valid *regexp.Regexp
+}
+
+// externalSources maps a path ID source to its TMDB external_source value
+// and valid ID shape. Each ID becomes one path segment, so rejecting invalid
+// values also prevents "." and ".." traversal in JoinPath.
+var externalSources = map[string]externalSource{
+	"tvdb": {param: "tvdb_id", valid: regexp.MustCompile(`^[0-9]+$`)},
+	"imdb": {param: "imdb_id", valid: regexp.MustCompile(`(?i)^tt[0-9]+$`)},
+}
 
 // Client sends requests to TMDB.
 type Client struct {
@@ -33,17 +52,54 @@ func New(token string, timeout time.Duration) *Client {
 	return &Client{
 		base:  &url.URL{Scheme: "https", Host: "api.themoviedb.org", Path: "/"},
 		token: token,
-		http:  &http.Client{Timeout: timeout},
+		http: &http.Client{
+			Timeout:       timeout,
+			Transport:     traceTransport{base: http.DefaultTransport},
+			CheckRedirect: sameOrigin,
+		},
 	}
+}
+
+// traceTransport logs one trace line for each HTTP round trip, including
+// redirect hops. It logs only method, path, duration, and status or error.
+type traceTransport struct {
+	base http.RoundTripper
+}
+
+func (t traceTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	start := time.Now()
+	res, err := t.base.RoundTrip(req)
+	if err != nil {
+		trace(req, start).Err(err).Msg("TMDB request")
+		return nil, err
+	}
+	trace(req, start).Int("status", res.StatusCode).Msg("TMDB request")
+	return res, nil
+}
+
+// sameOrigin refuses a redirect to another origin so the bearer token stays
+// pinned to the TMDB API origin (Go's default client still forwards
+// Authorization across subdomains).
+func sameOrigin(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("too many redirects")
+	}
+	if req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host {
+		return errors.New("redirect to another origin refused")
+	}
+	return nil
 }
 
 // Find returns the TMDB ID of the series (show true) or the movie with an
 // external ID. source is "tvdb" or "imdb". ok is false unless TMDB has
-// exactly one such entry.
+// exactly one such entry with a positive ID.
 func (c *Client) Find(ctx context.Context, source, id string, show bool) (tmdbID string, ok bool, err error) {
-	external, known := externalSources[source]
+	ext, known := externalSources[source]
 	if !known {
 		return "", false, fmt.Errorf("find: unknown source %q", source)
+	}
+	if !ext.valid.MatchString(id) {
+		return "", false, fmt.Errorf("find: invalid %s id", source)
 	}
 
 	var resp struct {
@@ -54,7 +110,7 @@ func (c *Client) Find(ctx context.Context, source, id string, show bool) (tmdbID
 			ID int `json:"id"`
 		} `json:"tv_results"`
 	}
-	query := url.Values{"external_source": {external}}
+	query := url.Values{"external_source": {ext.param}}
 	if err := c.get(ctx, []string{"3", "find", id}, query, &resp); err != nil {
 		return "", false, err
 	}
@@ -63,7 +119,7 @@ func (c *Client) Find(ctx context.Context, source, id string, show bool) (tmdbID
 	if show {
 		entries = resp.Series
 	}
-	if len(entries) != 1 {
+	if len(entries) != 1 || entries[0].ID <= 0 {
 		return "", false, nil
 	}
 	return strconv.Itoa(entries[0].ID), true, nil
@@ -72,6 +128,13 @@ func (c *Client) Find(ctx context.Context, source, id string, show bool) (tmdbID
 // Check asks TMDB whether it accepts the token.
 func (c *Client) Check(ctx context.Context) error {
 	return c.get(ctx, []string{"3", "authentication"}, nil, nil)
+}
+
+func trace(req *http.Request, start time.Time) *zerolog.Event {
+	return log.Trace().
+		Str("method", req.Method).
+		Str("path", req.URL.Path).
+		Dur("duration", time.Since(start).Round(time.Millisecond))
 }
 
 // get sends a GET request to the path segments below the base URL and
@@ -102,7 +165,11 @@ func (c *Client) get(ctx context.Context, segments []string, query url.Values, o
 		}
 		return fmt.Errorf("GET %s: %w", path, err)
 	}
-	defer res.Body.Close()
+	defer func() {
+		// Draining the body lets the connection get reused.
+		io.Copy(io.Discard, io.LimitReader(res.Body, maxDrainBytes))
+		res.Body.Close()
+	}()
 
 	switch {
 	case res.StatusCode == http.StatusUnauthorized:

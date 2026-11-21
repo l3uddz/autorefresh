@@ -866,3 +866,20 @@ func TestStoreErrorEndsRun(t *testing.T) {
 		t.Error("Run with a closed store returned no error")
 	}
 }
+
+func TestRecordReadRetainsOnlyUnmatchedMovieFiles(t *testing.T) {
+	matched := completeItem("101")
+	matched.Files = []string{"/m/Matched (2020) {tmdb-1}/Matched.mkv"}
+	incompleteMatched := incompleteItem("102")
+	incompleteMatched.Files = []string{"/m/NoSummary (2020) {tmdb-2}/NoSummary.mkv"}
+	unmatched := unmatchedItem("103")
+	unmatched.Files = []string{"/m/Unmatched (2020) {tmdb-3}/Unmatched.mkv"}
+
+	run := &serverRun{files: map[string][]string{}}
+	run.recordRead(store.Read{}, moviesLib, []plex.Item{matched, incompleteMatched, unmatched}, nil)
+
+	want := map[string][]string{"103": unmatched.Files}
+	if !reflect.DeepEqual(run.files, want) {
+		t.Errorf("run.files = %v, want %v", run.files, want)
+	}
+}
