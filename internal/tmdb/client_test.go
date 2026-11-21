@@ -298,3 +298,32 @@ func TestTraceLogsRequestsWithoutToken(t *testing.T) {
 		t.Errorf("line 1 = %s, want error field", lines[1])
 	}
 }
+
+func TestTraceLogsRedirectHopsSeparately(t *testing.T) {
+	buf := captureLog(t)
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/3/authentication" {
+			http.Redirect(w, r, "/3/authentication/v2", http.StatusTemporaryRedirect)
+			return
+		}
+		w.Write([]byte(`{"success":true}`))
+	})
+
+	if err := c.Check(context.Background()); err != nil {
+		t.Fatalf("Check = %v, want nil", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, token) {
+		t.Fatalf("trace log holds the token: %s", out)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d trace lines, want 2: %s", len(lines), out)
+	}
+	if !strings.Contains(lines[0], `"path":"/3/authentication"`) || !strings.Contains(lines[0], `"status":307`) {
+		t.Errorf("line 0 = %s, want /3/authentication with status 307", lines[0])
+	}
+	if !strings.Contains(lines[1], `"path":"/3/authentication/v2"`) || !strings.Contains(lines[1], `"status":200`) {
+		t.Errorf("line 1 = %s, want /3/authentication/v2 with status 200", lines[1])
+	}
+}

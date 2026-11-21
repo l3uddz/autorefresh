@@ -52,8 +52,29 @@ func New(token string, timeout time.Duration) *Client {
 	return &Client{
 		base:  &url.URL{Scheme: "https", Host: "api.themoviedb.org", Path: "/"},
 		token: token,
-		http:  &http.Client{Timeout: timeout, CheckRedirect: sameOrigin},
+		http: &http.Client{
+			Timeout:       timeout,
+			Transport:     traceTransport{base: http.DefaultTransport},
+			CheckRedirect: sameOrigin,
+		},
 	}
+}
+
+// traceTransport logs one trace line for each HTTP round trip, including
+// redirect hops. It logs only method, path, duration, and status or error.
+type traceTransport struct {
+	base http.RoundTripper
+}
+
+func (t traceTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	start := time.Now()
+	res, err := t.base.RoundTrip(req)
+	if err != nil {
+		trace(req, start).Err(err).Msg("TMDB request")
+		return nil, err
+	}
+	trace(req, start).Int("status", res.StatusCode).Msg("TMDB request")
+	return res, nil
 }
 
 // sameOrigin refuses a redirect to another origin so the bearer token stays
@@ -136,14 +157,12 @@ func (c *Client) get(ctx context.Context, segments []string, query url.Values, o
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "application/json")
 
-	start := time.Now()
 	res, err := c.http.Do(req)
 	if err != nil {
 		var urlErr *url.Error
 		if errors.As(err, &urlErr) {
 			err = urlErr.Err
 		}
-		trace(req, start).Err(err).Msg("TMDB request")
 		return fmt.Errorf("GET %s: %w", path, err)
 	}
 	defer func() {
@@ -151,8 +170,6 @@ func (c *Client) get(ctx context.Context, segments []string, query url.Values, o
 		io.Copy(io.Discard, io.LimitReader(res.Body, maxDrainBytes))
 		res.Body.Close()
 	}()
-
-	trace(req, start).Int("status", res.StatusCode).Msg("TMDB request")
 
 	switch {
 	case res.StatusCode == http.StatusUnauthorized:
