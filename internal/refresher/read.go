@@ -171,7 +171,15 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 	if err != nil {
 		return err
 	}
+	run.recordRead(rd, lib, items, fixed)
+	r.logRead(rd, lib, r.now().Sub(at))
+	return nil
+}
 
+// recordRead adds an applied read of lib to the run: the counts of the
+// summary, the rows that became complete, and the movie files that a fix
+// match can use instead of a request.
+func (run *serverRun) recordRead(rd store.Read, lib plex.Library, items []plex.Item, fixed []store.Item) {
 	if rd.Full {
 		run.fullReadItems += len(items)
 	} else {
@@ -191,8 +199,6 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 			run.files[it.RatingKey] = it.Files
 		}
 	}
-	r.logRead(rd, lib, r.now().Sub(at))
-	return nil
 }
 
 // stopError returns the error that stops the server after a failed Plex
