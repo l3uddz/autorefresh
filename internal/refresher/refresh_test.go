@@ -58,7 +58,7 @@ func (f *fixture) seed(server string, lib plex.Library, it plex.Item, reasons st
 		f.t.Fatalf("seed store: %v", err)
 	}
 	for range refreshes {
-		if err := f.store.RecordAttempt(server, it.RatingKey, seedAttempt, true); err != nil {
+		if err := f.store.RecordAttempt(server, it.RatingKey, seedAttempt, store.ActionRefresh); err != nil {
 			f.t.Fatalf("seed attempt: %v", err)
 		}
 	}
@@ -248,6 +248,9 @@ func TestRefreshSuccessRecordsRefresh(t *testing.T) {
 	if row.Refreshes != 1 || !row.LastRefresh.Equal(t0) || !row.LastAttempt.Equal(t0) {
 		t.Errorf("row = %+v, want 1 refresh and both times %v", row, t0)
 	}
+	if row.LastAction != store.ActionRefresh || row.LastMatch != "" {
+		t.Errorf("actions = %q, %q, want refresh and no match", row.LastAction, row.LastMatch)
+	}
 	lines := f.logLines("info", "Sent request")
 	if len(lines) != 1 {
 		t.Fatalf("got %d sent lines, want 1", len(lines))
@@ -268,8 +271,8 @@ func TestRefreshFailureRecordsAttemptOnly(t *testing.T) {
 	f.run(t0)
 
 	row, _ := f.row(testServer, "1", "101")
-	if row.Refreshes != 0 || !row.LastRefresh.IsZero() || !row.LastAttempt.Equal(t0) {
-		t.Errorf("row = %+v, want no refresh and LastAttempt %v", row, t0)
+	if row.Refreshes != 0 || !row.LastRefresh.IsZero() || !row.LastAttempt.Equal(t0) || row.LastAction != "" {
+		t.Errorf("row = %+v, want no refresh, no action, and LastAttempt %v", row, t0)
 	}
 	warnings := f.logLines("warn", "Request failed")
 	if len(warnings) != 1 {
@@ -379,8 +382,9 @@ func TestFixMatchMovie(t *testing.T) {
 
 	wantCalls(t, matchReads(fp.calls), "SearchMatches 101 tmdb-1 tv.plex.agents.movie en-US")
 	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/a")
-	if row, _ := f.row(testServer, "1", "101"); row.Refreshes != 2 {
-		t.Errorf("Refreshes = %d, want 2", row.Refreshes)
+	row, _ := f.row(testServer, "1", "101")
+	if row.Refreshes != 2 || row.LastAction != store.ActionMatch || row.LastMatch != store.ActionMatch {
+		t.Errorf("row = %+v, want 2 refreshes and the match as both actions", row)
 	}
 	summary := f.lastSummary(testServer)
 	wantField(t, summary, "match_requests", float64(1))
@@ -670,8 +674,8 @@ func TestDryRunSendsAndRecordsNothing(t *testing.T) {
 	want := map[string]time.Time{"101": {}, "102": seedAttempt, "103": seedAttempt, "104": seedAttempt}
 	for key, attempt := range want {
 		row, exists := f.row(testServer, "1", key)
-		if !exists || !row.LastAttempt.Equal(attempt) {
-			t.Errorf("row %s = %+v (exists %v), want LastAttempt %v", key, row, exists, attempt)
+		if !exists || !row.LastAttempt.Equal(attempt) || row.LastMatch != "" {
+			t.Errorf("row %s = %+v (exists %v), want LastAttempt %v and no match", key, row, exists, attempt)
 		}
 	}
 	lines := f.logLines("info", "Dry run")

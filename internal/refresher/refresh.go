@@ -70,12 +70,12 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 		return r.itemFailed(ctx, run, it, "", err)
 	}
 
-	action := "refresh"
+	action := store.ActionRefresh
 	if match {
-		action = "match"
+		action = store.ActionMatch
 	}
 	if r.opts.DryRun {
-		itemEvent(log.Info(), run.server.Name, lib, it).Str("action", action).Msg("Dry run")
+		itemEvent(log.Info(), run.server.Name, lib, it).Str("action", string(action)).Msg("Dry run")
 		return nil
 	}
 
@@ -94,10 +94,10 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 		return r.itemFailed(ctx, run, it, action, err)
 	}
 
-	if err := r.store.RecordAttempt(run.server.Name, it.RatingKey, r.now(), true); err != nil {
+	if err := r.store.RecordAttempt(run.server.Name, it.RatingKey, r.now(), action); err != nil {
 		return err
 	}
-	itemEvent(log.Info(), run.server.Name, lib, it).Str("action", action).Msg("Sent request")
+	itemEvent(log.Info(), run.server.Name, lib, it).Str("action", string(action)).Msg("Sent request")
 	r.warnAtLongestWait(run.server.Name, lib, it)
 	return nil
 }
@@ -113,7 +113,7 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 //   - A match search that the end of the run interrupted changes nothing.
 //
 // It returns the error of stopError or a store error.
-func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Item, action string, err error) error {
+func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Item, action store.Action, err error) error {
 	sent := action != ""
 	if errors.Is(err, errCache) {
 		return err
@@ -129,7 +129,7 @@ func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Ite
 	} else {
 		run.failures++
 		if !r.opts.DryRun {
-			if err := r.store.RecordAttempt(run.server.Name, it.RatingKey, r.now(), false); err != nil {
+			if err := r.store.RecordAttempt(run.server.Name, it.RatingKey, r.now(), ""); err != nil {
 				return err
 			}
 		}
@@ -140,7 +140,7 @@ func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Ite
 
 	ev := itemEvent(log.Warn(), run.server.Name, run.library(it.Section), it).Err(err)
 	if sent {
-		ev.Str("action", action).Msg("Request failed")
+		ev.Str("action", string(action)).Msg("Request failed")
 	} else {
 		ev.Msg("Match search failed")
 	}

@@ -165,7 +165,7 @@ func (f *fixture) library(server, section string) store.Library {
 func (f *fixture) refreshed(key string, times int) {
 	f.t.Helper()
 	for range times {
-		if err := f.store.RecordAttempt(testServer, key, t0, true); err != nil {
+		if err := f.store.RecordAttempt(testServer, key, t0, store.ActionRefresh); err != nil {
 			f.t.Fatalf("record attempt: %v", err)
 		}
 	}

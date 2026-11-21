@@ -30,7 +30,7 @@ type Store interface {
 	Unseen(server, section string, seen []string) ([]store.Item, error)
 	Due(q store.DueQuery) (items []store.Item, total int, err error)
 	CountIncomplete(server string, sections []string, ignored store.Reasons) (int, error)
-	RecordAttempt(server, ratingKey string, at time.Time, refreshed bool) error
+	RecordAttempt(server, ratingKey string, at time.Time, accepted store.Action) error
 	TMDBID(server, ratingKey, source, externalID string) (tmdbID string, ok bool, err error)
 	SaveTMDBID(server, ratingKey, source, externalID, tmdbID string) error
 	Delete(server, ratingKey string) error
