@@ -1,6 +1,7 @@
 package tmdb
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -9,11 +10,33 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+
 	"github.com/l3uddz/autorefresh/internal/plex"
 )
+
+func TestMain(m *testing.M) {
+	log.Logger = zerolog.Nop()
+	os.Exit(m.Run())
+}
+
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	oldLogger, oldLevel := log.Logger, zerolog.GlobalLevel()
+	log.Logger = zerolog.New(&buf)
+	zerolog.SetGlobalLevel(zerolog.TraceLevel)
+	t.Cleanup(func() {
+		log.Logger = oldLogger
+		zerolog.SetGlobalLevel(oldLevel)
+	})
+	return &buf
+}
 
 const token = "secret-token"
 
@@ -175,5 +198,103 @@ func TestCheck(t *testing.T) {
 	})
 	if err := c.Check(context.Background()); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("Check = %v, want ErrUnauthorized", err)
+	}
+}
+
+func TestFindRejectsInvalidID(t *testing.T) {
+	var hits atomic.Int32
+	c := serve(t, func(w http.ResponseWriter, _ *http.Request) { hits.Add(1) })
+	tests := []struct {
+		source, id string
+	}{
+		{"tvdb", ""},
+		{"tvdb", ".."},
+		{"tvdb", "1/2"},
+		{"tvdb", "tt123"},
+		{"imdb", ""},
+		{"imdb", ".."},
+		{"imdb", "12345"},
+		{"imdb", "tt"},
+		{"unknown", "123"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.source+"_"+tt.id, func(t *testing.T) {
+			if _, _, err := c.Find(context.Background(), tt.source, tt.id, true); err == nil {
+				t.Errorf("Find(%q, %q) returned no error", tt.source, tt.id)
+			}
+		})
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("server received %d requests, want 0", n)
+	}
+}
+
+func TestFindIgnoresNonPositiveID(t *testing.T) {
+	for _, body := range []string{`{"tv_results":[{}]}`, `{"tv_results":[{"id":0}]}`, `{"tv_results":[{"id":-5}]}`} {
+		t.Run(body, func(t *testing.T) {
+			c := serve(t, func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte(body)) })
+			id, ok, err := c.Find(context.Background(), "tvdb", "81189", true)
+			if err != nil || ok || id != "" {
+				t.Fatalf("Find = %q, %v, %v, want nothing", id, ok, err)
+			}
+		})
+	}
+}
+
+func TestRefusesCrossOriginRedirect(t *testing.T) {
+	var other atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { other.Add(1) }))
+	t.Cleanup(target.Close)
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	})
+
+	err := c.Check(context.Background())
+	if err == nil {
+		t.Fatal("Check succeeded, want redirect error")
+	}
+	if other.Load() != 0 {
+		t.Errorf("other origin received %d requests, want 0", other.Load())
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Errorf("error %q holds the token", err)
+	}
+}
+
+func TestTraceLogsRequestsWithoutToken(t *testing.T) {
+	buf := captureLog(t)
+	c := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"success":true}`))
+	})
+
+	if err := c.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c.base = mustURL(t, "http://127.0.0.1:1")
+	_ = c.Check(context.Background())
+
+	out := buf.String()
+	if strings.Contains(out, token) {
+		t.Fatalf("trace log holds the token: %s", out)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d trace lines, want 2: %s", len(lines), out)
+	}
+	for _, want := range []string{
+		`"level":"trace"`,
+		`"method":"GET","path":"/3/authentication"`,
+	} {
+		for i, line := range lines {
+			if !strings.Contains(line, want) {
+				t.Errorf("line %d missing %s: %s", i, want, line)
+			}
+		}
+	}
+	if !strings.Contains(lines[0], `"status":200`) {
+		t.Errorf("line 0 = %s, want status 200", lines[0])
+	}
+	if !strings.Contains(lines[1], `"error":`) {
+		t.Errorf("line 1 = %s, want error field", lines[1])
 	}
 }
