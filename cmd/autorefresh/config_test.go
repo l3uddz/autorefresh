@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -208,6 +209,77 @@ func TestReadConfigReturnsReadError(t *testing.T) {
 
 	if _, err := readConfigAsync(t, path, time.Hour); !errors.Is(err, errRead) {
 		t.Fatalf("readConfig error = %v, want the read error", err)
+	}
+}
+
+// If the file vanishes between Stat and ReadFile (e.g. an atomic replace),
+// readConfig waits instead of aborting startup.
+func TestReadConfigWaitsWhenFileVanishesBeforeRead(t *testing.T) {
+	captureLog(t)
+	path := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(path, []byte("plex: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalSleep, originalRead := sleepFunc, readFileFunc
+	t.Cleanup(func() { sleepFunc, readFileFunc = originalSleep, originalRead })
+	sleepFunc = func(context.Context, time.Duration) error { return nil }
+	reads := 0
+	readFileFunc = func(name string) ([]byte, error) {
+		reads++
+		if reads == 1 {
+			return nil, fs.ErrNotExist
+		}
+		return os.ReadFile(name)
+	}
+
+	data, err := readConfig(context.Background(), path, time.Hour)
+	if err != nil || string(data) != "plex: []\n" || reads != 2 {
+		t.Fatalf("readConfig = %q, %v after %d reads, want content after 2 reads", data, err, reads)
+	}
+}
+
+// If a file becomes empty while waiting and later gets the same size and
+// modification time again, readConfig still waits for one quiet interval.
+func TestReadConfigResetsSeenWhenFileBecomesEmpty(t *testing.T) {
+	captureLog(t)
+	path := filepath.Join(t.TempDir(), "config.yml")
+	fixedTime := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	writeFixed := func(content string) {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, fixedTime, fixedTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	originalSleep := sleepFunc
+	t.Cleanup(func() { sleepFunc = originalSleep })
+	sleeps := 0
+	sleepFunc = func(context.Context, time.Duration) error {
+		sleeps++
+		switch sleeps {
+		case 1:
+			// File appears with content; triggers seen = state.
+			writeFixed("plex: []\n")
+		case 2:
+			// File becomes empty; must clear seen.
+			if err := os.WriteFile(path, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		case 3:
+			// File reappears with identical size/mtime; must wait one more interval.
+			writeFixed("plex: []\n")
+		}
+		return nil
+	}
+
+	data, err := readConfig(context.Background(), path, time.Hour)
+	if err != nil || string(data) != "plex: []\n" {
+		t.Fatalf("readConfig = %q, %v", data, err)
+	}
+	if sleeps != 4 {
+		t.Fatalf("sleeps = %d, want 4 (must wait one quiet interval after reappearance)", sleeps)
 	}
 }
 

@@ -72,12 +72,12 @@ func TestCheckServersLogsEachResult(t *testing.T) {
 	closed := checkTarget(t, "closed", http.StatusOK)
 	closed.Plex = plex.New("closed", mustURL(t, "http://127.0.0.1:1"), "token", time.Second)
 
-	checkServers(context.Background(), []refresher.Server{
+	checkTokens(context.Background(), []refresher.Server{
 		checkTarget(t, "ok", http.StatusOK),
 		checkTarget(t, "bad-token", http.StatusUnauthorized),
 		checkTarget(t, "down", http.StatusServiceUnavailable),
 		closed,
-	})
+	}, nil)
 
 	want := map[string]bool{
 		"info Plex server accepted the token ok":         true,
@@ -95,11 +95,33 @@ func TestCheckServersLogsNothingWhenCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	checkServers(ctx, []refresher.Server{checkTarget(t, "ok", http.StatusOK)})
+	checkTokens(ctx, []refresher.Server{checkTarget(t, "ok", http.StatusOK)}, nil)
 
 	if got := logEvents(t, buf); len(got) != 0 {
 		t.Errorf("logged %v, want nothing", got)
 	}
+}
+
+// checkTokens runs the TMDB check at the same time as the Plex checks, so a
+// slow Plex server does not block TMDB token verification.
+func TestCheckTokensRunsTMDBInParallel(t *testing.T) {
+	captureLog(t)
+	tmdbDone := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case <-tmdbDone:
+		case <-time.After(5 * time.Second):
+			t.Error("TMDB check did not run while Plex check was in flight")
+		}
+		w.Write([]byte(sectionsBody))
+	}))
+	t.Cleanup(srv.Close)
+
+	target := refresher.Server{Name: "slow", Plex: plex.New("slow", mustURL(t, srv.URL), "token", 5*time.Second)}
+	checkTokens(context.Background(), []refresher.Server{target}, checkerFunc(func(context.Context) error {
+		close(tmdbDone)
+		return nil
+	}))
 }
 
 // checkerFunc is a TMDB token check.

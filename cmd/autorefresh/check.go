@@ -12,13 +12,16 @@ import (
 	"github.com/l3uddz/autorefresh/internal/tmdb"
 )
 
-// checkServers lists the libraries of each server once, at the same time,
-// so a wrong token or URL shows at the start and not at the first scheduled
-// run. It only logs, because Plex can still be starting.
-func checkServers(ctx context.Context, servers []refresher.Server) {
+// checkTokens checks each Plex server and, if set, TMDB at the same time,
+// so a wrong token or URL shows at the start and a slow Plex server does not
+// delay the TMDB check. It only logs, because a service can still be starting.
+func checkTokens(ctx context.Context, servers []refresher.Server, tmdbClient interface{ Check(context.Context) error }) {
 	var wg sync.WaitGroup
 	for _, srv := range servers {
 		wg.Go(func() { checkServer(ctx, srv) })
+	}
+	if tmdbClient != nil {
+		wg.Go(func() { checkTMDB(ctx, tmdbClient) })
 	}
 	wg.Wait()
 }
