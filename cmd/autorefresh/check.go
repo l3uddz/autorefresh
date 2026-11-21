@@ -16,6 +16,9 @@ import (
 // so a wrong token or URL shows at the start and a slow Plex server does not
 // delay the TMDB check. It only logs, because a service can still be starting.
 func checkTokens(ctx context.Context, servers []refresher.Server, tmdbClient interface{ Check(context.Context) error }) {
+	if ctx.Err() != nil {
+		return
+	}
 	var wg sync.WaitGroup
 	for _, srv := range servers {
 		wg.Go(func() { checkServer(ctx, srv) })
@@ -27,6 +30,9 @@ func checkTokens(ctx context.Context, servers []refresher.Server, tmdbClient int
 }
 
 func checkServer(ctx context.Context, srv refresher.Server) {
+	if ctx.Err() != nil {
+		return
+	}
 	libraries, err := srv.Plex.Libraries(ctx)
 	switch {
 	case ctx.Err() != nil:
@@ -42,6 +48,9 @@ func checkServer(ctx context.Context, srv refresher.Server) {
 // checkTMDB checks the TMDB token once, so a wrong token shows at the start.
 // It only logs, because TMDB can be down for a short time.
 func checkTMDB(ctx context.Context, client interface{ Check(context.Context) error }) {
+	if ctx.Err() != nil {
+		return
+	}
 	err := client.Check(ctx)
 	switch {
 	case ctx.Err() != nil:

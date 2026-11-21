@@ -117,7 +117,9 @@ func TestCheckTokensRunsTMDBInParallel(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	target := refresher.Server{Name: "slow", Plex: plex.New("slow", mustURL(t, srv.URL), "token", 5*time.Second)}
+	// Client timeout exceeds the handler's 5s wait so a sequential run hits
+	// the handler timeout and fails instead of timing out the Plex call first.
+	target := refresher.Server{Name: "slow", Plex: plex.New("slow", mustURL(t, srv.URL), "token", 10*time.Second)}
 	checkTokens(context.Background(), []refresher.Server{target}, checkerFunc(func(context.Context) error {
 		close(tmdbDone)
 		return nil
@@ -160,8 +162,15 @@ func TestCheckTMDBLogsNothingWhenCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	checkTMDB(ctx, checkerFunc(func(ctx context.Context) error { return ctx.Err() }))
+	called := false
+	checkTokens(ctx, nil, checkerFunc(func(ctx context.Context) error {
+		called = true
+		return ctx.Err()
+	}))
 
+	if called {
+		t.Error("TMDB checker was invoked after context cancellation")
+	}
 	if buf.Len() != 0 {
 		t.Errorf("logged %s, want nothing", buf)
 	}
