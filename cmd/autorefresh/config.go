@@ -62,27 +62,18 @@ func readConfig(ctx context.Context, path string, interval time.Duration) ([]byt
 	waited := false
 	var seen os.FileInfo // the last state of the file with content
 	for {
-		info, err := os.Stat(path)
-		switch {
-		case err != nil && !errors.Is(err, fs.ErrNotExist):
+		data, state, err := checkConfig(path, waited, seen)
+		if err != nil {
 			return nil, err
-		case err == nil && !info.Mode().IsRegular():
-			// Docker creates a directory for a bind mount of a missing file.
-			return nil, fmt.Errorf("%s is not a regular file", path)
-		case err == nil && info.Size() > 0:
-			if !waited || sameState(seen, info) {
-				data, err := readFileFunc(path)
-				if err != nil {
-					return nil, err
-				}
-				if after, err := os.Stat(path); err == nil && len(data) > 0 && sameState(info, after) {
-					if waited {
-						log.Info().Str("path", path).Msg("Found config")
-					}
-					return data, nil
-				}
+		}
+		if data != nil {
+			if waited {
+				log.Info().Str("path", path).Msg("Found config")
 			}
-			seen = info
+			return data, nil
+		}
+		if state != nil {
+			seen = state
 		}
 
 		if !waited {
@@ -96,6 +87,36 @@ func readConfig(ctx context.Context, path string, interval time.Duration) ([]byt
 			return nil, err
 		}
 	}
+}
+
+// checkConfig checks the config file at path once. It returns the content
+// of the file if the file is ready: it has content, it did not change during
+// the read, and after a wait it has the same state as seen. Otherwise it
+// returns no content, and the state of the file if the file has content.
+func checkConfig(path string, waited bool, seen os.FileInfo) (data []byte, state os.FileInfo, err error) {
+	info, err := os.Stat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, nil, nil
+	case err != nil:
+		return nil, nil, err
+	case !info.Mode().IsRegular():
+		// Docker creates a directory for a bind mount of a missing file.
+		return nil, nil, fmt.Errorf("%s is not a regular file", path)
+	case info.Size() == 0:
+		return nil, nil, nil
+	case waited && !sameState(seen, info):
+		return nil, info, nil
+	}
+
+	data, err = readFileFunc(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if after, err := os.Stat(path); err != nil || len(data) == 0 || !sameState(info, after) {
+		return nil, info, nil
+	}
+	return data, info, nil
 }
 
 // sameState reports whether a and b have the same size and modification
