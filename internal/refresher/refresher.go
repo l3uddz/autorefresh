@@ -21,6 +21,7 @@ type Plex interface {
 	Libraries(ctx context.Context) ([]plex.Library, error)
 	List(ctx context.Context, section string, itemType int, filters ...plex.Filter) ([]plex.Item, error)
 	ItemPaths(ctx context.Context, ratingKey string) ([]string, error)
+	EpisodeNumbers(ctx context.Context, ratingKey string) (map[int][]int, error)
 	Refresh(ctx context.Context, ratingKey string) error
 	SearchMatches(ctx context.Context, ratingKey, title, agent, language string) ([]plex.Candidate, error)
 	Match(ctx context.Context, ratingKey string, cand plex.Candidate) error

@@ -12,6 +12,60 @@ import (
 	"time"
 )
 
+func TestEpisodeNumbersRequiresCompleteFileBackedEntries(t *testing.T) {
+	const episodes = `{"parentIndex":0,"index":1},
+		{"parentIndex":1,"index":1,"Media":[{"Part":[{"file":"/fixture/Show/S01E01-E02.mkv"}]}]},
+		{"parentIndex":1,"index":2,"Media":[{"Part":[{"file":"/fixture/Show/S01E01-E02.mkv"}]}]}`
+	tests := []struct {
+		name  string
+		total string
+		items string
+		want  map[int][]int
+	}{
+		{"separate episode numbers in the same file", "3", episodes, map[int][]int{1: {1, 2}}},
+		{"truncated listing", "4", episodes, nil},
+		{"unreported total", "null", episodes, nil},
+		{"no backing file for a regular episode", "4", episodes + `,{"parentIndex":2,"index":1}`, nil},
+		{"no season number for a file", "4", episodes + `,{"index":1,"Media":[{"Part":[{"file":"/fixture/Show/episode.mkv"}]}]}`, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/library/metadata/201/allLeaves" {
+					t.Errorf("request = %s %s", r.Method, r.URL.Path)
+				}
+				w.Write([]byte(`{"MediaContainer":{"totalSize":` + tt.total + `,"Metadata":[` + tt.items + `]}}`))
+			})
+			got, err := c.EpisodeNumbers(context.Background(), "201")
+			if err != nil || !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("EpisodeNumbers = %v, %v, want %v", got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestEpisodeNumbersReadsEveryPage(t *testing.T) {
+	first := `{"ratingKey":"11","parentIndex":1,"index":1,"Media":[{"Part":[{"file":"/fixture/S01E01.mkv"}]}]}`
+	last := `{"ratingKey":"12","parentIndex":1,"index":2,"Media":[{"Part":[{"file":"/fixture/S01E02.mkv"}]}]}`
+	later := `{"ratingKey":"21","parentIndex":2,"index":1,"Media":[{"Part":[{"file":"/fixture/S02E01.mkv"}]}]}`
+	rec, c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
+		const opening = `{"MediaContainer":{"totalSize":3,"Metadata":[`
+		if r.URL.Query().Get("X-Plex-Container-Start") == "1" {
+			w.Write([]byte(opening + last + "," + later + "]}}"))
+			return
+		}
+		w.Write([]byte(opening + first + "," + last + "]}}"))
+	})
+	got, err := c.EpisodeNumbers(context.Background(), "201")
+	want := map[int][]int{1: {1, 2}, 2: {1}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("EpisodeNumbers = %v, %v, want %v", got, err, want)
+	}
+	if len(rec.all()) != 2 {
+		t.Fatalf("read %d pages, want 2", len(rec.all()))
+	}
+}
+
 func TestLibrariesDecodesSections(t *testing.T) {
 	rec, c := newServer(t, serveFixture(t, "sections.json"))
 

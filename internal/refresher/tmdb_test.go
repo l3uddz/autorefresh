@@ -17,11 +17,13 @@ var _ TMDB = (*tmdb.Client)(nil)
 // fakeTMDB records each Find and Year call and answers from its maps.
 // Find keys are "<source> <id> <show>"; Year keys are "<id> <show>".
 type fakeTMDB struct {
-	ids      map[string]string
-	errs     map[string]error
-	years    map[string]int
-	yearErrs map[string]error
-	calls    []string
+	ids       map[string]string
+	errs      map[string]error
+	years     map[string]int
+	yearErrs  map[string]error
+	seasons   map[string][]int
+	seasonErr error
+	calls     []string
 }
 
 func (f *fakeTMDB) Find(_ context.Context, source, id string, show bool) (string, bool, error) {
@@ -42,6 +44,12 @@ func (f *fakeTMDB) Year(_ context.Context, id string, show bool) (int, bool, err
 	}
 	y, ok := f.years[key]
 	return y, ok, nil
+}
+
+func (f *fakeTMDB) SeasonEpisodes(_ context.Context, id string, season int) ([]int, error) {
+	key := fmt.Sprintf("%s %d", id, season)
+	f.calls = append(f.calls, "SeasonEpisodes "+key)
+	return f.seasons[key], f.seasonErr
 }
 
 // newTMDBFixture returns a refresh fixture with the fake TMDB, and the
@@ -323,6 +331,11 @@ func (c cancelTMDB) Find(context.Context, string, string, bool) (string, bool, e
 func (c cancelTMDB) Year(context.Context, string, bool) (int, bool, error) {
 	c.cancel()
 	return 0, false, fmt.Errorf("GET /3/tv/77: %w", context.Canceled)
+}
+
+func (c cancelTMDB) SeasonEpisodes(context.Context, string, int) ([]int, error) {
+	c.cancel()
+	return nil, context.Canceled
 }
 
 func TestTMDBFindCanceled(t *testing.T) {

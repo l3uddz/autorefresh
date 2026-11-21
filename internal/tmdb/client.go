@@ -1,6 +1,6 @@
 // Package tmdb is the client for the part of the TMDB API that autorefresh
-// uses: finding the TMDB ID of a TVDB or IMDb ID. It sends the token only in
-// a header, so the token never shows in a URL or an error.
+// uses to resolve external IDs and read release years and episode numbers.
+// It sends the token only in a header.
 package tmdb
 
 import (
@@ -22,8 +22,7 @@ import (
 // ErrUnauthorized marks a 401 status, which means that TMDB rejected the token.
 var ErrUnauthorized = errors.New("tmdb token rejected")
 
-// errNotFound marks a 404 status inside the package so Year can treat a
-// deleted or merged TMDB entry as unknown instead of a TMDB outage.
+// errNotFound marks a 404 for a missing TMDB entry or season.
 var errNotFound = errors.New("tmdb entry not found")
 
 // maxDrainBytes bounds unread response body draining so normal responses
@@ -175,6 +174,30 @@ func (c *Client) seriesYear(ctx context.Context, id string) (int, bool, error) {
 		}
 	}
 	return earliest, earliest > 0, nil
+}
+
+// SeasonEpisodes returns the catalog episode numbers for one regular season.
+// A missing season returns no evidence.
+func (c *Client) SeasonEpisodes(ctx context.Context, id string, season int) ([]int, error) {
+	if !tmdbIDPattern.MatchString(id) || season <= 0 {
+		return nil, errors.New("season episodes: invalid tmdb id or season")
+	}
+	var resp struct {
+		Episodes []struct {
+			Number int `json:"episode_number"`
+		} `json:"episodes"`
+	}
+	if err := c.get(ctx, []string{"3", "tv", id, "season", strconv.Itoa(season)}, nil, &resp); err != nil {
+		if errors.Is(err, errNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	numbers := make([]int, 0, len(resp.Episodes))
+	for _, e := range resp.Episodes {
+		numbers = append(numbers, e.Number)
+	}
+	return numbers, nil
 }
 
 func (c *Client) movieYear(ctx context.Context, id string) (int, bool, error) {

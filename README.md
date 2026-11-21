@@ -203,6 +203,14 @@ tries a fix match.
      regular season air date for a series, ignoring specials, or the
      earliest release date for a movie) against the item's year or its
      unambiguous path year.
+   - If TMDB's year cannot confirm a series match, autorefresh reads the
+     episode numbers Plex found in the files. Every local regular season
+     must have the same episode count and numbers as that season in TMDB.
+     At least one regular season must match. Specials and seasons absent
+     from the library do not affect the check.
+     This can confirm a match even when the folder year disagrees with TMDB.
+     An incomplete season or differences in episode numbering still prevent
+     confirmation by episode numbers.
 
 If no match applies, autorefresh sends a plain refresh. If the IDs disagree,
 it also logs a `Match conflict` warning. The warning has the reason, the
@@ -219,7 +227,8 @@ fields, so you can check each match in the log:
 | `action` | `match`, or `tmdb-match` if the TMDB fallback below found the candidate |
 | `item_year` | The year of the item in Plex, or 0 if it has none |
 | `path_year` | Set when an unambiguous `(YYYY)` year in the path confirmed a year gap |
-| `tmdb_year` | Set when TMDB's canonical release year confirmed a year gap |
+| `tmdb_year` | TMDB's canonical year, if available during confirmation |
+| `episode_count` | Number of regular episodes compared when episode numbers confirmed the match |
 | `candidate` | The title of the entry that the match applies |
 | `candidate_year` | The year of that entry, or 0 if it has none |
 | `links` | The web page of each ID whose search found or confirmed the entry. A `tmdb` ID links to TMDB, an `imdb` ID to IMDb, and a `tvdb` ID to TheTVDB. |

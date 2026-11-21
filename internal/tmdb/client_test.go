@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -353,6 +354,27 @@ func TestYearMovie(t *testing.T) {
 	year, ok, err := c.Year(context.Background(), "272165", false)
 	if err != nil || !ok || year != 1984 {
 		t.Fatalf("Year = %d, %v, %v, want earliest release year 1984", year, ok, err)
+	}
+}
+
+func TestSeasonEpisodes(t *testing.T) {
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/3/tv/77/season/1":
+			w.Write([]byte(`{"episodes":[{"episode_number":3},{"episode_number":1}]}`))
+		case "/3/tv/77/season/2":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request %s", r.URL)
+		}
+	})
+	got, err := c.SeasonEpisodes(context.Background(), "77", 1)
+	if err != nil || !slices.Equal(got, []int{3, 1}) {
+		t.Fatalf("SeasonEpisodes = %v, %v, want [3 1]", got, err)
+	}
+	got, err = c.SeasonEpisodes(context.Background(), "77", 2)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("SeasonEpisodes on 404 = %v, %v, want no evidence", got, err)
 	}
 }
 
