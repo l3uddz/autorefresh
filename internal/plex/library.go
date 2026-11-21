@@ -154,12 +154,12 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 		if total == nil {
 			return nil, fmt.Errorf("listing section %s: response has no totalSize", section)
 		}
-		page, ok := newPageItems(items, page)
+		rest, ok := newPageItems(items, page)
 		if !ok {
 			return nil, fmt.Errorf("listing section %s: listing changed during the read at offset %d",
 				section, start)
 		}
-		for _, m := range page {
+		for _, m := range rest {
 			items = append(items, m.item())
 		}
 		switch {
