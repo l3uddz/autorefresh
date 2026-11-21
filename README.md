@@ -191,10 +191,10 @@ tries a fix match.
    candidates are the same entry, it can apply a match.
 4. If the item and the candidate both have a year, the years must differ by
    1 or less. If only the year disagrees:
-   - If the item's paths have one unambiguous release year in parentheses,
-     such as `(2018)`, that differs from the item's year in Plex (for
-     example when Plex parsed a bare year from a title), autorefresh checks
-     the candidate against that path year.
+   - If the series folder, or the movie folder and file name, have one
+     unambiguous release year in parentheses, such as `(2018)`, that differs
+     from the item's year in Plex (for example when Plex parsed a bare year
+     from a title), autorefresh checks the candidate against that path year.
    - If that does not confirm the match (either because there is no
      unambiguous path year or because the path year also disagrees with the
      candidate) and a `tmdb-token` is set, autorefresh resolves the item to
