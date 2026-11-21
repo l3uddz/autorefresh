@@ -81,11 +81,14 @@ regular episodes. Autorefresh never lists all episodes.
 
 If a read of a library fails, the cache of that library does not change.
 The next run reads the same period again. Autorefresh reads a listing page
-by page. If an item leaves the part of the listing that it already read, or
-a new item enters that part, the read fails, because the next page could
-skip an item. Items that Plex adds at the end of the listing do not make
-the read fail. If an item becomes complete, autorefresh logs it with the
-number of refreshes and removes it from the cache.
+by page. Each page starts at the last item of the previous page. If that
+item is not at its place, items moved in the part of the listing that
+autorefresh already read, and the next page could skip an item, so the read
+fails. If one item leaves that part and another item enters it, the last
+item can stay at its place, and the read does not see the change. Items
+that Plex adds at the end of the listing do not make the read fail. If an
+item becomes complete, autorefresh logs it with the number of refreshes and
+removes it from the cache.
 
 ### Cache cleanup
 
