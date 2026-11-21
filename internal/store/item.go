@@ -322,35 +322,59 @@ func LongestWaitRefreshes(refreshInterval, maxRefreshInterval time.Duration) int
 	return doublings + 1
 }
 
-// Due returns the rows of the sections that are incomplete, added at or
-// before now-minimumAge, and with no attempt in their wait before now.
+// DueQuery selects the due rows of some sections of a server.
+type DueQuery struct {
+	Server          string
+	Sections        []string
+	Now             time.Time
+	MinimumAge      time.Duration // a row added after Now-MinimumAge is not due
+	RefreshInterval time.Duration
+	// MaxRefreshInterval is the longest wait. Below RefreshInterval, the
+	// wait does not back off.
+	MaxRefreshInterval time.Duration
+	Ignored            Reasons // a row whose reasons are all in Ignored is never due
+	Limit              int     // the most rows that Due returns; 0: no limit
+}
+
+// Due returns the first q.Limit rows of the sections that are incomplete,
+// added at or before Now-MinimumAge, and with no attempt in their wait
+// before Now. total is the number of all such rows.
 //
-// The wait backs off: it is refreshInterval for a row with at most 1
+// The wait backs off: it is RefreshInterval for a row with at most 1
 // refresh, and it doubles with each later refresh, up to
-// maxRefreshInterval. A maxRefreshInterval below refreshInterval means no
-// backoff. A row whose reasons are all in ignored is never due.
+// MaxRefreshInterval.
 //
 // Order: the fewest Refreshes first, then no attempt, then the oldest
 // LastAttempt, then the oldest AddedAt.
-func (s *Store) Due(server string, sections []string, now time.Time, minimumAge, refreshInterval, maxRefreshInterval time.Duration, ignored Reasons) ([]Item, error) {
-	if len(sections) == 0 {
-		return nil, nil
+func (s *Store) Due(q DueQuery) (items []Item, total int, err error) {
+	if len(q.Sections) == 0 {
+		return nil, 0, nil
 	}
-	interval, maxWait, doublings := backoff(refreshInterval, maxRefreshInterval)
+	interval, maxWait, doublings := backoff(q.RefreshInterval, q.MaxRefreshInterval)
 
 	// The query rounds the cutoff down to whole seconds, like the stored times.
-	args := append([]any{server}, stringArgs(sections)...)
-	args = append(args, int(ignored), now.Add(-minimumAge).Unix(), now.UnixMilli(), maxWait, interval, doublings)
-
-	items, err := queryItems(s.db, `SELECT `+itemColumns+` FROM item
-		WHERE server = ? AND section IN (`+placeholders(len(sections))+`)
+	where := `server = ? AND section IN (` + placeholders(len(q.Sections)) + `)
 		AND reasons & ~? != 0 AND added_at <= ?
-		AND (last_attempt IS NULL OR last_attempt <= (? - MIN(?, ? << MIN(MAX(refreshes - 1, 0), ?))) / 1000)
-		ORDER BY refreshes, last_attempt IS NOT NULL, last_attempt, added_at, rating_key`, args...)
-	if err != nil {
-		return nil, fmt.Errorf("read due items: %w", err)
+		AND (last_attempt IS NULL OR last_attempt <= (? - MIN(?, ? << MIN(MAX(refreshes - 1, 0), ?))) / 1000)`
+	args := append([]any{q.Server}, stringArgs(q.Sections)...)
+	args = append(args, int(q.Ignored), q.Now.Add(-q.MinimumAge).Unix(), q.Now.UnixMilli(), maxWait, interval, doublings)
+
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM item WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count due items: %w", err)
 	}
-	return items, nil
+
+	// SQLite reads a negative LIMIT as no limit.
+	limit := q.Limit
+	if limit <= 0 {
+		limit = -1
+	}
+	items, err = queryItems(s.db, `SELECT `+itemColumns+` FROM item WHERE `+where+`
+		ORDER BY refreshes, last_attempt IS NOT NULL, last_attempt, added_at, rating_key LIMIT ?`,
+		append(args, limit)...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("read due items: %w", err)
+	}
+	return items, total, nil
 }
 
 // CountIncomplete counts the stored rows of the sections that have a reason

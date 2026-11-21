@@ -16,31 +16,40 @@ import (
 type refreshStep struct {
 	run       *serverRun
 	libraries map[string]plex.Library // by section
-	sent      int                     // refresh and match requests, or logged items in a dry run
 }
 
-// refreshDue sends a refresh or a match request to each due item of the
-// server, in Due order. It returns only the error of stopError, a sleep
-// error, or a store error.
+// refreshDue handles the first MaxRefreshesPerRun due items of the server,
+// in Due order, and waits RefreshDelay between two items. Each item gets at
+// most one refresh or match request. It returns only the error of
+// stopError, a sleep error, or a store error.
 func (r *Refresher) refreshDue(ctx context.Context, run *serverRun) error {
 	s := &refreshStep{run: run, libraries: map[string]plex.Library{}}
 	for _, lib := range run.libraries {
 		s.libraries[lib.ID] = lib
 	}
 
-	due, err := r.store.Due(run.server.Name, run.sections(), r.now(), r.opts.MinimumAge,
-		r.opts.RefreshInterval, r.opts.MaxRefreshInterval, r.opts.IgnoreReasons)
+	due, total, err := r.store.Due(store.DueQuery{
+		Server:             run.server.Name,
+		Sections:           run.sections(),
+		Now:                r.now(),
+		MinimumAge:         r.opts.MinimumAge,
+		RefreshInterval:    r.opts.RefreshInterval,
+		MaxRefreshInterval: r.opts.MaxRefreshInterval,
+		Ignored:            r.opts.IgnoreReasons,
+		Limit:              r.opts.MaxRefreshesPerRun,
+	})
 	if err != nil {
 		return err
 	}
-	run.due = len(due)
+	run.due, run.remaining = total, total
 	for i, it := range due {
-		if r.opts.MaxRefreshesPerRun > 0 && s.sent >= r.opts.MaxRefreshesPerRun {
-			run.remaining = len(due) - i
-			break
+		if i > 0 && !r.opts.DryRun {
+			if err := r.sleep(ctx, r.opts.RefreshDelay); err != nil {
+				return err
+			}
 		}
+		run.remaining-- // the item is reached, also if it stops the server
 		if err := r.refreshItem(ctx, s, it); err != nil {
-			run.remaining = len(due) - i - 1 // the item of the error was reached
 			return err
 		}
 	}
@@ -77,20 +86,14 @@ func (r *Refresher) refreshItem(ctx context.Context, s *refreshStep, it store.It
 		action = "match"
 	}
 	if r.opts.DryRun {
-		s.sent++
 		itemEvent(log.Info(), s.run.server.Name, lib, it).Str("action", action).Msg("Dry run")
 		return nil
 	}
 
-	if s.sent > 0 {
-		if err := r.sleep(ctx, r.opts.RefreshDelay); err != nil {
-			return err
-		}
-	}
+	// A canceled request still counts as sent and as an attempt.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	s.sent++
 	client := s.run.server.Plex
 	if match {
 		s.run.matches++

@@ -585,6 +585,8 @@ func TestDryRunUnavailableSearchRecordsNothing(t *testing.T) {
 	}
 }
 
+// A failed match search sends nothing, but the item counts toward the limit,
+// so failing searches cannot run without bound.
 func TestFailedSearchSendsNothing(t *testing.T) {
 	fp := newFakePlex(moviesLib)
 	fp.paths["101"] = []string{"/m/Film (2020) {tmdb-1}/Film.mkv"}
@@ -598,11 +600,16 @@ func TestFailedSearchSendsNothing(t *testing.T) {
 
 	f.run(t0)
 
-	wantCalls(t, sends(fp.calls), "Refresh 102")
+	wantCalls(t, sends(fp.calls))
 	if row, _ := f.row(testServer, "1", "101"); row.Refreshes != 1 || !row.LastAttempt.Equal(t0) {
 		t.Errorf("row = %+v, want 1 refresh and LastAttempt %v", row, t0)
 	}
-	wantField(t, f.lastSummary(testServer), "remaining_items", float64(0))
+	wantField(t, f.lastSummary(testServer), "remaining_items", float64(1))
+
+	// The failed item moved to the end of the queue.
+	fp.calls = nil
+	f.run(t0.Add(time.Minute))
+	wantCalls(t, sends(fp.calls), "Refresh 102")
 }
 
 func TestEpisodeReasonGetsPlainRefresh(t *testing.T) {
@@ -813,8 +820,8 @@ func TestAttemptTimeIsRequestTime(t *testing.T) {
 	f.run(t0)
 
 	wantCalls(t, sends(fp.calls), "Refresh 101", "Refresh 102")
-	later := t0.Add(refreshDelay)
-	want := map[string]time.Time{"101": t0, "102": later, "103": later}
+	later, last := t0.Add(refreshDelay), t0.Add(2*refreshDelay)
+	want := map[string]time.Time{"101": t0, "102": later, "103": last}
 	for key, at := range want {
 		if row, _ := f.row(testServer, "1", key); !row.LastAttempt.Equal(at) {
 			t.Errorf("row %s = %+v, want LastAttempt %v", key, row, at)
@@ -824,7 +831,7 @@ func TestAttemptTimeIsRequestTime(t *testing.T) {
 		t.Errorf("row 102 = %+v, want LastRefresh %v", row, later)
 	}
 	// zerolog writes a duration in milliseconds.
-	wantField(t, f.lastSummary(testServer), "duration", float64(refreshDelay.Milliseconds()))
+	wantField(t, f.lastSummary(testServer), "duration", float64(2*refreshDelay.Milliseconds()))
 }
 
 func TestSummaryDurationRoundsToMilliseconds(t *testing.T) {

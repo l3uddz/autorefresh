@@ -28,7 +28,7 @@ type Store interface {
 	Library(server, section string) (store.Library, error)
 	ApplyRead(r store.Read) (fixed []store.Item, err error)
 	Unseen(server, section string, seen []string) ([]store.Item, error)
-	Due(server string, sections []string, now time.Time, minimumAge, refreshInterval, maxRefreshInterval time.Duration, ignored store.Reasons) ([]store.Item, error)
+	Due(q store.DueQuery) (items []store.Item, total int, err error)
 	CountIncomplete(server string, sections []string, ignored store.Reasons) (int, error)
 	RecordAttempt(server, ratingKey string, at time.Time, refreshed bool) error
 	TMDBID(server, ratingKey, source, externalID string) (tmdbID string, ok bool, err error)
@@ -53,7 +53,7 @@ type Options struct {
 	MinimumAge, RefreshInterval, Oversample, RefreshDelay time.Duration
 	MaxRefreshInterval                                    time.Duration // below RefreshInterval: no backoff
 	CacheRefresh                                          Schedule
-	MaxRefreshesPerRun                                    int           // 0: no limit
+	MaxRefreshesPerRun                                    int           // the most due items in each run; 0: no limit
 	IgnoreReasons                                         store.Reasons // never refreshed for, and not counted
 	DryRun                                                bool
 	TMDB                                                  TMDB // nil: no TMDB fallback in fix match

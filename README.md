@@ -105,8 +105,7 @@ read of it, and its items start with no refreshes.
 
 If an incomplete item has no attempt in its wait, the item is due. An
 attempt is a refresh or match request, successful or failed. A failed match
-search also counts as an attempt, but it does not count toward
-`max-refreshes-per-run`. A dry run records no attempts.
+search also counts as an attempt. A dry run records no attempts.
 
 The wait backs off, because an item that many refreshes did not fix is
 less likely to become complete. For an item with no refresh or one refresh,
@@ -144,10 +143,11 @@ If two items are equal, the item that Plex added first goes first. A failing
 item therefore moves to the end of the items with the same number of
 refreshes.
 
-Autorefresh sends one refresh or match request at a time on each server. It
-waits `refresh-delay` between two of these requests. A run sends at most
-`max-refreshes-per-run` refresh and match requests on each server. If you
-set it to 0, a run has no limit.
+Autorefresh handles one due item at a time on each server, and each item
+gets at most one refresh or match request. It waits `refresh-delay` between
+two items. A run handles at most `max-refreshes-per-run` due items on each
+server. An item whose match search fails also counts, although it gets no
+request. If you set `max-refreshes-per-run` to 0, a run has no limit.
 
 Runs do not overlap. If a run is still busy when the schedule starts the
 next run, autorefresh skips that start and logs a warning. The first run on
@@ -183,7 +183,7 @@ plain refresh.
 If no match applies, autorefresh sends a plain refresh. If the IDs disagree,
 it also logs the conflict. If a match search fails, autorefresh sends no
 request for that item in this run. A match request counts as a refresh for
-the wait and for `max-refreshes-per-run`.
+the wait.
 
 Plex stops using TheTVDB on December 3, 2026, and can then answer a search
 for a `tvdb` ID with an error. So a failed search for a `tvdb` or an `imdb`
@@ -237,8 +237,8 @@ refresh-interval: 24h         # wait at least this long between attempts on one 
 max-refresh-interval: 168h    # the longest wait between attempts after the backoff
 cache-refresh: "0 3 * * 0"    # cron expression for full reads of each library
 oversample: 48h               # each incremental read also gets changes from this far back
-refresh-delay: 5s             # wait between two refreshes on one server
-max-refreshes-per-run: 250    # the most refresh and match requests in each run; 0 for no limit
+refresh-delay: 5s             # wait between two due items on one server
+max-refreshes-per-run: 250    # the most due items in each run on each server; 0 for no limit
 ignore-reasons: []            # reasons that never cause a refresh, for example [no-art]
 tmdb-token: ""                # optional; the TMDB API Read Access Token for the fix match fallback
 
@@ -359,7 +359,7 @@ run does these things:
 - It logs one `Dry run` line at info level for each due item. The line has
   the server, the library, the title, the reasons, and the action, which is
   `refresh` or `match`.
-- It applies `max-refreshes-per-run` to the logged items.
+- It applies `max-refreshes-per-run` to the due items.
 
 A dry run sends no refresh or match request and does not wait
 `refresh-delay`. It records no attempts, so a later real run refreshes the
