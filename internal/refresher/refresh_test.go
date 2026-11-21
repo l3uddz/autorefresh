@@ -503,6 +503,14 @@ func TestFixMatchConflictSendsPlainRefresh(t *testing.T) {
 	}
 	wantField(t, warnings[0], "title", "Title 101")
 	wantField(t, warnings[0], "conflict", "different candidates")
+	wantField(t, warnings[0], "item_year", float64(2020))
+	want := []any{
+		"Film (2020) via https://www.themoviedb.org/movie/1",
+		"Film (2020) via https://www.imdb.com/title/tt2",
+	}
+	if got, _ := warnings[0]["candidates"].([]any); !reflect.DeepEqual(got, want) {
+		t.Errorf("candidates = %v, want %v", warnings[0]["candidates"], want)
+	}
 }
 
 func TestFixMatchWithoutIDsSendsPlainRefresh(t *testing.T) {

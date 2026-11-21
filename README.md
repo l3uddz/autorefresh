@@ -187,7 +187,9 @@ tries a fix match.
    1 or less.
 
 If no match applies, autorefresh sends a plain refresh. If the IDs disagree,
-it also logs the conflict. If a match search fails, autorefresh sends no
+it also logs a `Match conflict` warning. The warning has the reason, the
+year of the item, and each candidate with its year and the web page of the
+ID that found it. If a match search fails, autorefresh sends no
 request for that item in this run. A match request counts as a refresh for
 the wait.
 

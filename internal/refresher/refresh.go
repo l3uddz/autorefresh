@@ -3,6 +3,7 @@ package refresher
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -216,7 +217,8 @@ func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Libr
 
 	cand, match, conflict := chooseMatch(it.Year, results)
 	if conflict != "" {
-		itemEvent(log.Warn(), srv.Name, lib, it).Str("conflict", conflict).Msg("Match conflict")
+		itemEvent(log.Warn(), srv.Name, lib, it).Str("conflict", conflict).Int("item_year", it.Year).
+			Strs("candidates", describeCandidates(results, it.Type == plex.ShowLibrary)).Msg("Match conflict")
 	}
 	if !match {
 		return nil, nil
@@ -260,6 +262,23 @@ func searchFailureIsEmpty(ctx context.Context, id pathID, err error) bool {
 // item to ev.
 func itemEvent(ev *zerolog.Event, server string, lib plex.Library, it store.Item) *zerolog.Event {
 	return ev.Str("server", server).Str("library", lib.Title).Str("title", it.Title).Str("reasons", it.Reasons.String())
+}
+
+// describeCandidates describes each candidate of the searches, with the web
+// page of the ID that found it, for example "Film (2020) via
+// https://www.themoviedb.org/movie/1". A candidate without a year has none.
+func describeCandidates(results []searchResult, show bool) []string {
+	var out []string
+	for _, res := range results {
+		for _, c := range res.candidates {
+			name := c.Name
+			if c.Year != 0 {
+				name += " (" + strconv.Itoa(c.Year) + ")"
+			}
+			out = append(out, name+" via "+res.id.link(show))
+		}
+	}
+	return out
 }
 
 // requestEvent adds the item and the action of a request. For a fix match,

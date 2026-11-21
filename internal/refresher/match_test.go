@@ -1,6 +1,7 @@
 package refresher
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
@@ -58,5 +59,19 @@ func TestChooseMatch(t *testing.T) {
 				t.Errorf("candidate %v returned without ok", cand)
 			}
 		})
+	}
+}
+
+func TestDescribeCandidates(t *testing.T) {
+	results := []searchResult{
+		{id: pathID{"tvdb", "5"}, candidates: []plex.Candidate{{Name: "Show", Year: 2020}, {Name: "Show"}}},
+		{id: pathID{"imdb", "tt1"}},
+	}
+	want := []string{
+		"Show (2020) via https://thetvdb.com/dereferrer/series/5",
+		"Show via https://thetvdb.com/dereferrer/series/5",
+	}
+	if got := describeCandidates(results, true); !reflect.DeepEqual(got, want) {
+		t.Errorf("describeCandidates = %q, want %q", got, want)
 	}
 }
