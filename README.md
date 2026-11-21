@@ -210,7 +210,9 @@ Plex once for each TMDB ID, for example `tmdb-1396`, with the same rules for
 the candidates.
 
 - If TMDB has no entry for an ID, autorefresh skips that ID. If no ID gives
-  a match, the item gets a plain refresh.
+  a match, the item gets a plain refresh. Autorefresh does not remember
+  that TMDB had no entry, because TMDB can add it later, so it asks again
+  at the next attempt of the item.
 - Autorefresh keeps each TMDB ID that it finds in the cache of the item, so
   it asks TMDB for an ID only once. The cache removes these IDs with the
   item.
@@ -326,7 +328,13 @@ bind-mount a file that does not exist.
 If the directory of the binary contains `config.yml`, the default
 configuration directory is that directory. Otherwise it is `autorefresh` in
 the user configuration directory, for example `~/.config/autorefresh` on
-Linux.
+Linux. Autorefresh creates that directory with access for its owner only,
+because the configuration holds the tokens.
+
+Two processes can use the same database, for example a `--once --dry-run`
+check while the service runs. A process waits up to 30 seconds for the
+other one to finish a write. An older version of autorefresh does not open
+a database that a newer version migrated to a newer schema.
 
 Without `--once`, the first run starts at the next `schedule` time. With
 `--once`, autorefresh runs one check at once and exits. If the check logs an
