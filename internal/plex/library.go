@@ -126,7 +126,10 @@ func (c *Client) Libraries(ctx context.Context) ([]Library, error) {
 	return libraries, nil
 }
 
-// List reads every page of one item type in a section.
+// List reads every page of one item type in a section. It fails if the
+// listing changes before the offset of a page during the read, because the
+// page could then skip an item. Items that Plex adds at the end of the
+// listing do not make it fail.
 func (c *Client) List(ctx context.Context, section string, itemType int, filters ...Filter) ([]Item, error) {
 	if !idPattern.MatchString(section) {
 		return nil, errors.New("invalid plex section")
@@ -141,11 +144,15 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 
 	var items []Item
 	for {
+		// Each page after the first starts at the last item of the previous
+		// page. If that item moved, the items after it moved too, and the
+		// page would skip or repeat an item.
+		start := max(0, len(items)-1)
 		query := url.Values{
 			"type":                   {strconv.Itoa(itemType)},
 			"sort":                   {"addedAt"},
 			"excludeElements":        {exclude},
-			"X-Plex-Container-Start": {strconv.Itoa(len(items))},
+			"X-Plex-Container-Start": {strconv.Itoa(start)},
 			"X-Plex-Container-Size":  {strconv.Itoa(pageSize)},
 		}
 		for _, f := range filters {
@@ -163,6 +170,13 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 		page, total := resp.MediaContainer.Metadata, resp.MediaContainer.TotalSize
 		if total == nil {
 			return nil, fmt.Errorf("listing section %s: response has no totalSize", section)
+		}
+		if len(items) > 0 {
+			if len(page) == 0 || page[0].RatingKey != items[len(items)-1].RatingKey {
+				return nil, fmt.Errorf("listing section %s: listing changed during the read at offset %d",
+					section, start)
+			}
+			page = page[1:]
 		}
 		for _, m := range page {
 			items = append(items, m.item())

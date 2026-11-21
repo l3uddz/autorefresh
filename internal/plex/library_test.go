@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -150,9 +151,11 @@ func TestListReadsEveryPage(t *testing.T) {
 		size   int // the most items in one answer
 		starts []string
 	}{
-		{"full pages", 1001, 500, []string{"0", "500", "1000"}},
+		// Each page after the first starts one item early, at the last
+		// item of the previous page.
+		{"full pages", 1001, 500, []string{"0", "499", "998"}},
 		{"empty library", 0, 500, []string{"0"}},
-		{"short pages", 450, 200, []string{"0", "200", "400"}},
+		{"short pages", 450, 200, []string{"0", "199", "398"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -179,6 +182,91 @@ func TestListReadsEveryPage(t *testing.T) {
 				t.Errorf("starts = %v, want %v", starts, tt.starts)
 			}
 		})
+	}
+}
+
+// listServer answers each listing with the page at X-Plex-Container-Start
+// of keys(n), with at most size items. n counts the requests from 0, so a
+// test can change the listing between two pages.
+func listServer(t *testing.T, size int, keys func(n int) []string) (*recorder, *Client) {
+	t.Helper()
+	var n int
+	return newServer(t, func(w http.ResponseWriter, r *http.Request) {
+		list := keys(n)
+		n++
+		start, _ := strconv.Atoi(r.URL.Query().Get("X-Plex-Container-Start"))
+		page := list[min(start, len(list)):min(start+size, len(list))]
+		w.Write([]byte(`{"MediaContainer":{"totalSize":` + strconv.Itoa(len(list)) + `,"Metadata":[`))
+		for i, key := range page {
+			if i > 0 {
+				w.Write([]byte(","))
+			}
+			w.Write([]byte(`{"ratingKey":"` + key + `"}`))
+		}
+		w.Write([]byte(`]}}`))
+	})
+}
+
+// keyRange returns the rating keys from first to last.
+func keyRange(first, last int) []string {
+	keys := make([]string, 0, last-first+1)
+	for i := first; i <= last; i++ {
+		keys = append(keys, strconv.Itoa(i))
+	}
+	return keys
+}
+
+// A change before the offset of the next page moves the later items, so the
+// next page would skip or repeat an item. The listing fails instead.
+func TestListFailsWhenListingMoves(t *testing.T) {
+	tests := []struct {
+		name  string
+		after []string // the listing after the first page
+	}{
+		{"item removed before the offset", append(keyRange(0, 4), keyRange(6, 11)...)},
+		{"item inserted before the offset", append(append(keyRange(0, 4), "new"), keyRange(5, 11)...)},
+		{"last item of the page removed", append(keyRange(0, 8), keyRange(10, 11)...)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, c := listServer(t, 10, func(n int) []string {
+				if n == 0 {
+					return keyRange(0, 11)
+				}
+				return tt.after
+			})
+
+			_, err := c.List(context.Background(), "1", TypeMovie)
+			if err == nil || !strings.Contains(err.Error(), "changed during the read") {
+				t.Fatalf("err = %v, want a changed listing", err)
+			}
+			if errors.Is(err, ErrUnavailable) {
+				t.Error("a changed listing must not stop the server")
+			}
+		})
+	}
+}
+
+// Items that Plex adds during the read come after the offset, so the
+// listing returns them too.
+func TestListReadsItemsAddedDuringTheRead(t *testing.T) {
+	_, c := listServer(t, 10, func(n int) []string {
+		if n == 0 {
+			return keyRange(0, 11)
+		}
+		return keyRange(0, 14)
+	})
+
+	items, err := c.List(context.Background(), "1", TypeMovie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys []string
+	for _, it := range items {
+		keys = append(keys, it.RatingKey)
+	}
+	if want := keyRange(0, 14); !reflect.DeepEqual(keys, want) {
+		t.Errorf("keys = %v, want %v", keys, want)
 	}
 }
 

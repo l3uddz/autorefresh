@@ -80,9 +80,12 @@ unmatched items. On every run, it also requests the series with incomplete
 regular episodes. Autorefresh never lists all episodes.
 
 If a read of a library fails, the cache of that library does not change.
-The next run reads the same period again. If an item becomes complete,
-autorefresh logs it with the number of refreshes and removes it from the
-cache.
+The next run reads the same period again. Autorefresh reads a listing page
+by page. If an item leaves the part of the listing that it already read, or
+a new item enters that part, the read fails, because the next page could
+skip an item. Items that Plex adds at the end of the listing do not make
+the read fail. If an item becomes complete, autorefresh logs it with the
+number of refreshes and removes it from the cache.
 
 ### Cache cleanup
 
