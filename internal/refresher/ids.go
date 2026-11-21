@@ -3,6 +3,7 @@ package refresher
 import (
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -51,7 +52,29 @@ var (
 	// imdbValue and numberValue match the value of an ID.
 	imdbValue   = regexp.MustCompile(`(?i)^tt[0-9]+$`)
 	numberValue = regexp.MustCompile(`^[0-9]+$`)
+	// parenYearPattern matches a 4-digit year in parentheses, such as (2018).
+	parenYearPattern = regexp.MustCompile(`\(([0-9]{4})\)`)
 )
+
+// parsePathYear returns the single plausible release year in parentheses
+// across paths, for example 2018 from "Title 2000 (2018)/Title 2000 (2018).mkv".
+// It returns 0 if paths contain no such year or multiple different years.
+func parsePathYear(paths []string) int {
+	var year int
+	for _, path := range paths {
+		for _, m := range parenYearPattern.FindAllStringSubmatch(path, -1) {
+			y, err := strconv.Atoi(m[1])
+			if err != nil || y < 1880 || y > 2100 {
+				continue
+			}
+			if year != 0 && year != y {
+				return 0
+			}
+			year = y
+		}
+	}
+	return year
+}
 
 // parseIDs reads the IDs in all paths, without duplicates, in the order found.
 func parseIDs(paths []string) []pathID {

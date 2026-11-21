@@ -14,12 +14,14 @@ import (
 
 var _ TMDB = (*tmdb.Client)(nil)
 
-// fakeTMDB records each Find call as "Find <source> <id> <show>" and
-// answers from ids and errs, both by "<source> <id> <show>".
+// fakeTMDB records each Find and Year call and answers from its maps.
+// Find keys are "<source> <id> <show>"; Year keys are "<id> <show>".
 type fakeTMDB struct {
-	ids   map[string]string
-	errs  map[string]error
-	calls []string
+	ids      map[string]string
+	errs     map[string]error
+	years    map[string]int
+	yearErrs map[string]error
+	calls    []string
 }
 
 func (f *fakeTMDB) Find(_ context.Context, source, id string, show bool) (string, bool, error) {
@@ -30,6 +32,16 @@ func (f *fakeTMDB) Find(_ context.Context, source, id string, show bool) (string
 	}
 	tmdbID, ok := f.ids[key]
 	return tmdbID, ok, nil
+}
+
+func (f *fakeTMDB) Year(_ context.Context, id string, show bool) (int, bool, error) {
+	key := fmt.Sprintf("%s %v", id, show)
+	f.calls = append(f.calls, "Year "+key)
+	if err := f.yearErrs[key]; err != nil {
+		return 0, false, err
+	}
+	y, ok := f.years[key]
+	return y, ok, nil
 }
 
 // newTMDBFixture returns a refresh fixture with the fake TMDB, and the
@@ -300,12 +312,17 @@ func TestTMDBFallbackDryRun(t *testing.T) {
 	})
 }
 
-// cancelTMDB cancels the run during its Find call, and Find then fails.
+// cancelTMDB cancels the run during its Find or Year call, which then fails.
 type cancelTMDB struct{ cancel context.CancelFunc }
 
 func (c cancelTMDB) Find(context.Context, string, string, bool) (string, bool, error) {
 	c.cancel()
 	return "", false, fmt.Errorf("GET /3/find/5: %w", context.Canceled)
+}
+
+func (c cancelTMDB) Year(context.Context, string, bool) (int, bool, error) {
+	c.cancel()
+	return 0, false, fmt.Errorf("GET /3/tv/77: %w", context.Canceled)
 }
 
 func TestTMDBFindCanceled(t *testing.T) {
@@ -329,5 +346,268 @@ func TestTMDBFindCanceled(t *testing.T) {
 	}
 	if row, _ := f.row(testServer, "2", "201"); row.LastAttempt.Equal(t0) || row.Refreshes != 1 {
 		t.Errorf("row = %+v, want no new attempt", row)
+	}
+}
+
+func TestYearConfirmSeriesViaTMDB(t *testing.T) {
+	fp := newFakePlex(showsLib)
+	cand := []plex.Candidate{{GUID: "plex://show/s", Name: "Show", Year: 2017}}
+	fp.candidates["201 tvdb-5"] = cand
+	fp.candidates["201 tmdb-77"] = cand
+	ft := &fakeTMDB{
+		ids:   map[string]string{"tvdb 5 true": "77"},
+		years: map[string]int{"77 true": 2022},
+	}
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.opts.TMDB = ft
+	it := unmatchedItem("201")
+	it.Year = 2022
+	fp.paths["201"] = []string{"/tv/Show (2022) {tvdb-5}"}
+	f.seed(testServer, showsLib, it, store.Unmatched, 1)
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s")
+	wantCalls(t, ft.calls, "Find tvdb 5 true", "Year 77 true")
+	sent := f.logLines("info", "Sent request")
+	if len(sent) != 1 {
+		t.Fatalf("got %d sent lines, want 1", len(sent))
+	}
+	wantField(t, sent[0], "action", "match")
+	wantField(t, sent[0], "item_year", float64(2022))
+	wantField(t, sent[0], "candidate_year", float64(2017))
+	wantField(t, sent[0], "tmdb_year", float64(2022))
+	wantLinks := []any{"https://thetvdb.com/dereferrer/series/5", "https://www.themoviedb.org/tv/77"}
+	if got, _ := sent[0]["links"].([]any); fmt.Sprint(got) != fmt.Sprint(wantLinks) {
+		t.Errorf("links = %v, want %v", got, wantLinks)
+	}
+}
+
+func TestYearConfirmMovieViaTMDBFallback(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	movie := unmatchedItem("101")
+	movie.Year = 1984
+	movie.Files = []string{"/m/Film (1984)/Film (1984) {imdb-tt1}.mkv"}
+	fp.lists["1?type=1&unmatched=1"] = []plex.Item{movie}
+	fp.candidates["101 tmdb-9"] = []plex.Candidate{{GUID: "plex://movie/a", Name: "Film", Year: 1991}}
+	ft := &fakeTMDB{
+		ids:   map[string]string{"imdb tt1 false": "9"},
+		years: map[string]int{"9 false": 1984},
+	}
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.opts.TMDB = ft
+	f.seed(testServer, moviesLib, movie, store.Unmatched, 1)
+
+	f.run(t0)
+
+	// The fallback already searched tmdb-9, so year confirmation sends no
+	// duplicate SearchMatches call and keeps action as tmdb-match.
+	wantCalls(t, matchReads(fp.calls),
+		"SearchMatches 101 imdb-tt1 tv.plex.agents.movie en-US",
+		"SearchMatches 101 tmdb-9 tv.plex.agents.movie en-US",
+	)
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/a")
+	wantCalls(t, ft.calls, "Find imdb tt1 false", "Year 9 false")
+	sent := f.logLines("info", "Sent request")
+	if len(sent) != 1 {
+		t.Fatalf("got %d sent lines, want 1", len(sent))
+	}
+	wantField(t, sent[0], "action", "tmdb-match")
+	wantField(t, sent[0], "tmdb_year", float64(1984))
+	wantLinks := []any{"https://www.themoviedb.org/movie/9"}
+	if got, _ := sent[0]["links"].([]any); fmt.Sprint(got) != fmt.Sprint(wantLinks) {
+		t.Errorf("links = %v, want %v", got, wantLinks)
+	}
+}
+
+// When Plex misparses a bare year in a title (e.g. "Concert 2000 (2018)"),
+// the unambiguous parenthesized path year confirms the match without TMDB.
+func TestYearConfirmViaPathYearWithoutTMDB(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	movie := unmatchedItem("101")
+	movie.Year = 2000
+	movie.Files = []string{"/m/Concert 2000 (2018) {imdb-tt1}/Concert 2000 (2018).mkv"}
+	fp.lists["1?type=1&unmatched=1"] = []plex.Item{movie}
+	fp.candidates["101 imdb-tt1"] = []plex.Candidate{{GUID: "plex://movie/a", Name: "Concert 2000", Year: 2018}}
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.seed(testServer, moviesLib, movie, store.Unmatched, 1)
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/a")
+	sent := f.logLines("info", "Sent request")
+	if len(sent) != 1 {
+		t.Fatalf("got %d sent lines, want 1", len(sent))
+	}
+	wantField(t, sent[0], "action", "match")
+	wantField(t, sent[0], "item_year", float64(2000))
+	wantField(t, sent[0], "path_year", float64(2018))
+	wantField(t, sent[0], "candidate_year", float64(2018))
+}
+
+func TestYearConfirmRejectsUnconfirmedConflicts(t *testing.T) {
+	tests := []struct {
+		name         string
+		setup        func(fp *fakePlex, ft *fakeTMDB)
+		noTMDB       bool
+		wantConflict string
+		wantTMDBYear float64
+		wantTMDBNone bool
+	}{
+		{
+			name: "remake year still differs",
+			setup: func(fp *fakePlex, ft *fakeTMDB) {
+				cand := []plex.Candidate{{GUID: "plex://show/old", Name: "Show", Year: 1978}}
+				fp.candidates["201 tvdb-5"] = cand
+				fp.candidates["201 tmdb-77"] = cand
+				ft.ids["tvdb 5 true"] = "77"
+				ft.years["77 true"] = 1978
+			},
+			wantConflict: "year differs",
+			wantTMDBYear: 1978,
+		},
+		{
+			name: "tmdb plex search returns different guid",
+			setup: func(fp *fakePlex, ft *fakeTMDB) {
+				fp.candidates["201 tvdb-5"] = []plex.Candidate{{GUID: "plex://show/a", Name: "Show", Year: 2017}}
+				fp.candidates["201 tmdb-77"] = []plex.Candidate{{GUID: "plex://show/b", Name: "Show", Year: 2022}}
+				ft.ids["tvdb 5 true"] = "77"
+				ft.years["77 true"] = 2022
+			},
+			wantConflict: "year differs",
+		},
+		{
+			name: "tmdb plex search returns no candidate",
+			setup: func(fp *fakePlex, ft *fakeTMDB) {
+				fp.candidates["201 tvdb-5"] = []plex.Candidate{{GUID: "plex://show/a", Name: "Show", Year: 2017}}
+				ft.ids["tvdb 5 true"] = "77"
+				ft.years["77 true"] = 2022
+			},
+			wantConflict: "year differs",
+		},
+		{
+			name: "tmdb plex search non-fatal error keeps plain refresh",
+			setup: func(fp *fakePlex, ft *fakeTMDB) {
+				fp.candidates["201 tvdb-5"] = []plex.Candidate{{GUID: "plex://show/a", Name: "Show", Year: 2017}}
+				fp.searchErrs["201 tmdb-77"] = errServer
+				ft.ids["tvdb 5 true"] = "77"
+				ft.years["77 true"] = 2022
+			},
+			wantConflict: "year differs",
+		},
+		{
+			name: "no tmdb token",
+			setup: func(fp *fakePlex, _ *fakeTMDB) {
+				fp.candidates["201 tvdb-5"] = []plex.Candidate{{GUID: "plex://show/a", Name: "Show", Year: 2017}}
+			},
+			noTMDB:       true,
+			wantConflict: "year differs",
+			wantTMDBNone: true,
+		},
+		{
+			name: "multi-id different guids skips tmdb confirmation",
+			setup: func(fp *fakePlex, ft *fakeTMDB) {
+				fp.paths["201"] = []string{"/tv/Show (2022) {tvdb-5} {imdb-tt1}"}
+				fp.candidates["201 tvdb-5"] = []plex.Candidate{{GUID: "plex://show/a", Name: "Show", Year: 2017}}
+				fp.candidates["201 imdb-tt1"] = []plex.Candidate{{GUID: "plex://show/b", Name: "Other", Year: 2022}}
+				ft.ids["tvdb 5 true"] = "77"
+				ft.years["77 true"] = 2022
+			},
+			wantConflict: "different candidates",
+			wantTMDBNone: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := newFakePlex(showsLib)
+			ft := &fakeTMDB{ids: map[string]string{}, years: map[string]int{}}
+			f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+			if !tt.noTMDB {
+				f.r.opts.TMDB = ft
+			}
+			it := unmatchedItem("201")
+			it.Year = 2022
+			fp.paths["201"] = []string{"/tv/Show (2022) {tvdb-5}"}
+			f.seed(testServer, showsLib, it, store.Unmatched, 1)
+			tt.setup(fp, ft)
+
+			f.run(t0)
+
+			wantCalls(t, sends(fp.calls), "Refresh 201")
+			if tt.wantTMDBNone {
+				wantCalls(t, ft.calls)
+			}
+			warnings := f.logLines("warn", "Match conflict")
+			if len(warnings) != 1 {
+				t.Fatalf("got %d conflict warnings, want 1", len(warnings))
+			}
+			wantField(t, warnings[0], "conflict", tt.wantConflict)
+			if tt.wantTMDBYear != 0 {
+				wantField(t, warnings[0], "tmdb_year", tt.wantTMDBYear)
+			}
+		})
+	}
+}
+
+func TestYearConfirmTMDBYearFailureDisablesTMDB(t *testing.T) {
+	fp := newFakePlex(showsLib)
+	cand1 := []plex.Candidate{{GUID: "plex://show/a", Name: "Show 1", Year: 2017}}
+	cand2 := []plex.Candidate{{GUID: "plex://show/b", Name: "Show 2", Year: 2017}}
+	fp.candidates["201 tvdb-5"] = cand1
+	fp.candidates["201 tmdb-77"] = cand1
+	fp.candidates["202 tvdb-6"] = cand2
+	fp.candidates["202 tmdb-78"] = cand2
+	ft := &fakeTMDB{
+		ids:      map[string]string{"tvdb 5 true": "77", "tvdb 6 true": "78"},
+		years:    map[string]int{"78 true": 2022},
+		yearErrs: map[string]error{"77 true": errors.New("GET /3/tv/77: 500 Internal Server Error")},
+	}
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.opts.TMDB = ft
+	first := unmatchedItem("201")
+	first.Year = 2022
+	fp.paths["201"] = []string{"/tv/Show 1 (2022) {tvdb-5}"}
+	f.seed(testServer, showsLib, first, store.Unmatched, 1)
+
+	second := unmatchedItem("202")
+	second.Year = 2022
+	second.AddedAt = addedAt.Add(time.Hour)
+	fp.paths["202"] = []string{"/tv/Show 2 (2022) {tvdb-6}"}
+	f.seed(testServer, showsLib, second, store.Unmatched, 1)
+
+	f.run(t0)
+
+	wantCalls(t, ft.calls, "Find tvdb 5 true", "Year 77 true")
+	wantCalls(t, sends(fp.calls), "Refresh 201", "Refresh 202")
+	if warnings := f.logLines("warn", "TMDB lookup failed"); len(warnings) != 1 {
+		t.Errorf("got %d TMDB warnings, want 1", len(warnings))
+	}
+	wantField(t, f.lastSummary(testServer), "failed_requests", float64(1))
+}
+
+func TestYearConfirmCanceledDuringTMDBYearStopsQuietly(t *testing.T) {
+	fp := newFakePlex(showsLib)
+	cand := []plex.Candidate{{GUID: "plex://show/s", Name: "Show", Year: 2017}}
+	fp.candidates["201 tmdb-77"] = cand
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	it := unmatchedItem("201")
+	it.Year = 2022
+	fp.paths["201"] = []string{"/tv/Show (2022) {tmdb-77}"}
+	f.seed(testServer, showsLib, it, store.Unmatched, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.r.opts.TMDB = cancelTMDB{cancel}
+
+	f.now = t0
+	if err := f.r.Run(ctx); err != nil {
+		t.Fatalf("Run = %v, want nil", err)
+	}
+	wantCalls(t, sends(fp.calls))
+	if warnings := f.logLines("warn", "TMDB lookup failed"); len(warnings) != 0 {
+		t.Errorf("got TMDB warnings %v, want none", warnings)
+	}
+	if lines := f.logLines("info", "Run summary"); len(lines) != 0 {
+		t.Errorf("got summary lines %v, want none", lines)
 	}
 }

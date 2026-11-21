@@ -3,6 +3,7 @@ package refresher
 import (
 	"context"
 	"errors"
+	"slices"
 	"strconv"
 	"time"
 
@@ -169,9 +170,11 @@ func (r *Refresher) warnAtLongestWait(server string, lib plex.Library, it store.
 
 // fixMatch is the candidate that a fix match applies.
 type fixMatch struct {
-	cand   plex.Candidate
-	links  []string     // the web pages of the search IDs that found cand
-	action store.Action // store.ActionMatch, or store.ActionTMDBMatch if TMDB gave the IDs
+	cand     plex.Candidate
+	links    []string     // the web pages of the search IDs that found cand
+	action   store.Action // store.ActionMatch, or store.ActionTMDBMatch if TMDB gave the IDs
+	pathYear int          // >0 when the path (YYYY) confirmed a year gap
+	tmdbYear int          // >0 when TMDB confirmed a year gap
 }
 
 // findMatch returns the fix match of the item, or nil for a plain refresh.
@@ -201,17 +204,40 @@ func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Libr
 		}
 		action = store.ActionTMDBMatch
 	}
+	mc := matchContext{lib: lib, it: it, paths: paths, ids: ids, results: results}
+	return r.resolveMatch(ctx, run, mc, action)
+}
 
-	show := it.Type == plex.ShowLibrary
-	cand, match, conflict := chooseMatch(it.Year, results)
+// resolveMatch evaluates search results, confirms pure year conflicts via
+// the path year or TMDB when possible, and logs unresolved conflicts.
+func (r *Refresher) resolveMatch(ctx context.Context, run *serverRun, mc matchContext, action store.Action) (*fixMatch, error) {
+	show := mc.it.Type == plex.ShowLibrary
+	cand, match, conflict := chooseMatch(mc.it.Year, mc.results)
+	var yr yearResolution
+	if conflict == conflictYear {
+		var err error
+		if yr, err = r.confirmYear(ctx, run, mc); err != nil {
+			return nil, err
+		}
+		if yr.ok {
+			cand, match, conflict = yr.cand, true, ""
+		}
+	}
 	if conflict != "" {
-		itemEvent(log.Warn(), run.server.Name, lib, it).Str("conflict", conflict).Int("item_year", it.Year).
-			Strs("candidates", describeCandidates(results, show)).Msg("Match conflict")
+		ev := itemEvent(log.Warn(), run.server.Name, mc.lib, mc.it).Str("conflict", conflict).Int("item_year", mc.it.Year)
+		if yr.tmdbYear != 0 {
+			ev.Int("tmdb_year", yr.tmdbYear)
+		}
+		ev.Strs("candidates", describeCandidates(mc.results, show)).Msg("Match conflict")
 	}
 	if !match {
 		return nil, nil
 	}
-	return &fixMatch{cand: cand, links: foundLinks(results, show), action: action}, nil
+	links := foundLinks(mc.results, show)
+	if yr.extraLink != "" && !slices.Contains(links, yr.extraLink) {
+		links = append(links, yr.extraLink)
+	}
+	return &fixMatch{cand: cand, links: links, action: action, pathYear: yr.pathYear, tmdbYear: yr.tmdbYear}, nil
 }
 
 // itemPaths returns the paths of the item: the movie files from the reads
@@ -265,10 +291,14 @@ func (r *Refresher) tmdbFallback(ctx context.Context, run *serverRun, lib plex.L
 	if !errors.Is(err, errTMDB) || ctx.Err() != nil {
 		return results, err
 	}
+	r.recordTMDBFailure(run, lib, it, err)
+	return nil, nil
+}
+
+func (r *Refresher) recordTMDBFailure(run *serverRun, lib plex.Library, it store.Item, err error) {
 	run.tmdbFailed = true
 	run.failures++
 	itemEvent(log.Warn(), run.server.Name, lib, it).Err(err).Msg("TMDB lookup failed")
-	return nil, nil
 }
 
 // searchFailureIsEmpty reports whether a failed search for id counts as a
@@ -313,6 +343,12 @@ func requestEvent(ev *zerolog.Event, server string, lib plex.Library, it store.I
 	if fm == nil {
 		return ev
 	}
-	return ev.Int("item_year", it.Year).Str("candidate", fm.cand.Name).Int("candidate_year", fm.cand.Year).
-		Strs("links", fm.links)
+	ev = ev.Int("item_year", it.Year).Str("candidate", fm.cand.Name).Int("candidate_year", fm.cand.Year)
+	if fm.pathYear != 0 {
+		ev = ev.Int("path_year", fm.pathYear)
+	}
+	if fm.tmdbYear != 0 {
+		ev = ev.Int("tmdb_year", fm.tmdbYear)
+	}
+	return ev.Strs("links", fm.links)
 }
