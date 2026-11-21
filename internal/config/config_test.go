@@ -174,6 +174,7 @@ func TestDecodeRejectsInvalidConfig(t *testing.T) {
 		{"duplicate server names", "plex:\n  - name: a\n" + server + "  - name: a\n" + server},
 		{"empty name", "plex:\n  - name: \"\"\n" + server},
 		{"whitespace name", "plex:\n  - name: \"   \"\n" + server},
+		{"name with control char", "plex:\n  - name: \"main\\nother\"\n" + server},
 		{"empty url", "plex:\n  - name: a\n    url: \"\"\n    token: t\n"},
 		{"unsupported scheme", "plex:\n  - name: a\n    url: ftp://plex.example.invalid\n    token: t\n"},
 		{"url without host", "plex:\n  - name: a\n    url: http://\n    token: t\n"},
@@ -204,6 +205,7 @@ func TestDecodeRejectsInvalidConfig(t *testing.T) {
 		{"negative timeout", "plex:\n  - name: a\n" + server + "    timeout: -1s\n"},
 		{"empty library title", "plex:\n  - name: a\n" + server + "    libraries: [\"\"]\n"},
 		{"whitespace library title", "plex:\n  - name: a\n" + server + "    libraries: [\"   \"]\n"},
+		{"library title with control char", "plex:\n  - name: a\n" + server + "    libraries: [\"Movies\\tOther\"]\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

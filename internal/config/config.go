@@ -190,6 +190,16 @@ func (c *Config) validateServers() error {
 	return nil
 }
 
+// hasControl reports whether s contains any ASCII control character.
+func hasControl(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
 // hasControlOrSpace reports whether s contains any ASCII control character or
 // whitespace, which cannot appear in a valid Plex or TMDB header token.
 func hasControlOrSpace(s string) bool {
@@ -228,6 +238,9 @@ func (s *Server) validate() error {
 	if strings.TrimSpace(s.Name) == "" {
 		return errors.New("name is empty")
 	}
+	if hasControl(s.Name) {
+		return errors.New("name must not contain control characters")
+	}
 	u, err := validateURL(s.URL)
 	if err != nil {
 		return err
@@ -245,6 +258,9 @@ func (s *Server) validate() error {
 	for _, lib := range s.Libraries {
 		if strings.TrimSpace(lib) == "" {
 			return errors.New("a library title is empty")
+		}
+		if hasControl(lib) {
+			return errors.New("a library title must not contain control characters")
 		}
 	}
 	return nil
