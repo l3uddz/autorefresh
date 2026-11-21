@@ -261,8 +261,11 @@ func TestSecondStoreWaitsForLock(t *testing.T) {
 			_, err := second.ApplyRead(Read{Server: "s", Section: "1", At: base, Full: true})
 			return err
 		}},
+		// The prune reads before it deletes. Without a write lock at the
+		// start of the transaction, SQLite returns SQLITE_BUSY at once
+		// instead of waiting. It runs last, because it removes the library.
 		{"PruneSections", func() error {
-			_, err := second.PruneSections("s", []string{"1"})
+			_, err := second.PruneSections("s", nil)
 			return err
 		}},
 	} {
@@ -365,5 +368,37 @@ func TestMigrationRejectsBrokenForeignKey(t *testing.T) {
 	var n int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migration WHERE version = 99`).Scan(&n); err != nil || n != 0 {
 		t.Errorf("schema_migration rows of 99 = %d, %v, want 0", n, err)
+	}
+}
+
+// A database failure must reach the caller, so the refresher can stop the
+// run instead of acting on a cache that it did not read or write.
+func TestMethodsReportDatabaseFailure(t *testing.T) {
+	s := openTest(t)
+	s.Close()
+
+	calls := map[string]func() error{
+		"Library": func() error { _, err := s.Library(srv, sec); return err },
+		"ApplyRead": func() error {
+			_, err := s.ApplyRead(Read{Server: srv, Section: sec, At: base})
+			return err
+		},
+		"Unseen": func() error { _, err := s.Unseen(srv, sec, nil); return err },
+		"Due": func() error {
+			_, _, err := s.Due(DueQuery{Server: srv, Sections: []string{sec}, Now: base})
+			return err
+		},
+		"CountIncomplete": func() error { _, err := s.CountIncomplete(srv, []string{sec}, 0); return err },
+		"RecordAttempt":   func() error { return s.RecordAttempt(srv, "101", base, true) },
+		"Delete":          func() error { return s.Delete(srv, "101") },
+		"PruneServers":    func() error { _, err := s.PruneServers(nil); return err },
+		"PruneSections":   func() error { _, err := s.PruneSections(srv, nil); return err },
+		"TMDBID":          func() error { _, _, err := s.TMDBID(srv, "101", "tvdb", "5"); return err },
+		"SaveTMDBID":      func() error { return s.SaveTMDBID(srv, "101", "tvdb", "5", "77") },
+	}
+	for name, call := range calls {
+		if err := call(); err == nil {
+			t.Errorf("%s on a closed database returned no error", name)
+		}
 	}
 }
