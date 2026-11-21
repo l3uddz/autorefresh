@@ -165,8 +165,8 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 		switch {
 		case len(items) >= *total:
 			return items, nil
-		case len(page) == 0:
-			return nil, fmt.Errorf("listing section %s: empty page at offset %d of %d",
+		case len(rest) == 0:
+			return nil, fmt.Errorf("listing section %s: page added no new items at offset %d of %d",
 				section, len(items), *total)
 		}
 	}

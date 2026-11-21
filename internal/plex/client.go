@@ -95,6 +95,10 @@ func sameOrigin(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
+// maxDrainBytes bounds unread response body draining so normal responses
+// reuse connections without letting a misbehaving server stall a request.
+const maxDrainBytes = 64 << 10
+
 // send sends a request to endpoint with the query. If out is not nil, it
 // decodes the JSON response body into out.
 func (c *Client) send(ctx context.Context, method string, endpoint *url.URL, query url.Values, out any) error {
@@ -114,7 +118,7 @@ func (c *Client) send(ctx context.Context, method string, endpoint *url.URL, que
 	}
 	defer func() {
 		// Draining the body lets the connection get reused.
-		io.Copy(io.Discard, res.Body)
+		io.Copy(io.Discard, io.LimitReader(res.Body, maxDrainBytes))
 		res.Body.Close()
 	}()
 

@@ -292,17 +292,40 @@ func TestListRejectsPageWithoutTotalSize(t *testing.T) {
 	}
 }
 
-func TestListStopsOnEmptyPage(t *testing.T) {
-	rec, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(`{"MediaContainer":{"totalSize":10,"Metadata":[]}}`))
+func TestListStopsWhenPageAddsNoNewItems(t *testing.T) {
+	t.Run("empty first page", func(t *testing.T) {
+		rec, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Write([]byte(`{"MediaContainer":{"totalSize":10,"Metadata":[]}}`))
+		})
+
+		if _, err := c.List(context.Background(), "1", TypeMovie); err == nil {
+			t.Fatal("no error")
+		}
+		if n := len(rec.all()); n != 1 {
+			t.Errorf("got %d requests, want 1", n)
+		}
 	})
 
-	if _, err := c.List(context.Background(), "1", TypeMovie); err == nil {
-		t.Fatal("no error")
-	}
-	if n := len(rec.all()); n != 1 {
-		t.Errorf("got %d requests, want 1", n)
-	}
+	// A second page that contains only the overlap anchor adds no new items
+	// and must fail instead of repeating the same offset forever.
+	t.Run("overlap-only second page", func(t *testing.T) {
+		calls := 0
+		rec, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+			calls++
+			if calls == 1 {
+				w.Write([]byte(`{"MediaContainer":{"totalSize":5,"Metadata":[{"ratingKey":"1"},{"ratingKey":"2"}]}}`))
+				return
+			}
+			w.Write([]byte(`{"MediaContainer":{"totalSize":5,"Metadata":[{"ratingKey":"2"}]}}`))
+		})
+
+		if _, err := c.List(context.Background(), "1", TypeMovie); err == nil {
+			t.Fatal("no error")
+		}
+		if n := len(rec.all()); n != 2 {
+			t.Errorf("got %d requests, want 2", n)
+		}
+	})
 }
 
 func TestListEncodesFilters(t *testing.T) {
