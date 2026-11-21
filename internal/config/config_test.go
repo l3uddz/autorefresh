@@ -118,6 +118,16 @@ plex:
 	if want := []string{"no-art", "episode-no-summary"}; !reflect.DeepEqual(cfg.IgnoreReasons, want) {
 		t.Errorf("IgnoreReasons = %v, want %v", cfg.IgnoreReasons, want)
 	}
+	if want := store.NoArt | store.EpisodeNoSummary; cfg.Ignored != want {
+		t.Errorf("Ignored = %v, want %v", cfg.Ignored, want)
+	}
+	from := time.Date(2026, 11, 23, 0, 0, 0, 0, time.UTC) // a Monday
+	if got, want := cfg.RunSchedule.Next(from), from.Add(30*time.Minute); !got.Equal(want) {
+		t.Errorf("RunSchedule.Next = %v, want %v", got, want)
+	}
+	if got, want := cfg.CacheRefreshSchedule.Next(from), from.Add(4*time.Hour); !got.Equal(want) {
+		t.Errorf("CacheRefreshSchedule.Next = %v, want %v", got, want)
+	}
 	if cfg.MaxRefreshesPerRun != 100 {
 		t.Errorf("MaxRefreshesPerRun = %d, want 100", cfg.MaxRefreshesPerRun)
 	}

@@ -71,16 +71,6 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed decoding config")
 	}
-	cacheRefresh, err := cron.ParseStandard(cfg.CacheRefresh)
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed parsing cache-refresh")
-	}
-
-	ignoreReasons, err := store.ParseReasons(cfg.IgnoreReasons)
-	if err != nil {
-		log.Fatal().Err(err).Msg("Failed parsing ignore-reasons")
-	}
-
 	// database
 	st, err := store.Open(cli.Database)
 	if err != nil {
@@ -114,9 +104,9 @@ func main() {
 		MaxRefreshInterval: cfg.MaxRefreshInterval,
 		Oversample:         cfg.Oversample,
 		RefreshDelay:       cfg.RefreshDelay,
-		CacheRefresh:       cacheRefresh,
+		CacheRefresh:       cfg.CacheRefreshSchedule,
 		MaxRefreshesPerRun: cfg.MaxRefreshesPerRun,
-		IgnoreReasons:      ignoreReasons,
+		IgnoreReasons:      cfg.Ignored,
 		DryRun:             cli.DryRun,
 		TMDB:               lookup,
 	})
@@ -153,10 +143,7 @@ func main() {
 	}
 	run := &runner{run: r.Run}
 	c := cron.New()
-	if _, err := c.AddFunc(cfg.Schedule, func() { run.start(ctx) }); err != nil {
-		closeStore(st)
-		log.Fatal().Err(err).Msg("Failed adding schedule")
-	}
+	c.Schedule(cfg.RunSchedule, cron.FuncJob(func() { run.start(ctx) }))
 	c.Start()
 
 	<-ctx.Done()
