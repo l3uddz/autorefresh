@@ -213,10 +213,11 @@ the candidates.
 - Autorefresh keeps each TMDB ID that it finds in the cache of the item, so
   it asks TMDB for an ID only once. The cache removes these IDs with the
   item.
-- If a TMDB request fails, autorefresh sends no request for the item in
-  this run, as for a failed match search. The item is due again after its
-  current wait, and the failed request does not make the wait longer.
-  Autorefresh logs a `TMDB lookup failed` warning.
+- If a TMDB request fails, autorefresh logs a `TMDB lookup failed` warning
+  and the item gets a plain refresh, as without a `tmdb-token`. The rest of
+  the run on that server asks TMDB nothing more, so a rejected token sends
+  one failing request in each run, not one for each item. The next run asks
+  TMDB again.
 
 The debug line of each second pass search has a `from` field with the ID
 that TMDB translated, for example `tvdb-81189`.

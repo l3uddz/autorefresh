@@ -76,7 +76,7 @@ func (r *Refresher) logSummary(run *serverRun) error {
 // in a dry run.
 func (r *Refresher) refreshItem(ctx context.Context, s *refreshStep, it store.Item) error {
 	lib := s.libraries[it.Section]
-	cand, match, err := r.findMatch(ctx, s.run.server, lib, it, s.run.files)
+	cand, match, err := r.findMatch(ctx, s.run, lib, it)
 	if err != nil {
 		return r.matchSearchFailed(ctx, s, lib, it, err)
 	}
@@ -142,17 +142,19 @@ func (r *Refresher) warnAtLongestWait(server string, lib plex.Library, it store.
 
 // findMatch returns the candidate of a fix match. match is false for a plain
 // refresh. Only an unmatched item that was refreshed before gets a fix
-// match, and only if the unmatched reason is not ignored. If no search found a candidate, a TMDB client gives a second pass
-// with TMDB IDs. err is the error of a failed ItemPaths or SearchMatches
-// request, of a TMDB lookup (errTMDB), or of the TMDB ID cache (errCache).
-func (r *Refresher) findMatch(ctx context.Context, srv Server, lib plex.Library, it store.Item, files map[string][]string) (cand plex.Candidate, match bool, err error) {
+// match, and only if the unmatched reason is not ignored. If no search found
+// a candidate, a TMDB client gives a second pass with TMDB IDs. err is the
+// error of a failed ItemPaths or SearchMatches request, or of the TMDB ID
+// cache (errCache).
+func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Library, it store.Item) (cand plex.Candidate, match bool, err error) {
 	if it.Reasons&store.Unmatched == 0 || r.opts.IgnoreReasons&store.Unmatched != 0 || it.Refreshes < 1 {
 		return plex.Candidate{}, false, nil
 	}
+	srv := run.server
 
 	var paths []string
 	if it.Type == "movie" {
-		paths = files[it.RatingKey]
+		paths = run.files[it.RatingKey]
 	}
 	if len(paths) == 0 {
 		if err := ctx.Err(); err != nil {
@@ -181,8 +183,8 @@ func (r *Refresher) findMatch(ctx context.Context, srv Server, lib plex.Library,
 		results = append(results, searchResult{id: id, candidates: candidates})
 	}
 
-	if r.useTMDB(ids, results) {
-		if results, err = r.tmdbResults(ctx, srv, lib, it, ids); err != nil {
+	if !run.tmdbFailed && r.useTMDB(ids, results) {
+		if results, err = r.tmdbFallback(ctx, run, lib, it, ids); err != nil {
 			return plex.Candidate{}, false, err
 		}
 	}
@@ -192,6 +194,21 @@ func (r *Refresher) findMatch(ctx context.Context, srv Server, lib plex.Library,
 		itemEvent(log.Warn(), srv.Name, lib, it).Str("conflict", conflict).Msg("Match conflict")
 	}
 	return cand, match, nil
+}
+
+// tmdbFallback returns the results of the second pass with TMDB IDs. If a
+// TMDB lookup fails, it logs the failure, turns the second pass off for the
+// rest of the run, and returns no result. The first pass found no candidate,
+// so the item then gets a plain refresh, as without a TMDB client.
+func (r *Refresher) tmdbFallback(ctx context.Context, run *serverRun, lib plex.Library, it store.Item, ids []pathID) ([]searchResult, error) {
+	results, err := r.tmdbResults(ctx, run.server, lib, it, ids)
+	if !errors.Is(err, errTMDB) || ctx.Err() != nil {
+		return results, err
+	}
+	run.tmdbFailed = true
+	run.failures++
+	itemEvent(log.Warn(), run.server.Name, lib, it).Err(err).Msg("TMDB lookup failed")
+	return nil, nil
 }
 
 // searchFailureIsEmpty reports whether a failed search for id counts as a
@@ -206,7 +223,7 @@ func searchFailureIsEmpty(ctx context.Context, id pathID, err error) bool {
 }
 
 // matchSearchFailed handles a failed ItemPaths or SearchMatches request of
-// a fix match, or a failed TMDB lookup. The item gets no request in this run.
+// a fix match. The item gets no request in this run.
 // It returns the error of stopError or a store error.
 func (r *Refresher) matchSearchFailed(ctx context.Context, s *refreshStep, lib plex.Library, it store.Item, err error) error {
 	if errors.Is(err, errCache) {
@@ -234,11 +251,7 @@ func (r *Refresher) matchSearchFailed(ctx context.Context, s *refreshStep, lib p
 	if !notFound {
 		s.run.failures++
 	}
-	msg := "Match search failed"
-	if errors.Is(err, errTMDB) {
-		msg = "TMDB lookup failed"
-	}
-	itemEvent(log.Warn(), name, lib, it).Err(err).Msg(msg)
+	itemEvent(log.Warn(), name, lib, it).Err(err).Msg("Match search failed")
 	if r.opts.DryRun {
 		return nil
 	}

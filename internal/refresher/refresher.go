@@ -105,10 +105,11 @@ type serverRun struct {
 	completed            []completedItem     // rows that became complete, logged after the refresh step
 	fixed                int                 // completed rows that had a request that Plex accepted
 	due                  int
-	refreshes            int // refresh requests sent, also failed ones
-	matches              int // match requests sent, also failed ones
-	failures             int // failed requests and match searches, without 404 answers
-	remaining            int // due items that the limit or a stop kept from this run
+	refreshes            int  // refresh requests sent, also failed ones
+	matches              int  // match requests sent, also failed ones
+	failures             int  // failed requests and match searches, without 404 answers
+	remaining            int  // due items that the limit or a stop kept from this run
+	tmdbFailed           bool // a TMDB lookup failed, so the run asks TMDB nothing more
 }
 
 // completedItem is a row that a read of the run found complete.
