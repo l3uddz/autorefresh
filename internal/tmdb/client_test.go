@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,8 +32,18 @@ func serve(t *testing.T, handler func(w http.ResponseWriter, r *http.Request)) *
 	}))
 	t.Cleanup(srv.Close)
 	c := New(token, 5*time.Second)
-	c.baseURL = srv.URL
+	c.base = mustURL(t, srv.URL)
 	return c
+}
+
+// mustURL parses a test server URL.
+func mustURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
 }
 
 // file answers with a file of testdata.
@@ -124,7 +135,7 @@ func TestFindErrors(t *testing.T) {
 
 	t.Run("closed server", func(t *testing.T) {
 		c := serve(t, nil)
-		c.baseURL = "http://127.0.0.1:1"
+		c.base = mustURL(t, "http://127.0.0.1:1")
 		_, _, err := c.Find(context.Background(), "tvdb", "81189", true)
 		checkError(t, err, false)
 	})
@@ -148,8 +159,9 @@ func checkError(t *testing.T, err error, unauthorized bool) {
 
 func TestCheck(t *testing.T) {
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/3/authentication" {
-			t.Errorf("path = %s, want /3/authentication", r.URL.Path)
+		// A request without a query has no "?".
+		if r.RequestURI != "/3/authentication" {
+			t.Errorf("request URI = %s, want /3/authentication", r.RequestURI)
 		}
 		w.Write([]byte(`{"success":true}`))
 	})
