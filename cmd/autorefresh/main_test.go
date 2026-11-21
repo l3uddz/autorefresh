@@ -137,3 +137,29 @@ func TestRunStopsAfterSignal(t *testing.T) {
 	}
 	wantDatabase(t, opts.Database)
 }
+
+// A signal while run waits for a missing config stops the process without
+// an error, like a signal after the start.
+func TestRunStopsDuringConfigWait(t *testing.T) {
+	buf := captureLog(t)
+	opts := runOptions(t, "http://127.0.0.1:1")
+	if err := os.Remove(opts.Config); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, cancel, opts, "test") }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run = %v, want nil", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("run did not return after the signal")
+	}
+	if logs := buf.String(); !strings.Contains(logs, `"message":"Stopped"`) || strings.Contains(logs, `"level":"fatal"`) {
+		t.Errorf("want a Stopped line and no fatal line:\n%s", logs)
+	}
+}

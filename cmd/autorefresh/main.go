@@ -90,7 +90,12 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 	}
 
 	// config
-	data, err := readConfig(opts.Config, 5*time.Second)
+	data, err := readConfig(ctx, opts.Config, 5*time.Second)
+	if ctx.Err() != nil {
+		// A signal during the wait for the config stops the process.
+		log.Info().Msg("Stopped")
+		return nil
+	}
 	if err != nil {
 		return fatal(err, "Failed reading config")
 	}
