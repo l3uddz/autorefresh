@@ -124,7 +124,7 @@ type yearResolution struct {
 //     release date for a movie) after confirming Plex resolves the TMDB ID
 //     to the same GUID.
 func (r *Refresher) confirmYear(ctx context.Context, run *serverRun, mc matchContext) (yearResolution, error) {
-	pathYear := parsePathYear(mc.paths)
+	pathYear := parsePathYear(mc.paths, mc.it.Type == plex.ShowLibrary)
 	if pathYear != 0 && pathYear != mc.it.Year {
 		if cand, ok, _ := chooseMatch(pathYear, mc.results); ok {
 			return yearResolution{cand: cand, ok: true, pathYear: pathYear}, nil
@@ -136,6 +136,9 @@ func (r *Refresher) confirmYear(ctx context.Context, run *serverRun, mc matchCon
 	return r.confirmTMDBYear(ctx, run, mc, pathYear)
 }
 
+// confirmTMDBYear resolves the item to a single TMDB ID, verifies Plex
+// resolves tmdb-<id> to the same candidate GUID if not already searched, and
+// checks TMDB's canonical release year against the item year or pathYear.
 func (r *Refresher) confirmTMDBYear(ctx context.Context, run *serverRun, mc matchContext, pathYear int) (yearResolution, error) {
 	tmdbID, needSearch, err := r.resolveOneTMDBID(ctx, run.server.Name, mc)
 	if err != nil {
@@ -185,32 +188,57 @@ func yearConfirms(itemYear, pathYear, tmdbYear int) bool {
 
 // resolveOneTMDBID returns the single TMDB ID associated with the item's
 // match, and whether Plex still needs a tmdb-<id> search to verify the GUID.
+// If the single ID was already searched in mc.results and found nothing, it
+// returns "" to avoid repeating a search that cannot match.
 func (r *Refresher) resolveOneTMDBID(ctx context.Context, server string, mc matchContext) (string, bool, error) {
 	if id, found := singleMatchedTMDBID(mc.results); found {
 		return id, false, nil
 	}
-	found := map[string]bool{}
+	only, err := r.singlePathTMDBID(ctx, server, mc)
+	if err != nil || only == "" || searchedTMDBEmpty(mc.results, only) {
+		return "", false, err
+	}
+	return only, true, nil
+}
+
+// singlePathTMDBID resolves all path IDs to TMDB IDs and returns the unique
+// TMDB ID if exactly one distinct ID is found.
+func (r *Refresher) singlePathTMDBID(ctx context.Context, server string, mc matchContext) (string, error) {
+	var only string
 	for _, id := range mc.ids {
+		var tmdbID string
 		switch {
 		case id.Source == "tmdb":
-			found[id.Value] = true
+			tmdbID = id.Value
 		case id.Source == "imdb" || (id.Source == "tvdb" && mc.it.Type == plex.ShowLibrary):
-			tmdbID, ok, err := r.tmdbID(ctx, server, mc.it, id)
-			if err != nil {
-				return "", false, err
+			var ok bool
+			var err error
+			if tmdbID, ok, err = r.tmdbID(ctx, server, mc.it, id); err != nil {
+				return "", err
 			}
-			if ok {
-				found[tmdbID] = true
+			if !ok {
+				continue
 			}
+		default:
+			continue
+		}
+		if only != "" && only != tmdbID {
+			return "", nil
+		}
+		only = tmdbID
+	}
+	return only, nil
+}
+
+// searchedTMDBEmpty reports whether results already searched tmdb-<id> and
+// returned no candidates.
+func searchedTMDBEmpty(results []searchResult, id string) bool {
+	for _, res := range results {
+		if res.id.Source == "tmdb" && res.id.Value == id && len(res.candidates) == 0 {
+			return true
 		}
 	}
-	if len(found) != 1 {
-		return "", false, nil
-	}
-	for id := range found {
-		return id, true, nil
-	}
-	return "", false, nil
+	return false
 }
 
 // singleMatchedTMDBID returns the unique TMDB ID if one or more tmdb search
@@ -230,20 +258,13 @@ func singleMatchedTMDBID(results []searchResult) (id string, found bool) {
 }
 
 // tieTMDBCandidate checks that Plex resolves tmdb-<tmdbID> to the exact same
-// candidate GUID as mc.results. Non-fatal Plex errors leave the conflict
-// unconfirmed rather than turning today's plain refresh into a failed attempt.
+// candidate GUID as mc.results. A failed Plex search propagates its error,
+// matching the tmdb search handling in tmdbResults.
 func tieTMDBCandidate(ctx context.Context, srv Server, mc matchContext, tmdbID string) (bool, error) {
 	id := pathID{"tmdb", tmdbID}
 	candidates, err := srv.Plex.SearchMatches(ctx, mc.it.RatingKey, id.title(), mc.lib.Agent, mc.lib.Language)
 	if err != nil {
-		if stop := stopError(ctx, err); stop != nil {
-			return false, stop
-		}
-		if errors.Is(err, plex.ErrNotFound) {
-			return false, err
-		}
-		itemEvent(log.Debug(), srv.Name, mc.lib, mc.it).Str("id", id.title()).Err(err).Msg("Match search failed")
-		return false, nil
+		return false, err
 	}
 	itemEvent(log.Debug(), srv.Name, mc.lib, mc.it).Str("id", id.title()).Int("candidates", len(candidates)).
 		Msg("Match search result")

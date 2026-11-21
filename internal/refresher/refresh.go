@@ -171,7 +171,7 @@ func (r *Refresher) warnAtLongestWait(server string, lib plex.Library, it store.
 // fixMatch is the candidate that a fix match applies.
 type fixMatch struct {
 	cand     plex.Candidate
-	links    []string     // the web pages of the search IDs that found cand
+	links    []string     // the web pages of the IDs that found or confirmed cand
 	action   store.Action // store.ActionMatch, or store.ActionTMDBMatch if TMDB gave the IDs
 	pathYear int          // >0 when the path (YYYY) confirmed a year gap
 	tmdbYear int          // >0 when TMDB confirmed a year gap

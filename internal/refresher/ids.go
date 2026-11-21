@@ -57,23 +57,55 @@ var (
 )
 
 // parsePathYear returns the single plausible release year in parentheses
-// across paths, for example 2018 from "Title 2000 (2018)/Title 2000 (2018).mkv".
-// It returns 0 if paths contain no such year or multiple different years.
-func parsePathYear(paths []string) int {
+// from the item-owned tail of paths (the show folder for a series, or the
+// movie folder and filename for a movie) so library root directories like
+// "/media/Backup (2019)/..." never supply a year. It returns 0 if no such
+// year exists or multiple different years appear.
+func parsePathYear(paths []string, show bool) int {
+	segments := 2
+	if show {
+		segments = 1
+	}
 	var year int
 	for _, path := range paths {
-		for _, m := range parenYearPattern.FindAllStringSubmatch(path, -1) {
-			y, err := strconv.Atoi(m[1])
-			if err != nil || y < 1880 || y > 2100 {
-				continue
-			}
-			if year != 0 && year != y {
+		for _, seg := range tailSegments(path, segments) {
+			y, ambiguous := segmentYear(seg)
+			if ambiguous || (y != 0 && year != 0 && year != y) {
 				return 0
 			}
-			year = y
+			if y != 0 {
+				year = y
+			}
 		}
 	}
 	return year
+}
+
+// segmentYear returns the single plausible release year in parentheses within
+// one path segment. ambiguous is true if the segment holds multiple different
+// plausible years.
+func segmentYear(seg string) (year int, ambiguous bool) {
+	for _, m := range parenYearPattern.FindAllStringSubmatch(seg, -1) {
+		y, err := strconv.Atoi(m[1])
+		if err != nil || y < 1880 || y > 2100 {
+			continue
+		}
+		if year != 0 && year != y {
+			return 0, true
+		}
+		year = y
+	}
+	return year, false
+}
+
+// tailSegments returns up to n trailing non-empty path segments, splitting
+// on both "/" and "\" so Plex server paths from any OS work identically.
+func tailSegments(path string, n int) []string {
+	parts := strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == '\\' })
+	if len(parts) <= n {
+		return parts
+	}
+	return parts[len(parts)-n:]
 }
 
 // parseIDs reads the IDs in all paths, without duplicates, in the order found.
