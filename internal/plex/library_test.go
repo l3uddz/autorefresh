@@ -121,12 +121,13 @@ func serveOnePage(t *testing.T, name string) http.HandlerFunc {
 }
 
 // pagedServer answers each listing with the page at X-Plex-Container-Start
-// of total items. The pages have totalSize only if withTotal is set.
-func pagedServer(t *testing.T, total int, withTotal bool) (*recorder, *Client) {
+// of total items, with at most size items. The pages have totalSize only if
+// withTotal is set.
+func pagedServer(t *testing.T, total, size int, withTotal bool) (*recorder, *Client) {
 	t.Helper()
 	return newServer(t, func(w http.ResponseWriter, r *http.Request) {
 		start, _ := strconv.Atoi(r.URL.Query().Get("X-Plex-Container-Start"))
-		n := max(0, min(500, total-start))
+		n := max(0, min(size, total-start))
 		w.Write([]byte(`{"MediaContainer":{`))
 		if withTotal {
 			w.Write([]byte(`"totalSize":` + strconv.Itoa(total) + `,`))
@@ -144,20 +145,18 @@ func pagedServer(t *testing.T, total int, withTotal bool) (*recorder, *Client) {
 
 func TestListReadsEveryPage(t *testing.T) {
 	tests := []struct {
-		name      string
-		total     int
-		withTotal bool
-		starts    []string
+		name   string
+		total  int
+		size   int // the most items in one answer
+		starts []string
 	}{
-		{"total size", 1001, true, []string{"0", "500", "1000"}},
-		{"empty library", 0, true, []string{"0"}},
-		// Without totalSize, a short page is the last page.
-		{"no total size", 1001, false, []string{"0", "500", "1000"}},
-		{"no total size, full last page", 1000, false, []string{"0", "500", "1000"}},
+		{"full pages", 1001, 500, []string{"0", "500", "1000"}},
+		{"empty library", 0, 500, []string{"0"}},
+		{"short pages", 450, 200, []string{"0", "200", "400"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rec, c := pagedServer(t, tt.total, tt.withTotal)
+			rec, c := pagedServer(t, tt.total, tt.size, true)
 
 			items, err := c.List(context.Background(), "1", TypeMovie)
 			if err != nil {
@@ -180,6 +179,19 @@ func TestListReadsEveryPage(t *testing.T) {
 				t.Errorf("starts = %v, want %v", starts, tt.starts)
 			}
 		})
+	}
+}
+
+// Without totalSize, the end of a listing is unknown, so the listing fails
+// after one request instead of returning part of the library.
+func TestListRejectsPageWithoutTotalSize(t *testing.T) {
+	rec, c := pagedServer(t, 1001, 200, false)
+
+	if _, err := c.List(context.Background(), "1", TypeMovie); err == nil {
+		t.Fatal("no error")
+	}
+	if n := len(rec.all()); n != 1 {
+		t.Errorf("got %d requests, want 1", n)
 	}
 }
 

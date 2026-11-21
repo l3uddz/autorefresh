@@ -157,16 +157,17 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 			return nil, fmt.Errorf("listing section %s: %w", section, err)
 		}
 
+		// Without totalSize, the end of the listing is unknown: a short page
+		// can come before the end, and a server that ignores the offset sends
+		// the same page forever.
 		page, total := resp.MediaContainer.Metadata, resp.MediaContainer.TotalSize
+		if total == nil {
+			return nil, fmt.Errorf("listing section %s: response has no totalSize", section)
+		}
 		for _, m := range page {
 			items = append(items, m.item())
 		}
 		switch {
-		case total == nil:
-			// Without totalSize, a short page is the last page.
-			if len(page) < pageSize {
-				return items, nil
-			}
 		case len(items) >= *total:
 			return items, nil
 		case len(page) == 0:
