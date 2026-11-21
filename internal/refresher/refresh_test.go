@@ -952,3 +952,51 @@ func TestSleepWaitsOrStops(t *testing.T) {
 		t.Errorf("sleep after cancel = %v, want context.Canceled", err)
 	}
 }
+
+// An item that keeps failing must not keep the only slot of each run. Runs
+// come more often than the wait of the items here, so both items are due in
+// every run. The failing item starts 4 refreshes behind the other item. Each
+// attempt counts in the order, also a failed one, so the failing item gives
+// up the slot after 4 failed attempts.
+func TestFailingItemGivesUpTheSlot(t *testing.T) {
+	tests := []struct {
+		name    string
+		reasons store.Reasons
+		item    plex.Item
+		fail    func(fp *fakePlex)
+	}{
+		{"failed search", store.Unmatched, unmatchedItem("101"), func(fp *fakePlex) {
+			fp.paths["101"] = []string{"/m/Film (2020) {tmdb-1}/Film.mkv"}
+			fp.searchErrs["101"] = serverErr
+		}},
+		{"failed request", store.NoSummary, incompleteItem("101"), func(fp *fakePlex) {
+			fp.refreshErrs["101"] = serverErr
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := newFakePlex(moviesLib)
+			tt.fail(fp)
+			f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+			f.r.opts.MaxRefreshesPerRun = 1
+			f.r.opts.RefreshInterval = time.Minute
+			f.r.opts.MaxRefreshInterval = time.Minute
+			f.seed(testServer, moviesLib, tt.item, tt.reasons, 1)
+			f.seed(testServer, moviesLib, incompleteItem("102"), store.NoSummary, 5)
+
+			var got []string
+			for run := range 6 {
+				fp.calls = nil
+				f.run(t0.Add(time.Duration(run) * 2 * time.Minute))
+				if row, _ := f.row(testServer, "1", "102"); row.LastAttempt.Equal(t0.Add(time.Duration(run) * 2 * time.Minute)) {
+					got = append(got, "102")
+				} else {
+					got = append(got, "101")
+				}
+			}
+			if want := []string{"101", "101", "101", "101", "102", "101"}; !reflect.DeepEqual(got, want) {
+				t.Errorf("slot by run = %v, want %v", got, want)
+			}
+		})
+	}
+}

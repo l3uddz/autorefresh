@@ -299,7 +299,9 @@ func TestDueLimitKeepsOrderAndTotal(t *testing.T) {
 	}
 }
 
-func TestDuePutsFewerRefreshesFirst(t *testing.T) {
+// A failed attempt counts in the order like a refresh, so "failed" and
+// "once" tie on one attempt, and the older attempt of "once" goes first.
+func TestDuePutsFewerAttemptsFirst(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("never", NoArt), item("failed", NoArt), item("once", NoArt), item("twice", NoArt)}})
 	// The last attempts are in the opposite order of the refreshes.
@@ -314,7 +316,7 @@ func TestDuePutsFewerRefreshesFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"never", "failed", "once", "twice"}
+	want := []string{"never", "once", "failed", "twice"}
 	if k := keys(got); !reflect.DeepEqual(k, want) {
 		t.Fatalf("Due = %v, want %v", k, want)
 	}

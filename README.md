@@ -135,14 +135,18 @@ the wait never grows, autorefresh logs no such warning.
 
 Each run refreshes the due items in this order:
 
-1. Items with the fewest refreshes. A refresh is a refresh or match request
-   that Plex accepted. Items that Plex never refreshed therefore go first.
+1. Items with the fewest attempts. An attempt is a refresh or match
+   request, successful or failed, or a failed match search. Items that
+   autorefresh never tried therefore go first.
 2. Items with no attempt.
 3. Items with the oldest last attempt.
 
-If two items are equal, the item that Plex added first goes first. A failing
-item therefore moves to the end of the items with the same number of
-refreshes.
+If two items are equal, the item that Plex added first goes first. A failed
+attempt counts in this order, but not in the wait. An item that keeps
+failing therefore moves behind the other due items, one attempt at a time,
+and it cannot take the first place in every run. For example, an item that
+fails with 1 refresh takes the first place for 4 runs before an item with 5
+refreshes gets it.
 
 Autorefresh handles one due item at a time on each server, and each item
 gets at most one refresh or match request. It waits `refresh-delay` between

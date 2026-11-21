@@ -345,8 +345,10 @@ type DueQuery struct {
 // refresh, and it doubles with each later refresh, up to
 // MaxRefreshInterval.
 //
-// Order: the fewest Refreshes first, then no attempt, then the oldest
-// LastAttempt, then the oldest AddedAt.
+// Order: the fewest attempts first, then no attempt, then the oldest
+// LastAttempt, then the oldest AddedAt. Each RecordAttempt counts as an
+// attempt, also a failed one, so an item that keeps failing moves back
+// instead of taking the first place in every run.
 func (s *Store) Due(q DueQuery) (items []Item, total int, err error) {
 	if len(q.Sections) == 0 {
 		return nil, 0, nil
@@ -379,7 +381,7 @@ func (s *Store) Due(q DueQuery) (items []Item, total int, err error) {
 		limit = -1
 	}
 	items, err = queryItems(tx, `SELECT `+itemColumns+` FROM item WHERE `+where+`
-		ORDER BY refreshes, last_attempt IS NOT NULL, last_attempt, added_at, rating_key LIMIT ?`,
+		ORDER BY attempts, last_attempt IS NOT NULL, last_attempt, added_at, rating_key LIMIT ?`,
 		append(args, limit)...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("read due items: %w", err)
@@ -405,15 +407,15 @@ func (s *Store) CountIncomplete(server string, sections []string, ignored Reason
 	return n, nil
 }
 
-// RecordAttempt sets LastAttempt. If refreshed, it also sets LastRefresh
-// and adds 1 to Refreshes.
+// RecordAttempt sets LastAttempt and counts the attempt. If refreshed, it
+// also sets LastRefresh and adds 1 to Refreshes.
 func (s *Store) RecordAttempt(server, ratingKey string, at time.Time, refreshed bool) error {
 	var err error
 	if refreshed {
-		_, err = s.db.Exec(`UPDATE item SET last_attempt = ?, last_refresh = ?, refreshes = refreshes + 1
-			WHERE server = ? AND rating_key = ?`, at.Unix(), at.Unix(), server, ratingKey)
+		_, err = s.db.Exec(`UPDATE item SET last_attempt = ?, last_refresh = ?, refreshes = refreshes + 1,
+			attempts = attempts + 1 WHERE server = ? AND rating_key = ?`, at.Unix(), at.Unix(), server, ratingKey)
 	} else {
-		_, err = s.db.Exec(`UPDATE item SET last_attempt = ? WHERE server = ? AND rating_key = ?`,
+		_, err = s.db.Exec(`UPDATE item SET last_attempt = ?, attempts = attempts + 1 WHERE server = ? AND rating_key = ?`,
 			at.Unix(), server, ratingKey)
 	}
 	if err != nil {

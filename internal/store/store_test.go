@@ -160,6 +160,24 @@ func TestMigrationKeepsItemsWithoutLibrary(t *testing.T) {
 	}
 }
 
+// The attempts of an older row start at its refreshes, so the order of the
+// queue stays the same after the upgrade.
+func TestMigrationCountsRefreshesAsAttempts(t *testing.T) {
+	s, err := Open(openVersion1(t))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	var attempts int
+	if err := s.db.QueryRow(`SELECT attempts FROM item WHERE server = 'home' AND rating_key = '101'`).Scan(&attempts); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want the 3 refreshes", attempts)
+	}
+}
+
 func TestPruneRemovesMigratedLibrary(t *testing.T) {
 	s, err := Open(openVersion1(t))
 	if err != nil {
