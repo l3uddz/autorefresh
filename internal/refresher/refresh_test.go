@@ -605,7 +605,9 @@ func TestDryRunUnavailableSearchRecordsNothing(t *testing.T) {
 }
 
 // A failed match search sends nothing, but the item counts toward the limit,
-// so failing searches cannot run without bound.
+// so failing searches cannot run without bound. The failed attempt starts
+// the wait of the item, so the next run reaches an item with more refreshes,
+// which the queue puts after it.
 func TestFailedSearchSendsNothing(t *testing.T) {
 	fp := newFakePlex(moviesLib)
 	fp.paths["101"] = []string{"/m/Film (2020) {tmdb-1}/Film.mkv"}
@@ -615,7 +617,7 @@ func TestFailedSearchSendsNothing(t *testing.T) {
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
 	f.r.opts.MaxRefreshesPerRun = 1
 	f.seed(testServer, moviesLib, unmatchedItem("101"), store.Unmatched, 1)
-	f.seed(testServer, moviesLib, second, store.NoSummary, 1)
+	f.seed(testServer, moviesLib, second, store.NoSummary, 2)
 
 	f.run(t0)
 
@@ -625,7 +627,7 @@ func TestFailedSearchSendsNothing(t *testing.T) {
 	}
 	wantField(t, f.lastSummary(testServer), "remaining_items", float64(1))
 
-	// The failed item moved to the end of the queue.
+	// The failed item waits, so the next run refreshes the other item.
 	fp.calls = nil
 	f.run(t0.Add(time.Minute))
 	wantCalls(t, sends(fp.calls), "Refresh 102")
