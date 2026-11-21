@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -189,13 +190,100 @@ func TestItemNeedsLibrary(t *testing.T) {
 	}
 }
 
-// A "?" in the path ends the file name for the driver, and the rest turns
-// into parameters, so foreign keys would be off without an error.
-func TestOpenRejectsPathWithoutForeignKeys(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "we?rd.db"))
-	if err == nil {
-		s.Close()
-		t.Fatal("Open succeeded, want an error")
+// The data source name escapes the path, so a character such as "?" or "#"
+// stays part of the file name and the settings still apply.
+func TestOpenAcceptsAnyPath(t *testing.T) {
+	for _, name := range []string{"we?rd.db", "per%cent.db", "hash#tag.db", "with space.db"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			s, err := Open(filepath.Join(dir, name))
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			s.Close()
+			if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+				t.Fatalf("database file: %v", err)
+			}
+		})
+	}
+}
+
+func TestOpenAcceptsRelativePath(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	s, err := Open(filepath.Join("sub", "..", "store.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	s.Close()
+	if _, err := os.Stat(filepath.Join(dir, "store.db")); err != nil {
+		t.Fatalf("database file: %v", err)
+	}
+}
+
+// The container image has no writable temporary directory, so a large sort
+// must stay in memory.
+func TestOpenKeepsTemporaryDataInMemory(t *testing.T) {
+	s := openTest(t)
+	var store int
+	if err := s.db.QueryRow(`PRAGMA temp_store`).Scan(&store); err != nil {
+		t.Fatal(err)
+	}
+	if store != 2 {
+		t.Fatalf("temp_store = %d, want 2 (memory)", store)
+	}
+}
+
+// A second process, such as a dry run, waits for the write lock of the
+// first one instead of failing at once.
+func TestSecondStoreWaitsForLock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.db")
+	first, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	second, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	if _, err := second.ApplyRead(Read{Server: "s", Section: "1", At: base, Full: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		call func() error
+	}{
+		{"ApplyRead", func() error {
+			_, err := second.ApplyRead(Read{Server: "s", Section: "1", At: base, Full: true})
+			return err
+		}},
+		{"PruneSections", func() error {
+			_, err := second.PruneSections("s", []string{"1"})
+			return err
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tx, err := first.db.Begin()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tx.Exec(`INSERT INTO library (server, section) VALUES ('other', '1')
+				ON CONFLICT DO NOTHING`); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- tt.call() }()
+			time.Sleep(200 * time.Millisecond)
+			if err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil {
+				t.Fatalf("%s while another store held the lock: %v", tt.name, err)
+			}
+		})
 	}
 }
 

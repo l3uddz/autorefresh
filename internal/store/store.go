@@ -8,10 +8,13 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"net/url"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 )
@@ -25,25 +28,27 @@ type Store struct {
 }
 
 // Open opens the database file and applies the migrations that are missing.
-// Each connection enforces foreign keys.
 func Open(file string) (*Store, error) {
-	db, err := sql.Open("sqlite", file+"?_pragma=foreign_keys(1)")
+	name, err := dataSourceName(file)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	db, err := sql.Open("sqlite", name)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 	// One connection serializes all statements, so writers never collide.
 	db.SetMaxOpenConns(1)
 
-	// The cache cleanup relies on the cascade of the foreign keys. A "?" in
-	// the path turns them off without an error, so check them.
-	var foreignKeys int
-	if err := db.QueryRow(`PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+	// The driver ignores a setting that it does not apply, so check the
+	// settings that the cache relies on.
+	if err := checkPragma(db, "foreign_keys", 1); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	if foreignKeys != 1 {
+	if err := checkPragma(db, "temp_store", 2); err != nil {
 		db.Close()
-		return nil, errors.New(`open database: foreign keys are off; the path must not contain "?"`)
+		return nil, fmt.Errorf("open database: %w", err)
 	}
 
 	if err := migrate(db); err != nil {
@@ -51,6 +56,48 @@ func Open(file string) (*Store, error) {
 		return nil, fmt.Errorf("migrate database: %w", err)
 	}
 	return &Store{db: db}, nil
+}
+
+// dataSourceName returns the SQLite URI of file with the settings of each
+// connection:
+//
+//   - Foreign keys are on, because the cache cleanup relies on their cascade.
+//   - Temporary data, such as a large sort, stays in memory. The container
+//     image has no writable temporary directory.
+//   - A second process, such as a dry run, can use the same file. A
+//     connection waits for a lock that the other process holds, and a write
+//     transaction takes the write lock at its start. A transaction that
+//     reads first and then writes can otherwise fail at once.
+//
+// The URI escapes the path, so a path can hold any character.
+func dataSourceName(file string) (string, error) {
+	abs, err := filepath.Abs(file)
+	if err != nil {
+		return "", err
+	}
+	query := url.Values{
+		"_foreign_keys": {"1"},
+		"_pragma":       {"temp_store(memory)"},
+		"_busy_timeout": {strconv.Itoa(int(busyTimeout.Milliseconds()))},
+		"_txlock":       {"immediate"},
+	}
+	u := url.URL{Scheme: "file", Path: filepath.ToSlash(abs), RawQuery: query.Encode()}
+	return u.String(), nil
+}
+
+// busyTimeout is the longest wait for a lock that another process holds.
+const busyTimeout = 30 * time.Second
+
+// checkPragma returns an error unless the pragma has the value want.
+func checkPragma(db *sql.DB, pragma string, want int) error {
+	var got int
+	if err := db.QueryRow(`PRAGMA ` + pragma).Scan(&got); err != nil {
+		return err
+	}
+	if got != want {
+		return fmt.Errorf("%s is %d, want %d", pragma, got, want)
+	}
+	return nil
 }
 
 // Close closes the database.
@@ -78,7 +125,6 @@ func migrate(db *sql.DB) error {
 	if err != nil {
 		return err
 	}
-
 	for _, m := range list {
 		if applied[m.version] {
 			continue
