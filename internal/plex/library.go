@@ -64,7 +64,7 @@ type metadata struct {
 
 type metadataResponse struct {
 	MediaContainer struct {
-		TotalSize int        `json:"totalSize"`
+		TotalSize *int       `json:"totalSize"` // nil when absent
 		Metadata  []metadata `json:"Metadata"`
 	} `json:"MediaContainer"`
 }
@@ -151,16 +151,21 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 			return nil, fmt.Errorf("listing section %s: %w", section, err)
 		}
 
-		page := resp.MediaContainer.Metadata
-		if len(page) == 0 && len(items) < resp.MediaContainer.TotalSize {
-			return nil, fmt.Errorf("listing section %s: empty page at offset %d of %d",
-				section, len(items), resp.MediaContainer.TotalSize)
-		}
+		page, total := resp.MediaContainer.Metadata, resp.MediaContainer.TotalSize
 		for _, m := range page {
 			items = append(items, m.item())
 		}
-		if len(items) >= resp.MediaContainer.TotalSize {
+		switch {
+		case total == nil:
+			// Without totalSize, a short page is the last page.
+			if len(page) < pageSize {
+				return items, nil
+			}
+		case len(items) >= *total:
 			return items, nil
+		case len(page) == 0:
+			return nil, fmt.Errorf("listing section %s: empty page at offset %d of %d",
+				section, len(items), *total)
 		}
 	}
 }

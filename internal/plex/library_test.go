@@ -120,12 +120,18 @@ func serveOnePage(t *testing.T, name string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) { w.Write(body) }
 }
 
-func TestListReadsEveryPage(t *testing.T) {
-	const total = 1001
-	rec, c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
+// pagedServer answers each listing with the page at X-Plex-Container-Start
+// of total items. The pages have totalSize only if withTotal is set.
+func pagedServer(t *testing.T, total int, withTotal bool) (*recorder, *Client) {
+	t.Helper()
+	return newServer(t, func(w http.ResponseWriter, r *http.Request) {
 		start, _ := strconv.Atoi(r.URL.Query().Get("X-Plex-Container-Start"))
-		n := min(500, total-start)
-		w.Write([]byte(`{"MediaContainer":{"totalSize":1001,"Metadata":[`))
+		n := max(0, min(500, total-start))
+		w.Write([]byte(`{"MediaContainer":{`))
+		if withTotal {
+			w.Write([]byte(`"totalSize":` + strconv.Itoa(total) + `,`))
+		}
+		w.Write([]byte(`"Metadata":[`))
 		for i := 0; i < n; i++ {
 			if i > 0 {
 				w.Write([]byte(","))
@@ -134,26 +140,46 @@ func TestListReadsEveryPage(t *testing.T) {
 		}
 		w.Write([]byte(`]}}`))
 	})
+}
 
-	items, err := c.List(context.Background(), "1", TypeMovie)
-	if err != nil {
-		t.Fatal(err)
+func TestListReadsEveryPage(t *testing.T) {
+	tests := []struct {
+		name      string
+		total     int
+		withTotal bool
+		starts    []string
+	}{
+		{"total size", 1001, true, []string{"0", "500", "1000"}},
+		{"empty library", 0, true, []string{"0"}},
+		// Without totalSize, a short page is the last page.
+		{"no total size", 1001, false, []string{"0", "500", "1000"}},
+		{"no total size, full last page", 1000, false, []string{"0", "500", "1000"}},
 	}
-	if len(items) != total {
-		t.Errorf("got %d items, want %d", len(items), total)
-	}
-	for i, it := range items {
-		if it.RatingKey != strconv.Itoa(i) {
-			t.Fatalf("item %d has rating key %s", i, it.RatingKey)
-		}
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec, c := pagedServer(t, tt.total, tt.withTotal)
 
-	var starts []string
-	for _, r := range rec.all() {
-		starts = append(starts, r.URL.Query().Get("X-Plex-Container-Start"))
-	}
-	if want := []string{"0", "500", "1000"}; !reflect.DeepEqual(starts, want) {
-		t.Errorf("starts = %v, want %v", starts, want)
+			items, err := c.List(context.Background(), "1", TypeMovie)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(items) != tt.total {
+				t.Errorf("got %d items, want %d", len(items), tt.total)
+			}
+			for i, it := range items {
+				if it.RatingKey != strconv.Itoa(i) {
+					t.Fatalf("item %d has rating key %s", i, it.RatingKey)
+				}
+			}
+
+			var starts []string
+			for _, r := range rec.all() {
+				starts = append(starts, r.URL.Query().Get("X-Plex-Container-Start"))
+			}
+			if !reflect.DeepEqual(starts, tt.starts) {
+				t.Errorf("starts = %v, want %v", starts, tt.starts)
+			}
+		})
 	}
 }
 
