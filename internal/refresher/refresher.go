@@ -1,3 +1,6 @@
+// Package refresher runs the check of each Plex server: it reads the
+// libraries into the cache, finds the due items, and sends each one a
+// refresh or a fix match.
 package refresher
 
 import (

@@ -25,10 +25,10 @@ var (
 	// seedAt is the time of the seeded read. A run at t0 reads incrementally.
 	seedAt = t0.Add(-24 * time.Hour)
 	// seedAttempt is the time of the seeded refreshes. The row is due at t0.
-	seedAttempt = t0.Add(-48 * time.Hour)
-	serverErr   = errors.New("500 Internal Server Error")
-	unavailable = fmt.Errorf("refresh: %w", plex.ErrUnavailable)
-	notFound    = fmt.Errorf("refresh: %w", plex.ErrNotFound)
+	seedAttempt    = t0.Add(-48 * time.Hour)
+	errServer      = errors.New("500 Internal Server Error")
+	errUnavailable = fmt.Errorf("refresh: %w", plex.ErrUnavailable)
+	errNotFound    = fmt.Errorf("refresh: %w", plex.ErrNotFound)
 )
 
 // newRefreshFixture returns a fixture that sends refresh and match requests
@@ -284,7 +284,7 @@ func TestRefreshSuccessRecordsRefresh(t *testing.T) {
 func TestRefreshFailureRecordsAttemptOnly(t *testing.T) {
 	fp := newFakePlex(moviesLib)
 	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
-	fp.refreshErrs["101"] = serverErr
+	fp.refreshErrs["101"] = errServer
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
 
 	f.run(t0)
@@ -311,7 +311,7 @@ func TestRefreshFailureRecordsAttemptOnly(t *testing.T) {
 func TestRefreshNotFoundDeletesRow(t *testing.T) {
 	fp := newFakePlex(moviesLib)
 	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
-	fp.refreshErrs["101"] = notFound
+	fp.refreshErrs["101"] = errNotFound
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
 
 	f.run(t0)
@@ -325,7 +325,7 @@ func TestRefreshNotFoundDeletesRow(t *testing.T) {
 func TestRefreshUnavailableStopsServer(t *testing.T) {
 	down := newFakePlex(moviesLib)
 	down.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102")}
-	down.refreshErrs["101"] = unavailable
+	down.refreshErrs["101"] = errUnavailable
 	up := newFakePlex(moviesLib)
 	up.lists["1?type=1"] = []plex.Item{incompleteItem("201")}
 	f := newRefreshFixture(t, Server{Name: "down", Plex: down}, Server{Name: "up", Plex: up})
@@ -534,17 +534,17 @@ func TestFixMatchReadErrors(t *testing.T) {
 		wantRow   string // "deleted", "attempted" (no request), or "refreshed"
 		wantStop  bool   // the error stops the server
 	}{
-		{"item paths unavailable", "", func(fp *fakePlex) { fp.pathErrs["201"] = unavailable }, nil, "attempted", true},
-		{"item paths not found", "", func(fp *fakePlex) { fp.pathErrs["201"] = notFound }, []string{"Refresh 202"}, "deleted", false},
-		{"item paths 500", "", func(fp *fakePlex) { fp.pathErrs["201"] = serverErr }, []string{"Refresh 202"}, "attempted", false},
-		{"search unavailable", "", func(fp *fakePlex) { fp.searchErrs["201"] = unavailable }, nil, "attempted", true},
-		{"search not found", "", func(fp *fakePlex) { fp.searchErrs["201"] = notFound }, []string{"Refresh 202"}, "deleted", false},
-		{"search 500", "", func(fp *fakePlex) { fp.searchErrs["201"] = serverErr }, []string{"Refresh 202"}, "attempted", false},
+		{"item paths unavailable", "", func(fp *fakePlex) { fp.pathErrs["201"] = errUnavailable }, nil, "attempted", true},
+		{"item paths not found", "", func(fp *fakePlex) { fp.pathErrs["201"] = errNotFound }, []string{"Refresh 202"}, "deleted", false},
+		{"item paths 500", "", func(fp *fakePlex) { fp.pathErrs["201"] = errServer }, []string{"Refresh 202"}, "attempted", false},
+		{"search unavailable", "", func(fp *fakePlex) { fp.searchErrs["201"] = errUnavailable }, nil, "attempted", true},
+		{"search not found", "", func(fp *fakePlex) { fp.searchErrs["201"] = errNotFound }, []string{"Refresh 202"}, "deleted", false},
+		{"search 500", "", func(fp *fakePlex) { fp.searchErrs["201"] = errServer }, []string{"Refresh 202"}, "attempted", false},
 		// A failed tvdb search counts as no candidate, unless the error
 		// stops the server or says that the item is gone.
-		{"tvdb search unavailable", "tvdb-5", func(fp *fakePlex) { fp.searchErrs["201"] = unavailable }, nil, "attempted", true},
-		{"tvdb search not found", "tvdb-5", func(fp *fakePlex) { fp.searchErrs["201"] = notFound }, []string{"Refresh 202"}, "deleted", false},
-		{"tvdb search 500", "tvdb-5", func(fp *fakePlex) { fp.searchErrs["201"] = serverErr }, []string{"Refresh 201", "Refresh 202"}, "refreshed", false},
+		{"tvdb search unavailable", "tvdb-5", func(fp *fakePlex) { fp.searchErrs["201"] = errUnavailable }, nil, "attempted", true},
+		{"tvdb search not found", "tvdb-5", func(fp *fakePlex) { fp.searchErrs["201"] = errNotFound }, []string{"Refresh 202"}, "deleted", false},
+		{"tvdb search 500", "tvdb-5", func(fp *fakePlex) { fp.searchErrs["201"] = errServer }, []string{"Refresh 201", "Refresh 202"}, "refreshed", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -609,7 +609,7 @@ func TestFixMatchReadErrors(t *testing.T) {
 func TestFixMatchIMDbSearchErrorUsesOtherID(t *testing.T) {
 	fp := newFakePlex(showsLib)
 	fp.paths["201"] = []string{"/tv/Show (2020) {imdb-tt1} {tmdb-2}"}
-	fp.searchErrs["201 imdb-tt1"] = serverErr
+	fp.searchErrs["201 imdb-tt1"] = errServer
 	fp.candidates["201 tmdb-2"] = []plex.Candidate{{GUID: "plex://show/s", Name: "Show", Year: 2020}}
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
 	f.seed(testServer, showsLib, unmatchedItem("201"), store.Unmatched, 1)
@@ -625,7 +625,7 @@ func TestFixMatchIMDbSearchErrorUsesOtherID(t *testing.T) {
 func TestDryRunUnavailableSearchRecordsNothing(t *testing.T) {
 	fp := newFakePlex(showsLib)
 	fp.paths["201"] = []string{"/tv/Show (2020) {tvdb-5}"}
-	fp.searchErrs["201"] = unavailable
+	fp.searchErrs["201"] = errUnavailable
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
 	f.r.opts.DryRun = true
 	f.seed(testServer, showsLib, unmatchedItem("201"), store.Unmatched, 1)
@@ -648,7 +648,7 @@ func TestDryRunUnavailableSearchRecordsNothing(t *testing.T) {
 func TestFailedSearchSendsNothing(t *testing.T) {
 	fp := newFakePlex(moviesLib)
 	fp.paths["101"] = []string{"/m/Film (2020) {tmdb-1}/Film.mkv"}
-	fp.searchErrs["101"] = serverErr
+	fp.searchErrs["101"] = errServer
 	second := incompleteItem("102")
 	second.AddedAt = addedAt.Add(time.Hour)
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
@@ -689,8 +689,8 @@ func TestDryRunSendsAndRecordsNothing(t *testing.T) {
 		fp.paths[key] = []string{"/m/Film (2020) {tmdb-" + key + "}/Film.mkv"}
 	}
 	fp.candidates["102 tmdb-102"] = []plex.Candidate{{GUID: "plex://movie/a", Name: "Film", Year: 2020}}
-	fp.searchErrs["103"] = serverErr
-	fp.searchErrs["104"] = notFound
+	fp.searchErrs["103"] = errServer
+	fp.searchErrs["104"] = errNotFound
 	fp.lists["1?type=1&unmatched=1"] = []plex.Item{incompleteItem("101")}
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
 	f.r.opts.DryRun = true
@@ -759,7 +759,7 @@ func TestSummaryLine(t *testing.T) {
 	fp.paths["103"] = []string{"/m/Film (2020) {tmdb-3}/Film.mkv"}
 	fp.candidates["103 tmdb-3"] = []plex.Candidate{{GUID: "plex://movie/a", Name: "Film", Year: 2020}}
 	fp.paths["104"] = []string{"/m/Film (2020) {tmdb-4}/Film.mkv"}
-	fp.searchErrs["104"] = serverErr
+	fp.searchErrs["104"] = errServer
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
 	f.seed(testServer, moviesLib, incompleteItem("101"), store.NoSummary, 1)
 	f.seed(testServer, moviesLib, incompleteItem("102"), store.NoSummary, 1)
@@ -843,7 +843,7 @@ func TestMatchFailureRecordsAttemptOnly(t *testing.T) {
 	movie.Files = []string{"/m/Film (2020) {tmdb-1}/Film.mkv"}
 	fp.lists["1?type=1&unmatched=1"] = []plex.Item{movie}
 	fp.candidates["101 tmdb-1"] = []plex.Candidate{{GUID: "plex://movie/a", Name: "Film", Year: 2020}}
-	fp.matchErrs["101"] = serverErr
+	fp.matchErrs["101"] = errServer
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
 	f.seed(testServer, moviesLib, movie, store.Unmatched, 1)
 
@@ -869,7 +869,7 @@ func TestAttemptTimeIsRequestTime(t *testing.T) {
 	since := unixString(seedAt.Add(-oversample))
 	fp.lists["1?type=1&updatedAt>>="+since] = []plex.Item{incompleteItem("101"), incompleteItem("102")}
 	fp.paths["103"] = []string{"/m/Film (2020) {tmdb-3}/Film.mkv"}
-	fp.searchErrs["103"] = serverErr
+	fp.searchErrs["103"] = errServer
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
 	f.seed(testServer, moviesLib, unmatchedItem("103"), store.Unmatched, 1)
 	// The clock moves forward by each delay.
@@ -968,7 +968,7 @@ func TestRunKeepsUnavailableAndStoreErrors(t *testing.T) {
 func TestStoreErrorAfterUnavailableServer(t *testing.T) {
 	fp := newFakePlex(moviesLib)
 	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
-	fp.refreshErrs["101"] = unavailable
+	fp.refreshErrs["101"] = errUnavailable
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
 	f.r.store = countFails{Store: f.store}
 
@@ -1007,10 +1007,10 @@ func TestFailingItemGivesUpTheSlot(t *testing.T) {
 	}{
 		{"failed search", store.Unmatched, unmatchedItem("101"), func(fp *fakePlex) {
 			fp.paths["101"] = []string{"/m/Film (2020) {tmdb-1}/Film.mkv"}
-			fp.searchErrs["101"] = serverErr
+			fp.searchErrs["101"] = errServer
 		}},
 		{"failed request", store.NoSummary, incompleteItem("101"), func(fp *fakePlex) {
-			fp.refreshErrs["101"] = serverErr
+			fp.refreshErrs["101"] = errServer
 		}},
 	}
 	for _, tt := range tests {

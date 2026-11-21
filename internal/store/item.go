@@ -152,71 +152,26 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	if err := writeReadTimes(tx, r); err != nil {
 		return nil, err
 	}
-
-	gone := make(map[string]bool, len(r.Gone))
-	for _, key := range r.Gone {
-		gone[key] = true
-		if err := deleteItem(tx, r.Server, key); err != nil {
-			return nil, err
-		}
-	}
-
-	incoming := readKeys(r)
-
-	// The old rows are the rows of the section, and the rows of any section
-	// whose rating key is in the read (a moved item). The server's rows are
-	// filtered in Go because a read can hold more keys than SQLite accepts
-	// as query parameters.
-	stored, err := queryItems(tx, `SELECT `+itemColumns+` FROM item WHERE server = ?`, r.Server)
+	gone, err := deleteGone(tx, r)
 	if err != nil {
-		return nil, fmt.Errorf("read stored items: %w", err)
+		return nil, err
 	}
-	oldByKey := map[string]Item{}
-	for _, it := range stored {
-		if _, ok := incoming[it.RatingKey]; ok || it.Section == r.Section {
-			oldByKey[it.RatingKey] = it
-		}
-	}
-
-	keys := make(map[string]bool, len(oldByKey)+len(incoming))
-	for k := range oldByKey {
-		keys[k] = true
-	}
-	for k := range incoming {
-		keys[k] = true
+	incoming := readKeys(r)
+	old, err := oldRows(tx, r, incoming)
+	if err != nil {
+		return nil, err
 	}
 
-	for key := range keys {
+	for key := range unionKeys(old, incoming) {
 		if gone[key] {
 			continue
 		}
-		prev, exists := oldByKey[key]
-		in, isIncoming := incoming[key]
-		final := in.reasons(r, prev.Reasons)
-
-		switch {
-		case final == 0:
-			if !exists {
-				continue
-			}
-			if err := deleteItem(tx, r.Server, key); err != nil {
-				return nil, err
-			}
-			fixed = append(fixed, prev)
-			continue
-		case !exists:
-			_, err = tx.Exec(`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-				r.Server, r.Section, key, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final))
-		case isIncoming:
-			_, err = tx.Exec(`UPDATE item SET section = ?, type = ?, title = ?, year = ?, added_at = ?, reasons = ?
-				WHERE server = ? AND rating_key = ?`,
-				r.Section, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final), r.Server, key)
-		default:
-			_, err = tx.Exec(`UPDATE item SET reasons = ? WHERE server = ? AND rating_key = ?`, int(final), r.Server, key)
-		}
+		removed, err := writeKey(tx, r, key, incoming, old)
 		if err != nil {
-			return nil, fmt.Errorf("write item %s: %w", key, err)
+			return nil, err
+		}
+		if removed != nil {
+			fixed = append(fixed, *removed)
 		}
 	}
 
@@ -226,6 +181,80 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 		return nil, fmt.Errorf("commit read: %w", err)
 	}
 	return fixed, nil
+}
+
+// deleteGone deletes the rows of r.Gone and returns their rating keys.
+func deleteGone(tx *sql.Tx, r Read) (map[string]bool, error) {
+	gone := make(map[string]bool, len(r.Gone))
+	for _, key := range r.Gone {
+		gone[key] = true
+		if err := deleteItem(tx, r.Server, key); err != nil {
+			return nil, err
+		}
+	}
+	return gone, nil
+}
+
+// oldRows returns the stored rows that the read r can change, by rating key:
+// the rows of the section, and the rows of any section whose rating key is
+// in the read (a moved item). The server's rows are filtered in Go because a
+// read can hold more keys than SQLite accepts as query parameters.
+func oldRows(tx *sql.Tx, r Read, incoming map[string]readKey) (map[string]Item, error) {
+	stored, err := queryItems(tx, `SELECT `+itemColumns+` FROM item WHERE server = ?`, r.Server)
+	if err != nil {
+		return nil, fmt.Errorf("read stored items: %w", err)
+	}
+	old := map[string]Item{}
+	for _, it := range stored {
+		if _, ok := incoming[it.RatingKey]; ok || it.Section == r.Section {
+			old[it.RatingKey] = it
+		}
+	}
+	return old, nil
+}
+
+// unionKeys returns the rating keys of the old rows and of the read.
+func unionKeys(old map[string]Item, incoming map[string]readKey) map[string]bool {
+	keys := make(map[string]bool, len(old)+len(incoming))
+	for k := range old {
+		keys[k] = true
+	}
+	for k := range incoming {
+		keys[k] = true
+	}
+	return keys
+}
+
+// writeKey writes the row of one rating key after the read r. If the row
+// becomes complete, writeKey deletes it and returns the old row.
+func writeKey(tx *sql.Tx, r Read, key string, incoming map[string]readKey, old map[string]Item) (removed *Item, err error) {
+	prev, exists := old[key]
+	in, isIncoming := incoming[key]
+	final := in.reasons(r, prev.Reasons)
+
+	switch {
+	case final == 0 && !exists:
+		return nil, nil
+	case final == 0:
+		if err := deleteItem(tx, r.Server, key); err != nil {
+			return nil, err
+		}
+		return &prev, nil
+	case !exists:
+		_, err = tx.Exec(`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			r.Server, r.Section, key, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final))
+	case isIncoming:
+		_, err = tx.Exec(`UPDATE item SET section = ?, type = ?, title = ?, year = ?, added_at = ?, reasons = ?
+			WHERE server = ? AND rating_key = ?`,
+			r.Section, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final), r.Server, key)
+	default:
+		_, err = tx.Exec(`UPDATE item SET reasons = ? WHERE server = ? AND rating_key = ?`, int(final), r.Server, key)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("write item %s: %w", key, err)
+	}
+	return nil, nil
 }
 
 // readKey is what a read says about one rating key.
