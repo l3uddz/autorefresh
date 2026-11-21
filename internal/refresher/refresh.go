@@ -177,34 +177,14 @@ func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Libr
 	if it.Reasons&store.Unmatched == 0 || r.opts.IgnoreReasons&store.Unmatched != 0 || it.Refreshes < 1 {
 		return nil, nil
 	}
-	srv := run.server
-
-	var (
-		paths []string
-		err   error
-	)
-	if it.Type == plex.MovieLibrary {
-		paths = run.files[it.RatingKey]
+	paths, err := itemPaths(ctx, run, it)
+	if err != nil {
+		return nil, err
 	}
-	if len(paths) == 0 {
-		if paths, err = srv.Plex.ItemPaths(ctx, it.RatingKey); err != nil {
-			return nil, err
-		}
-	}
-
 	ids := parseIDs(paths)
-	var results []searchResult
-	for _, id := range ids {
-		candidates, err := srv.Plex.SearchMatches(ctx, it.RatingKey, id.title(), lib.Agent, lib.Language)
-		if err != nil && !searchFailureIsEmpty(ctx, id, err) {
-			return nil, err
-		}
-		if err != nil {
-			itemEvent(log.Debug(), srv.Name, lib, it).Str("id", id.title()).Err(err).Msg("Match search failed")
-		}
-		itemEvent(log.Debug(), srv.Name, lib, it).Str("id", id.title()).Int("candidates", len(candidates)).
-			Msg("Match search result")
-		results = append(results, searchResult{id: id, candidates: candidates})
+	results, err := searchIDs(ctx, run.server, lib, it, ids)
+	if err != nil {
+		return nil, err
 	}
 
 	action := store.ActionMatch
@@ -215,21 +195,58 @@ func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Libr
 		action = store.ActionTMDBMatch
 	}
 
+	show := it.Type == plex.ShowLibrary
 	cand, match, conflict := chooseMatch(it.Year, results)
 	if conflict != "" {
-		itemEvent(log.Warn(), srv.Name, lib, it).Str("conflict", conflict).Int("item_year", it.Year).
-			Strs("candidates", describeCandidates(results, it.Type == plex.ShowLibrary)).Msg("Match conflict")
+		itemEvent(log.Warn(), run.server.Name, lib, it).Str("conflict", conflict).Int("item_year", it.Year).
+			Strs("candidates", describeCandidates(results, show)).Msg("Match conflict")
 	}
 	if !match {
 		return nil, nil
 	}
-	fm := &fixMatch{cand: cand, action: action}
-	for _, res := range results {
-		if len(res.candidates) > 0 {
-			fm.links = append(fm.links, res.id.link(it.Type == plex.ShowLibrary))
+	return &fixMatch{cand: cand, links: foundLinks(results, show), action: action}, nil
+}
+
+// itemPaths returns the paths of the item: the movie files from the reads
+// of the run, or else the paths that Plex gives for the item.
+func itemPaths(ctx context.Context, run *serverRun, it store.Item) ([]string, error) {
+	if it.Type == plex.MovieLibrary {
+		if paths := run.files[it.RatingKey]; len(paths) > 0 {
+			return paths, nil
 		}
 	}
-	return fm, nil
+	return run.server.Plex.ItemPaths(ctx, it.RatingKey)
+}
+
+// searchIDs searches Plex once for each path ID of the item. A failed
+// search that searchFailureIsEmpty accepts counts as a search without a
+// candidate. Any other failure returns its error.
+func searchIDs(ctx context.Context, srv Server, lib plex.Library, it store.Item, ids []pathID) ([]searchResult, error) {
+	var results []searchResult
+	for _, id := range ids {
+		candidates, err := srv.Plex.SearchMatches(ctx, it.RatingKey, id.title(), lib.Agent, lib.Language)
+		if err != nil {
+			if !searchFailureIsEmpty(ctx, id, err) {
+				return nil, err
+			}
+			itemEvent(log.Debug(), srv.Name, lib, it).Str("id", id.title()).Err(err).Msg("Match search failed")
+		}
+		itemEvent(log.Debug(), srv.Name, lib, it).Str("id", id.title()).Int("candidates", len(candidates)).
+			Msg("Match search result")
+		results = append(results, searchResult{id: id, candidates: candidates})
+	}
+	return results, nil
+}
+
+// foundLinks returns the web page of each search ID that found a candidate.
+func foundLinks(results []searchResult, show bool) []string {
+	var links []string
+	for _, res := range results {
+		if len(res.candidates) > 0 {
+			links = append(links, res.id.link(show))
+		}
+	}
+	return links
 }
 
 // tmdbFallback returns the results of the second pass with TMDB IDs. If a
