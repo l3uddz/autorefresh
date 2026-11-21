@@ -157,9 +157,6 @@ func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Libr
 		paths = run.files[it.RatingKey]
 	}
 	if len(paths) == 0 {
-		if err := ctx.Err(); err != nil {
-			return plex.Candidate{}, false, err
-		}
 		if paths, err = srv.Plex.ItemPaths(ctx, it.RatingKey); err != nil {
 			return plex.Candidate{}, false, err
 		}
@@ -168,9 +165,6 @@ func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Libr
 	ids := parseIDs(paths)
 	var results []searchResult
 	for _, id := range ids {
-		if err := ctx.Err(); err != nil {
-			return plex.Candidate{}, false, err
-		}
 		candidates, err := srv.Plex.SearchMatches(ctx, it.RatingKey, id.title(), lib.Agent, lib.Language)
 		if err != nil && !searchFailureIsEmpty(ctx, id, err) {
 			return plex.Candidate{}, false, err

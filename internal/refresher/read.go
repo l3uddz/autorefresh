@@ -220,9 +220,6 @@ func readFailed(ctx context.Context, server string, lib plex.Library, err error)
 // listings by rating key.
 func (r *Refresher) listItems(ctx context.Context, client Plex, section string, itemType int, full bool, lastRead time.Time) ([]plex.Item, error) {
 	if full {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		return client.List(ctx, section, itemType)
 	}
 
@@ -234,9 +231,6 @@ func (r *Refresher) listItems(ctx context.Context, client Plex, section string, 
 		filter("addedAt>>", since),
 		filter("unmatched", "1"),
 	} {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		list, err := client.List(ctx, section, itemType, f)
 		if err != nil {
 			return nil, err
@@ -256,9 +250,6 @@ func (r *Refresher) listItems(ctx context.Context, client Plex, section string, 
 func goneKeys(ctx context.Context, client Plex, server string, lib plex.Library, unseen []store.Item) ([]string, error) {
 	var gone []string
 	for _, it := range unseen {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		_, err := client.ItemPaths(ctx, it.RatingKey)
 		if err == nil {
 			continue
@@ -308,9 +299,6 @@ func (r *Refresher) episodeSeries(ctx context.Context, client Plex, server strin
 }
 
 func listSeries(ctx context.Context, client Plex, server string, lib plex.Library, reason store.Reasons, filters ...plex.Filter) ([]store.Item, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	series, err := client.List(ctx, lib.ID, plex.TypeShow, filters...)
 	if err != nil {
 		return nil, err

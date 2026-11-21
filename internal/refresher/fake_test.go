@@ -2,6 +2,7 @@ package refresher
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -12,7 +13,8 @@ var _ Plex = (*plex.Client)(nil)
 
 // fakePlex records each call and returns the configured results. A List,
 // ItemPaths, or SearchMatches call without a configured result returns an
-// empty result.
+// empty result. Like plex.Client, it sends nothing once ctx is done: it
+// records no call and returns an unavailable error that wraps ctx.Err().
 type fakePlex struct {
 	libraries    []plex.Library
 	librariesErr error
@@ -59,12 +61,26 @@ func (f *fakePlex) record(call string) {
 	}
 }
 
-func (f *fakePlex) Libraries(context.Context) ([]plex.Library, error) {
+// canceled returns the error of a call after ctx is done, or nil.
+func canceled(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("request failed: %w: %w", plex.ErrUnavailable, err)
+	}
+	return nil
+}
+
+func (f *fakePlex) Libraries(ctx context.Context) ([]plex.Library, error) {
+	if err := canceled(ctx); err != nil {
+		return nil, err
+	}
 	f.record("Libraries")
 	return f.libraries, f.librariesErr
 }
 
-func (f *fakePlex) List(_ context.Context, section string, itemType int, filters ...plex.Filter) ([]plex.Item, error) {
+func (f *fakePlex) List(ctx context.Context, section string, itemType int, filters ...plex.Filter) ([]plex.Item, error) {
+	if err := canceled(ctx); err != nil {
+		return nil, err
+	}
 	key := listKey(section, itemType, filters...)
 	f.record("List " + key)
 	if err := f.listErrs[key]; err != nil {
@@ -73,7 +89,10 @@ func (f *fakePlex) List(_ context.Context, section string, itemType int, filters
 	return f.lists[key], nil
 }
 
-func (f *fakePlex) ItemPaths(_ context.Context, ratingKey string) ([]string, error) {
+func (f *fakePlex) ItemPaths(ctx context.Context, ratingKey string) ([]string, error) {
+	if err := canceled(ctx); err != nil {
+		return nil, err
+	}
 	f.record("ItemPaths " + ratingKey)
 	if err := f.pathErrs[ratingKey]; err != nil {
 		return nil, err
@@ -81,13 +100,19 @@ func (f *fakePlex) ItemPaths(_ context.Context, ratingKey string) ([]string, err
 	return f.paths[ratingKey], nil
 }
 
-func (f *fakePlex) Refresh(_ context.Context, ratingKey string) error {
+func (f *fakePlex) Refresh(ctx context.Context, ratingKey string) error {
+	if err := canceled(ctx); err != nil {
+		return err
+	}
 	f.record("Refresh " + ratingKey)
 	return f.refreshErrs[ratingKey]
 }
 
 // SearchMatches records "SearchMatches <rating key> <title> <agent> <language>".
-func (f *fakePlex) SearchMatches(_ context.Context, ratingKey, title, agent, language string) ([]plex.Candidate, error) {
+func (f *fakePlex) SearchMatches(ctx context.Context, ratingKey, title, agent, language string) ([]plex.Candidate, error) {
+	if err := canceled(ctx); err != nil {
+		return nil, err
+	}
 	f.record(strings.Join([]string{"SearchMatches", ratingKey, title, agent, language}, " "))
 	if err := f.searchErrs[ratingKey+" "+title]; err != nil {
 		return nil, err
@@ -99,7 +124,10 @@ func (f *fakePlex) SearchMatches(_ context.Context, ratingKey, title, agent, lan
 }
 
 // Match records "Match <rating key> <candidate guid>".
-func (f *fakePlex) Match(_ context.Context, ratingKey string, cand plex.Candidate) error {
+func (f *fakePlex) Match(ctx context.Context, ratingKey string, cand plex.Candidate) error {
+	if err := canceled(ctx); err != nil {
+		return err
+	}
 	f.record("Match " + ratingKey + " " + cand.GUID)
 	return f.matchErrs[ratingKey]
 }

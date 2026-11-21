@@ -61,9 +61,6 @@ func (r *Refresher) tmdbResults(ctx context.Context, srv Server, lib plex.Librar
 		}
 		searched[tmdbID] = true
 
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 		id := pathID{"tmdb", tmdbID}
 		candidates, err := srv.Plex.SearchMatches(ctx, it.RatingKey, id.title(), lib.Agent, lib.Language)
 		if err != nil {
