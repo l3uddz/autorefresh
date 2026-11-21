@@ -39,6 +39,9 @@ var externalSources = map[string]externalSource{
 	"imdb": {param: "imdb_id", valid: regexp.MustCompile(`(?i)^tt[0-9]+$`)},
 }
 
+// tmdbIDPattern validates a numeric TMDB ID before it becomes a path segment.
+var tmdbIDPattern = regexp.MustCompile(`^[0-9]+$`)
+
 // Client sends requests to TMDB.
 type Client struct {
 	base  *url.URL
@@ -128,6 +131,85 @@ func (c *Client) Find(ctx context.Context, source, id string, show bool) (tmdbID
 // Check asks TMDB whether it accepts the token.
 func (c *Client) Check(ctx context.Context) error {
 	return c.get(ctx, []string{"3", "authentication"}, nil, nil)
+}
+
+// Year returns the canonical release year of a TMDB entry: for a series
+// (show true), the earliest air-date year among regular seasons
+// (season_number >= 1, ignoring specials); for a movie, the earliest
+// release-date year across all release dates. ok is false if TMDB has no
+// valid date for the entry.
+func (c *Client) Year(ctx context.Context, id string, show bool) (year int, ok bool, err error) {
+	if !tmdbIDPattern.MatchString(id) {
+		return 0, false, errors.New("year: invalid tmdb id")
+	}
+	if show {
+		return c.seriesYear(ctx, id)
+	}
+	return c.movieYear(ctx, id)
+}
+
+func (c *Client) seriesYear(ctx context.Context, id string) (int, bool, error) {
+	var resp struct {
+		Seasons []struct {
+			Number  int    `json:"season_number"`
+			AirDate string `json:"air_date"`
+		} `json:"seasons"`
+	}
+	if err := c.get(ctx, []string{"3", "tv", id}, nil, &resp); err != nil {
+		return 0, false, err
+	}
+	var earliest int
+	for _, s := range resp.Seasons {
+		if s.Number < 1 {
+			continue
+		}
+		if y, ok := parseDateYear(s.AirDate); ok {
+			earliest = earliestYear(earliest, y)
+		}
+	}
+	return earliest, earliest > 0, nil
+}
+
+func (c *Client) movieYear(ctx context.Context, id string) (int, bool, error) {
+	var resp struct {
+		Results []struct {
+			ReleaseDates []struct {
+				ReleaseDate string `json:"release_date"`
+			} `json:"release_dates"`
+		} `json:"results"`
+	}
+	if err := c.get(ctx, []string{"3", "movie", id, "release_dates"}, nil, &resp); err != nil {
+		return 0, false, err
+	}
+	var earliest int
+	for _, country := range resp.Results {
+		for _, rd := range country.ReleaseDates {
+			if y, ok := parseDateYear(rd.ReleaseDate); ok {
+				earliest = earliestYear(earliest, y)
+			}
+		}
+	}
+	return earliest, earliest > 0, nil
+}
+
+// parseDateYear reads the leading YYYY of a TMDB date such as "2022-12-05"
+// or "1984-12-10T00:00:00.000Z".
+func parseDateYear(date string) (int, bool) {
+	if len(date) < 4 || (len(date) > 4 && date[4] != '-') {
+		return 0, false
+	}
+	y, err := strconv.Atoi(date[:4])
+	if err != nil || y <= 0 {
+		return 0, false
+	}
+	return y, true
+}
+
+func earliestYear(cur, y int) int {
+	if cur == 0 || y < cur {
+		return y
+	}
+	return cur
 }
 
 func trace(req *http.Request, start time.Time) *zerolog.Event {

@@ -327,3 +327,85 @@ func TestTraceLogsRedirectHopsSeparately(t *testing.T) {
 		t.Errorf("line 1 = %s, want /3/authentication/v2 with status 200", lines[1])
 	}
 }
+
+func TestYearSeries(t *testing.T) {
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/3/tv/75367" || r.URL.RawQuery != "" {
+			t.Errorf("request = %s, want /3/tv/75367", r.URL)
+		}
+		file(t, "tv_seasons.json")(w, r)
+	})
+
+	year, ok, err := c.Year(context.Background(), "75367", true)
+	if err != nil || !ok || year != 2022 {
+		t.Fatalf("Year = %d, %v, %v, want 2022 (ignoring Season 0 and null dates)", year, ok, err)
+	}
+}
+
+func TestYearMovie(t *testing.T) {
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/3/movie/272165/release_dates" || r.URL.RawQuery != "" {
+			t.Errorf("request = %s, want /3/movie/272165/release_dates", r.URL)
+		}
+		file(t, "movie_release_dates.json")(w, r)
+	})
+
+	year, ok, err := c.Year(context.Background(), "272165", false)
+	if err != nil || !ok || year != 1984 {
+		t.Fatalf("Year = %d, %v, %v, want earliest release year 1984", year, ok, err)
+	}
+}
+
+func TestYearNothing(t *testing.T) {
+	tests := []struct {
+		name string
+		show bool
+		body string
+	}{
+		{"only specials", true, `{"seasons":[{"season_number":0,"air_date":"2017-11-27"}]}`},
+		{"null season dates", true, `{"seasons":[{"season_number":1,"air_date":null}]}`},
+		{"bad date format", true, `{"seasons":[{"season_number":1,"air_date":"20220101"}]}`},
+		{"empty movie releases", false, `{"results":[]}`},
+		{"blank movie release date", false, `{"results":[{"release_dates":[{"release_date":""}]}]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := serve(t, func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte(tt.body)) })
+			year, ok, err := c.Year(context.Background(), "1", tt.show)
+			if err != nil || ok || year != 0 {
+				t.Fatalf("Year = %d, %v, %v, want nothing", year, ok, err)
+			}
+		})
+	}
+}
+
+func TestYearRejectsInvalidID(t *testing.T) {
+	var hits atomic.Int32
+	c := serve(t, func(http.ResponseWriter, *http.Request) { hits.Add(1) })
+	for _, id := range []string{"", "..", "1/2", "tt123"} {
+		if _, _, err := c.Year(context.Background(), id, true); err == nil {
+			t.Errorf("Year(%q) returned no error", id)
+		}
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("server received %d requests, want 0", n)
+	}
+}
+
+func TestYearErrors(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		status       int
+		show         bool
+		unauthorized bool
+	}{
+		{"series 401", http.StatusUnauthorized, true, true},
+		{"movie 500", http.StatusInternalServerError, false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := serve(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(tt.status) })
+			_, _, err := c.Year(context.Background(), "75367", tt.show)
+			checkError(t, err, tt.unauthorized)
+		})
+	}
+}

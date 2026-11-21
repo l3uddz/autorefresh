@@ -1,0 +1,36 @@
+{
+  "id": 272165,
+  "results": [
+    {
+      "iso_3166_1": "BE",
+      "release_dates": [
+        {
+          "release_date": "1991-09-21T00:00:00.000Z",
+          "type": 3
+        }
+      ]
+    },
+    {
+      "iso_3166_1": "BR",
+      "release_dates": [
+        {
+          "release_date": "2026-02-12T00:00:00.000Z",
+          "type": 2
+        }
+      ]
+    },
+    {
+      "iso_3166_1": "US",
+      "release_dates": [
+        {
+          "release_date": "1985-03-24T00:00:00.000Z",
+          "type": 1
+        },
+        {
+          "release_date": "1984-12-10T00:00:00.000Z",
+          "type": 6
+        }
+      ]
+    }
+  ]
+}
