@@ -301,7 +301,7 @@ environment variable sets. Choose a `cache-refresh` time at which
 at or after that time.
 
 Durations use Go units such as `h`, `m`, and `s`, so write 7 days as
-`168h`. `refresh-interval` must be more than 0. `max-refresh-interval`,
+`168h`. `refresh-interval` must be at least `1ms`. `max-refresh-interval`,
 `minimum-age`, `oversample`, and `refresh-delay` must be 0 or more.
 `max-refreshes-per-run` must be 0 or more, and 0 means no limit. An unknown
 name in `ignore-reasons` is an error. These keys apply to all servers.
@@ -311,8 +311,8 @@ Each entry in `plex` is one Plex server:
 - `name` is required and must be unique. Logs and the database use it, so a
   new `url` keeps the state of the server.
 - `url` is required and must use `http` or `https`. It can have a path,
-  such as `https://example.com/plex` behind a reverse proxy, but no query
-  and no fragment.
+  such as `https://example.com/plex` behind a reverse proxy, but no
+  userinfo, no query, and no fragment.
 - `token` is required. It is the Plex token of the server.
 - `libraries` is optional. It selects libraries by their title.
 - `timeout` is optional. It limits each request to the server. The default
@@ -401,7 +401,7 @@ run does these things:
   and caches the TMDB IDs that they find.
 - It logs one `Dry run` line at info level for each due item. The line has
   the server, the library, the title, the reasons, and the action, which is
-  `refresh` or `match`.
+  `refresh`, `match`, or `tmdb-match`.
 - It applies `max-refreshes-per-run` to the due items.
 
 A dry run sends no refresh or match request and does not wait

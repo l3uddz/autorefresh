@@ -143,8 +143,8 @@ func (c *Config) validate() error {
 	if c.CacheRefreshSchedule, err = parseCron("cache-refresh", c.CacheRefresh); err != nil {
 		return err
 	}
-	if c.RefreshInterval <= 0 {
-		return errors.New("refresh-interval must be greater than zero")
+	if c.RefreshInterval < time.Millisecond {
+		return errors.New("refresh-interval must be at least 1ms")
 	}
 	if c.MaxRefreshInterval < 0 {
 		return errors.New("max-refresh-interval must not be negative")
@@ -164,10 +164,18 @@ func (c *Config) validate() error {
 	if c.Ignored, err = store.ParseReasons(c.IgnoreReasons); err != nil {
 		return fmt.Errorf("ignore-reasons: %w", err)
 	}
+	if c.TMDBToken != "" && hasControlOrSpace(c.TMDBToken) {
+		return errors.New("tmdb-token must not contain whitespace or control characters")
+	}
+	return c.validateServers()
+}
+
+// validateServers validates each configured Plex server and ensures unique
+// server names.
+func (c *Config) validateServers() error {
 	if len(c.Plex) == 0 {
 		return errors.New("no plex server is configured")
 	}
-
 	names := make(map[string]struct{}, len(c.Plex))
 	for i := range c.Plex {
 		s := &c.Plex[i]
@@ -180,6 +188,17 @@ func (c *Config) validate() error {
 		names[s.Name] = struct{}{}
 	}
 	return nil
+}
+
+// hasControlOrSpace reports whether s contains any ASCII control character or
+// whitespace, which cannot appear in a valid Plex or TMDB header token.
+func hasControlOrSpace(s string) bool {
+	for _, r := range s {
+		if r <= 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
 }
 
 // parseCron parses expr as a standard cron expression that fires. For an
@@ -198,7 +217,7 @@ func parseCron(key, expr string) (cron.Schedule, error) {
 
 // label names a server in errors. It never uses the URL or the token.
 func (s Server) label(index int) string {
-	if s.Name == "" {
+	if strings.TrimSpace(s.Name) == "" {
 		return fmt.Sprintf("#%d", index+1)
 	}
 	return fmt.Sprintf("%q", s.Name)
@@ -206,42 +225,58 @@ func (s Server) label(index int) string {
 
 // validate checks the server and sets BaseURL.
 func (s *Server) validate() error {
-	if s.Name == "" {
+	if strings.TrimSpace(s.Name) == "" {
 		return errors.New("name is empty")
 	}
-	if s.URL == "" {
-		return errors.New("url is empty")
-	}
-	// The error of url.Parse contains the URL, so it is not wrapped.
-	u, err := url.Parse(s.URL)
+	u, err := validateURL(s.URL)
 	if err != nil {
-		return errors.New("url is not valid")
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return errors.New("url must use http or https")
-	}
-	if u.Hostname() == "" {
-		return errors.New("url has no host")
-	}
-	// The requests replace the query and drop the fragment, so either one
-	// is a silent mistake.
-	if u.RawQuery != "" || u.ForceQuery {
-		return errors.New("url must not have a query")
-	}
-	if strings.Contains(s.URL, "#") {
-		return errors.New("url must not have a fragment")
+		return err
 	}
 	s.BaseURL = u
 	if s.Token == "" {
 		return errors.New("token is empty")
 	}
+	if hasControlOrSpace(s.Token) {
+		return errors.New("token must not contain whitespace or control characters")
+	}
 	if s.RequestTimeout() <= 0 {
 		return errors.New("timeout must be greater than zero")
 	}
 	for _, lib := range s.Libraries {
-		if lib == "" {
+		if strings.TrimSpace(lib) == "" {
 			return errors.New("a library title is empty")
 		}
 	}
 	return nil
+}
+
+// validateURL parses and validates a Plex server URL without leaking the URL
+// in error messages.
+func validateURL(raw string) (*url.URL, error) {
+	if raw == "" {
+		return nil, errors.New("url is empty")
+	}
+	// The error of url.Parse contains the URL, so it is not wrapped.
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, errors.New("url is not valid")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return nil, errors.New("url must use http or https")
+	}
+	if u.Hostname() == "" {
+		return nil, errors.New("url has no host")
+	}
+	if u.User != nil {
+		return nil, errors.New("url must not have userinfo")
+	}
+	// The requests replace the query and drop the fragment, so either one
+	// is a silent mistake.
+	if u.RawQuery != "" || u.ForceQuery {
+		return nil, errors.New("url must not have a query")
+	}
+	if strings.Contains(raw, "#") {
+		return nil, errors.New("url must not have a fragment")
+	}
+	return u, nil
 }
