@@ -74,7 +74,7 @@ func due(s *Store, q DueQuery) ([]Item, error) {
 func refresh(t *testing.T, s *Store, key string, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
-		if err := s.RecordAttempt(srv, key, base.Add(time.Duration(i+1)*time.Minute), true); err != nil {
+		if err := s.RecordAttempt(srv, key, base.Add(time.Duration(i+1)*time.Minute), ActionRefresh); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -269,7 +269,7 @@ func TestDueOrder(t *testing.T) {
 	}})
 	at := base.Add(10 * time.Hour)
 	for k, d := range map[string]time.Duration{"old-attempt": 0, "new-attempt": time.Hour, "same-z": 2 * time.Hour, "same-a": 2 * time.Hour} {
-		if err := s.RecordAttempt(srv, k, at.Add(d), false); err != nil {
+		if err := s.RecordAttempt(srv, k, at.Add(d), ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -306,10 +306,10 @@ func TestDuePutsFewerAttemptsFirst(t *testing.T) {
 	apply(t, s, Read{Items: []Item{item("never", NoArt), item("failed", NoArt), item("once", NoArt), item("twice", NoArt)}})
 	// The last attempts are in the opposite order of the refreshes.
 	refresh(t, s, "twice", 2)
-	if err := s.RecordAttempt(srv, "once", base.Add(5*time.Hour), true); err != nil {
+	if err := s.RecordAttempt(srv, "once", base.Add(5*time.Hour), ActionRefresh); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordAttempt(srv, "failed", base.Add(6*time.Hour), false); err != nil {
+	if err := s.RecordAttempt(srv, "failed", base.Add(6*time.Hour), ""); err != nil {
 		t.Fatal(err)
 	}
 	got, err := due(s, DueQuery{Server: srv, Sections: []string{sec}, Now: base.Add(100 * time.Hour), RefreshInterval: time.Hour, MaxRefreshInterval: time.Hour})
@@ -333,12 +333,12 @@ func TestDueBacksOffAfterRefreshes(t *testing.T) {
 	at := base.Add(time.Hour)
 	for k, n := range refreshes {
 		if n == 0 {
-			if err := s.RecordAttempt(srv, k, at, false); err != nil {
+			if err := s.RecordAttempt(srv, k, at, ""); err != nil {
 				t.Fatal(err)
 			}
 		}
 		for range n {
-			if err := s.RecordAttempt(srv, k, at, true); err != nil {
+			if err := s.RecordAttempt(srv, k, at, ActionRefresh); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -382,7 +382,7 @@ func TestDueKeepsFractionalSecondWaits(t *testing.T) {
 			apply(t, s, Read{Items: []Item{item("a", NoArt)}})
 			at := base.Add(time.Hour)
 			for range tt.refreshes {
-				if err := s.RecordAttempt(srv, "a", at, true); err != nil {
+				if err := s.RecordAttempt(srv, "a", at, ActionRefresh); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -510,10 +510,10 @@ func TestDueSkipsRecentAttemptsAndOtherScopes(t *testing.T) {
 	apply(t, s, Read{Items: []Item{item("recent", NoArt), item("old", NoArt), item("second", NoArt)}})
 	apply(t, s, Read{Section: "2", Items: []Item{item("hidden", NoArt)}})
 	apply(t, s, Read{Server: "other", Items: []Item{item("elsewhere", NoArt)}})
-	if err := s.RecordAttempt(srv, "recent", now.Add(-time.Hour), false); err != nil {
+	if err := s.RecordAttempt(srv, "recent", now.Add(-time.Hour), ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordAttempt(srv, "old", now.Add(-13*time.Hour), false); err != nil {
+	if err := s.RecordAttempt(srv, "old", now.Add(-13*time.Hour), ""); err != nil {
 		t.Fatal(err)
 	}
 	got, err := due(s, DueQuery{Server: srv, Sections: []string{sec}, Now: now, RefreshInterval: 12 * time.Hour, MaxRefreshInterval: 12 * time.Hour})
@@ -563,10 +563,10 @@ func TestDueComparesTimesAcrossZones(t *testing.T) {
 	if a.Format("2006-01-02T15:04:05") >= b.Format("2006-01-02T15:04:05") {
 		t.Fatal("setup: wall-clock order must be opposite to instant order")
 	}
-	if err := s.RecordAttempt(srv, "a", a, false); err != nil {
+	if err := s.RecordAttempt(srv, "a", a, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RecordAttempt(srv, "b", b, false); err != nil {
+	if err := s.RecordAttempt(srv, "b", b, ""); err != nil {
 		t.Fatal(err)
 	}
 	got, err := due(s, DueQuery{Server: srv, Sections: []string{sec}, Now: instant.Add(48 * time.Hour), RefreshInterval: time.Hour, MaxRefreshInterval: time.Hour})
@@ -583,22 +583,68 @@ func TestRecordAttempt(t *testing.T) {
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
 	at1, at2 := base.Add(time.Hour), base.Add(2*time.Hour)
 
-	if err := s.RecordAttempt(srv, "a", at1, true); err != nil {
+	if err := s.RecordAttempt(srv, "a", at1, ActionRefresh); err != nil {
 		t.Fatal(err)
 	}
 	got := rows(t, s)["a"]
 	if got.Refreshes != 1 || !got.LastRefresh.Equal(at1) || !got.LastAttempt.Equal(at1) {
 		t.Fatalf("after refresh = %+v", got)
 	}
-	if err := s.RecordAttempt(srv, "a", at2, false); err != nil {
+	if err := s.RecordAttempt(srv, "a", at2, ""); err != nil {
 		t.Fatal(err)
 	}
 	got = rows(t, s)["a"]
 	if got.Refreshes != 1 || !got.LastRefresh.Equal(at1) || !got.LastAttempt.Equal(at2) {
 		t.Fatalf("after attempt = %+v", got)
 	}
-	if err := s.RecordAttempt(srv, "missing", at1, true); err != nil {
+	if err := s.RecordAttempt(srv, "missing", at1, ActionRefresh); err != nil {
 		t.Fatalf("missing row: %v", err)
+	}
+}
+
+// RecordAttempt keeps the last request that Plex accepted, and the last
+// match request, which a later refresh does not replace.
+func TestRecordAttemptKeepsActions(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+
+	steps := []struct {
+		accepted        Action
+		last, lastMatch Action
+	}{
+		{ActionRefresh, ActionRefresh, ""},
+		{ActionTMDBMatch, ActionTMDBMatch, ActionTMDBMatch},
+		{ActionRefresh, ActionRefresh, ActionTMDBMatch},
+		{"", ActionRefresh, ActionTMDBMatch}, // a failed attempt changes neither
+		{ActionMatch, ActionMatch, ActionMatch},
+	}
+	for i, st := range steps {
+		if err := s.RecordAttempt(srv, "a", base.Add(time.Duration(i+1)*time.Hour), st.accepted); err != nil {
+			t.Fatal(err)
+		}
+		got := rows(t, s)["a"]
+		if got.LastAction != st.last || got.LastMatch != st.lastMatch {
+			t.Fatalf("step %d: LastAction = %q, LastMatch = %q, want %q, %q",
+				i, got.LastAction, got.LastMatch, st.last, st.lastMatch)
+		}
+	}
+}
+
+// A read that finds an item complete returns its row with the actions, so
+// the refresher can log what fixed it.
+func TestApplyReadReturnsActionsOfFixedRows(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	if err := s.RecordAttempt(srv, "a", base.Add(time.Hour), ActionMatch); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordAttempt(srv, "a", base.Add(2*time.Hour), ActionRefresh); err != nil {
+		t.Fatal(err)
+	}
+
+	fixed := apply(t, s, Read{At: base.Add(3 * time.Hour), Items: []Item{item("a", 0)}})
+	if len(fixed) != 1 || fixed[0].LastAction != ActionRefresh || fixed[0].LastMatch != ActionMatch {
+		t.Fatalf("fixed = %+v, want a with LastAction refresh and LastMatch match", fixed)
 	}
 }
 

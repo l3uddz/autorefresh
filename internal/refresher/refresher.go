@@ -30,7 +30,7 @@ type Store interface {
 	Unseen(server, section string, seen []string) ([]store.Item, error)
 	Due(q store.DueQuery) (items []store.Item, total int, err error)
 	CountIncomplete(server string, sections []string, ignored store.Reasons) (int, error)
-	RecordAttempt(server, ratingKey string, at time.Time, refreshed bool) error
+	RecordAttempt(server, ratingKey string, at time.Time, accepted store.Action) error
 	TMDBID(server, ratingKey, source, externalID string) (tmdbID string, ok bool, err error)
 	SaveTMDBID(server, ratingKey, source, externalID, tmdbID string) error
 	Delete(server, ratingKey string) error
@@ -104,6 +104,7 @@ type serverRun struct {
 	incrementalReadItems int                 // items that incremental reads listed
 	completed            []completedItem     // rows that became complete, logged after the refresh step
 	fixed                int                 // completed rows that had a request that Plex accepted
+	fixedAfterMatch      int                 // completed rows that had a match request that Plex accepted
 	due                  int
 	refreshes            int  // refresh requests sent, also failed ones
 	matches              int  // match requests sent, also failed ones
@@ -122,8 +123,16 @@ type completedItem struct {
 // logs them after the refresh step, so they stay next to the summary.
 func logCompleted(run *serverRun) {
 	for _, c := range run.completed {
-		log.Info().Str("server", run.server.Name).Str("library", c.library).Str("title", c.item.Title).
-			Int("refreshes", c.item.Refreshes).Msg("Item complete")
+		ev := log.Info().Str("server", run.server.Name).Str("library", c.library).Str("title", c.item.Title).
+			Int("refreshes", c.item.Refreshes)
+		// Rows from before actions were recorded have none.
+		if c.item.LastAction != "" {
+			ev.Str("last_action", string(c.item.LastAction))
+		}
+		if c.item.LastMatch != "" {
+			ev.Str("last_match", string(c.item.LastMatch))
+		}
+		ev.Msg("Item complete")
 	}
 }
 

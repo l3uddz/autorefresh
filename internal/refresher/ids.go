@@ -1,6 +1,7 @@
 package refresher
 
 import (
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -11,6 +12,34 @@ type pathID struct{ Source, Value string } // Source: "imdb", "tmdb", or "tvdb"
 // title gives the match search title, for example "tmdb-747059".
 func (id pathID) title() string {
 	return id.Source + "-" + id.Value
+}
+
+// link returns the web page of the ID: TMDB, IMDb, or TheTVDB. show selects
+// the series page of a tmdb or tvdb ID instead of the movie page.
+func (id pathID) link(show bool) string {
+	var u url.URL
+	var segments []string
+	switch id.Source {
+	case "tmdb":
+		u = url.URL{Scheme: "https", Host: "www.themoviedb.org"}
+		segments = []string{"movie", id.Value}
+		if show {
+			segments[0] = "tv"
+		}
+	case "imdb":
+		u = url.URL{Scheme: "https", Host: "www.imdb.com"}
+		segments = []string{"title", id.Value}
+	case "tvdb":
+		u = url.URL{Scheme: "https", Host: "thetvdb.com"}
+		segments = []string{"dereferrer", "movie", id.Value}
+		if show {
+			segments[1] = "series"
+		}
+	}
+	for i, seg := range segments {
+		segments[i] = url.PathEscape(seg)
+	}
+	return u.JoinPath(segments...).String()
 }
 
 var (

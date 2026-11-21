@@ -58,7 +58,7 @@ func (f *fixture) seed(server string, lib plex.Library, it plex.Item, reasons st
 		f.t.Fatalf("seed store: %v", err)
 	}
 	for range refreshes {
-		if err := f.store.RecordAttempt(server, it.RatingKey, seedAttempt, true); err != nil {
+		if err := f.store.RecordAttempt(server, it.RatingKey, seedAttempt, store.ActionRefresh); err != nil {
 			f.t.Fatalf("seed attempt: %v", err)
 		}
 	}
@@ -101,6 +101,25 @@ func matchReads(calls []string) []string {
 		}
 	}
 	return got
+}
+
+// wantMatchFields checks the action and the match fields of a request line.
+func wantMatchFields(t *testing.T, ev map[string]any, action, name string, year int, links ...string) {
+	t.Helper()
+	wantField(t, ev, "action", action)
+	wantField(t, ev, "item_year", float64(2020))
+	wantField(t, ev, "candidate", name)
+	wantField(t, ev, "candidate_year", float64(year))
+	var want []any
+	for _, l := range links {
+		want = append(want, l)
+	}
+	if got, _ := ev["links"].([]any); !reflect.DeepEqual(got, want) {
+		t.Errorf("links = %v, want %v", ev["links"], want)
+	}
+	if _, ok := ev["guid"]; ok {
+		t.Errorf("request line has a guid: %v", ev)
+	}
 }
 
 // lastSummary returns the last summary line of the server.
@@ -248,6 +267,9 @@ func TestRefreshSuccessRecordsRefresh(t *testing.T) {
 	if row.Refreshes != 1 || !row.LastRefresh.Equal(t0) || !row.LastAttempt.Equal(t0) {
 		t.Errorf("row = %+v, want 1 refresh and both times %v", row, t0)
 	}
+	if row.LastAction != store.ActionRefresh || row.LastMatch != "" {
+		t.Errorf("actions = %q, %q, want refresh and no match", row.LastAction, row.LastMatch)
+	}
 	lines := f.logLines("info", "Sent request")
 	if len(lines) != 1 {
 		t.Fatalf("got %d sent lines, want 1", len(lines))
@@ -268,8 +290,8 @@ func TestRefreshFailureRecordsAttemptOnly(t *testing.T) {
 	f.run(t0)
 
 	row, _ := f.row(testServer, "1", "101")
-	if row.Refreshes != 0 || !row.LastRefresh.IsZero() || !row.LastAttempt.Equal(t0) {
-		t.Errorf("row = %+v, want no refresh and LastAttempt %v", row, t0)
+	if row.Refreshes != 0 || !row.LastRefresh.IsZero() || !row.LastAttempt.Equal(t0) || row.LastAction != "" {
+		t.Errorf("row = %+v, want no refresh, no action, and LastAttempt %v", row, t0)
 	}
 	warnings := f.logLines("warn", "Request failed")
 	if len(warnings) != 1 {
@@ -379,12 +401,19 @@ func TestFixMatchMovie(t *testing.T) {
 
 	wantCalls(t, matchReads(fp.calls), "SearchMatches 101 tmdb-1 tv.plex.agents.movie en-US")
 	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/a")
-	if row, _ := f.row(testServer, "1", "101"); row.Refreshes != 2 {
-		t.Errorf("Refreshes = %d, want 2", row.Refreshes)
+	row, _ := f.row(testServer, "1", "101")
+	if row.Refreshes != 2 || row.LastAction != store.ActionMatch || row.LastMatch != store.ActionMatch {
+		t.Errorf("row = %+v, want 2 refreshes and the match as both actions", row)
 	}
 	summary := f.lastSummary(testServer)
 	wantField(t, summary, "match_requests", float64(1))
 	wantField(t, summary, "refresh_requests", float64(0))
+	// A tmdb ID from the path is a plain match, not a TMDB match.
+	sent := f.logLines("info", "Sent request")
+	if len(sent) != 1 {
+		t.Fatalf("got %d sent lines, want 1", len(sent))
+	}
+	wantMatchFields(t, sent[0], "match", "Film", 2020, "https://www.themoviedb.org/movie/1")
 	results := f.logLines("debug", "Match search result")
 	if len(results) != 1 {
 		t.Fatalf("got %d search result lines, want 1", len(results))
@@ -474,6 +503,14 @@ func TestFixMatchConflictSendsPlainRefresh(t *testing.T) {
 	}
 	wantField(t, warnings[0], "title", "Title 101")
 	wantField(t, warnings[0], "conflict", "different candidates")
+	wantField(t, warnings[0], "item_year", float64(2020))
+	want := []any{
+		"Film (2020) via https://www.themoviedb.org/movie/1",
+		"Film (2020) via https://www.imdb.com/title/tt2",
+	}
+	if got, _ := warnings[0]["candidates"].([]any); !reflect.DeepEqual(got, want) {
+		t.Errorf("candidates = %v, want %v", warnings[0]["candidates"], want)
+	}
 }
 
 func TestFixMatchWithoutIDsSendsPlainRefresh(t *testing.T) {
@@ -670,8 +707,8 @@ func TestDryRunSendsAndRecordsNothing(t *testing.T) {
 	want := map[string]time.Time{"101": {}, "102": seedAttempt, "103": seedAttempt, "104": seedAttempt}
 	for key, attempt := range want {
 		row, exists := f.row(testServer, "1", key)
-		if !exists || !row.LastAttempt.Equal(attempt) {
-			t.Errorf("row %s = %+v (exists %v), want LastAttempt %v", key, row, exists, attempt)
+		if !exists || !row.LastAttempt.Equal(attempt) || row.LastMatch != "" {
+			t.Errorf("row %s = %+v (exists %v), want LastAttempt %v and no match", key, row, exists, attempt)
 		}
 	}
 	lines := f.logLines("info", "Dry run")
@@ -683,7 +720,10 @@ func TestDryRunSendsAndRecordsNothing(t *testing.T) {
 	wantField(t, lines[0], "action", "refresh")
 	wantField(t, lines[1], "title", "Title 102")
 	wantField(t, lines[1], "reasons", "unmatched")
-	wantField(t, lines[1], "action", "match")
+	wantMatchFields(t, lines[1], "match", "Film", 2020, "https://www.themoviedb.org/movie/102")
+	if _, ok := lines[0]["candidate"]; ok {
+		t.Errorf("a refresh line has match fields: %v", lines[0])
+	}
 	if warnings := f.logLines("warn", "Match search failed"); len(warnings) != 2 {
 		t.Errorf("got %d search failure warnings, want 2", len(warnings))
 	}
@@ -733,7 +773,7 @@ func TestSummaryLine(t *testing.T) {
 	for field, want := range map[string]float64{
 		"full_read_items": 2, "incremental_read_items": 1, "incomplete_items": 3, "due_items": 3,
 		"refresh_requests": 1, "match_requests": 1, "failed_requests": 1, "remaining_items": 0,
-		"completed_items": 1, "completed_after_request": 1,
+		"completed_items": 1, "completed_after_request": 1, "completed_after_match": 0,
 	} {
 		wantField(t, summary, field, want)
 	}

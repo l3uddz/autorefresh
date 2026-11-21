@@ -23,7 +23,24 @@ type Item struct {
 	Reasons                    Reasons
 	LastRefresh, LastAttempt   time.Time // zero: never
 	Refreshes                  int
+	LastAction                 Action // the last request that Plex accepted
+	LastMatch                  Action // the last match request that Plex accepted
 }
+
+// Action is a request that Plex accepted for an item. The empty Action
+// means no request, or a request from before autorefresh recorded actions.
+type Action string
+
+const (
+	ActionRefresh Action = "refresh"
+	ActionMatch   Action = "match"
+	// ActionTMDBMatch is a match whose candidate a search with a TMDB ID
+	// from TMDB found.
+	ActionTMDBMatch Action = "tmdb-match"
+)
+
+// isMatch reports whether a is a match request.
+func (a Action) isMatch() bool { return a == ActionMatch || a == ActionTMDBMatch }
 
 // Read is the staged result of all requests for one library.
 type Read struct {
@@ -38,7 +55,8 @@ type Read struct {
 	EpisodeUnmatched []Item   // the series of the second episode request
 }
 
-const itemColumns = `server, section, rating_key, type, title, year, added_at, reasons, last_refresh, last_attempt, refreshes`
+const itemColumns = `server, section, rating_key, type, title, year, added_at, reasons, last_refresh, last_attempt, refreshes,
+	last_action, last_match`
 
 // nullTime stores a zero time as NULL and any other time as Unix seconds.
 func nullTime(t time.Time) any {
@@ -65,7 +83,7 @@ func scanItem(row scanner) (Item, error) {
 		lastRefresh, lastAttempt sql.NullInt64
 	)
 	err := row.Scan(&it.Server, &it.Section, &it.RatingKey, &it.Type, &it.Title, &it.Year,
-		&addedAt, &reasons, &lastRefresh, &lastAttempt, &it.Refreshes)
+		&addedAt, &reasons, &lastRefresh, &lastAttempt, &it.Refreshes, &it.LastAction, &it.LastMatch)
 	if err != nil {
 		return Item{}, err
 	}
@@ -407,14 +425,22 @@ func (s *Store) CountIncomplete(server string, sections []string, ignored Reason
 	return n, nil
 }
 
-// RecordAttempt sets LastAttempt and counts the attempt. If refreshed, it
-// also sets LastRefresh and adds 1 to Refreshes.
-func (s *Store) RecordAttempt(server, ratingKey string, at time.Time, refreshed bool) error {
+// RecordAttempt sets LastAttempt and counts the attempt. accepted is the
+// request that Plex accepted, or "" for a failed attempt. An accepted request
+// also sets LastRefresh and LastAction and adds 1 to Refreshes. An accepted
+// match request also sets LastMatch.
+func (s *Store) RecordAttempt(server, ratingKey string, at time.Time, accepted Action) error {
 	var err error
-	if refreshed {
+	switch {
+	case accepted.isMatch():
 		_, err = s.db.Exec(`UPDATE item SET last_attempt = ?, last_refresh = ?, refreshes = refreshes + 1,
-			attempts = attempts + 1 WHERE server = ? AND rating_key = ?`, at.Unix(), at.Unix(), server, ratingKey)
-	} else {
+			attempts = attempts + 1, last_action = ?, last_match = ? WHERE server = ? AND rating_key = ?`,
+			at.Unix(), at.Unix(), accepted, accepted, server, ratingKey)
+	case accepted != "":
+		_, err = s.db.Exec(`UPDATE item SET last_attempt = ?, last_refresh = ?, refreshes = refreshes + 1,
+			attempts = attempts + 1, last_action = ? WHERE server = ? AND rating_key = ?`,
+			at.Unix(), at.Unix(), accepted, server, ratingKey)
+	default:
 		_, err = s.db.Exec(`UPDATE item SET last_attempt = ?, attempts = attempts + 1 WHERE server = ? AND rating_key = ?`,
 			at.Unix(), server, ratingKey)
 	}

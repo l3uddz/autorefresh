@@ -178,6 +178,24 @@ func TestMigrationCountsRefreshesAsAttempts(t *testing.T) {
 	}
 }
 
+// An older row has refreshes but no recorded action, so its actions stay
+// empty instead of a guess.
+func TestMigrationLeavesActionsEmpty(t *testing.T) {
+	s, err := Open(openVersion1(t))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	items, err := s.Unseen("home", "9", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Refreshes != 3 || items[0].LastAction != "" || items[0].LastMatch != "" {
+		t.Fatalf("items = %+v, want 101 with 3 refreshes and no actions", items)
+	}
+}
+
 func TestPruneRemovesMigratedLibrary(t *testing.T) {
 	s, err := Open(openVersion1(t))
 	if err != nil {
@@ -407,7 +425,7 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 			return err
 		},
 		"CountIncomplete": func() error { _, err := s.CountIncomplete(srv, []string{sec}, 0); return err },
-		"RecordAttempt":   func() error { return s.RecordAttempt(srv, "101", base, true) },
+		"RecordAttempt":   func() error { return s.RecordAttempt(srv, "101", base, ActionRefresh) },
 		"Delete":          func() error { return s.Delete(srv, "101") },
 		"PruneServers":    func() error { _, err := s.PruneServers(nil); return err },
 		"PruneSections":   func() error { _, err := s.PruneSections(srv, nil); return err },

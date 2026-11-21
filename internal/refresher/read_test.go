@@ -165,7 +165,7 @@ func (f *fixture) library(server, section string) store.Library {
 func (f *fixture) refreshed(key string, times int) {
 	f.t.Helper()
 	for range times {
-		if err := f.store.RecordAttempt(testServer, key, t0, true); err != nil {
+		if err := f.store.RecordAttempt(testServer, key, t0, store.ActionRefresh); err != nil {
 			f.t.Fatalf("record attempt: %v", err)
 		}
 	}
@@ -665,29 +665,52 @@ func TestCancelStopsRunQuietly(t *testing.T) {
 
 func TestCompleteItemLogsFixed(t *testing.T) {
 	fp := newFakePlex(moviesLib)
-	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102")}
+	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102"), incompleteItem("103")}
 	f := newFixture(t, Server{Name: testServer, Plex: fp})
 	f.run(t0)
 	f.refreshed("101", 2)
+	// 103 got a match, then a refresh for its other reasons.
+	for _, a := range []store.Action{store.ActionMatch, store.ActionRefresh} {
+		if err := f.store.RecordAttempt(testServer, "103", t0, a); err != nil {
+			t.Fatal(err)
+		}
+	}
 
-	fp.lists["1?type=1&updatedAt>>="+unixString(t0.Add(-oversample))] = []plex.Item{completeItem("101"), completeItem("102")}
+	fp.lists["1?type=1&updatedAt>>="+unixString(t0.Add(-oversample))] = []plex.Item{
+		completeItem("101"), completeItem("102"), completeItem("103"),
+	}
 	f.run(t0.Add(time.Hour))
 
 	if rows := f.rows(testServer, "1"); len(rows) != 0 {
 		t.Errorf("rows = %+v, want none", rows)
 	}
-	fixed := f.logLines("info", "Item complete")
-	if len(fixed) != 2 {
-		t.Fatalf("got %d complete lines, want 2", len(fixed))
+	byTitle := map[string]map[string]any{}
+	for _, ev := range f.logLines("info", "Item complete") {
+		byTitle[ev["title"].(string)] = ev
 	}
-	wantField(t, fixed[0], "server", testServer)
-	wantField(t, fixed[0], "library", "Movies")
-	wantField(t, fixed[0], "title", "Title 101")
-	wantField(t, fixed[0], "refreshes", float64(2))
-	// Only 101 had a request from autorefresh.
+	if len(byTitle) != 3 {
+		t.Fatalf("got complete lines for %v, want 3 items", byTitle)
+	}
+	first := byTitle["Title 101"]
+	wantField(t, first, "server", testServer)
+	wantField(t, first, "library", "Movies")
+	wantField(t, first, "refreshes", float64(2))
+	wantField(t, first, "last_action", "refresh")
+	if _, ok := first["last_match"]; ok {
+		t.Errorf("101 had no match, but its line has last_match: %v", first)
+	}
+	// 102 had no request, so its line has no actions.
+	if _, ok := byTitle["Title 102"]["last_action"]; ok {
+		t.Errorf("102 had no request, but its line has last_action: %v", byTitle["Title 102"])
+	}
+	// The later refresh of 103 does not hide its match.
+	wantField(t, byTitle["Title 103"], "last_action", "refresh")
+	wantField(t, byTitle["Title 103"], "last_match", "match")
+
 	summary := f.lastSummary(testServer)
-	wantField(t, summary, "completed_items", float64(2))
-	wantField(t, summary, "completed_after_request", float64(1))
+	wantField(t, summary, "completed_items", float64(3))
+	wantField(t, summary, "completed_after_request", float64(2))
+	wantField(t, summary, "completed_after_match", float64(1))
 }
 
 func TestCompleteItemLogsBeforeSummary(t *testing.T) {
