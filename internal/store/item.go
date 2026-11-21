@@ -152,8 +152,7 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	if err := writeReadTimes(tx, r); err != nil {
 		return nil, err
 	}
-	gone, err := deleteGone(tx, r)
-	if err != nil {
+	if err := deleteGone(tx, r); err != nil {
 		return nil, err
 	}
 	incoming := readKeys(r)
@@ -161,18 +160,12 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	if err != nil {
 		return nil, err
 	}
-
-	for key := range unionKeys(old, incoming) {
-		if gone[key] {
-			continue
-		}
-		removed, err := writeKey(tx, r, key, incoming, old)
-		if err != nil {
-			return nil, err
-		}
-		if removed != nil {
-			fixed = append(fixed, *removed)
-		}
+	fixed, err = applyOldRows(tx, r, old, incoming)
+	if err != nil {
+		return nil, err
+	}
+	if err := insertNewRows(tx, r, old, incoming); err != nil {
+		return nil, err
 	}
 
 	sort.Slice(fixed, func(i, j int) bool { return fixed[i].RatingKey < fixed[j].RatingKey })
@@ -183,16 +176,14 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	return fixed, nil
 }
 
-// deleteGone deletes the rows of r.Gone and returns their rating keys.
-func deleteGone(tx *sql.Tx, r Read) (map[string]bool, error) {
-	gone := make(map[string]bool, len(r.Gone))
+// deleteGone deletes the rows of r.Gone.
+func deleteGone(tx *sql.Tx, r Read) error {
 	for _, key := range r.Gone {
-		gone[key] = true
 		if err := deleteItem(tx, r.Server, key); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	return gone, nil
+	return nil
 }
 
 // oldRows returns the stored rows that the read r can change, by rating key:
@@ -213,62 +204,81 @@ func oldRows(tx *sql.Tx, r Read, incoming map[string]readKey) (map[string]Item, 
 	return old, nil
 }
 
-// unionKeys returns the rating keys of the old rows and of the read.
-func unionKeys(old map[string]Item, incoming map[string]readKey) map[string]bool {
-	keys := make(map[string]bool, len(old)+len(incoming))
-	for k := range old {
-		keys[k] = true
-	}
-	for k := range incoming {
-		keys[k] = true
-	}
-	return keys
-}
-
-// writeKey writes the row of one rating key after the read r. If the row
-// becomes complete, writeKey deletes it and returns the old row.
-func writeKey(tx *sql.Tx, r Read, key string, incoming map[string]readKey, old map[string]Item) (removed *Item, err error) {
-	prev, exists := old[key]
-	in, isIncoming := incoming[key]
-	final := in.reasons(r, prev.Reasons)
-
-	switch {
-	case final == 0 && !exists:
-		return nil, nil
-	case final == 0:
-		if err := deleteItem(tx, r.Server, key); err != nil {
+// applyOldRows updates or deletes each stored row in old after the read r,
+// returning the rows that became complete.
+func applyOldRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]readKey) ([]Item, error) {
+	var fixed []Item
+	for key, prev := range old {
+		done, err := writeExisting(tx, r, prev, incoming[key])
+		if err != nil {
 			return nil, err
 		}
-		return &prev, nil
-	case !exists:
-		_, err = tx.Exec(`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			r.Server, r.Section, key, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final))
-	case isIncoming:
+		if done {
+			fixed = append(fixed, prev)
+		}
+	}
+	return fixed, nil
+}
+
+// writeExisting writes the row of one existing item after the read r. It
+// deletes the row and returns fixed=true when no reason remains, and skips
+// the write when an unmentioned row's reasons did not change.
+func writeExisting(tx *sql.Tx, r Read, prev Item, in readKey) (fixed bool, err error) {
+	final := in.reasons(r, prev.Reasons)
+	switch {
+	case final == 0:
+		if err := deleteItem(tx, r.Server, prev.RatingKey); err != nil {
+			return false, err
+		}
+		return true, nil
+	case in.present:
 		_, err = tx.Exec(`UPDATE item SET section = ?, type = ?, title = ?, year = ?, added_at = ?, reasons = ?
 			WHERE server = ? AND rating_key = ?`,
-			r.Section, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final), r.Server, key)
-	default:
-		_, err = tx.Exec(`UPDATE item SET reasons = ? WHERE server = ? AND rating_key = ?`, int(final), r.Server, key)
+			r.Section, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final), r.Server, prev.RatingKey)
+	case final != prev.Reasons:
+		_, err = tx.Exec(`UPDATE item SET reasons = ? WHERE server = ? AND rating_key = ?`, int(final), r.Server, prev.RatingKey)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("write item %s: %w", key, err)
+		return false, fmt.Errorf("write item %s: %w", prev.RatingKey, err)
 	}
-	return nil, nil
+	return false, nil
+}
+
+// insertNewRows inserts rows for incoming items not in old that have at least
+// one incomplete reason.
+func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]readKey) error {
+	for key, in := range incoming {
+		if _, exists := old[key]; exists {
+			continue
+		}
+		final := in.reasons(r, 0)
+		if final == 0 {
+			continue
+		}
+		_, err := tx.Exec(`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			r.Server, r.Section, key, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final))
+		if err != nil {
+			return fmt.Errorf("write item %s: %w", key, err)
+		}
+	}
+	return nil
 }
 
 // readKey is what a read says about one rating key.
 type readKey struct {
 	meta     Item    // the newest metadata: from r.Items, else from an episode list
+	present  bool    // the read listed the key (in r.Items or an episode list)
 	inItems  bool    // r.Items holds the key, so its item reasons replace the old ones
 	episodes Reasons // the episode reasons of the episode lists
 }
 
-// readKeys returns what r says about each rating key that it lists.
+// readKeys returns what r says about each rating key that it lists, excluding
+// keys marked gone.
 func readKeys(r Read) map[string]readKey {
 	keys := make(map[string]readKey, len(r.Items))
 	for _, it := range r.Items {
-		keys[it.RatingKey] = readKey{meta: it, inItems: true}
+		keys[it.RatingKey] = readKey{meta: it, present: true, inItems: true}
 	}
 	for _, list := range []struct {
 		items  []Item
@@ -279,9 +289,13 @@ func readKeys(r Read) map[string]readKey {
 			if !ok {
 				k.meta = it
 			}
+			k.present = true
 			k.episodes |= list.reason
 			keys[it.RatingKey] = k
 		}
+	}
+	for _, key := range r.Gone {
+		delete(keys, key)
 	}
 	return keys
 }

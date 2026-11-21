@@ -216,6 +216,16 @@ func migrateInTx(ctx context.Context, conn *sql.Conn, version int, script string
 	}
 	defer tx.Rollback()
 
+	// Another process can apply this version between appliedVersions and the
+	// immediate write lock of this transaction.
+	var existing int
+	switch err := tx.QueryRow(`SELECT version FROM schema_migration WHERE version = ?`, version).Scan(&existing); {
+	case err == nil:
+		return nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("check schema_migration: %w", err)
+	}
+
 	if _, err := tx.Exec(script); err != nil {
 		return err
 	}

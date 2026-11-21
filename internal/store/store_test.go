@@ -466,6 +466,47 @@ func TestOpenFailsInMissingDirectory(t *testing.T) {
 	}
 }
 
+// Two processes opening a fresh or older database at the same time must both
+// succeed instead of racing on the same migration version.
+func TestOpenConcurrentMigrations(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		path func(t *testing.T) string
+	}{
+		{"fresh database", func(t *testing.T) string { return filepath.Join(t.TempDir(), "store.db") }},
+		{"upgrade from v1", openVersion1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			path := tt.path(t)
+			start := make(chan struct{})
+			errs := make(chan error, 2)
+			for range 2 {
+				go func() {
+					<-start
+					s, err := Open(path)
+					if err == nil {
+						err = s.Close()
+					}
+					errs <- err
+				}()
+			}
+			close(start)
+			for range 2 {
+				if err := <-errs; err != nil {
+					t.Errorf("concurrent Open failed: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestApplyMigrationSkipsAlreadyAppliedVersion(t *testing.T) {
+	s := openTest(t)
+	if err := applyMigration(s.db, 1, `INVALID SQL THAT MUST NOT RUN`); err != nil {
+		t.Fatalf("applyMigration on already-applied version 1 = %v, want nil", err)
+	}
+}
+
 // A database failure must reach the caller, so the refresher can stop the
 // run instead of acting on a cache that it did not read or write.
 func TestMethodsReportDatabaseFailure(t *testing.T) {
