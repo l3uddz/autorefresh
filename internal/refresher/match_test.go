@@ -75,3 +75,18 @@ func TestDescribeCandidates(t *testing.T) {
 		t.Errorf("describeCandidates = %q, want %q", got, want)
 	}
 }
+
+// Candidate disagreement takes precedence over a year gap on an earlier
+// search result, so a multi-ID conflict never enters year confirmation.
+func TestChooseMatchChecksAllCandidatesBeforeYear(t *testing.T) {
+	first := plex.Candidate{GUID: "plex://show/a", Name: "Show", Year: 2017}
+	second := plex.Candidate{GUID: "plex://show/b", Name: "Other", Year: 2022}
+	results := []searchResult{
+		{id: pathID{"tvdb", "1"}, candidates: []plex.Candidate{first}},
+		{id: pathID{"imdb", "tt2"}, candidates: []plex.Candidate{second}},
+	}
+	_, ok, conflict := chooseMatch(2022, results)
+	if ok || conflict != conflictDifferent {
+		t.Fatalf("chooseMatch = ok:%v conflict:%q, want conflict %q", ok, conflict, conflictDifferent)
+	}
+}
