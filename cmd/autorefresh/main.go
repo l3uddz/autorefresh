@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
 	"github.com/l3uddz/autorefresh/internal/config"
@@ -26,7 +27,8 @@ var (
 	Timestamp = "unknown"
 )
 
-var cli struct {
+// options holds the command line flags.
+type options struct {
 	Version kong.VersionFlag `help:"Print version information and quit"`
 
 	// An empty path means a file in the default config directory.
@@ -40,6 +42,8 @@ var cli struct {
 	DryRun bool `env:"AUTOREFRESH_DRY_RUN" help:"Read Plex and update the cache, but send no refresh or match requests"`
 	Once   bool `env:"AUTOREFRESH_ONCE" help:"Run one check at once and exit, instead of waiting for the schedule"`
 }
+
+var cli options
 
 func main() {
 	version := fmt.Sprintf("%s (%s@%s)", Version, GitCommit, Timestamp)
@@ -61,19 +65,43 @@ func main() {
 	applyDefaultPaths(&cli.Config, &cli.Database, &cli.Log)
 	log.Logger = newLogger(os.Stderr, cli.Log, cli.Verbosity)
 
-	// config
-	data, err := readConfig(cli.Config, 5*time.Second)
+	// SIGINT and SIGTERM cancel ctx. A run then stops before its next request.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := run(ctx, stop, cli, version)
+	stop()
+	// run logged the error.
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed reading config")
+		os.Exit(1)
+	}
+}
+
+// run loads the config, opens the database, and runs the refresher. With
+// opts.Once, it runs one check. Otherwise it checks the tokens, starts the
+// first run at once, then a run at each schedule time, until ctx ends. stop
+// ends the signal handling after the first signal, so a second signal ends
+// the process at once. run logs each error that it returns. With opts.Once,
+// a failed check or a failed close of the database returns an error, which
+// gives exit code 1.
+func run(ctx context.Context, stop context.CancelFunc, opts options, version string) error {
+	// A setup error ends the process, so it logs at fatal level.
+	fatal := func(err error, msg string) error {
+		log.WithLevel(zerolog.FatalLevel).Err(err).Msg(msg)
+		return err
+	}
+
+	// config
+	data, err := readConfig(opts.Config, 5*time.Second)
+	if err != nil {
+		return fatal(err, "Failed reading config")
 	}
 	cfg, err := config.Decode(bytes.NewReader(data))
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed decoding config")
+		return fatal(err, "Failed decoding config")
 	}
 	// database
-	st, err := store.Open(cli.Database)
+	st, err := store.Open(opts.Database)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed opening database")
+		return fatal(err, "Failed opening database")
 	}
 
 	// refresher
@@ -106,7 +134,7 @@ func main() {
 		CacheRefresh:       cfg.CacheRefreshSchedule,
 		MaxRefreshesPerRun: cfg.MaxRefreshesPerRun,
 		IgnoreReasons:      cfg.Ignored,
-		DryRun:             cli.DryRun,
+		DryRun:             opts.DryRun,
 		TMDB:               lookup,
 	})
 
@@ -114,24 +142,19 @@ func main() {
 		Str("version", version).
 		Strs("servers", names).
 		Str("schedule", cfg.Schedule).
-		Bool("dry_run", cli.DryRun).
+		Bool("dry_run", opts.DryRun).
 		Bool("tmdb", tmdbClient != nil).
 		Msg("Initialised")
 
-	// SIGINT and SIGTERM cancel ctx. A run then stops before its next request.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	// With --once, each logged error gives exit code 1.
-	if cli.Once {
+	if opts.Once {
 		err := r.Run(ctx)
 		if err != nil {
 			log.Error().Err(err).Msg("Run failed")
 		}
-		if !closeStore(st) || err != nil {
-			os.Exit(1)
+		if closeErr := closeStore(st); err == nil {
+			err = closeErr
 		}
-		return
+		return err
 	}
 
 	// schedule. A check of each server shows a wrong token or URL at once,
@@ -145,14 +168,15 @@ func main() {
 	serve(ctx, &runner{run: r.Run}, cfg.RunSchedule)
 	closeStore(st)
 	log.Info().Msg("Stopped")
+	return nil
 }
 
-// closeStore closes the database. If that fails, it logs an error and
-// returns false.
-func closeStore(st *store.Store) bool {
+// closeStore closes the database. If that fails, it logs and returns the
+// error.
+func closeStore(st *store.Store) error {
 	if err := st.Close(); err != nil {
 		log.Error().Err(err).Msg("Failed closing database")
-		return false
+		return err
 	}
-	return true
+	return nil
 }
