@@ -250,7 +250,7 @@ func TestListFailsWhenListingMoves(t *testing.T) {
 // Items that Plex adds during the read come after the offset, so the
 // listing returns them too.
 func TestListReadsItemsAddedDuringTheRead(t *testing.T) {
-	_, c := listServer(t, 10, func(n int) []string {
+	rec, c := listServer(t, 10, func(n int) []string {
 		if n == 0 {
 			return keyRange(0, 11)
 		}
@@ -267,6 +267,15 @@ func TestListReadsItemsAddedDuringTheRead(t *testing.T) {
 	}
 	if want := keyRange(0, 14); !reflect.DeepEqual(keys, want) {
 		t.Errorf("keys = %v, want %v", keys, want)
+	}
+
+	// The second page starts at the last item of the first page.
+	var starts []string
+	for _, r := range rec.all() {
+		starts = append(starts, r.URL.Query().Get("X-Plex-Container-Start"))
+	}
+	if want := []string{"0", "9"}; !reflect.DeepEqual(starts, want) {
+		t.Errorf("starts = %v, want %v", starts, want)
 	}
 }
 
