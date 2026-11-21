@@ -22,6 +22,10 @@ import (
 // ErrUnauthorized marks a 401 status, which means that TMDB rejected the token.
 var ErrUnauthorized = errors.New("tmdb token rejected")
 
+// errNotFound marks a 404 status inside the package so Year can treat a
+// deleted or merged TMDB entry as unknown instead of a TMDB outage.
+var errNotFound = errors.New("tmdb entry not found")
+
 // maxDrainBytes bounds unread response body draining so normal responses
 // reuse connections without letting a misbehaving server stall a request.
 const maxDrainBytes = 64 << 10
@@ -156,6 +160,9 @@ func (c *Client) seriesYear(ctx context.Context, id string) (int, bool, error) {
 		} `json:"seasons"`
 	}
 	if err := c.get(ctx, []string{"3", "tv", id}, nil, &resp); err != nil {
+		if errors.Is(err, errNotFound) {
+			return 0, false, nil
+		}
 		return 0, false, err
 	}
 	var earliest int
@@ -179,6 +186,9 @@ func (c *Client) movieYear(ctx context.Context, id string) (int, bool, error) {
 		} `json:"results"`
 	}
 	if err := c.get(ctx, []string{"3", "movie", id, "release_dates"}, nil, &resp); err != nil {
+		if errors.Is(err, errNotFound) {
+			return 0, false, nil
+		}
 		return 0, false, err
 	}
 	var earliest int
@@ -256,6 +266,8 @@ func (c *Client) get(ctx context.Context, segments []string, query url.Values, o
 	switch {
 	case res.StatusCode == http.StatusUnauthorized:
 		return fmt.Errorf("GET %s: %d %s: %w", path, res.StatusCode, http.StatusText(res.StatusCode), ErrUnauthorized)
+	case res.StatusCode == http.StatusNotFound:
+		return fmt.Errorf("GET %s: %d %s: %w", path, res.StatusCode, http.StatusText(res.StatusCode), errNotFound)
 	case res.StatusCode < 200 || res.StatusCode >= 300:
 		return fmt.Errorf("GET %s: %d %s", path, res.StatusCode, http.StatusText(res.StatusCode))
 	case out == nil:

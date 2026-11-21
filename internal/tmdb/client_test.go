@@ -377,6 +377,19 @@ func TestYearNothing(t *testing.T) {
 			}
 		})
 	}
+	for _, show := range []bool{true, false} {
+		name := "movie 404"
+		if show {
+			name = "series 404"
+		}
+		t.Run(name, func(t *testing.T) {
+			c := serve(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) })
+			year, ok, err := c.Year(context.Background(), "999999", show)
+			if err != nil || ok || year != 0 {
+				t.Fatalf("Year on 404 = %d, %v, %v, want nothing without error", year, ok, err)
+			}
+		})
+	}
 }
 
 func TestYearRejectsInvalidID(t *testing.T) {
