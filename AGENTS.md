@@ -92,6 +92,11 @@ The `ci` workflow in `.github/workflows/ci.yml` runs on pushes to
 `main`, on `v*` tags, and on PRs into `main`. A push to another branch, such
 as `fix/<issue>-<slug>`, runs CI only after you open a PR into `main`.
 
+Pushes to `main` and PRs run the `build` job, which only reads the
+repository. A `v*` tag runs the `release` job instead. It has the same
+steps through a YAML anchor, and it alone gets write access to publish the
+GitHub release. Keep the name `build`, because the ruleset requires it.
+
 - If a run is not from a fork, CI publishes a public Docker image tag,
   `l3uddz/autorefresh:<branch>`. For a PR, the image contains the PR merge
   commit. `.github/scripts/docker-branch-tag.sh` makes the tag from the
@@ -103,6 +108,10 @@ as `fix/<issue>-<slug>`, runs CI only after you open a PR into `main`.
   branch such a name.
 - If two branches on origin map to the same tag, such as `fix/a` and
   `fix-a`, the build and the cleanup both fail.
+- The workflows pin each action to a commit SHA, with the version in a
+  comment. No bot updates them. To update an action, take the SHA of the new
+  tag from `gh api repos/<owner>/<repo>/commits/<tag>` and change the SHA and
+  the comment together.
 - A new run cancels an older run for the same ref. Only one ref publishes
   each branch tag: `main` for pushes, or the PR for another branch. An older
   commit then cannot replace the image of a newer commit.

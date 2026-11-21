@@ -11,12 +11,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: .github/scripts
 
-      # ci.yml makes the branch tag with the same script. The image is
-      # pinned by digest, because it receives the Docker Hub credentials.
+      # ci.yml makes the branch tag with the same script. The password and
+      # the token stay out of the process arguments: jq reads the password
+      # from the environment, and curl reads the header from stdin. A tag
+      # that never existed, such as one of a branch without a PR, is no
+      # error.
       - name: remove docker tag
         shell: bash
         env:
@@ -25,4 +28,25 @@ jobs:
           branch: ${{ github.event.ref }}
         run: |
           tag="$(.github/scripts/docker-branch-tag.sh "$branch")"
-          docker run --rm lumir/remove-dockerhub-tag@sha256:9d5a167f76969cb22059f6accd191329856891cac2dcac5b2bfae84f746f1b4b --user "$username" --password "$password" "l3uddz/autorefresh:$tag"
+          image="l3uddz/autorefresh:$tag"
+
+          token="$(jq -n '{username: env.username, password: env.password}' |
+            curl -fsS -H 'Content-Type: application/json' --data @- https://hub.docker.com/v2/users/login/ |
+            jq -r '.token // empty')"
+          if [ -z "$token" ]; then
+            echo "::error::Docker Hub login returned no token"
+            exit 1
+          fi
+          echo "::add-mask::$token"
+
+          status="$(printf 'Authorization: JWT %s\n' "$token" |
+            curl -sS -o /dev/null -w '%{http_code}' -X DELETE -H @- \
+              "https://hub.docker.com/v2/repositories/l3uddz/autorefresh/tags/$tag/")"
+          case "$status" in
+            204) echo "removed: $image" ;;
+            404) echo "no such tag: $image" ;;
+            *)
+              echo "::error::removing $image failed with status $status"
+              exit 1
+              ;;
+          esac

@@ -12,9 +12,10 @@ on:
     branches:
       - main
 
-# goreleaser needs write access to publish a GitHub release for a v* tag.
+# Runs only read the repository. The release job of a v* tag gets write
+# access, because goreleaser publishes a GitHub release.
 permissions:
-  contents: write
+  contents: read
 
 # A new run cancels the older run for the same ref, so an older commit never
 # replaces the image of a newer commit.
@@ -26,18 +27,21 @@ env:
   IMAGE: l3uddz/autorefresh
 
 jobs:
+  # The ruleset of main requires a check named build, so this job keeps its
+  # name. A v* tag runs the release job instead, with the same steps.
   build:
+    if: github.ref_type != 'tag'
     runs-on: ubuntu-latest
-    steps:
+    steps: &steps
       # checkout
       - name: checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       # tools: go and goreleaser, at the versions in mise.toml
       - name: mise
-        uses: jdx/mise-action@v5
+        uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
 
       - name: tool info
         run: |
@@ -46,7 +50,7 @@ jobs:
 
       # cache
       - name: cache-go
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cache/go-build
@@ -113,13 +117,13 @@ jobs:
 
       # artifacts
       - name: artifact_linux
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build_linux
           path: dist/*linux*
 
       - name: artifact_darwin
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build_darwin
           path: dist/*darwin*
@@ -127,18 +131,18 @@ jobs:
       # docker
       - name: buildx
         if: ${{ !github.event.pull_request.head.repo.fork }}
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: docker login
         if: ${{ !github.event.pull_request.head.repo.fork }}
-        uses: docker/login-action@v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: docker build
         if: ${{ !github.event.pull_request.head.repo.fork }}
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ./docker/Dockerfile
@@ -148,3 +152,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: ${{ steps.image.outputs.tags }}
+
+  release:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps: *steps
