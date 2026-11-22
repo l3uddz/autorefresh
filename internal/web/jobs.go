@@ -275,11 +275,17 @@ func (s *Server) serveBulkStopped(w http.ResponseWriter, r *http.Request, tab st
 		Changed int        `json:"changed"`
 		Skipped []bulkSkip `json:"skipped"`
 	}{Skipped: []bulkSkip{}}
-	for _, key := range keys {
+	for i, key := range keys {
 		reason, err := s.stopBulkItem(ctx, r.Context(), s.servers[srv].Name, key, stop)
 		if err != nil {
 			s.writeActionError(w, r, err)
 			return
+		}
+		if reason == "timeout" {
+			for _, remaining := range keys[i:] {
+				out.Skipped = append(out.Skipped, bulkSkip{Key: remaining, Reason: reason})
+			}
+			break
 		}
 		if reason == "" {
 			out.Changed++
