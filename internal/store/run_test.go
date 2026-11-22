@@ -173,6 +173,7 @@ func TestPruneHistoryKeepsRecentlyInterruptedRuns(t *testing.T) {
 // is stored again by FinishRun, under the same ID.
 func TestFinishRunRestoresRemovedRow(t *testing.T) {
 	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
 	start := runStart(srv, base)
 	id := startRun(t, s, srv, base)
 	if _, err := s.InterruptRuns(base.Add(time.Minute)); err != nil {
@@ -198,6 +199,25 @@ func TestFinishRunRestoresRemovedRow(t *testing.T) {
 	// A later run still gets a new ID.
 	if next := startRun(t, s, srv, end); next <= id {
 		t.Errorf("next run ID = %d, want above %d", next, id)
+	}
+}
+
+// The runs of a server that PruneServers removed stay removed: FinishRun
+// does not store them again.
+func TestFinishRunKeepsRemovedServerRemoved(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	start := runStart(srv, base)
+	id := startRun(t, s, srv, base)
+	if _, err := s.PruneServers([]string{"other"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.FinishRun(id, start, RunResult{FinishedAt: base.Add(time.Minute), Status: RunFinished}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Runs(0); err != nil || len(got) != 0 {
+		t.Fatalf("runs = %+v, %v; want none", got, err)
 	}
 }
 

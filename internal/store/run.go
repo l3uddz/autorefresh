@@ -78,21 +78,51 @@ func (s *Store) StartRun(r RunStart) (int64, error) {
 }
 
 // FinishRun records the end and the counts of the run id, which StartRun
-// stored from start. It writes the whole row: if retention or another
-// process removed the row meanwhile, FinishRun stores it again under the
-// same ID, so a finished run is never lost.
+// stored from start. If retention removed the row meanwhile (for example
+// after the scheduled service marked a still-running --once check
+// interrupted), FinishRun stores it again under the same ID, so a finished
+// run is not lost. A run of a server that PruneServers removed stays
+// removed: the row comes back only while the server still has a library
+// row. It runs in one transaction.
 func (s *Store) FinishRun(id int64, start RunStart, r RunResult) error {
-	_, err := s.db.Exec(`INSERT INTO run (id, server, kind, source, started_at, status, finished_at, error,
-		read_items, refreshed, matched, failed, completed, fixed, incomplete, due, selected)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (id) DO UPDATE SET status = excluded.status, finished_at = excluded.finished_at,
-		error = excluded.error, read_items = excluded.read_items, refreshed = excluded.refreshed,
-		matched = excluded.matched, failed = excluded.failed, completed = excluded.completed,
-		fixed = excluded.fixed, incomplete = excluded.incomplete, due = excluded.due, selected = excluded.selected`,
-		id, start.Server, start.Kind, start.Source, start.StartedAt.Unix(), r.Status, r.FinishedAt.Unix(), r.Error,
-		r.ReadItems, r.Refreshed, r.Matched, r.Failed, r.Completed, r.Fixed, r.Incomplete, r.Due, r.Selected)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin finish run: %w", err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(`UPDATE run SET status = ?, finished_at = ?, error = ?, read_items = ?, refreshed = ?,
+		matched = ?, failed = ?, completed = ?, fixed = ?, incomplete = ?, due = ?, selected = ? WHERE id = ?`,
+		r.Status, r.FinishedAt.Unix(), r.Error, r.ReadItems, r.Refreshed,
+		r.Matched, r.Failed, r.Completed, r.Fixed, r.Incomplete, r.Due, r.Selected, id)
 	if err != nil {
 		return fmt.Errorf("finish run: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("finish run: %w", err)
+	} else if n == 0 {
+		if err := restoreRun(tx, id, start, r); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit finish run: %w", err)
+	}
+	return nil
+}
+
+// restoreRun stores the finished run id again, unless its server no longer
+// has a library row.
+func restoreRun(tx *sql.Tx, id int64, start RunStart, r RunResult) error {
+	_, err := tx.Exec(`INSERT INTO run (id, server, kind, source, started_at, status, finished_at, error,
+		read_items, refreshed, matched, failed, completed, fixed, incomplete, due, selected)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		WHERE EXISTS (SELECT 1 FROM library WHERE server = ?)`,
+		id, start.Server, start.Kind, start.Source, start.StartedAt.Unix(), r.Status, r.FinishedAt.Unix(), r.Error,
+		r.ReadItems, r.Refreshed, r.Matched, r.Failed, r.Completed, r.Fixed, r.Incomplete, r.Due, r.Selected,
+		start.Server)
+	if err != nil {
+		return fmt.Errorf("restore run: %w", err)
 	}
 	return nil
 }
