@@ -525,16 +525,211 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 			return err
 		},
 		"CountIncomplete": func() error { _, err := s.CountIncomplete(srv, []string{sec}, 0); return err },
-		"RecordAttempt":   func() error { return s.RecordAttempt(srv, "101", base, ActionRefresh) },
-		"Delete":          func() error { return s.Delete(srv, "101") },
-		"PruneServers":    func() error { _, err := s.PruneServers(nil); return err },
-		"PruneSections":   func() error { _, err := s.PruneSections(srv, nil); return err },
-		"TMDBID":          func() error { _, _, err := s.TMDBID(srv, "101", "tvdb", "5"); return err },
-		"SaveTMDBID":      func() error { return s.SaveTMDBID(srv, "101", "tvdb", "5", "77") },
+		"RecordRequest": func() error {
+			return s.RecordRequest(Request{Server: srv, RatingKey: "101", At: base, Source: SourceAuto, Action: ActionRefresh})
+		},
+		"RecordGone": func() error { return s.RecordGone(srv, "101", base, SourceAuto) },
+		"RecordMatchDecision": func() error {
+			return s.RecordMatchDecision(MatchDecision{Server: srv, RatingKey: "101", At: base, Source: SourceAuto, Outcome: DecisionNoIDs})
+		},
+		"StartRun": func() error {
+			_, err := s.StartRun(RunStart{Server: srv, Kind: RunKindRun, Source: RunSourceManual, StartedAt: base})
+			return err
+		},
+		"FinishRun": func() error {
+			return s.FinishRun(1, RunStart{Server: srv, StartedAt: base}, RunResult{FinishedAt: base, Status: RunFinished})
+		},
+		"InterruptRuns": func() error { _, err := s.InterruptRuns(base); return err },
+		"PruneHistory":  func() error { _, _, err := s.PruneHistory(base); return err },
+		"Runs":          func() error { _, err := s.Runs(10); return err },
+		"Timeline":      func() error { _, err := s.Timeline(srv, "101"); return err },
+		"PruneServers":  func() error { _, err := s.PruneServers(nil); return err },
+		"PruneSections": func() error { _, err := s.PruneSections(srv, nil); return err },
+		"TMDBID":        func() error { _, _, err := s.TMDBID(srv, "101", "tvdb", "5"); return err },
+		"SaveTMDBID":    func() error { return s.SaveTMDBID(srv, "101", "tvdb", "5", "77") },
+		"SaveLibraries": func() error { return s.SaveLibraries(srv, []LibraryInfo{{Section: sec, Title: "TV"}}) },
+		"SetPath":       func() error { return s.SetPath(srv, "101", "/x") },
 	}
 	for name, call := range calls {
 		if err := call(); err == nil {
 			t.Errorf("%s on a closed database returned no error", name)
 		}
+	}
+}
+
+// openAtVersion creates schema_migration, applies migrations 1..v to a new
+// file, and returns its path.
+func openAtVersion(t *testing.T, v int) string {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "store.db")
+	db, err := sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE schema_migration (version INTEGER PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	list, err := parseMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range list {
+		if m.version > v {
+			break
+		}
+		script, err := migrations.ReadFile("migrations/" + m.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := applyMigration(db, m.version, string(script)); err != nil {
+			t.Fatalf("%s: %v", m.file, err)
+		}
+	}
+	return file
+}
+
+// indexNames returns the names of the indexes of table.
+func indexNames(t *testing.T, s *Store, table string) map[string]bool {
+	t.Helper()
+	rows, err := s.db.Query(`SELECT name FROM pragma_index_list(?)`, table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	names := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		names[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return names
+}
+
+func TestMigrateAddsDashboardSchema(t *testing.T) {
+	s := openTest(t)
+	want := map[string][]string{
+		"event":           {"event_item", "event_kind", "event_at", "event_library", "event_fixed_match"},
+		"match_search":    {"match_search_event"},
+		"match_candidate": {"match_candidate_search"},
+		"run":             {"run_started", "run_server"},
+	}
+	for table, indexes := range want {
+		got := indexNames(t, s, table)
+		for _, name := range indexes {
+			if !got[name] {
+				t.Errorf("table %s has no index %s (have %v)", table, name, got)
+			}
+		}
+	}
+}
+
+func TestMigrateFromVersion5KeepsActionHistory(t *testing.T) {
+	file := openAtVersion(t, 5)
+	db, err := sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO library (server, section) VALUES ('home', '9')`,
+		`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons, refreshes, attempts, last_action, last_match)
+			VALUES ('home', '9', '101', 'movie', 'Title 101', 2020, 1000, 2, 2, 3, 'match', 'match')`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+
+	s, err := Open(file)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+	var refreshes, attempts int
+	var action, match, thumb, outcome string
+	var stopped, matchEvent sql.NullInt64
+	err = s.db.QueryRow(`SELECT refreshes, attempts, last_action, last_match, thumb, stopped_at, last_outcome, last_match_event_id
+		FROM item WHERE server = 'home' AND rating_key = '101'`).
+		Scan(&refreshes, &attempts, &action, &match, &thumb, &stopped, &outcome, &matchEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshes != 2 || attempts != 3 || action != "match" || match != "match" {
+		t.Errorf("old values = %d %d %q %q, want 2 3 match match", refreshes, attempts, action, match)
+	}
+	if thumb != "" || outcome != "" || stopped.Valid || matchEvent.Valid {
+		t.Errorf("new columns = %q %q %v %v, want empty and null", thumb, outcome, stopped, matchEvent)
+	}
+}
+
+func TestDeletingLibraryCascadesHistory(t *testing.T) {
+	s := openTest(t)
+	for _, stmt := range []string{
+		`INSERT INTO library (server, section) VALUES ('home', '9')`,
+		`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons)
+			VALUES ('home', '9', '101', 'movie', 'Title 101', 2020, 1000, 2)`,
+		`INSERT INTO event (id, server, section, rating_key, at, kind) VALUES (1, 'home', '9', '101', 2000, 'refresh')`,
+		`INSERT INTO match_search (id, event_id, position, query) VALUES (1, 1, 0, 'Title')`,
+		`INSERT INTO match_candidate (id, search_id, position, guid) VALUES (1, 1, 0, 'plex://movie/1')`,
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	if _, err := s.db.Exec(`DELETE FROM library`); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"library", "item", "event", "match_search", "match_candidate"} {
+		var n int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Errorf("%s has %d rows after deleting the library, want 0", table, n)
+		}
+	}
+}
+
+func TestDeletingEventClearsFixedMatchReference(t *testing.T) {
+	s := openTest(t)
+	for _, stmt := range []string{
+		`INSERT INTO library (server, section) VALUES ('home', '9')`,
+		`INSERT INTO event (id, server, section, rating_key, at, kind) VALUES (1, 'home', '9', '101', 2000, 'refresh')`,
+		`INSERT INTO event (id, server, section, rating_key, at, kind, fixed_match_event_id) VALUES (2, 'home', '9', '101', 2001, 'complete', 1)`,
+	} {
+		if _, err := s.db.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	if _, err := s.db.Exec(`DELETE FROM event WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
+	var ref sql.NullInt64
+	if err := s.db.QueryRow(`SELECT fixed_match_event_id FROM event WHERE id = 2`).Scan(&ref); err != nil {
+		t.Fatal(err)
+	}
+	if ref.Valid {
+		t.Errorf("fixed_match_event_id = %v, want null", ref)
+	}
+
+	if _, err := s.db.Exec(`DELETE FROM event WHERE id = 2`); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.db.Exec(`INSERT INTO event (server, section, rating_key, at, kind) VALUES ('home', '9', '101', 2002, 'refresh')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id <= 2 {
+		t.Errorf("new event id = %d, want above the deleted highest id 2", id)
 	}
 }

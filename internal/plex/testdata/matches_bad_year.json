@@ -1,0 +1,12 @@
+{
+  "MediaContainer": {
+    "size": 1,
+    "SearchResult": [
+      {
+        "guid": "plex://movie/000000000000000000000004",
+        "name": "Fixture Movie Four",
+        "year": "2023"
+      }
+    ]
+  }
+}

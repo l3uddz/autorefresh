@@ -27,6 +27,7 @@ func (f *fixture) cached(scopes ...string) map[string]bool {
 func TestRunPrunesRemovedServer(t *testing.T) {
 	fp := newFakePlex(moviesLib)
 	f := newFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.opts.DryRun = false
 	f.seed("old", moviesLib, incompleteItem("101"), store.NoSummary, 2)
 	f.seed(testServer, moviesLib, incompleteItem("102"), store.NoSummary, 0)
 
@@ -73,6 +74,7 @@ func TestRunPrunesUnselectedLibraries(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			fp := newFakePlex(moviesLib, showsLib)
 			f := newFixture(t, Server{Name: testServer, Plex: fp, Libraries: tt.libraries})
+			f.r.opts.DryRun = false
 			f.seed(testServer, moviesLib, incompleteItem("101"), store.NoSummary, 1)
 			f.seed(testServer, showsLib, incompleteItem("201"), store.NoSummary, 1)
 			f.seed(testServer, gone, incompleteItem("901"), store.NoSummary, 1)
@@ -112,6 +114,7 @@ func TestRunKeepsCacheWithoutLibraryListing(t *testing.T) {
 			fp := newFakePlex(showsLib)
 			tt.fail(fp)
 			f := newFixture(t, Server{Name: testServer, Plex: fp})
+			f.r.opts.DryRun = false
 			f.seed(testServer, moviesLib, incompleteItem("101"), store.NoSummary, 1)
 
 			if tt.failed {
@@ -142,6 +145,7 @@ func TestRunKeepsCacheWithoutLibraryListing(t *testing.T) {
 func TestRunCanceledBeforeStartDoesNotPrune(t *testing.T) {
 	fp := newFakePlex(moviesLib)
 	f := newFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.opts.DryRun = false
 	f.seed("old", moviesLib, incompleteItem("101"), store.NoSummary, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -152,4 +156,63 @@ func TestRunCanceledBeforeStartDoesNotPrune(t *testing.T) {
 	if got := f.cached("old/1"); !got["old/1"] {
 		t.Error("canceled Run pruned old/1")
 	}
+}
+
+func TestDryRunPrunesNothing(t *testing.T) {
+	fp := newFakePlex(moviesLib, showsLib)
+	f := newFixture(t, Server{Name: testServer, Plex: fp, Libraries: []string{"Movies"}})
+	f.seed("old", moviesLib, incompleteItem("101"), store.NoSummary, 0)
+	f.seed(testServer, showsLib, incompleteItem("201"), store.NoSummary, 0)
+	for _, ref := range [][2]string{{"old", "101"}, {testServer, "201"}} {
+		err := f.store.RecordRequest(store.Request{
+			Server: ref[0], RatingKey: ref[1], At: t0,
+			Source: store.SourceAuto, Action: store.ActionRefresh, Accepted: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	f.run(t0)
+
+	want := map[string]bool{"old/1": true, testServer + "/2": true}
+	if got := f.cached("old/1", testServer+"/2"); !reflect.DeepEqual(got, want) {
+		t.Errorf("cached = %v, want %v", got, want)
+	}
+	for _, ref := range [][2]string{{"old", "101"}, {testServer, "201"}} {
+		events, err := f.store.Timeline(ref[0], ref[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(events) != 1 {
+			t.Errorf("events of %s/%s = %+v, want 1", ref[0], ref[1], events)
+		}
+	}
+	if lines := f.logLines("info", "Removed cache of library"); len(lines) != 0 {
+		t.Errorf("got removed cache lines %v, want none", lines)
+	}
+	lines := f.logLines("info", "Dry run keeps cache of removed libraries")
+	if len(lines) != 1 {
+		t.Fatalf("got %d dry run lines, want 1", len(lines))
+	}
+	wantField(t, lines[0], "server", testServer)
+}
+
+// A dry run logs that it keeps the cache also when the server lists no
+// library, and still keeps the cache of a server that may be starting.
+func TestDryRunWithEmptyListingLogsKeptCache(t *testing.T) {
+	fp := newFakePlex()
+	f := newFixture(t, Server{Name: testServer, Plex: fp})
+	f.seed(testServer, moviesLib, incompleteItem("101"), store.NoSummary, 0)
+
+	f.run(t0)
+
+	if got := f.cached(testServer + "/1"); !got[testServer+"/1"] {
+		t.Errorf("cached = %v, want the library kept", got)
+	}
+	lines := f.logLines("info", "Dry run keeps cache of removed libraries")
+	if len(lines) != 1 {
+		t.Fatalf("got %d dry run lines, want 1", len(lines))
+	}
+	wantField(t, lines[0], "server", testServer)
 }

@@ -165,7 +165,9 @@ func (f *fixture) library(server, section string) store.Library {
 func (f *fixture) refreshed(key string, times int) {
 	f.t.Helper()
 	for range times {
-		if err := f.store.RecordAttempt(testServer, key, t0, store.ActionRefresh); err != nil {
+		err := f.store.RecordRequest(store.Request{Server: testServer, RatingKey: key, At: t0,
+			Source: store.SourceAuto, Action: store.ActionRefresh, Accepted: true})
+		if err != nil {
 			f.t.Fatalf("record attempt: %v", err)
 		}
 	}
@@ -671,7 +673,9 @@ func TestCompleteItemLogsFixed(t *testing.T) {
 	f.refreshed("101", 2)
 	// 103 got a match, then a refresh for its other reasons.
 	for _, a := range []store.Action{store.ActionMatch, store.ActionRefresh} {
-		if err := f.store.RecordAttempt(testServer, "103", t0, a); err != nil {
+		err := f.store.RecordRequest(store.Request{Server: testServer, RatingKey: "103", At: t0,
+			Source: store.SourceAuto, Action: a, Accepted: true})
+		if err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -439,13 +439,14 @@ func TestItemPathsReadsLocationsAndFiles(t *testing.T) {
 	tests := []struct {
 		fixture string
 		want    []string
+		files   bool // want holds the files, not the locations
 	}{
-		{"item_show.json", []string{"/fixture/tv/Fixture Series One (2021) {tvdb-200004}"}},
+		{"item_show.json", []string{"/fixture/tv/Fixture Series One (2021) {tvdb-200004}"}, false},
 		{"item_movie.json", []string{
 			"/fixture/movies/Fixture Movie One (2020) {tmdb-100001}/Fixture Movie One (2020).mkv",
 			"/fixture/movies/Fixture Movie One (2020) {tmdb-100001}/Fixture Movie One (2020) - version2.mkv",
 			"/fixture/movies/Fixture Movie One (2020) {tmdb-100001}/Fixture Movie One (2020) - version3.mkv",
-		}},
+		}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.fixture, func(t *testing.T) {
@@ -455,8 +456,15 @@ func TestItemPathsReadsLocationsAndFiles(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("paths = %v, want %v", got, tt.want)
+			if !reflect.DeepEqual(got.All(), tt.want) {
+				t.Errorf("paths = %v, want %v", got.All(), tt.want)
+			}
+			locations, files := got.Locations, got.Files
+			if tt.files {
+				locations, files = files, locations
+			}
+			if !reflect.DeepEqual(locations, tt.want) || len(files) != 0 {
+				t.Errorf("locations = %v, files = %v, want %v in one and none in the other", got.Locations, got.Files, tt.want)
 			}
 			if r := rec.all()[0]; r.Method != http.MethodGet || r.URL.Path != "/library/metadata/1001" {
 				t.Errorf("request = %s %s", r.Method, r.URL.Path)

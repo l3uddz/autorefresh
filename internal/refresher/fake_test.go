@@ -91,15 +91,15 @@ func (f *fakePlex) List(ctx context.Context, section string, itemType int, filte
 	return f.lists[key], nil
 }
 
-func (f *fakePlex) ItemPaths(ctx context.Context, ratingKey string) ([]string, error) {
+func (f *fakePlex) ItemPaths(ctx context.Context, ratingKey string) (plex.Paths, error) {
 	if err := canceled(ctx); err != nil {
-		return nil, err
+		return plex.Paths{}, err
 	}
 	f.record("ItemPaths " + ratingKey)
 	if err := f.pathErrs[ratingKey]; err != nil {
-		return nil, err
+		return plex.Paths{}, err
 	}
-	return f.paths[ratingKey], nil
+	return plex.Paths{Locations: f.paths[ratingKey]}, nil
 }
 
 func (f *fakePlex) EpisodeNumbers(ctx context.Context, ratingKey string) (map[int][]int, error) {

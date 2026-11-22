@@ -13,6 +13,7 @@ const (
 type searchResult struct {
 	id         pathID
 	candidates []plex.Candidate
+	pos        int // the index of its search in the decisionLog
 }
 
 // chooseCandidate checks that every non-empty result has one candidate with

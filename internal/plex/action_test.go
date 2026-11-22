@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -25,8 +26,12 @@ func TestSearchMatchesDecodesCandidates(t *testing.T) {
 		fixture string
 		want    []Candidate
 	}{
-		{"matches_one.json", []Candidate{{GUID: "plex://movie/000000000000000000000001", Name: "Fixture Movie One", Year: 2020}}},
+		{"matches_one.json", []Candidate{{GUID: "plex://movie/000000000000000000000001", Name: "Fixture Movie One", Year: 2020, Type: "movie", Summary: "A neutral summary.", Thumb: "https://metadata.example.invalid/thumb.jpg", Score: 98},
+			{GUID: "plex://movie/000000000000000000000002", Name: "Fixture Movie Two", Year: 2021, Type: "movie", Summary: "Another neutral summary.", Thumb: "", Score: 80}}},
 		{"matches_none.json", nil},
+		// The fields shown only on the dashboard are optional. A value of an
+		// unexpected type leaves that field empty and keeps the candidate.
+		{"matches_odd_fields.json", []Candidate{{GUID: "plex://movie/000000000000000000000003", Name: "Fixture Movie Three", Year: 2022, Type: "movie", Thumb: "https://metadata.example.invalid/three.jpg"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.fixture, func(t *testing.T) {
@@ -53,6 +58,17 @@ func TestSearchMatchesDecodesCandidates(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A match field of an unexpected type fails the search, as before the
+// shown fields were decoded: a match must not use a guessed value.
+func TestSearchMatchesRejectsBadMatchField(t *testing.T) {
+	_, c := newServer(t, serveFixture(t, "matches_bad_year.json"))
+
+	_, err := c.SearchMatches(context.Background(), "1001", "Fixture Movie Four", "tv.plex.agents.movie", "en-GB")
+	if err == nil || !strings.Contains(err.Error(), "decoding candidate") {
+		t.Fatalf("err = %v, want a candidate decoding error", err)
 	}
 }
 

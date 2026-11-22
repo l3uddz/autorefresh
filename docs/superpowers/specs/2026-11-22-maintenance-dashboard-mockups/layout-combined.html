@@ -1,0 +1,223 @@
+<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="mockup-theme.css">
+<style>
+*{box-sizing:border-box}
+body{margin:0}
+.wrap{display:flex;flex-direction:column;gap:28px}
+.label{display:flex;align-items:baseline;gap:10px;margin:0 0 8px}
+.label b{font-size:15px}
+.label span{color:var(--muted-foreground);font-size:12.5px}
+.app{border:1px solid var(--border);border-radius:var(--radius);background:var(--card);color:var(--card-foreground);overflow:hidden;font-size:12px}
+.top{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)}
+.logo{font-weight:700;letter-spacing:-.2px;font-size:13px}
+.logo i{font-style:normal;color:var(--primary)}
+.pill{border:1px solid var(--border);border-radius:999px;padding:3px 10px;font-size:11px;color:var(--muted-foreground);white-space:nowrap}
+.sp{flex:1}
+.btn{border-radius:6px;padding:5px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);background:var(--secondary);color:var(--secondary-foreground);white-space:nowrap}
+.btn.p{background:var(--primary);color:var(--primary-foreground);border-color:transparent}
+.btn.d{color:var(--destructive);background:transparent}
+.nav{display:flex;gap:2px;padding:0 10px;border-bottom:1px solid var(--border)}
+.nav a{padding:8px 10px;color:var(--muted-foreground);font-size:11.5px;border-bottom:2px solid transparent}
+.nav a.on{color:var(--foreground);border-color:var(--primary)}
+.nav a em{font-style:normal;background:var(--secondary);border-radius:999px;padding:0 6px;margin-left:4px;font-size:10px}
+.live{display:flex;align-items:center;gap:8px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--success);box-shadow:0 0 0 3px color-mix(in oklab,var(--success) 25%,transparent)}
+.bar{height:4px;border-radius:4px;background:var(--secondary);overflow:hidden}
+.bar>div{height:100%;background:var(--primary)}
+.muted{color:var(--muted-foreground)}
+.chip{display:inline-block;border-radius:4px;padding:1px 5px;font-size:9.5px;font-weight:600;margin:1px 2px 1px 0}
+.c-un{background:var(--destructive-surface,color-mix(in oklab,var(--destructive) 18%,transparent));color:var(--destructive)}
+.c-art{background:var(--warning-surface,color-mix(in oklab,var(--warning) 18%,transparent));color:var(--warning)}
+.c-sum{background:color-mix(in oklab,var(--info) 18%,transparent);color:var(--info)}
+.c-ep{background:var(--accent-surface,color-mix(in oklab,var(--accent) 25%,transparent));color:var(--accent-foreground)}
+.poster{border-radius:6px;position:relative;overflow:hidden;aspect-ratio:2/3;display:flex;align-items:flex-end;padding:6px;color:#fff;font-weight:700;font-size:11px;line-height:1.15;text-shadow:0 1px 2px #0008}
+.poster::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 45%,#0009)}
+.poster span{position:relative;z-index:1}
+.g1{background:linear-gradient(155deg,var(--chart-1),color-mix(in oklab,var(--chart-1) 35%,#000))}
+.g2{background:linear-gradient(155deg,var(--chart-2),color-mix(in oklab,var(--chart-2) 35%,#000))}
+.g3{background:linear-gradient(155deg,var(--chart-3),color-mix(in oklab,var(--chart-3) 35%,#000))}
+.g4{background:linear-gradient(155deg,var(--chart-4),color-mix(in oklab,var(--chart-4) 35%,#000))}
+.g5{background:linear-gradient(155deg,var(--chart-5),color-mix(in oklab,var(--chart-5) 35%,#000))}
+.g6{background:linear-gradient(155deg,var(--chart-6),color-mix(in oklab,var(--chart-6) 35%,#000))}
+.gx{background:repeating-linear-gradient(45deg,var(--secondary),var(--secondary) 6px,var(--muted) 6px,var(--muted) 12px);color:var(--muted-foreground);text-shadow:none}
+.gx::after{display:none}
+.mono{font-family:var(--font-mono);font-size:10.5px}
+/* A */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:12px 14px}
+.stat{border:1px solid var(--border);border-radius:8px;padding:8px 10px}
+.stat b{display:block;font-size:18px;letter-spacing:-.5px}
+.stat small{color:var(--muted-foreground);font-size:10.5px}
+.grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;padding:4px 14px 14px}
+.tile .poster{margin-bottom:5px}
+.tile .t{font-weight:600;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .m{color:var(--muted-foreground);font-size:10px}
+.badge{position:absolute;top:5px;left:5px;z-index:2}
+.sel{outline:2px solid var(--primary);outline-offset:2px;border-radius:6px}
+.filters{display:flex;gap:6px;padding:0 14px 8px;flex-wrap:wrap}
+/* B */
+table{width:100%;border-collapse:collapse}
+th{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted-foreground);text-align:left;font-weight:600;padding:7px 8px;border-bottom:1px solid var(--border)}
+td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr.hl td{background:color-mix(in oklab,var(--primary) 8%,transparent)}
+.thumb{width:26px;flex:none;border-radius:3px;font-size:0;padding:0}
+.cell{display:flex;gap:8px;align-items:center}
+.cell .t{font-weight:600}
+.srv{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:10px 14px;border-bottom:1px solid var(--border)}
+.srvc{border:1px solid var(--border);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+/* C */
+.split{display:grid;grid-template-columns:250px 1fr;min-height:430px}
+.list{border-right:1px solid var(--border)}
+.li{display:flex;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border);align-items:center}
+.li.on{background:color-mix(in oklab,var(--primary) 10%,transparent);box-shadow:inset 3px 0 0 var(--primary)}
+.li .thumb{width:34px}
+.li .t{font-weight:600;font-size:11.5px}
+.detail{position:relative}
+.hero{height:120px;background:linear-gradient(120deg,color-mix(in oklab,var(--chart-2) 70%,#000),color-mix(in oklab,var(--chart-4) 55%,#000));position:relative}
+.hero::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 30%,var(--card))}
+.dhead{display:flex;gap:14px;padding:0 16px;margin-top:-70px;position:relative;z-index:1}
+.dhead .poster{width:96px;flex:none;box-shadow:0 6px 18px #0006}
+.dhead h3{margin:38px 0 2px;font-size:17px;letter-spacing:-.3px}
+.dbody{padding:12px 16px 16px;display:flex;flex-direction:column;gap:10px}
+.kv{display:grid;grid-template-columns:86px 1fr;gap:3px 10px;font-size:11px}
+.kv dt{color:var(--muted-foreground)}
+.kv dd{margin:0}
+.cands{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.cand{border:1px solid var(--border);border-radius:8px;padding:6px;display:flex;gap:7px;align-items:center}
+.cand .poster{width:30px;padding:0;font-size:0}
+.cand.best{border-color:var(--primary)}
+.sec{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted-foreground);font-weight:600}
+.actions{display:flex;gap:6px;flex-wrap:wrap}
+.sheet{position:absolute;right:0;top:0;bottom:0;width:250px;background:var(--popover);border-left:1px solid var(--border);box-shadow:-8px 0 24px #0004;padding:12px;display:flex;flex-direction:column;gap:8px}
+.rel{position:relative}
+</style></head><body><div class="wrap">
+</head><body>
+<style>
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.seg span{padding:3px 8px;font-size:10.5px;color:var(--muted-foreground)}
+.seg span.on{background:var(--secondary);color:var(--foreground);font-weight:600}
+.lhead{display:flex;align-items:center;gap:6px;padding:7px 10px;border-bottom:1px solid var(--border)}
+.search{flex:1;border:1px solid var(--border);border-radius:6px;padding:3px 8px;color:var(--muted-foreground);font-size:10.5px}
+.ok{background:color-mix(in oklab,var(--success) 18%,transparent);color:var(--success)}
+.runs td{font-size:11px}
+.phones{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+.phone{width:220px;border:1px solid var(--border);border-radius:22px;background:var(--card);overflow:hidden;font-size:11px}
+.phone .top{padding:9px 12px}
+.side{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 14px}
+.box{border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.box h4{margin:0;padding:7px 10px;font-size:11px;border-bottom:1px solid var(--border)}
+.row{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--border)}
+.row:last-child{border-bottom:0}
+.row .thumb{width:22px}
+</style>
+<div class="wrap">
+
+<!-- 1. Items, list mode -->
+<section>
+  <div class="label"><b>1 · Items, list mode</b><span>C's layout. The list header toggles between List and Table.</span></div>
+  <div class="app">
+    <div class="top">
+      <div class="logo">auto<i>refresh</i></div>
+      <div class="nav" style="border:0;padding:0"><a>Status</a><a class="on">Items</a><a>Runs</a></div>
+      <div class="sp"></div>
+      <div class="pill">All servers ▾</div>
+      <div class="live"><div class="dot"></div><span class="muted">Home 42 / 100</span></div>
+      <div class="btn p">Run now ▾</div>
+    </div>
+    <div class="split">
+      <div class="list">
+        <div class="nav" style="padding:0 4px"><a class="on">Attention<em>318</em></a><a>Fixed<em>57</em></a><a>Stopped<em>12</em></a></div>
+        <div class="lhead"><div class="search">Search title or path</div><div class="seg"><span class="on">List</span><span>Table</span></div></div>
+        <div class="li"><div class="poster thumb gx"></div><div><div class="t">The Quiet Harbor</div><span class="chip c-un">unmatched</span><span class="muted" style="font-size:10px">6 tries</span></div></div>
+        <div class="li on"><div class="poster thumb g2"></div><div><div class="t">Northern Lights</div><span class="chip c-ep">ep-no-summary</span><span class="muted" style="font-size:10px">3 tries</span></div></div>
+        <div class="li"><div class="poster thumb g3"></div><div><div class="t">Glass Orchard</div><span class="chip c-art">no-art</span><span class="chip c-sum">no-summary</span></div></div>
+        <div class="li"><div class="poster thumb g5"></div><div><div class="t">Static Bloom</div><span class="chip c-sum">no-summary</span></div></div>
+        <div class="li"><div class="poster thumb g4"></div><div><div class="t">Ember Season</div><span class="chip c-ep">ep-unmatched</span></div></div>
+      </div>
+      <div class="detail">
+        <div class="hero"></div>
+        <div class="dhead"><div class="poster g2"><span>Northern Lights</span></div>
+          <div><h3>Northern Lights</h3><div class="muted">Series · 2016 · 3 seasons · 24 episodes · Home / TV</div><div style="margin-top:5px"><span class="chip c-ep">episode-no-summary · 4 episodes</span></div></div></div>
+        <div class="dbody">
+          <div class="muted" style="line-height:1.45">A lighthouse keeper's family is pulled into a decades-old disappearance on a remote northern island.</div>
+          <dl class="kv"><dt>Path</dt><dd class="mono">/data/tv/Northern Lights (2016) {tvdb-31207}</dd><dt>Match</dt><dd>tvdb-31207 · matched by autorefresh, 12 Nov</dd><dt>Refreshes</dt><dd>3 accepted · 3 attempts · next due in 2d 4h</dd></dl>
+          <div class="actions"><span class="btn p">Refresh now</span><span class="btn">Fix match</span><span class="btn d">Stop trying</span><span class="btn">Open in Plex ↗</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 2. Items, table mode -->
+<section>
+  <div class="label"><b>2 · Items, table mode</b><span>B's table for sorting hundreds of items. A row opens the same detail view.</span></div>
+  <div class="app">
+    <div class="lhead" style="padding:8px 14px"><div class="nav" style="border:0;padding:0"><a class="on">Attention<em>318</em></a><a>Fixed<em>57</em></a><a>Stopped<em>12</em></a></div><div class="search">Search title or path</div><span class="pill">Library: all</span><span class="pill">Reason: any</span><div class="seg"><span>List</span><span class="on">Table</span></div></div>
+    <table>
+      <tr><th><input type="checkbox"></th><th>Item</th><th>Server · library</th><th>Reasons</th><th>Tries ▾</th><th>Last action</th><th>Next due</th></tr>
+      <tr><td><input type="checkbox" checked></td><td><div class="cell"><div class="poster thumb gx"></div><div><div class="t">The Quiet Harbor</div><div class="muted">Movie · 2019</div></div></div></td><td>Home · Movies</td><td><span class="chip c-un">unmatched</span></td><td>6</td><td class="muted">match failed</td><td>in 3d</td></tr>
+      <tr><td><input type="checkbox" checked></td><td><div class="cell"><div class="poster thumb g1"></div><div><div class="t">Paper Moons</div><div class="muted">Movie · 2017</div></div></div></td><td>Cabin · Films</td><td><span class="chip c-art">no-art</span></td><td>4</td><td class="muted">refresh</td><td>in 6d</td></tr>
+      <tr><td><input type="checkbox"></td><td><div class="cell"><div class="poster thumb g2"></div><div><div class="t">Northern Lights</div><div class="muted">Series · 2016</div></div></div></td><td>Home · TV</td><td><span class="chip c-ep">ep-no-summary</span></td><td>3</td><td class="muted">refresh</td><td>in 2d</td></tr>
+      <tr><td><input type="checkbox"></td><td><div class="cell"><div class="poster thumb g3"></div><div><div class="t">Glass Orchard</div><div class="muted">Movie · 2023</div></div></div></td><td>Cabin · Films</td><td><span class="chip c-art">no-art</span><span class="chip c-sum">no-summary</span></td><td>2</td><td class="muted">refresh</td><td>due</td></tr>
+    </table>
+    <div style="display:flex;gap:6px;align-items:center;padding:8px 14px"><span class="muted">2 selected</span><span class="sp"></span><span class="btn">Refresh</span><span class="btn d">Stop trying</span></div>
+  </div>
+</section>
+
+<!-- 3. Status -->
+<section>
+  <div class="label"><b>3 · Status</b><span>B's server cards, recent fixes and recent runs. With one server, a single card fills the width.</span></div>
+  <div class="app">
+    <div class="top">
+      <div class="logo">auto<i>refresh</i></div>
+      <div class="nav" style="border:0;padding:0"><a class="on">Status</a><a>Items</a><a>Runs</a></div>
+      <div class="sp"></div>
+      <div class="btn p">Run now ▾</div>
+    </div>
+    <div class="srv">
+      <div class="srvc"><div class="live"><div class="dot"></div><b>Home</b><span class="sp"></span><span class="muted">running · 42 / 100</span></div><div class="bar"><div style="width:42%"></div></div><div class="muted">241 incomplete · 38 fixed in 30d · now: Glass Orchard</div></div>
+      <div class="srvc"><div class="live"><div class="dot" style="background:var(--muted-foreground);box-shadow:none"></div><b>Cabin</b><span class="sp"></span><span class="muted">idle · next 14:00</span></div><div class="bar"><div style="width:0"></div></div><div class="muted">77 incomplete · 19 fixed in 30d · last run 13:00</div></div>
+    </div>
+    <div class="side">
+      <div class="box"><h4>Recently fixed</h4>
+        <div class="row"><div class="poster thumb g6"></div><div style="flex:1"><b>The Long Field</b><div class="muted">tmdb-match → The Long Field (2022)</div></div><span class="muted">2h</span></div>
+        <div class="row"><div class="poster thumb g5"></div><div style="flex:1"><b>Static Bloom</b><div class="muted">refresh · 2 tries</div></div><span class="muted">5h</span></div>
+        <div class="row"><div class="poster thumb g4"></div><div style="flex:1"><b>Ember Season</b><div class="muted">match → Ember Season (2024)</div></div><span class="muted">1d</span></div>
+      </div>
+      <div class="box"><h4>Recent runs</h4>
+        <table class="runs"><tr><td><b>13:00</b></td><td>Cabin</td><td>31 refreshed</td><td><span class="chip ok">4 fixed</span></td></tr>
+        <tr><td><b>13:00</b></td><td>Home</td><td>100 refreshed</td><td><span class="chip ok">7 fixed</span></td></tr>
+        <tr><td><b>12:00</b></td><td>Home</td><td>88 refreshed</td><td><span class="chip ok">3 fixed</span></td></tr>
+        <tr><td><b>12:00</b></td><td>Cabin</td><td><span class="chip c-un">unreachable</span></td><td></td></tr></table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 4. Phone -->
+<section>
+  <div class="label"><b>4 · Phone</b><span>The list goes full width. Tapping an item opens its detail full screen.</span></div>
+  <div class="phones">
+    <div class="phone">
+      <div class="top"><div class="logo">auto<i>refresh</i></div><div class="sp"></div><div class="dot"></div><div class="btn p">Run</div></div>
+      <div class="nav" style="padding:0 4px"><a class="on">Attention<em>318</em></a><a>Fixed</a><a>Stopped</a></div>
+      <div class="li"><div class="poster thumb gx"></div><div><div class="t">The Quiet Harbor</div><span class="chip c-un">unmatched</span></div></div>
+      <div class="li"><div class="poster thumb g2"></div><div><div class="t">Northern Lights</div><span class="chip c-ep">ep-no-summary</span></div></div>
+      <div class="li"><div class="poster thumb g3"></div><div><div class="t">Glass Orchard</div><span class="chip c-art">no-art</span></div></div>
+      <div class="li"><div class="poster thumb g5"></div><div><div class="t">Static Bloom</div><span class="chip c-sum">no-summary</span></div></div>
+      <div class="li"><div class="poster thumb g4"></div><div><div class="t">Ember Season</div><span class="chip c-ep">ep-unmatched</span></div></div>
+    </div>
+    <div class="phone">
+      <div class="hero" style="height:90px"></div>
+      <div class="dhead" style="margin-top:-55px;padding:0 12px"><div class="poster g2" style="width:70px"><span></span></div><div><h3 style="margin-top:28px;font-size:14px">Northern Lights</h3><div class="muted">Series · 2016</div></div></div>
+      <div class="dbody" style="padding:10px 12px">
+        <span><span class="chip c-ep">episode-no-summary</span></span>
+        <div class="muted" style="line-height:1.4">A lighthouse keeper's family is pulled into a decades-old disappearance…</div>
+        <div class="mono muted">/data/tv/Northern Lights (2016) {tvdb-31207}</div>
+        <div class="actions"><span class="btn p">Refresh</span><span class="btn">Fix match</span><span class="btn d">Stop</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</div>
+</body></html>

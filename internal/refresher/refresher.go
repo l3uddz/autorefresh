@@ -20,7 +20,7 @@ import (
 type Plex interface {
 	Libraries(ctx context.Context) ([]plex.Library, error)
 	List(ctx context.Context, section string, itemType int, filters ...plex.Filter) ([]plex.Item, error)
-	ItemPaths(ctx context.Context, ratingKey string) ([]string, error)
+	ItemPaths(ctx context.Context, ratingKey string) (plex.Paths, error)
 	EpisodeNumbers(ctx context.Context, ratingKey string) (map[int][]int, error)
 	Refresh(ctx context.Context, ratingKey string) error
 	SearchMatches(ctx context.Context, ratingKey, title, agent, language string) ([]plex.Candidate, error)
@@ -34,12 +34,18 @@ type Store interface {
 	Unseen(server, section string, seen []string) ([]store.Item, error)
 	Due(q store.DueQuery) (items []store.Item, total int, err error)
 	CountIncomplete(server string, sections []string, ignored store.Reasons) (int, error)
-	RecordAttempt(server, ratingKey string, at time.Time, accepted store.Action) error
+	RecordRequest(r store.Request) error
+	RecordGone(server, ratingKey string, at time.Time, source store.Source) error
+	RecordMatchDecision(d store.MatchDecision) error
+	SaveLibraries(server string, libs []store.LibraryInfo) error
+	SetPath(server, ratingKey, path string) error
 	TMDBID(server, ratingKey, source, externalID string) (tmdbID string, ok bool, err error)
 	SaveTMDBID(server, ratingKey, source, externalID, tmdbID string) error
-	Delete(server, ratingKey string) error
 	PruneServers(servers []string) ([]store.Pruned, error)
 	PruneSections(server string, sections []string) ([]store.Pruned, error)
+	StartRun(r store.RunStart) (int64, error)
+	FinishRun(id int64, start store.RunStart, r store.RunResult) error
+	PruneHistory(before time.Time) (events, runs int, err error)
 }
 
 // Server is one Plex server to check.
@@ -60,7 +66,8 @@ type Options struct {
 	MaxRefreshesPerRun                                    int           // the most due items in each run; 0: no limit
 	IgnoreReasons                                         store.Reasons // never refreshed for, and not counted
 	DryRun                                                bool
-	TMDB                                                  TMDB // nil: no TMDB fallback in fix match
+	TMDB                                                  TMDB          // nil: no TMDB fallback in fix match
+	HistoryRetention                                      time.Duration // events and runs older than this are removed; 0: no retention
 }
 
 // Refresher checks the libraries of each server.
@@ -113,6 +120,8 @@ type serverRun struct {
 	refreshes            int  // refresh requests sent, also failed ones
 	matches              int  // match requests sent, also failed ones
 	failures             int  // failed requests and match searches, without 404 answers
+	selected             int  // due items that this run handles, after the limit
+	incomplete           int  // incomplete items that the summary counted; 0 without a summary
 	remaining            int  // due items that the limit or a stop kept from this run
 	tmdbFailed           bool // a TMDB lookup failed, so the run asks TMDB nothing more
 }
@@ -159,7 +168,37 @@ func (run *serverRun) sections() []string {
 	return sections
 }
 
-// Run removes the cache of the servers that are not configured. Then it
+// pruneBeforeRun removes the cache of the servers that are not configured,
+// and the events and runs that are older than the history retention. A dry
+// run keeps both.
+func (r *Refresher) pruneBeforeRun(now time.Time) error {
+	if r.opts.DryRun {
+		return nil
+	}
+	names := make([]string, 0, len(r.servers))
+	for _, srv := range r.servers {
+		names = append(names, srv.Name)
+	}
+	pruned, err := r.store.PruneServers(names)
+	if err != nil {
+		return err
+	}
+	logPruned(pruned, nil)
+	if r.opts.HistoryRetention <= 0 {
+		return nil
+	}
+	events, runs, err := r.store.PruneHistory(now.Add(-r.opts.HistoryRetention))
+	if err != nil {
+		return err
+	}
+	if events > 0 || runs > 0 {
+		log.Debug().Int("events", events).Int("runs", runs).Msg("Pruned history")
+	}
+	return nil
+}
+
+// Run removes the cache of the servers that are not configured and the
+// history past its retention, unless it is a dry run. Then it
 // checks each server in its own goroutine. It reads the libraries of the
 // server, refreshes its due items, and logs its summary. It returns the
 // store errors and the errors of the unavailable servers. A store error of
@@ -172,15 +211,9 @@ func (r *Refresher) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	names := make([]string, 0, len(r.servers))
-	for _, srv := range r.servers {
-		names = append(names, srv.Name)
-	}
-	pruned, err := r.store.PruneServers(names)
-	if err != nil {
+	if err := r.pruneBeforeRun(r.now()); err != nil {
 		return err
 	}
-	logPruned(pruned, nil)
 
 	errs := make([]error, len(r.servers))
 	var wg sync.WaitGroup
@@ -197,14 +230,35 @@ func (r *Refresher) Run(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// runServer checks one server. It returns a store error, or the error of
-// an unavailable server after it logged that error.
+// runServer checks one server and records the run, unless it is a dry run.
+// It returns a store error, or the error of an unavailable server after it
+// logged that error.
 func (r *Refresher) runServer(ctx context.Context, srv Server) error {
 	if ctx.Err() != nil {
 		log.Debug().Str("server", srv.Name).Msg("Run canceled")
 		return nil
 	}
 	run := &serverRun{server: srv, began: r.now(), files: map[string][]string{}}
+	var id int64
+	if !r.opts.DryRun {
+		var err error
+		id, err = r.store.StartRun(run.start())
+		if err != nil {
+			return fmt.Errorf("server %s: %w", srv.Name, err)
+		}
+	}
+	return r.finishRun(ctx, run, id, r.checkServer(ctx, run))
+}
+
+// stopped reports whether the end of ctx stopped a run that ended with err.
+func stopped(ctx context.Context, err error) bool {
+	ctxErr := ctx.Err()
+	return ctxErr != nil && (err == nil || errors.Is(err, ctxErr))
+}
+
+// checkServer reads the libraries of the server, refreshes its due items,
+// and logs its summary. It returns the error that ended the run.
+func (r *Refresher) checkServer(ctx context.Context, run *serverRun) error {
 	err := r.readLibraries(ctx, run)
 	readsDone := err == nil
 	if readsDone {
@@ -215,14 +269,14 @@ func (r *Refresher) runServer(ctx context.Context, srv Server) error {
 	logCompleted(run)
 	// A canceled run logs no summary, also when the server finished without
 	// an error. The store calls do not see ctx, so they can still succeed.
-	if ctxErr := ctx.Err(); ctxErr != nil && (err == nil || errors.Is(err, ctxErr)) {
-		log.Debug().Str("server", srv.Name).Msg("Run canceled")
-		return nil
+	if stopped(ctx, err) {
+		log.Debug().Str("server", run.server.Name).Msg("Run canceled")
+		return err
 	}
 	unavailable := errors.Is(err, plex.ErrUnavailable)
 	if unavailable {
 		// The run can take long, so the error shows at once.
-		log.Error().Str("server", srv.Name).Err(err).Msg("Plex server unavailable")
+		log.Error().Str("server", run.server.Name).Err(err).Msg("Plex server unavailable")
 	}
 	// A server that the refresh step stopped also gets its summary.
 	if err == nil || unavailable && readsDone {
@@ -230,10 +284,59 @@ func (r *Refresher) runServer(ctx context.Context, srv Server) error {
 			err = summaryErr
 		}
 	}
-	if err != nil {
-		return fmt.Errorf("server %s: %w", srv.Name, err)
+	return err
+}
+
+// recordFinish stores res as the end of the run id and returns the error of
+// the run. A failed FinishRun becomes that error only if the run has none;
+// otherwise it is logged, so it is not lost.
+func (r *Refresher) recordFinish(run *serverRun, id int64, res store.RunResult, err error) error {
+	finishErr := r.store.FinishRun(id, run.start(), res)
+	switch {
+	case finishErr == nil:
+		return err
+	case err == nil:
+		return finishErr
 	}
-	return nil
+	log.Error().Str("server", run.server.Name).Err(finishErr).Msg("Recording run failed")
+	return err
+}
+
+// start returns how the run started, as StartRun and FinishRun store it.
+func (run *serverRun) start() store.RunStart {
+	return store.RunStart{
+		Server: run.server.Name, Kind: store.RunKindRun, Source: store.RunSourceSchedule, StartedAt: run.began,
+	}
+}
+
+// finishRun records the end of the run id, unless it is a dry run, and
+// returns the result of runServer. The end of ctx is a clean exit, so a
+// canceled run returns only a failed FinishRun. Otherwise a failed
+// FinishRun is the error of the run only if the run has no error.
+func (r *Refresher) finishRun(ctx context.Context, run *serverRun, id int64, err error) error {
+	canceled := stopped(ctx, err)
+	if canceled {
+		err = nil
+	}
+	if !r.opts.DryRun {
+		res := store.RunResult{
+			FinishedAt: r.now(), Status: store.RunFinished,
+			ReadItems: run.fullReadItems + run.incrementalReadItems, Refreshed: run.refreshes,
+			Matched: run.matches, Failed: run.failures, Completed: len(run.completed), Fixed: run.fixed,
+			Incomplete: run.incomplete, Due: run.due, Selected: run.selected,
+		}
+		switch {
+		case canceled:
+			res.Status = store.RunCanceled
+		case err != nil:
+			res.Status, res.Error = store.RunFailed, err.Error()
+		}
+		err = r.recordFinish(run, id, res, err)
+	}
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("server %s: %w", run.server.Name, err)
 }
 
 // warnOnce reports whether the warning with key was not logged yet in this

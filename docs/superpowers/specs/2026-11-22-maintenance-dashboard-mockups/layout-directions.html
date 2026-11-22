@@ -1,0 +1,203 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="mockup-theme.css">
+<style>
+*{box-sizing:border-box}
+body{margin:0}
+.wrap{display:flex;flex-direction:column;gap:28px}
+.label{display:flex;align-items:baseline;gap:10px;margin:0 0 8px}
+.label b{font-size:15px}
+.label span{color:var(--muted-foreground);font-size:12.5px}
+.app{border:1px solid var(--border);border-radius:var(--radius);background:var(--card);color:var(--card-foreground);overflow:hidden;font-size:12px}
+.top{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)}
+.logo{font-weight:700;letter-spacing:-.2px;font-size:13px}
+.logo i{font-style:normal;color:var(--primary)}
+.pill{border:1px solid var(--border);border-radius:999px;padding:3px 10px;font-size:11px;color:var(--muted-foreground);white-space:nowrap}
+.sp{flex:1}
+.btn{border-radius:6px;padding:5px 10px;font-size:11px;font-weight:600;border:1px solid var(--border);background:var(--secondary);color:var(--secondary-foreground);white-space:nowrap}
+.btn.p{background:var(--primary);color:var(--primary-foreground);border-color:transparent}
+.btn.d{color:var(--destructive);background:transparent}
+.nav{display:flex;gap:2px;padding:0 10px;border-bottom:1px solid var(--border)}
+.nav a{padding:8px 10px;color:var(--muted-foreground);font-size:11.5px;border-bottom:2px solid transparent}
+.nav a.on{color:var(--foreground);border-color:var(--primary)}
+.nav a em{font-style:normal;background:var(--secondary);border-radius:999px;padding:0 6px;margin-left:4px;font-size:10px}
+.live{display:flex;align-items:center;gap:8px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--success);box-shadow:0 0 0 3px color-mix(in oklab,var(--success) 25%,transparent)}
+.bar{height:4px;border-radius:4px;background:var(--secondary);overflow:hidden}
+.bar>div{height:100%;background:var(--primary)}
+.muted{color:var(--muted-foreground)}
+.chip{display:inline-block;border-radius:4px;padding:1px 5px;font-size:9.5px;font-weight:600;margin:1px 2px 1px 0}
+.c-un{background:var(--destructive-surface,color-mix(in oklab,var(--destructive) 18%,transparent));color:var(--destructive)}
+.c-art{background:var(--warning-surface,color-mix(in oklab,var(--warning) 18%,transparent));color:var(--warning)}
+.c-sum{background:color-mix(in oklab,var(--info) 18%,transparent);color:var(--info)}
+.c-ep{background:var(--accent-surface,color-mix(in oklab,var(--accent) 25%,transparent));color:var(--accent-foreground)}
+.poster{border-radius:6px;position:relative;overflow:hidden;aspect-ratio:2/3;display:flex;align-items:flex-end;padding:6px;color:#fff;font-weight:700;font-size:11px;line-height:1.15;text-shadow:0 1px 2px #0008}
+.poster::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 45%,#0009)}
+.poster span{position:relative;z-index:1}
+.g1{background:linear-gradient(155deg,var(--chart-1),color-mix(in oklab,var(--chart-1) 35%,#000))}
+.g2{background:linear-gradient(155deg,var(--chart-2),color-mix(in oklab,var(--chart-2) 35%,#000))}
+.g3{background:linear-gradient(155deg,var(--chart-3),color-mix(in oklab,var(--chart-3) 35%,#000))}
+.g4{background:linear-gradient(155deg,var(--chart-4),color-mix(in oklab,var(--chart-4) 35%,#000))}
+.g5{background:linear-gradient(155deg,var(--chart-5),color-mix(in oklab,var(--chart-5) 35%,#000))}
+.g6{background:linear-gradient(155deg,var(--chart-6),color-mix(in oklab,var(--chart-6) 35%,#000))}
+.gx{background:repeating-linear-gradient(45deg,var(--secondary),var(--secondary) 6px,var(--muted) 6px,var(--muted) 12px);color:var(--muted-foreground);text-shadow:none}
+.gx::after{display:none}
+.mono{font-family:var(--font-mono);font-size:10.5px}
+/* A */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:12px 14px}
+.stat{border:1px solid var(--border);border-radius:8px;padding:8px 10px}
+.stat b{display:block;font-size:18px;letter-spacing:-.5px}
+.stat small{color:var(--muted-foreground);font-size:10.5px}
+.grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;padding:4px 14px 14px}
+.tile .poster{margin-bottom:5px}
+.tile .t{font-weight:600;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .m{color:var(--muted-foreground);font-size:10px}
+.badge{position:absolute;top:5px;left:5px;z-index:2}
+.sel{outline:2px solid var(--primary);outline-offset:2px;border-radius:6px}
+.filters{display:flex;gap:6px;padding:0 14px 8px;flex-wrap:wrap}
+/* B */
+table{width:100%;border-collapse:collapse}
+th{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted-foreground);text-align:left;font-weight:600;padding:7px 8px;border-bottom:1px solid var(--border)}
+td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr.hl td{background:color-mix(in oklab,var(--primary) 8%,transparent)}
+.thumb{width:26px;flex:none;border-radius:3px;font-size:0;padding:0}
+.cell{display:flex;gap:8px;align-items:center}
+.cell .t{font-weight:600}
+.srv{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:10px 14px;border-bottom:1px solid var(--border)}
+.srvc{border:1px solid var(--border);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+/* C */
+.split{display:grid;grid-template-columns:250px 1fr;min-height:430px}
+.list{border-right:1px solid var(--border)}
+.li{display:flex;gap:8px;padding:8px 10px;border-bottom:1px solid var(--border);align-items:center}
+.li.on{background:color-mix(in oklab,var(--primary) 10%,transparent);box-shadow:inset 3px 0 0 var(--primary)}
+.li .thumb{width:34px}
+.li .t{font-weight:600;font-size:11.5px}
+.detail{position:relative}
+.hero{height:120px;background:linear-gradient(120deg,color-mix(in oklab,var(--chart-2) 70%,#000),color-mix(in oklab,var(--chart-4) 55%,#000));position:relative}
+.hero::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 30%,var(--card))}
+.dhead{display:flex;gap:14px;padding:0 16px;margin-top:-70px;position:relative;z-index:1}
+.dhead .poster{width:96px;flex:none;box-shadow:0 6px 18px #0006}
+.dhead h3{margin:38px 0 2px;font-size:17px;letter-spacing:-.3px}
+.dbody{padding:12px 16px 16px;display:flex;flex-direction:column;gap:10px}
+.kv{display:grid;grid-template-columns:86px 1fr;gap:3px 10px;font-size:11px}
+.kv dt{color:var(--muted-foreground)}
+.kv dd{margin:0}
+.cands{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.cand{border:1px solid var(--border);border-radius:8px;padding:6px;display:flex;gap:7px;align-items:center}
+.cand .poster{width:30px;padding:0;font-size:0}
+.cand.best{border-color:var(--primary)}
+.sec{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted-foreground);font-weight:600}
+.actions{display:flex;gap:6px;flex-wrap:wrap}
+.sheet{position:absolute;right:0;top:0;bottom:0;width:250px;background:var(--popover);border-left:1px solid var(--border);box-shadow:-8px 0 24px #0004;padding:12px;display:flex;flex-direction:column;gap:8px}
+.rel{position:relative}
+</style></head><body><div class="wrap">
+
+<!-- ================= A ================= -->
+<section>
+  <div class="label"><b>A · Library</b><span>Poster grid, feels like a media app. The detail opens as a side sheet.</span></div>
+  <div class="app rel">
+    <div class="top">
+      <div class="logo">auto<i>refresh</i></div>
+      <div class="pill">All servers ▾</div>
+      <div class="sp"></div>
+      <div class="live"><div class="dot"></div><span>Running · Home · 42 / 100</span></div>
+      <div class="btn p">Run now</div>
+    </div>
+    <div class="nav"><a class="on">Needs attention<em>318</em></a><a>Recently fixed<em>57</em></a><a>Stopped<em>12</em></a><a>Runs</a></div>
+    <div class="stats">
+      <div class="stat"><b>318</b><small>incomplete</small></div>
+      <div class="stat"><b>57</b><small>fixed in 30 days</small></div>
+      <div class="stat"><b>9</b><small>matched by autorefresh</small></div>
+      <div class="stat"><b>14:00</b><small>next run</small></div>
+    </div>
+    <div class="filters"><span class="pill">Movies</span><span class="pill">Shows</span><span class="pill">unmatched</span><span class="pill">no-art</span><span class="pill">Most attempts ▾</span></div>
+    <div class="grid" style="padding-right:270px;grid-template-columns:repeat(4,1fr)">
+      <div class="tile"><div class="poster gx"><span class="badge chip c-un">unmatched</span><span>The Quiet Harbor</span></div><div class="t">The Quiet Harbor</div><div class="m">2019 · 6 tries</div></div>
+      <div class="tile sel"><div class="poster g2"><span class="badge chip c-ep">ep summary</span><span>Northern Lights</span></div><div class="t">Northern Lights</div><div class="m">2016 · 3 tries</div></div>
+      <div class="tile"><div class="poster g3"><span class="badge chip c-art">no-art</span><span>Glass Orchard</span></div><div class="t">Glass Orchard</div><div class="m">2023 · 2 tries</div></div>
+      <div class="tile"><div class="poster g5"><span class="badge chip c-sum">no-summary</span><span>Static Bloom</span></div><div class="t">Static Bloom</div><div class="m">2021 · 1 try</div></div>
+      <div class="tile"><div class="poster g1"><span class="badge chip c-art">no-art</span><span>Paper Moons</span></div><div class="t">Paper Moons</div><div class="m">2017 · 4 tries</div></div>
+      <div class="tile"><div class="poster gx"><span class="badge chip c-un">unmatched</span><span>Hollow Creek</span></div><div class="t">Hollow Creek</div><div class="m">2020 · 5 tries</div></div>
+      <div class="tile"><div class="poster g4"><span class="badge chip c-ep">ep unmatched</span><span>Ember Season</span></div><div class="t">Ember Season</div><div class="m">2024 · 0 tries</div></div>
+      <div class="tile"><div class="poster g6"><span class="badge chip c-art">no-art</span><span>The Long Field</span></div><div class="t">The Long Field</div><div class="m">2022 · 2 tries</div></div>
+    </div>
+    <div class="sheet" style="top:76px">
+      <div style="display:flex;gap:10px"><div class="poster g2" style="width:64px;flex:none"><span></span></div>
+        <div><b style="font-size:13px">Northern Lights</b><div class="muted">Series · 2016 · 3 seasons</div><div style="margin-top:4px"><span class="chip c-ep">episode-no-summary</span></div></div></div>
+      <div class="muted" style="font-size:11px;line-height:1.4">A lighthouse keeper's family is pulled into a decades-old disappearance on a remote northern island.</div>
+      <dl class="kv"><dt>Server</dt><dd>Home · TV</dd><dt>Path</dt><dd class="mono">/data/tv/Northern Lights (2016) {tvdb-31207}</dd><dt>Refreshes</dt><dd>3 · next in 2d 4h</dd><dt>Last action</dt><dd>refresh · 2 days ago</dd></dl>
+      <div class="actions"><span class="btn p">Refresh</span><span class="btn">Fix match…</span><span class="btn d">Stop trying</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= B ================= -->
+<section>
+  <div class="label"><b>B · Console</b><span>Dense table with small thumbnails. Best when there are hundreds of items to sort and filter.</span></div>
+  <div class="app">
+    <div class="top">
+      <div class="logo">auto<i>refresh</i></div>
+      <div class="nav" style="border:0;padding:0"><a class="on">Items</a><a>Fixed</a><a>Stopped</a><a>Runs</a></div>
+      <div class="sp"></div>
+      <div class="btn p">Run now</div>
+    </div>
+    <div class="srv">
+      <div class="srvc"><div class="live"><div class="dot"></div><b>Home</b><span class="sp"></span><span class="muted">running · 42 / 100</span></div><div class="bar"><div style="width:42%"></div></div><div class="muted">241 incomplete · 38 fixed in 30d · last full read Sun 03:00</div></div>
+      <div class="srvc"><div class="live"><div class="dot" style="background:var(--muted-foreground);box-shadow:none"></div><b>Cabin</b><span class="sp"></span><span class="muted">idle · next 14:00</span></div><div class="bar"><div style="width:0"></div></div><div class="muted">77 incomplete · 19 fixed in 30d · last run 13:00, 31 refreshed</div></div>
+    </div>
+    <div class="filters" style="padding-top:8px"><span class="pill">Search title or path…</span><span class="pill">Server: all</span><span class="pill">Library: all</span><span class="pill">Reason: any</span></div>
+    <table>
+      <tr><th>Item</th><th>Server · library</th><th>Reasons</th><th>Tries</th><th>Last action</th><th>Next due</th><th></th></tr>
+      <tr><td><div class="cell"><div class="poster thumb gx"></div><div><div class="t">The Quiet Harbor</div><div class="muted">Movie · 2019</div></div></div></td><td>Home · Movies</td><td><span class="chip c-un">unmatched</span></td><td>6</td><td class="muted">match failed</td><td>in 3d</td><td><span class="btn">⋯</span></td></tr>
+      <tr class="hl"><td><div class="cell"><div class="poster thumb g2"></div><div><div class="t">Northern Lights</div><div class="muted">Series · 2016</div></div></div></td><td>Home · TV</td><td><span class="chip c-ep">ep-no-summary</span></td><td>3</td><td class="muted">refresh</td><td>in 2d</td><td><span class="btn">⋯</span></td></tr>
+      <tr><td><div class="cell"><div class="poster thumb g3"></div><div><div class="t">Glass Orchard</div><div class="muted">Movie · 2023</div></div></div></td><td>Cabin · Films</td><td><span class="chip c-art">no-art</span><span class="chip c-sum">no-summary</span></td><td>2</td><td class="muted">refresh</td><td>due</td><td><span class="btn">⋯</span></td></tr>
+      <tr><td><div class="cell"><div class="poster thumb g5"></div><div><div class="t">Static Bloom</div><div class="muted">Movie · 2021</div></div></div></td><td>Home · Movies</td><td><span class="chip c-sum">no-summary</span></td><td>1</td><td class="muted">refresh</td><td>in 18h</td><td><span class="btn">⋯</span></td></tr>
+      <tr><td><div class="cell"><div class="poster thumb g4"></div><div><div class="t">Ember Season</div><div class="muted">Series · 2024</div></div></div></td><td>Home · TV</td><td><span class="chip c-ep">ep-unmatched</span></td><td>0</td><td class="muted">—</td><td>due</td><td><span class="btn">⋯</span></td></tr>
+    </table>
+    <div style="padding:8px 14px" class="muted">Click a row to expand the poster, summary, path, and the match tools below it.</div>
+  </div>
+</section>
+
+<!-- ================= C ================= -->
+<section>
+  <div class="label"><b>C · Inbox</b><span>A list on the left and a large detail view on the right. Good for working through items one at a time.</span></div>
+  <div class="app">
+    <div class="top">
+      <div class="logo">auto<i>refresh</i></div>
+      <div class="pill">Home ▾</div>
+      <div class="sp"></div>
+      <div class="live"><div class="dot"></div><span class="muted">Running · 42 / 100</span></div>
+      <div style="width:70px" class="bar"><div style="width:42%"></div></div>
+      <div class="btn p">Run now</div>
+    </div>
+    <div class="split">
+      <div class="list">
+        <div class="nav" style="padding:0 4px"><a class="on">Attention<em>318</em></a><a>Fixed</a><a>Stopped</a></div>
+        <div class="li"><div class="poster thumb gx"></div><div><div class="t">The Quiet Harbor</div><span class="chip c-un">unmatched</span></div></div>
+        <div class="li on"><div class="poster thumb g2"></div><div><div class="t">Northern Lights</div><span class="chip c-ep">ep-no-summary</span></div></div>
+        <div class="li"><div class="poster thumb g3"></div><div><div class="t">Glass Orchard</div><span class="chip c-art">no-art</span><span class="chip c-sum">no-summary</span></div></div>
+        <div class="li"><div class="poster thumb g5"></div><div><div class="t">Static Bloom</div><span class="chip c-sum">no-summary</span></div></div>
+        <div class="li"><div class="poster thumb g4"></div><div><div class="t">Ember Season</div><span class="chip c-ep">ep-unmatched</span></div></div>
+        <div class="li"><div class="poster thumb g1"></div><div><div class="t">Paper Moons</div><span class="chip c-art">no-art</span></div></div>
+      </div>
+      <div class="detail">
+        <div class="hero"></div>
+        <div class="dhead"><div class="poster g2"><span>Northern Lights</span></div>
+          <div><h3>Northern Lights</h3><div class="muted">Series · 2016 · 3 seasons · 24 episodes · Home / TV</div><div style="margin-top:5px"><span class="chip c-ep">episode-no-summary · 4 episodes</span></div></div></div>
+        <div class="dbody">
+          <div class="muted" style="line-height:1.45">A lighthouse keeper's family is pulled into a decades-old disappearance on a remote northern island.</div>
+          <dl class="kv"><dt>Path</dt><dd class="mono">/data/tv/Northern Lights (2016) {tvdb-31207}</dd><dt>Match</dt><dd>tvdb-31207 · matched by autorefresh, 12 Nov</dd><dt>Refreshes</dt><dd>3 accepted · 3 attempts · next due in 2d 4h</dd></dl>
+          <div class="actions"><span class="btn p">Refresh now</span><span class="btn">Fix match</span><span class="btn d">Stop trying</span><span class="btn">Open in Plex ↗</span></div>
+          <div class="sec">Match candidates</div>
+          <div class="cands">
+            <div class="cand best"><div class="poster g2"></div><div><b>Northern Lights</b><div class="muted">2016 · 98%</div></div></div>
+            <div class="cand"><div class="poster g6"></div><div><b>Northern Lights</b><div class="muted">2009 · 71%</div></div></div>
+            <div class="cand"><div class="poster g3"></div><div><b>The North</b><div class="muted">2016 · 44%</div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</div></body></html>

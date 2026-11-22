@@ -25,6 +25,13 @@ type Item struct {
 	Refreshes                  int
 	LastAction                 Action // the last request that Plex accepted
 	LastMatch                  Action // the last match request that Plex accepted
+
+	Thumb, Art, Path string    // Plex image paths and the folder or file path; "": unknown
+	StoppedAt        time.Time // zero: not stopped
+	// LastOutcome and LastMatchOutcome are the outcomes of the last request
+	// and of the last match request. "": none, or from before they were recorded.
+	LastOutcome, LastMatchOutcome string
+	LastMatchEventID              int64 // the request event of the last accepted match; 0: none
 }
 
 // Action is a request that Plex accepted for an item. The empty Action
@@ -53,10 +60,16 @@ type Read struct {
 	EpisodeSkipped   Reasons  // show reads only: the episode reasons without a request, which the rows keep
 	EpisodeNoSummary []Item   // the series of the first episode request
 	EpisodeUnmatched []Item   // the series of the second episode request
+	// Folders maps a rating key to its series folder. ApplyRead saves each
+	// non-empty value as the path of the row, if the read keeps the row.
+	Folders map[string]string
+	// DryRun keeps ApplyRead from writing events. The rows and the read
+	// times change as in any other read.
+	DryRun bool
 }
 
 const itemColumns = `server, section, rating_key, type, title, year, added_at, reasons, last_refresh, last_attempt, refreshes,
-	last_action, last_match`
+	last_action, last_match, thumb, art, path, stopped_at, last_outcome, last_match_outcome, last_match_event_id`
 
 // nullTime stores a zero time as NULL and any other time as Unix seconds.
 func nullTime(t time.Time) any {
@@ -81,9 +94,11 @@ func scanItem(row scanner) (Item, error) {
 		addedAt                  int64
 		reasons                  int
 		lastRefresh, lastAttempt sql.NullInt64
+		stoppedAt, matchEventID  sql.NullInt64
 	)
 	err := row.Scan(&it.Server, &it.Section, &it.RatingKey, &it.Type, &it.Title, &it.Year,
-		&addedAt, &reasons, &lastRefresh, &lastAttempt, &it.Refreshes, &it.LastAction, &it.LastMatch)
+		&addedAt, &reasons, &lastRefresh, &lastAttempt, &it.Refreshes, &it.LastAction, &it.LastMatch,
+		&it.Thumb, &it.Art, &it.Path, &stoppedAt, &it.LastOutcome, &it.LastMatchOutcome, &matchEventID)
 	if err != nil {
 		return Item{}, err
 	}
@@ -91,6 +106,8 @@ func scanItem(row scanner) (Item, error) {
 	it.Reasons = Reasons(reasons)
 	it.LastRefresh = timeFrom(lastRefresh)
 	it.LastAttempt = timeFrom(lastAttempt)
+	it.StoppedAt = timeFrom(stoppedAt)
+	it.LastMatchEventID = matchEventID.Int64
 	return it, nil
 }
 
@@ -136,11 +153,15 @@ func (s *Store) Library(server, section string) (Library, error) {
 // lists and the old bits of r.EpisodeSkipped (or else the old episode bits).
 // It deletes the r.Gone rows, inserts rows for new items with final reasons
 // that are not 0, deletes the other rows whose final reasons are 0 and
-// returns them as fixed, and sets the read times. LastFullRead changes only
-// if r.Full. The caller must set AddedAt on every item, because a zero time
-// is stored as a negative number, and must not put a key in both r.Items and
-// r.Gone. A row of the same rating key in another section moves to r.Section
-// and keeps its history and its reasons that the read does not replace.
+// returns them as fixed, sorted by rating key, writes the thumb and art of
+// each listed row and its path unless the read has none, saves the r.Folders
+// paths, and sets the read times. Unless r.DryRun, it also writes a completed
+// event for each fixed row and a gone event for each r.Gone row that exists;
+// a dry run writes no event. LastFullRead changes only if r.Full. The caller
+// must set AddedAt on every item, because a zero time is stored as a negative
+// number, and must not put a key in both r.Items and r.Gone. A row of the
+// same rating key in another section moves to r.Section and keeps its history
+// and its reasons that the read does not replace.
 func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -167,8 +188,9 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	if err := insertNewRows(tx, r, old, incoming); err != nil {
 		return nil, err
 	}
-
-	sort.Slice(fixed, func(i, j int) bool { return fixed[i].RatingKey < fixed[j].RatingKey })
+	if err := writeFolders(tx, r); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit read: %w", err)
@@ -176,9 +198,15 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	return fixed, nil
 }
 
-// deleteGone deletes the rows of r.Gone.
+// deleteGone deletes the rows of r.Gone. Unless r.DryRun, it writes a gone
+// event for each row that exists.
 func deleteGone(tx *sql.Tx, r Read) error {
 	for _, key := range r.Gone {
+		if !r.DryRun {
+			if err := writeGone(tx, r, key); err != nil {
+				return err
+			}
+		}
 		if err := deleteItem(tx, r.Server, key); err != nil {
 			return err
 		}
@@ -204,18 +232,36 @@ func oldRows(tx *sql.Tx, r Read, incoming map[string]readKey) (map[string]Item, 
 	return old, nil
 }
 
+// completion is a row that a read completed, with what the read says about it.
+type completion struct {
+	prev Item
+	in   readKey
+}
+
 // applyOldRows updates or deletes each stored row in old after the read r,
-// returning the rows that became complete.
+// returning the rows that became complete. Unless r.DryRun, it writes a
+// completed event for each of them, ordered by rating key.
 func applyOldRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]readKey) ([]Item, error) {
-	var fixed []Item
+	var done []completion
 	for key, prev := range old {
-		done, err := writeExisting(tx, r, prev, incoming[key])
+		fixed, err := writeExisting(tx, r, prev, incoming[key])
 		if err != nil {
 			return nil, err
 		}
-		if done {
-			fixed = append(fixed, prev)
+		if fixed {
+			done = append(done, completion{prev, incoming[key]})
 		}
+	}
+	sort.Slice(done, func(i, j int) bool { return done[i].prev.RatingKey < done[j].prev.RatingKey })
+
+	fixed := make([]Item, 0, len(done))
+	for _, c := range done {
+		if !r.DryRun {
+			if err := writeCompleted(tx, r, c.prev, c.in); err != nil {
+				return nil, err
+			}
+		}
+		fixed = append(fixed, c.prev)
 	}
 	return fixed, nil
 }
@@ -232,9 +278,11 @@ func writeExisting(tx *sql.Tx, r Read, prev Item, in readKey) (fixed bool, err e
 		}
 		return true, nil
 	case in.present:
-		_, err = tx.Exec(`UPDATE item SET section = ?, type = ?, title = ?, year = ?, added_at = ?, reasons = ?
+		_, err = tx.Exec(`UPDATE item SET section = ?, type = ?, title = ?, year = ?, added_at = ?, reasons = ?,
+			thumb = ?, art = ?, path = CASE WHEN ? = '' THEN path ELSE ? END
 			WHERE server = ? AND rating_key = ?`,
-			r.Section, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final), r.Server, prev.RatingKey)
+			r.Section, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final),
+			in.meta.Thumb, in.meta.Art, in.meta.Path, in.meta.Path, r.Server, prev.RatingKey)
 	case final != prev.Reasons:
 		_, err = tx.Exec(`UPDATE item SET reasons = ? WHERE server = ? AND rating_key = ?`, int(final), r.Server, prev.RatingKey)
 	}
@@ -255,11 +303,26 @@ func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]
 		if final == 0 {
 			continue
 		}
-		_, err := tx.Exec(`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			r.Server, r.Section, key, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final))
+		_, err := tx.Exec(`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons, thumb, art, path)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			r.Server, r.Section, key, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final),
+			in.meta.Thumb, in.meta.Art, in.meta.Path)
 		if err != nil {
 			return fmt.Errorf("write item %s: %w", key, err)
+		}
+	}
+	return nil
+}
+
+// writeFolders saves the staged folder of each row that the read kept. A key
+// without a row, such as a deleted one, matches nothing.
+func writeFolders(tx *sql.Tx, r Read) error {
+	for key, folder := range r.Folders {
+		if folder == "" {
+			continue
+		}
+		if _, err := tx.Exec(`UPDATE item SET path = ? WHERE server = ? AND rating_key = ?`, folder, r.Server, key); err != nil {
+			return fmt.Errorf("write item folder %s: %w", key, err)
 		}
 	}
 	return nil
@@ -314,7 +377,7 @@ func (k readKey) reasons(r Read, prev Reasons) Reasons {
 	return final | prev&^ItemReasons
 }
 
-func deleteItem(tx *sql.Tx, server, key string) error {
+func deleteItem(tx execer, server, key string) error {
 	if _, err := tx.Exec(`DELETE FROM item WHERE server = ? AND rating_key = ?`, server, key); err != nil {
 		return fmt.Errorf("delete item %s: %w", key, err)
 	}
@@ -407,7 +470,7 @@ type DueQuery struct {
 // MaxRefreshInterval.
 //
 // Order: the fewest attempts first, then no attempt, then the oldest
-// LastAttempt, then the oldest AddedAt. Each RecordAttempt counts as an
+// LastAttempt, then the oldest AddedAt. Each RecordRequest counts as an
 // attempt, also a failed one, so an item that keeps failing moves back
 // instead of taking the first place in every run.
 func (s *Store) Due(q DueQuery) (items []Item, total int, err error) {
@@ -418,7 +481,7 @@ func (s *Store) Due(q DueQuery) (items []Item, total int, err error) {
 
 	// The query rounds the cutoff down to whole seconds, like the stored times.
 	where := `server = ? AND section IN (` + placeholders(len(q.Sections)) + `)
-		AND reasons & ~? != 0 AND added_at <= ?
+		AND stopped_at IS NULL AND reasons & ~? != 0 AND added_at <= ?
 		AND (last_attempt IS NULL OR last_attempt <= (? - MIN(?, ? << MIN(MAX(refreshes - 1, 0), ?))) / 1000)`
 	args := append([]any{q.Server}, stringArgs(q.Sections)...)
 	args = append(args, int(q.Ignored), q.Now.Add(-q.MinimumAge).Unix(), q.Now.UnixMilli(), maxWait, interval, doublings)
@@ -461,44 +524,38 @@ func (s *Store) CountIncomplete(server string, sections []string, ignored Reason
 
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM item WHERE server = ? AND section IN (`+placeholders(len(sections))+`)
-		AND reasons & ~? != 0`, args...).Scan(&n)
+		AND stopped_at IS NULL AND reasons & ~? != 0`, args...).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count items: %w", err)
 	}
 	return n, nil
 }
 
-// RecordAttempt sets LastAttempt and counts the attempt. accepted is the
-// request that Plex accepted, or "" for a failed attempt. An accepted request
-// also sets LastRefresh and LastAction and adds 1 to Refreshes. An accepted
-// match request also sets LastMatch.
-func (s *Store) RecordAttempt(server, ratingKey string, at time.Time, accepted Action) error {
+// execer runs a statement on the database or in a transaction.
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// updateAttempt sets LastAttempt and counts one attempt of a row. accepted
+// is the request that Plex accepted, or "" for a failed attempt. An accepted
+// request also sets LastRefresh and LastAction and adds 1 to Refreshes. An
+// accepted match request also sets LastMatch. A missing row is not an error.
+func updateAttempt(db execer, server, ratingKey string, at time.Time, accepted Action) error {
 	var err error
 	switch {
 	case accepted.isMatch():
-		_, err = s.db.Exec(`UPDATE item SET last_attempt = ?, last_refresh = ?, refreshes = refreshes + 1,
+		_, err = db.Exec(`UPDATE item SET last_attempt = ?, last_refresh = ?, refreshes = refreshes + 1,
 			attempts = attempts + 1, last_action = ?, last_match = ? WHERE server = ? AND rating_key = ?`,
 			at.Unix(), at.Unix(), accepted, accepted, server, ratingKey)
 	case accepted != "":
-		_, err = s.db.Exec(`UPDATE item SET last_attempt = ?, last_refresh = ?, refreshes = refreshes + 1,
+		_, err = db.Exec(`UPDATE item SET last_attempt = ?, last_refresh = ?, refreshes = refreshes + 1,
 			attempts = attempts + 1, last_action = ? WHERE server = ? AND rating_key = ?`,
 			at.Unix(), at.Unix(), accepted, server, ratingKey)
 	default:
-		_, err = s.db.Exec(`UPDATE item SET last_attempt = ?, attempts = attempts + 1 WHERE server = ? AND rating_key = ?`,
+		_, err = db.Exec(`UPDATE item SET last_attempt = ?, attempts = attempts + 1 WHERE server = ? AND rating_key = ?`,
 			at.Unix(), server, ratingKey)
 	}
-	if err != nil {
-		return fmt.Errorf("record attempt: %w", err)
-	}
-	return nil
-}
-
-// Delete removes a row. A missing row is not an error.
-func (s *Store) Delete(server, ratingKey string) error {
-	if _, err := s.db.Exec(`DELETE FROM item WHERE server = ? AND rating_key = ?`, server, ratingKey); err != nil {
-		return fmt.Errorf("delete item: %w", err)
-	}
-	return nil
+	return err
 }
 
 func placeholders(n int) string {
@@ -520,13 +577,16 @@ type Pruned struct {
 }
 
 // PruneServers removes the libraries of each server that is not in servers.
-// The removal of a library also removes its item rows.
+// The removal of a library also removes its item rows. It also removes the
+// run rows of those servers, because a run has no library.
 func (s *Store) PruneServers(servers []string) ([]Pruned, error) {
 	keep := make(map[string]bool, len(servers))
 	for _, name := range servers {
 		keep[name] = true
 	}
-	return s.prune("", func(server, _ string) bool { return !keep[server] })
+	return s.prune("", func(server, _ string) bool { return !keep[server] }, func(tx *sql.Tx) error {
+		return deleteRunsExcept(tx, servers)
+	})
 }
 
 // PruneSections removes the library of each section of server that is not in
@@ -536,14 +596,15 @@ func (s *Store) PruneSections(server string, sections []string) ([]Pruned, error
 	for _, section := range sections {
 		keep[section] = true
 	}
-	return s.prune(server, func(_, section string) bool { return !keep[section] })
+	return s.prune(server, func(_, section string) bool { return !keep[section] }, nil)
 }
 
 // prune removes each library for which remove is true, in one transaction.
-// The foreign key of item removes the item rows of the library. It reads only the libraries of server,
-// or of all servers if server is "". It returns the removed libraries,
-// ordered by server and section.
-func (s *Store) prune(server string, remove func(server, section string) bool) ([]Pruned, error) {
+// The foreign key of item removes the item rows of the library. It reads only
+// the libraries of server, or of all servers if server is "". It returns the
+// removed libraries, ordered by server and section. If also is not nil, it
+// runs in the same transaction after the libraries are removed.
+func (s *Store) prune(server string, remove func(server, section string) bool, also func(tx *sql.Tx) error) ([]Pruned, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("begin prune: %w", err)
@@ -577,6 +638,11 @@ func (s *Store) prune(server string, remove func(server, section string) bool) (
 	for _, p := range pruned {
 		if _, err := tx.Exec(`DELETE FROM library WHERE server = ? AND section = ?`, p.Server, p.Section); err != nil {
 			return nil, fmt.Errorf("prune library: %w", err)
+		}
+	}
+	if also != nil {
+		if err := also(tx); err != nil {
+			return nil, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
