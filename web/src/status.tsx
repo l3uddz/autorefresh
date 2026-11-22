@@ -288,8 +288,6 @@ function RecentRuns({ isMulti, srv }: { isMulti: boolean; srv?: number }) {
   );
 }
 
-/** One run as a list row. A detailed row, as on the Runs page of a phone,
- * shows every count and wraps them, with the error below. */
 /** When the next scheduled run starts, from the live status. It shows
  * nothing until the status is known. */
 export function NextRun() {
@@ -305,6 +303,8 @@ export function NextRun() {
   );
 }
 
+/** One run as a list row. A detailed row, as on the Runs page of a phone,
+ * shows every count and wraps them, with the error below. */
 export function RunRow({ run, isMulti, isDetailed = false }: { run: RunRecord; isMulti: boolean; isDetailed?: boolean }) {
   // The Runs page names how the run read; the Status page keeps it short.
   const source = run.kind === 'bulk-refresh' ? 'Bulk refresh' : run.source === 'manual' ? 'Manual run' : 'Scheduled run';

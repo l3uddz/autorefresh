@@ -3,8 +3,6 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ApiError, post } from './api';
 import { cancelQueueOfJob } from './queue';
 
-/** Starts a manual run of the server srv, or of every server for null. A
- * busy run answers 409, which the toast explains. */
 /** A manual run of the server srv, or of every server for null. With full,
  * the run reads every library fully before it refreshes the due items. */
 export interface RunRequest {
@@ -12,6 +10,8 @@ export interface RunRequest {
   full: boolean;
 }
 
+/** Starts a manual run of the server srv, or of every server for null. A
+ * busy run answers 409, which the toast explains. */
 export function useRunNow() {
   const showToast = useToast();
   const client = useQueryClient();
