@@ -2,6 +2,7 @@ package refresher
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -148,4 +149,87 @@ func TestDryRunWritesNoRunRowAndKeepsHistory(t *testing.T) {
 	if lines := f.logLines("debug", "Pruned history"); len(lines) != 0 {
 		t.Errorf("got pruned history lines %v, want none", lines)
 	}
+}
+
+// runStore fails StartRun or FinishRun with errRun, and counts the calls.
+// afterStart, if set, runs after a successful StartRun.
+type runStore struct {
+	*store.Store
+	failStart, failFinish bool
+	finishes              int
+	afterStart            func()
+}
+
+var errRun = errors.New("run row failed")
+
+func (s *runStore) StartRun(r store.RunStart) (int64, error) {
+	if s.failStart {
+		return 0, errRun
+	}
+	id, err := s.Store.StartRun(r)
+	if s.afterStart != nil {
+		s.afterStart()
+	}
+	return id, err
+}
+
+func (s *runStore) FinishRun(id int64, r store.RunResult) error {
+	s.finishes++
+	if s.failFinish {
+		return errRun
+	}
+	return s.Store.FinishRun(id, r)
+}
+
+func TestRunStartRunErrorNamesServer(t *testing.T) {
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: newFakePlex(moviesLib)})
+	st := &runStore{Store: f.store, failStart: true}
+	f.r.store = st
+
+	err := f.r.Run(context.Background())
+
+	if !errors.Is(err, errRun) || !strings.Contains(err.Error(), "server "+testServer+": ") {
+		t.Errorf("error = %v, want server %s: %v", err, testServer, errRun)
+	}
+	if st.finishes != 0 {
+		t.Errorf("FinishRun calls = %d, want 0", st.finishes)
+	}
+}
+
+func TestRunFinishRunError(t *testing.T) {
+	t.Run("returned when the run has no error", func(t *testing.T) {
+		f := newRefreshFixture(t, Server{Name: testServer, Plex: newFakePlex(moviesLib)})
+		f.r.store = &runStore{Store: f.store, failFinish: true}
+
+		err := f.r.Run(context.Background())
+
+		if !errors.Is(err, errRun) || !strings.Contains(err.Error(), "server "+testServer+": ") {
+			t.Errorf("error = %v, want server %s: %v", err, testServer, errRun)
+		}
+	})
+	t.Run("loses to the error of the run", func(t *testing.T) {
+		fp := newFakePlex(moviesLib)
+		fp.librariesErr = errServer
+		f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+		f.r.store = &runStore{Store: f.store, failFinish: true}
+
+		err := f.r.Run(context.Background())
+
+		if err == nil || errors.Is(err, errRun) {
+			t.Errorf("error = %v, want the error of the run, not %v", err, errRun)
+		}
+	})
+	t.Run("canceled run returns nil", func(t *testing.T) {
+		f := newRefreshFixture(t, Server{Name: testServer, Plex: newFakePlex(moviesLib)})
+		st := &runStore{Store: f.store, failFinish: true}
+		f.r.store = st
+		ctx, cancel := context.WithCancel(context.Background())
+		st.afterStart = cancel
+
+		err := f.r.Run(ctx)
+
+		if err != nil || st.finishes != 1 {
+			t.Errorf("error = %v, FinishRun calls = %d, want nil and 1", err, st.finishes)
+		}
+	})
 }

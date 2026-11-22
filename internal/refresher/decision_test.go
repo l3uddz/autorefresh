@@ -33,6 +33,18 @@ func (f *fixture) decision(key string) store.Event {
 	return found[0]
 }
 
+// matchRequest returns the newest request event of an item.
+func (f *fixture) matchRequest(key string) store.Event {
+	f.t.Helper()
+	for _, e := range f.timeline(key) {
+		if e.Kind == store.EventRequest {
+			return e
+		}
+	}
+	f.t.Fatalf("item %s has no request event", key)
+	return store.Event{}
+}
+
 // describeSearches renders each search as "<source> <query>[ from
 // <id>][ failed]:" and then " <guid>=<verdict>" for each candidate.
 func describeSearches(searches []store.MatchSearch) []string {
@@ -214,6 +226,7 @@ func TestDecisionConfirmedByPathYear(t *testing.T) {
 	e := f.decision("101")
 	wantDecision(t, e, store.DecisionMatched, "", "path imdb-tt1: plex://movie/a=picked")
 	wantYears(t, e, 2018, 0, 0)
+	wantYears(t, f.matchRequest("101"), 2018, 0, 0)
 }
 
 func TestDecisionConfirmedByTMDBYear(t *testing.T) {
@@ -231,6 +244,7 @@ func TestDecisionConfirmedByTMDBYear(t *testing.T) {
 		"path tvdb-5: plex://show/s=picked",
 		"tie tmdb-77: plex://show/s=confirms")
 	wantYears(t, e, 0, 2022, 0)
+	wantYears(t, f.matchRequest("201"), 0, 2022, 0)
 	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s")
 }
 
@@ -258,6 +272,7 @@ func TestDecisionConfirmedByEpisodes(t *testing.T) {
 		"path tvdb-5: plex://show/right=picked",
 		"tie tmdb-77: plex://show/right=confirms")
 	wantYears(t, e, 0, 2011, 3)
+	wantYears(t, f.matchRequest("201"), 0, 2011, 3)
 	wantCalls(t, sends(fp.calls), "Match 201 plex://show/right")
 }
 
