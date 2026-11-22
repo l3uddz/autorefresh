@@ -120,9 +120,12 @@ func TestDeletingEventClearsFixedMatchReference(t *testing.T)
 - Modify: `internal/plex/action.go` (`Candidate`, `SearchMatches` decoding)
 - Modify: `internal/plex/testdata/matches_one.json` (add `"score": 98`)
 - Modify: `internal/plex/action_test.go` (`TestSearchMatchesDecodesCandidates` expects the new fields)
+- Modify: `internal/plex/library.go` (`ItemPaths`), `internal/plex/library_test.go` (`TestItemPathsShowWithoutLocation`)
+- Create: `internal/plex/testdata/item_show_no_location.json` (a show with a `Media` part and no `Location`)
 
 **Interfaces:**
 - Produces: `func ItemImagePath(ratingKey, p string) string` — returns `p` only if `ratingKey` matches `idPattern` (`client.go`) and `p` is exactly `/library/metadata/<ratingKey>/thumb/<digits>` or `/library/metadata/<ratingKey>/art/<digits>` (no query, fragment, or escape); else `""`.
+- Changes: `(c *Client) ItemPaths` falls back to `m.files()` only when the item is not a show (`m.Type != "show"`); a show without `Location` returns no paths. So every path of a show is a `Location`, which Task 10 saves as the series folder. A show's files are on its episodes, so match evaluation loses nothing.
 - Produces: `func SafeRemoteImage(raw string) string` — returns `raw` only if `raw` contains no `#` (a bare trailing `#` leaves `URL.Fragment` empty, as `config.go` already handles), `url.Parse` succeeds, the scheme is `https`, `Hostname()` is not empty, there is no user info, `url.ParseQuery(RawQuery)` succeeds, and no query key contains `token` (case-insensitive, so `X-Plex-Token` too); else `""`.
 - Produces: `Candidate{GUID, Name string; Year int; Type, Summary, Thumb string; Score int}`. `SearchMatches` sets `Thumb` through `SafeRemoteImage`. `Match` keeps sending only `guid`, `name`, `year`.
 
@@ -140,7 +143,8 @@ func TestSafeRemoteImage(t *testing.T)
 // -> "" for: "http://h/x.jpg"; "https://user:pw@h/x.jpg"; "https://:443/x.jpg";
 //    "https://h/x.jpg?X-Plex-Token=abc"; "https://h/x.jpg?apitoken=abc"; "https://h/x.jpg?a=%zz";
 //    "https://h/x.jpg#f"; "https://h/x.jpg#"; "/relative.jpg"; ""
-// TestItemPathsShowWithoutLocation: a show response with no Location and no Media -> no paths, no error
+// TestItemPathsShowWithoutLocation: a show response with Media parts and no Location -> no paths, no error
+// (ItemPaths falls back to the media files only for a non-show item; see the bullet below)
 ```
 
 Update `TestSearchMatchesDecodesCandidates` to expect `Candidate{GUID: "plex://movie/000000000000000000000001", Name: "Fixture Movie One", Year: 2020, Type: "movie", Summary: "A neutral summary.", Thumb: "https://metadata.example.invalid/thumb.jpg", Score: 98}`.
@@ -485,7 +489,7 @@ func TestDryRunPrunesNothing(t *testing.T)
 - `refreshItem` → on success `RecordRequest{Action: action, Accepted: true, Source: store.SourceAuto, Match: target(fm)}`. `target(fm *fixMatch) *store.MatchTarget` copies `cand.GUID`, `cand.Name`, `cand.Year`, `links`, `pathYear`, `tmdbYear`, `episodeCount`; nil when `fm` is nil.
 - `itemFailed(ctx, run, it, action, fm, err)`: a 404 calls `RecordGone` (not in dry run); other failures call `countFailure(ctx, run, it, action, fm, err)`, which records `RecordRequest{Action: action, Accepted: false, Source: store.SourceAuto, Error: err.Error(), Match: target(fm)}`. Every refresher call of `RecordRequest` sets `Source: store.SourceAuto`; `RecordRequest` returns an error for an empty `Source` (Task 5), so a missed one fails a test instead of storing an empty source. The attempt counting, stop rules, and log lines stay as today.
 - `storeItem` sets `Thumb: plex.ItemImagePath(it.RatingKey, it.Thumb)`, `Art: plex.ItemImagePath(it.RatingKey, it.Art)`, and for movies `Path: folderOf(it.Files)`. `folderOf(files []string) string` returns the first file up to its last `/` or `\`, or `""`.
-- `(r *Refresher) itemPaths(ctx, run, it)`: after a successful `ItemPaths` of a series (`it.Type == plex.ShowLibrary`), when `len(paths) > 0 && paths[0] != ""` and not a dry run, calls `SetPath` with `paths[0]`. For a show this is always a `Location`: `ItemPaths` falls back to `Media[].Part[].file` only without a `Location`, and a show item carries no `Media` (its files are on its episodes). Task 3 pins that with a Plex test; a `SetPath` error returns wrapped with `errCache` so `itemFailed` treats it as a store error.
+- `(r *Refresher) itemPaths(ctx, run, it)`: after a successful `ItemPaths` of a series (`it.Type == plex.ShowLibrary`), when `len(paths) > 0 && paths[0] != ""` and not a dry run, calls `SetPath` with `paths[0]`. For a show this is always a `Location`, because Task 3 limits the media-file fallback of `ItemPaths` to non-show items; a `SetPath` error returns wrapped with `errCache` so `itemFailed` treats it as a store error.
 - `readLibraries` calls `SaveLibraries` with the selected libraries after `selectLibraries` (dry runs too: it is cache metadata, not history).
 
 - [ ] **Step 1: Write the failing tests**
@@ -596,7 +600,7 @@ func TestTMDBFallbackKeepsPositions(t *testing.T)         // verdicts land on th
   - `FinishRun` on every later return, with `ReadItems = fullReadItems + incrementalReadItems`, `Refreshed = refreshes`, `Matched = matches`, `Failed = failures`, `Completed = len(completed)`, `Fixed = fixed`, `Incomplete` (from the summary; 0 without one), `Due = due`, `Selected = selected`.
   - Status: `canceled` under the existing condition (`ctx.Err() != nil && (err == nil || errors.Is(err, ctxErr))`); otherwise `failed` with `Error = err.Error()` when `err != nil`; otherwise `finished`.
   - A `FinishRun` error is returned only when there is no earlier error; the canceled path still returns nil as today.
-- `cmd/autorefresh`: `func interruptRuns(st *store.Store, opts options, now time.Time) error` returns nil at once when `opts.Once || opts.DryRun`; otherwise it calls `InterruptRuns` and logs `Marked interrupted runs` at info level with field `runs` when above 0. `run` calls it right after the store opens with one unnested `if`; on error it closes the store and returns the error.
+- `cmd/autorefresh`: `func interruptRuns(st *store.Store, opts options, now time.Time) error` returns nil at once when `opts.Once || opts.DryRun`; otherwise it calls `InterruptRuns` and logs `Marked interrupted runs` at info level with field `runs` when above 0. `run` calls it right after the store opens with one unnested `if`; on error it closes the store and returns `fatal(err, "Failed marking interrupted runs")`, because `main` exits without logging and `run` logs each error it returns.
 - Keep `Refresher.Run` and `runServer` under the complexity limit with named helpers: `pruneBeforeRun(now)` (server prune and retention) and `finishRun(ctx, run, id, err) error` (status, counters, and the error precedence above).
 
 - [ ] **Step 1: Write the failing tests**
