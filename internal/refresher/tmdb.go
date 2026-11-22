@@ -22,7 +22,8 @@ type TMDB interface {
 var (
 	// errTMDB marks a failed TMDB request.
 	errTMDB = errors.New("tmdb lookup")
-	// errCache marks a failed read or write of the TMDB ID cache, a store error.
+	// errCache marks a store error of a fix match: a failed read or write of
+	// the TMDB ID cache or of the item path.
 	errCache = errors.New("tmdb cache")
 )
 

@@ -525,8 +525,6 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 			return err
 		},
 		"CountIncomplete": func() error { _, err := s.CountIncomplete(srv, []string{sec}, 0); return err },
-		"RecordAttempt":   func() error { return s.RecordAttempt(srv, "101", base, ActionRefresh) },
-		"Delete":          func() error { return s.Delete(srv, "101") },
 		"RecordRequest": func() error {
 			return s.RecordRequest(Request{Server: srv, RatingKey: "101", At: base, Source: SourceAuto, Action: ActionRefresh})
 		},

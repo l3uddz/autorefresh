@@ -3,6 +3,7 @@ package refresher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strconv"
 	"time"
@@ -69,7 +70,7 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	lib := run.library(it.Section)
 	fm, err := r.findMatch(ctx, run, lib, it)
 	if err != nil {
-		return r.itemFailed(ctx, run, it, "", err)
+		return r.itemFailed(ctx, run, it, "", nil, err)
 	}
 
 	action := store.ActionRefresh
@@ -93,10 +94,12 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 		err = run.server.Plex.Refresh(ctx, it.RatingKey)
 	}
 	if err != nil {
-		return r.itemFailed(ctx, run, it, action, err)
+		return r.itemFailed(ctx, run, it, action, fm, err)
 	}
 
-	if err := r.store.RecordAttempt(run.server.Name, it.RatingKey, r.now(), action); err != nil {
+	req := r.request(run, it, action, fm)
+	req.Accepted = true
+	if err := r.store.RecordRequest(req); err != nil {
 		return err
 	}
 	requestEvent(log.Info(), run.server.Name, lib, it, action, fm).Msg("Sent request")
@@ -105,9 +108,11 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 }
 
 // itemFailed handles the failure of a due item: a failed refresh or match
-// request, with its action, or a failed match search, with no action.
+// request, with its action and its fix match fm, or a failed match search,
+// with no action and no fm.
 //
-//   - A 404 answer removes the row. A dry run keeps it and logs a warning.
+//   - A 404 answer removes the row and records a gone event. A dry run keeps
+//     the row and logs a warning.
 //   - Each other failure counts and records an attempt, also when it stops
 //     the server. Plex can apply a request before its response fails, and
 //     the attempt moves the item to the end of the queue, so it cannot stop
@@ -115,7 +120,7 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 //   - A match search that the end of the run interrupted changes nothing.
 //
 // It returns the error of stopError or a store error.
-func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Item, action store.Action, err error) error {
+func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Item, action store.Action, fm *fixMatch, err error) error {
 	sent := action != ""
 	if errors.Is(err, errCache) {
 		return err
@@ -127,9 +132,9 @@ func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Ite
 	notFound := ctx.Err() == nil && errors.Is(err, plex.ErrNotFound)
 	switch {
 	case notFound && !r.opts.DryRun:
-		return r.store.Delete(run.server.Name, it.RatingKey)
+		return r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto)
 	case !notFound:
-		if err := r.countFailure(ctx, run, it); err != nil {
+		if err := r.countFailure(ctx, run, it, action, fm, err); err != nil {
 			return err
 		}
 	}
@@ -143,17 +148,40 @@ func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Ite
 	return stopError(ctx, err)
 }
 
-// countFailure counts a failure of the item and records its attempt. A
+// countFailure counts a failure of the item and records its attempt with
+// the error failed and, if a request was sent, its action and fix match. A
 // dry run records nothing. It returns a store error, or the error of ctx if
 // the run ended.
-func (r *Refresher) countFailure(ctx context.Context, run *serverRun, it store.Item) error {
+func (r *Refresher) countFailure(ctx context.Context, run *serverRun, it store.Item, action store.Action, fm *fixMatch, failed error) error {
 	run.failures++
 	if !r.opts.DryRun {
-		if err := r.store.RecordAttempt(run.server.Name, it.RatingKey, r.now(), ""); err != nil {
+		req := r.request(run, it, action, fm)
+		req.Error = failed.Error()
+		if err := r.store.RecordRequest(req); err != nil {
 			return err
 		}
 	}
 	return ctx.Err()
+}
+
+// request returns the request of the item that the schedule sends now. It
+// is not accepted and has no error.
+func (r *Refresher) request(run *serverRun, it store.Item, action store.Action, fm *fixMatch) store.Request {
+	return store.Request{
+		Server: run.server.Name, RatingKey: it.RatingKey, At: r.now(), Source: store.SourceAuto,
+		Action: action, Match: target(fm),
+	}
+}
+
+// target returns the match target of fm, or nil for a plain refresh.
+func target(fm *fixMatch) *store.MatchTarget {
+	if fm == nil {
+		return nil
+	}
+	return &store.MatchTarget{
+		GUID: fm.cand.GUID, Title: fm.cand.Name, Year: fm.cand.Year, Links: fm.links,
+		PathYear: fm.pathYear, TMDBYear: fm.tmdbYear, EpisodeCount: fm.episodeCount,
+	}
 }
 
 // warnAtLongestWait logs a warning if the refresh that Plex just accepted
@@ -188,7 +216,7 @@ func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Libr
 	if it.Reasons&store.Unmatched == 0 || r.opts.IgnoreReasons&store.Unmatched != 0 || it.Refreshes < 1 {
 		return nil, nil
 	}
-	paths, err := itemPaths(ctx, run, it)
+	paths, err := r.itemPaths(ctx, run, it)
 	if err != nil {
 		return nil, err
 	}
@@ -245,15 +273,34 @@ func (r *Refresher) resolveMatch(ctx context.Context, run *serverRun, mc matchCo
 }
 
 // itemPaths returns the paths of the item: the movie files from the reads
-// of the run, or else the paths that Plex gives for the item.
-func itemPaths(ctx context.Context, run *serverRun, it store.Item) ([]string, error) {
+// of the run, or else the paths that Plex gives for the item. It saves the
+// folder of a series as the path of its row, also in a dry run, because the
+// path is cache metadata. A failed save returns an errCache error.
+func (r *Refresher) itemPaths(ctx context.Context, run *serverRun, it store.Item) ([]string, error) {
 	if it.Type == plex.MovieLibrary {
 		if paths := run.files[it.RatingKey]; len(paths) > 0 {
 			return paths, nil
 		}
 	}
 	paths, err := run.server.Plex.ItemPaths(ctx, it.RatingKey)
-	return paths.All(), err
+	if err != nil {
+		return nil, err
+	}
+	if folder := seriesFolder(it.Type, paths); folder != "" {
+		if err := r.store.SetPath(run.server.Name, it.RatingKey, folder); err != nil {
+			return nil, fmt.Errorf("%w: %w", errCache, err)
+		}
+	}
+	return paths.All(), nil
+}
+
+// seriesFolder returns the first location of a series, or "" for another
+// item type or a series without a location. A file is never a folder.
+func seriesFolder(itemType string, paths plex.Paths) string {
+	if itemType != plex.ShowLibrary || len(paths.Locations) == 0 {
+		return ""
+	}
+	return paths.Locations[0]
 }
 
 // searchIDs searches Plex once for each path ID of the item. A failed

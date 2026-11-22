@@ -469,7 +469,7 @@ type DueQuery struct {
 // MaxRefreshInterval.
 //
 // Order: the fewest attempts first, then no attempt, then the oldest
-// LastAttempt, then the oldest AddedAt. Each RecordAttempt counts as an
+// LastAttempt, then the oldest AddedAt. Each RecordRequest counts as an
 // attempt, also a failed one, so an item that keeps failing moves back
 // instead of taking the first place in every run.
 func (s *Store) Due(q DueQuery) (items []Item, total int, err error) {
@@ -535,18 +535,10 @@ type execer interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }
 
-// RecordAttempt sets LastAttempt and counts the attempt. accepted is the
-// request that Plex accepted, or "" for a failed attempt. An accepted request
-// also sets LastRefresh and LastAction and adds 1 to Refreshes. An accepted
-// match request also sets LastMatch.
-func (s *Store) RecordAttempt(server, ratingKey string, at time.Time, accepted Action) error {
-	if err := updateAttempt(s.db, server, ratingKey, at, accepted); err != nil {
-		return fmt.Errorf("record attempt: %w", err)
-	}
-	return nil
-}
-
-// updateAttempt counts one attempt of a row. A missing row is not an error.
+// updateAttempt sets LastAttempt and counts one attempt of a row. accepted
+// is the request that Plex accepted, or "" for a failed attempt. An accepted
+// request also sets LastRefresh and LastAction and adds 1 to Refreshes. An
+// accepted match request also sets LastMatch. A missing row is not an error.
 func updateAttempt(db execer, server, ratingKey string, at time.Time, accepted Action) error {
 	var err error
 	switch {
@@ -563,11 +555,6 @@ func updateAttempt(db execer, server, ratingKey string, at time.Time, accepted A
 			at.Unix(), server, ratingKey)
 	}
 	return err
-}
-
-// Delete removes a row. A missing row is not an error.
-func (s *Store) Delete(server, ratingKey string) error {
-	return deleteItem(s.db, server, ratingKey)
 }
 
 func placeholders(n int) string {

@@ -75,9 +75,17 @@ func due(s *Store, q DueQuery) ([]Item, error) {
 func refresh(t *testing.T, s *Store, key string, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
-		if err := s.RecordAttempt(srv, key, base.Add(time.Duration(i+1)*time.Minute), ActionRefresh); err != nil {
-			t.Fatal(err)
-		}
+		accept(t, s, key, base.Add(time.Duration(i+1)*time.Minute), ActionRefresh)
+	}
+}
+
+// failAttempt records a refresh request of the row at at that Plex did not
+// accept.
+func failAttempt(t *testing.T, s *Store, key string, at time.Time) {
+	t.Helper()
+	err := s.RecordRequest(Request{Server: srv, RatingKey: key, At: at, Source: SourceAuto, Action: ActionRefresh, Error: "boom"})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -270,9 +278,7 @@ func TestDueOrder(t *testing.T) {
 	}})
 	at := base.Add(10 * time.Hour)
 	for k, d := range map[string]time.Duration{"old-attempt": 0, "new-attempt": time.Hour, "same-z": 2 * time.Hour, "same-a": 2 * time.Hour} {
-		if err := s.RecordAttempt(srv, k, at.Add(d), ""); err != nil {
-			t.Fatal(err)
-		}
+		failAttempt(t, s, k, at.Add(d))
 	}
 	now := base.Add(100 * time.Hour)
 	got, err := due(s, DueQuery{Server: srv, Sections: []string{sec}, Now: now, RefreshInterval: time.Hour, MaxRefreshInterval: time.Hour})
@@ -307,12 +313,8 @@ func TestDuePutsFewerAttemptsFirst(t *testing.T) {
 	apply(t, s, Read{Items: []Item{item("never", NoArt), item("failed", NoArt), item("once", NoArt), item("twice", NoArt)}})
 	// The last attempts are in the opposite order of the refreshes.
 	refresh(t, s, "twice", 2)
-	if err := s.RecordAttempt(srv, "once", base.Add(5*time.Hour), ActionRefresh); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.RecordAttempt(srv, "failed", base.Add(6*time.Hour), ""); err != nil {
-		t.Fatal(err)
-	}
+	accept(t, s, "once", base.Add(5*time.Hour), ActionRefresh)
+	failAttempt(t, s, "failed", base.Add(6*time.Hour))
 	got, err := due(s, DueQuery{Server: srv, Sections: []string{sec}, Now: base.Add(100 * time.Hour), RefreshInterval: time.Hour, MaxRefreshInterval: time.Hour})
 	if err != nil {
 		t.Fatal(err)
@@ -334,14 +336,10 @@ func TestDueBacksOffAfterRefreshes(t *testing.T) {
 	at := base.Add(time.Hour)
 	for k, n := range refreshes {
 		if n == 0 {
-			if err := s.RecordAttempt(srv, k, at, ""); err != nil {
-				t.Fatal(err)
-			}
+			failAttempt(t, s, k, at)
 		}
 		for range n {
-			if err := s.RecordAttempt(srv, k, at, ActionRefresh); err != nil {
-				t.Fatal(err)
-			}
+			accept(t, s, k, at, ActionRefresh)
 		}
 	}
 
@@ -383,9 +381,7 @@ func TestDueKeepsFractionalSecondWaits(t *testing.T) {
 			apply(t, s, Read{Items: []Item{item("a", NoArt)}})
 			at := base.Add(time.Hour)
 			for range tt.refreshes {
-				if err := s.RecordAttempt(srv, "a", at, ActionRefresh); err != nil {
-					t.Fatal(err)
-				}
+				accept(t, s, "a", at, ActionRefresh)
 			}
 			for _, c := range []struct {
 				after time.Duration
@@ -535,12 +531,8 @@ func TestDueSkipsRecentAttemptsAndOtherScopes(t *testing.T) {
 	apply(t, s, Read{Items: []Item{item("recent", NoArt), item("old", NoArt), item("second", NoArt)}})
 	apply(t, s, Read{Section: "2", Items: []Item{item("hidden", NoArt)}})
 	apply(t, s, Read{Server: "other", Items: []Item{item("elsewhere", NoArt)}})
-	if err := s.RecordAttempt(srv, "recent", now.Add(-time.Hour), ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.RecordAttempt(srv, "old", now.Add(-13*time.Hour), ""); err != nil {
-		t.Fatal(err)
-	}
+	failAttempt(t, s, "recent", now.Add(-time.Hour))
+	failAttempt(t, s, "old", now.Add(-13*time.Hour))
 	got, err := due(s, DueQuery{Server: srv, Sections: []string{sec}, Now: now, RefreshInterval: 12 * time.Hour, MaxRefreshInterval: 12 * time.Hour})
 	if err != nil {
 		t.Fatal(err)
@@ -588,12 +580,8 @@ func TestDueComparesTimesAcrossZones(t *testing.T) {
 	if a.Format("2006-01-02T15:04:05") >= b.Format("2006-01-02T15:04:05") {
 		t.Fatal("setup: wall-clock order must be opposite to instant order")
 	}
-	if err := s.RecordAttempt(srv, "a", a, ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.RecordAttempt(srv, "b", b, ""); err != nil {
-		t.Fatal(err)
-	}
+	failAttempt(t, s, "a", a)
+	failAttempt(t, s, "b", b)
 	got, err := due(s, DueQuery{Server: srv, Sections: []string{sec}, Now: instant.Add(48 * time.Hour), RefreshInterval: time.Hour, MaxRefreshInterval: time.Hour})
 	if err != nil {
 		t.Fatal(err)
@@ -603,48 +591,56 @@ func TestDueComparesTimesAcrossZones(t *testing.T) {
 	}
 }
 
-func TestRecordAttempt(t *testing.T) {
+// RecordRequest counts each attempt. Only an accepted request sets
+// LastRefresh and counts a refresh.
+func TestRecordRequestCountsAttempts(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
 	at1, at2 := base.Add(time.Hour), base.Add(2*time.Hour)
 
-	if err := s.RecordAttempt(srv, "a", at1, ActionRefresh); err != nil {
+	err := s.RecordRequest(Request{Server: srv, RatingKey: "a", At: at1, Source: SourceAuto, Action: ActionRefresh, Accepted: true})
+	if err != nil {
 		t.Fatal(err)
 	}
 	got := rows(t, s)["a"]
 	if got.Refreshes != 1 || !got.LastRefresh.Equal(at1) || !got.LastAttempt.Equal(at1) {
 		t.Fatalf("after refresh = %+v", got)
 	}
-	if err := s.RecordAttempt(srv, "a", at2, ""); err != nil {
+	err = s.RecordRequest(Request{Server: srv, RatingKey: "a", At: at2, Source: SourceAuto, Action: ActionRefresh, Error: "boom"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	got = rows(t, s)["a"]
 	if got.Refreshes != 1 || !got.LastRefresh.Equal(at1) || !got.LastAttempt.Equal(at2) {
 		t.Fatalf("after attempt = %+v", got)
 	}
-	if err := s.RecordAttempt(srv, "missing", at1, ActionRefresh); err != nil {
+	err = s.RecordRequest(Request{Server: srv, RatingKey: "missing", At: at1, Source: SourceAuto, Action: ActionRefresh, Accepted: true})
+	if err != nil {
 		t.Fatalf("missing row: %v", err)
 	}
 }
 
-// RecordAttempt keeps the last request that Plex accepted, and the last
+// RecordRequest keeps the last request that Plex accepted, and the last
 // match request, which a later refresh does not replace.
-func TestRecordAttemptKeepsActions(t *testing.T) {
+func TestRecordRequestKeepsActions(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
 
 	steps := []struct {
-		accepted        Action
+		action          Action
+		accepted        bool
 		last, lastMatch Action
 	}{
-		{ActionRefresh, ActionRefresh, ""},
-		{ActionTMDBMatch, ActionTMDBMatch, ActionTMDBMatch},
-		{ActionRefresh, ActionRefresh, ActionTMDBMatch},
-		{"", ActionRefresh, ActionTMDBMatch}, // a failed attempt changes neither
-		{ActionMatch, ActionMatch, ActionMatch},
+		{ActionRefresh, true, ActionRefresh, ""},
+		{ActionTMDBMatch, true, ActionTMDBMatch, ActionTMDBMatch},
+		{ActionRefresh, true, ActionRefresh, ActionTMDBMatch},
+		{ActionMatch, false, ActionRefresh, ActionTMDBMatch}, // a failed attempt changes neither
+		{ActionMatch, true, ActionMatch, ActionMatch},
 	}
 	for i, st := range steps {
-		if err := s.RecordAttempt(srv, "a", base.Add(time.Duration(i+1)*time.Hour), st.accepted); err != nil {
+		err := s.RecordRequest(Request{Server: srv, RatingKey: "a", At: base.Add(time.Duration(i+1) * time.Hour),
+			Source: SourceAuto, Action: st.action, Accepted: st.accepted})
+		if err != nil {
 			t.Fatal(err)
 		}
 		got := rows(t, s)["a"]
@@ -660,12 +656,8 @@ func TestRecordAttemptKeepsActions(t *testing.T) {
 func TestApplyReadReturnsActionsOfFixedRows(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
-	if err := s.RecordAttempt(srv, "a", base.Add(time.Hour), ActionMatch); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.RecordAttempt(srv, "a", base.Add(2*time.Hour), ActionRefresh); err != nil {
-		t.Fatal(err)
-	}
+	accept(t, s, "a", base.Add(time.Hour), ActionMatch)
+	accept(t, s, "a", base.Add(2*time.Hour), ActionRefresh)
 
 	fixed := apply(t, s, Read{At: base.Add(3 * time.Hour), Items: []Item{item("a", 0)}})
 	if len(fixed) != 1 || fixed[0].LastAction != ActionRefresh || fixed[0].LastMatch != ActionMatch {
@@ -673,16 +665,16 @@ func TestApplyReadReturnsActionsOfFixedRows(t *testing.T) {
 	}
 }
 
-func TestDelete(t *testing.T) {
+func TestRecordGoneDeletesRow(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
-	if err := s.Delete(srv, "a"); err != nil {
+	if err := s.RecordGone(srv, "a", base, SourceAuto); err != nil {
 		t.Fatal(err)
 	}
 	if len(rows(t, s)) != 0 {
 		t.Fatal("row not deleted")
 	}
-	if err := s.Delete(srv, "a"); err != nil {
+	if err := s.RecordGone(srv, "a", base, SourceAuto); err != nil {
 		t.Fatalf("missing row: %v", err)
 	}
 }

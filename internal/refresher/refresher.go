@@ -34,10 +34,12 @@ type Store interface {
 	Unseen(server, section string, seen []string) ([]store.Item, error)
 	Due(q store.DueQuery) (items []store.Item, total int, err error)
 	CountIncomplete(server string, sections []string, ignored store.Reasons) (int, error)
-	RecordAttempt(server, ratingKey string, at time.Time, accepted store.Action) error
+	RecordRequest(r store.Request) error
+	RecordGone(server, ratingKey string, at time.Time, source store.Source) error
+	SaveLibraries(server string, libs []store.LibraryInfo) error
+	SetPath(server, ratingKey, path string) error
 	TMDBID(server, ratingKey, source, externalID string) (tmdbID string, ok bool, err error)
 	SaveTMDBID(server, ratingKey, source, externalID, tmdbID string) error
-	Delete(server, ratingKey string) error
 	PruneServers(servers []string) ([]store.Pruned, error)
 	PruneSections(server string, sections []string) ([]store.Pruned, error)
 }

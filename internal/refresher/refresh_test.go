@@ -58,7 +58,9 @@ func (f *fixture) seed(server string, lib plex.Library, it plex.Item, reasons st
 		f.t.Fatalf("seed store: %v", err)
 	}
 	for range refreshes {
-		if err := f.store.RecordAttempt(server, it.RatingKey, seedAttempt, store.ActionRefresh); err != nil {
+		err := f.store.RecordRequest(store.Request{Server: server, RatingKey: it.RatingKey, At: seedAttempt,
+			Source: store.SourceAuto, Action: store.ActionRefresh, Accepted: true})
+		if err != nil {
 			f.t.Fatalf("seed attempt: %v", err)
 		}
 	}

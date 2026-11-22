@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -38,6 +39,9 @@ func (r *Refresher) readLibraries(ctx context.Context, run *serverRun) error {
 	}
 
 	run.libraries = r.selectLibraries(run.server, libraries)
+	if err := r.saveLibraries(run); err != nil {
+		return err
+	}
 	if err := r.pruneSections(run, libraries); err != nil {
 		return err
 	}
@@ -50,6 +54,18 @@ func (r *Refresher) readLibraries(ctx context.Context, run *serverRun) error {
 		}
 	}
 	return nil
+}
+
+// saveLibraries stores the metadata of the selected libraries, also in a dry
+// run, because it is cache metadata.
+func (r *Refresher) saveLibraries(run *serverRun) error {
+	infos := make([]store.LibraryInfo, 0, len(run.libraries))
+	for _, lib := range run.libraries {
+		infos = append(infos, store.LibraryInfo{
+			Section: lib.ID, Title: lib.Title, Type: lib.Type, Agent: lib.Agent, Language: lib.Language,
+		})
+	}
+	return r.store.SaveLibraries(run.server.Name, infos)
 }
 
 // pruneSections removes the cache of each library of the server that the
@@ -161,7 +177,7 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 		if err != nil {
 			return err
 		}
-		if rd.Gone, err = goneKeys(ctx, client, name, lib, unseen); err != nil {
+		if rd.Gone, rd.Folders, err = goneKeys(ctx, client, name, lib, unseen); err != nil {
 			return readFailed(ctx, name, lib, err)
 		}
 	}
@@ -261,12 +277,16 @@ func (r *Refresher) listItems(ctx context.Context, client Plex, section string, 
 }
 
 // goneKeys returns the rating keys of the unseen rows that Plex answers with
-// 404. A row with another answer stays.
-func goneKeys(ctx context.Context, client Plex, server string, lib plex.Library, unseen []store.Item) ([]string, error) {
-	var gone []string
+// 404. A row with another answer stays. folders holds the folder of each
+// unseen series that Plex answers with a location, by rating key.
+func goneKeys(ctx context.Context, client Plex, server string, lib plex.Library, unseen []store.Item) (gone []string, folders map[string]string, err error) {
+	folders = map[string]string{}
 	for _, it := range unseen {
-		_, err := client.ItemPaths(ctx, it.RatingKey)
+		paths, err := client.ItemPaths(ctx, it.RatingKey)
 		if err == nil {
+			if folder := seriesFolder(lib.Type, paths); folder != "" {
+				folders[it.RatingKey] = folder
+			}
 			continue
 		}
 		if errors.Is(err, plex.ErrNotFound) {
@@ -274,12 +294,12 @@ func goneKeys(ctx context.Context, client Plex, server string, lib plex.Library,
 			continue
 		}
 		if stop := stopError(ctx, err); stop != nil {
-			return nil, stop
+			return nil, nil, stop
 		}
 		log.Warn().Str("server", server).Str("library", lib.Title).Str("title", it.Title).
 			Err(err).Msg("Checking unseen item failed")
 	}
-	return gone, nil
+	return gone, folders, nil
 }
 
 // episodeSeries sends the episode requests of a show library. It skips the
@@ -354,11 +374,30 @@ func (r *Refresher) logRead(rd store.Read, lib plex.Library, took time.Duration)
 		Msg("Read library")
 }
 
+// storeItem returns the row of a listed item. It keeps only the Plex image
+// paths of the item itself. Only movie listings have files, so only a movie
+// gets the folder of its first file as its path.
 func storeItem(server string, lib plex.Library, it plex.Item, reasons store.Reasons) store.Item {
 	return store.Item{
 		Server: server, Section: lib.ID, RatingKey: it.RatingKey, Type: lib.Type,
 		Title: it.Title, Year: it.Year, AddedAt: it.AddedAt, Reasons: reasons,
+		Thumb: plex.ItemImagePath(it.RatingKey, it.Thumb), Art: plex.ItemImagePath(it.RatingKey, it.Art),
+		Path: folderOf(it.Files),
 	}
+}
+
+// folderOf returns the folder of the first file: the file up to its last
+// slash or backslash, because Plex can run on Windows. It returns "" without
+// a file or a separator.
+func folderOf(files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+	i := strings.LastIndexAny(files[0], `/\`)
+	if i < 0 {
+		return ""
+	}
+	return files[0][:i]
 }
 
 func filter(key, value string) plex.Filter {
