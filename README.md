@@ -103,10 +103,11 @@ If the listing fails, or if Plex lists no library at all, autorefresh keeps
 the cache of that server, because the server can still be starting. A
 failed listing also counts as an unavailable server for the run.
 
-The cache of a library is its incomplete items and its read times.
-Autorefresh logs one `Removed cache of library` line for each removed
-library. If you check the library again later, autorefresh does a new full
-read of it, and its items start with no refreshes.
+The cache of a library is its incomplete items, its read times, and its
+history (see [History](#history)). Autorefresh logs one `Removed cache of
+library` line for each removed library. If you check the library again
+later, autorefresh does a new full read of it, and its items start with no
+refreshes and no history. A removed server also loses its runs.
 
 ### Refreshes
 
@@ -271,6 +272,37 @@ the candidates.
 The debug line of each second pass search has a `from` field with the ID
 that TMDB translated, for example `tvdb-81189`.
 
+### History
+
+Autorefresh keeps a history in the database, for a dashboard that will show
+it. The dashboard does not exist yet. The history has these records:
+
+- An event for each refresh or match request, with the time, the action, and
+  the result. A failed request is an event too, with its error. A match
+  search that fails before autorefresh sends a request is also an event.
+  Each event keeps the title, year, path, and images of the item, so it stays
+  readable after the item leaves the cache.
+- For each fix match, one decision event. It has each Plex search, each
+  candidate that a search returned, and the verdict on each candidate.
+- An event when an item becomes complete. If a request that Plex accepted
+  came before, the event names the last action and the last match that fixed
+  the item.
+- An event when an item is gone from Plex.
+- A run for each server in each run, with its status, its times, and its
+  counts. The status is `running`, `finished`, `failed`, or `canceled`.
+
+Autorefresh also keeps the images, the path, and the metadata of each
+library that it reads from Plex.
+
+At the start of each run, autorefresh removes the events and runs that are
+older than `history-retention`. A removed library loses its events, and a
+removed server loses its runs. If a process stops during a run, the run
+stays in the status `running`. When the scheduled service starts, it marks
+each such run as `interrupted`. A process with `--once` or `--dry-run`
+leaves these runs as they are, because it can run beside the service.
+
+A dry run records no history and removes none (see [Dry run](#dry-run)).
+
 ### No library-wide refresh
 
 Autorefresh refreshes one item at a time. It never sends a library-wide
@@ -370,7 +402,7 @@ bind-mount a file that does not exist.
 | --- | --- | --- | --- |
 | `--config` | `AUTOREFRESH_CONFIG` | `config.yml` in the default configuration directory | Configuration file path |
 | `--database` | `AUTOREFRESH_DATABASE` | `autorefresh.db` in the default configuration directory | Database file path |
-| `--dry-run` | `AUTOREFRESH_DRY_RUN` | off | Read Plex and update the cache, but send no refresh or match requests |
+| `--dry-run` | `AUTOREFRESH_DRY_RUN` | off | Read Plex and update the cache, but send no refresh or match requests, and record no history |
 | `--once` | `AUTOREFRESH_ONCE` | off | Run one check at once and exit, instead of waiting for the schedule |
 | `--log` | `AUTOREFRESH_LOG` | `activity.log` in the default configuration directory | Log file path |
 | `-v`, `--verbosity` | `AUTOREFRESH_VERBOSITY` | `0` | Log level: `0` is info, `1` is debug, `2` or more is trace |
@@ -433,6 +465,15 @@ run does these things:
 A dry run sends no refresh or match request and does not wait
 `refresh-delay`. It records no attempts, so a later real run refreshes the
 same due items.
+
+A dry run also records no history: no event, no decision, and no run. It
+removes no old history and no cache of removed servers or libraries. It
+logs one `Dry run keeps cache of removed libraries` line for each server
+instead. It still updates the cache and the read times, and it still keeps
+the images, the paths, and the library metadata. When a dry run reads an item
+that is complete or gone from Plex, it removes the item from the cache. A
+later real run then finds no item, so it records no completion or gone event
+for it. Run `--dry-run` only to check what a run will do.
 
 ```sh
 autorefresh --once --dry-run
