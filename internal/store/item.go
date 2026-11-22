@@ -192,8 +192,6 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 		return nil, err
 	}
 
-	sort.Slice(fixed, func(i, j int) bool { return fixed[i].RatingKey < fixed[j].RatingKey })
-
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit read: %w", err)
 	}
