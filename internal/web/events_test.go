@@ -92,6 +92,40 @@ func TestEventsStreamSnapshots(t *testing.T) {
 	}
 }
 
+func TestEventsHeadDoesNotSubscribe(t *testing.T) {
+	st := NewStatus([]string{"a"}, false)
+	ts := httptest.NewServer(New(Options{Status: st}).Handler())
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, ts.URL+"/api/events", nil)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("HEAD /api/events: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	st.mu.Lock()
+	subscribers := len(st.subs)
+	st.mu.Unlock()
+	if subscribers != 0 {
+		t.Errorf("subscribers after HEAD = %d, want 0", subscribers)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+	for name, value := range map[string]string{"Content-Type": "text/event-stream", "Cache-Control": "no-cache"} {
+		if got := resp.Header.Get(name); got != value {
+			t.Errorf("%s = %q, want %q", name, got, value)
+		}
+	}
+}
+
 func TestEventsKeepalive(t *testing.T) {
 	s := New(Options{})
 	s.keepalive = 20 * time.Millisecond

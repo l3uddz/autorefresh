@@ -35,10 +35,7 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	changes, unsubscribe := s.status.subscribe()
 	defer unsubscribe()
 
-	h := w.Header()
-	h.Set("Content-Type", "text/event-stream")
-	h.Set("Cache-Control", "no-cache")
-	h.Set("X-Accel-Buffering", "no")
+	setStreamHeaders(w.Header())
 	rc := http.NewResponseController(w)
 	if s.sendStatus(rc, w) != nil {
 		return
@@ -62,6 +59,21 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// serveEventsHead answers HEAD /api/events with the headers of the stream
+// and no body. It does not subscribe, so it returns at once. Without it,
+// the GET route would also answer HEAD and keep the stream open.
+func serveEventsHead(w http.ResponseWriter, _ *http.Request) {
+	setStreamHeaders(w.Header())
+	w.WriteHeader(http.StatusOK)
+}
+
+// setStreamHeaders sets the headers of an event stream.
+func setStreamHeaders(h http.Header) {
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-cache")
+	h.Set("X-Accel-Buffering", "no")
 }
 
 // sendStatus sends the live status as a status event.

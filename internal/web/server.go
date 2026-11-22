@@ -148,6 +148,7 @@ func New(opts Options) *Server {
 	s.mux.HandleFunc("GET /{$}", servePlaceholder)
 	s.mux.HandleFunc("GET /api/status", s.serveStatus)
 	s.mux.HandleFunc("GET /api/events", s.serveEvents)
+	s.mux.HandleFunc("HEAD /api/events", serveEventsHead)
 	s.mux.HandleFunc("GET /api/servers", s.serveServers)
 	s.mux.HandleFunc("GET /api/items", s.serveItems)
 	s.mux.HandleFunc("GET /api/item", s.serveItem)
