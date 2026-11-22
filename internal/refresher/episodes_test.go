@@ -109,16 +109,17 @@ func (f cancelSeasonLookup) SeasonEpisodes(ctx context.Context, _ string, _ int)
 
 func TestEpisodeEvidenceLookupFailures(t *testing.T) {
 	tests := []struct {
-		name        string
-		plexErr     error
-		tmdbErr     error
-		cancel      bool
-		wantSend    []string
-		wantWarning string
-		wantAttempt bool
+		name         string
+		plexErr      error
+		tmdbErr      error
+		cancel       bool
+		wantSend     []string
+		wantWarning  string
+		wantAttempt  bool
+		wantDecision store.DecisionOutcome // "": no decision
 	}{
-		{name: "Plex read error skips request", plexErr: errServer, wantWarning: "Match search failed", wantAttempt: true},
-		{name: "TMDB read error after a matching season falls back to refresh", tmdbErr: errors.New("season request failed"), wantSend: []string{"Refresh 201"}, wantWarning: "TMDB lookup failed", wantAttempt: true},
+		{name: "Plex read error skips request", plexErr: errServer, wantWarning: "Match search failed", wantAttempt: true, wantDecision: store.DecisionFailed},
+		{name: "TMDB read error after a matching season falls back to refresh", tmdbErr: errors.New("season request failed"), wantSend: []string{"Refresh 201"}, wantWarning: "TMDB lookup failed", wantAttempt: true, wantDecision: store.DecisionFailed},
 		{name: "cancel during season lookup skips request and attempt", cancel: true},
 	}
 	for _, tc := range tests {
@@ -161,6 +162,13 @@ func TestEpisodeEvidenceLookupFailures(t *testing.T) {
 			}
 			if tc.plexErr != nil && slices.Contains(ft.calls, "SeasonEpisodes 77 1") {
 				t.Error("TMDB season queried without Plex episode evidence")
+			}
+			decisions := f.decisions("201")
+			switch {
+			case tc.wantDecision == "" && len(decisions) != 0:
+				t.Errorf("decisions = %+v, want none", decisions)
+			case tc.wantDecision != "" && (len(decisions) != 1 || store.DecisionOutcome(decisions[0].Outcome) != tc.wantDecision):
+				t.Errorf("decisions = %+v, want one %q decision", decisions, tc.wantDecision)
 			}
 		})
 	}

@@ -206,47 +206,71 @@ type fixMatch struct {
 	episodeCount int          // >0 when regular episodes confirmed a series
 }
 
+// evaluation is the result of the fix match search of an item.
+type evaluation struct {
+	fm       *fixMatch      // nil: no match
+	noIDs    bool           // the paths hold no ID, so nothing was searched
+	conflict string         // the conflict that kept the searches from a match
+	years    yearResolution // the confirmation of a year conflict
+}
+
 // findMatch returns the fix match of the item, or nil for a plain refresh.
 // Only an unmatched item that was refreshed before gets a fix match, and
-// only if the unmatched reason is not ignored. If no search found a
-// candidate, a TMDB client gives a second pass with TMDB IDs. err is the
-// error of a failed ItemPaths, SearchMatches, or EpisodeNumbers request,
-// or of the TMDB ID cache (errCache).
+// only if the unmatched reason is not ignored. It records the decision of
+// the search. err is the error of a failed ItemPaths, SearchMatches, or
+// EpisodeNumbers request, or a store error of the TMDB ID cache, the series
+// path, or the decision (errCache).
 func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Library, it store.Item) (*fixMatch, error) {
 	if it.Reasons&store.Unmatched == 0 || r.opts.IgnoreReasons&store.Unmatched != 0 || it.Refreshes < 1 {
 		return nil, nil
 	}
+	d := &decisionLog{}
+	ev, err := r.evaluateMatch(ctx, run, lib, it, d)
+	if recErr := r.recordDecision(ctx, run, it, d, ev, err); recErr != nil {
+		return nil, recErr
+	}
+	return ev.fm, err
+}
+
+// evaluateMatch searches the fix match of the item and logs each search in
+// d. If no search found a candidate, a TMDB client gives a second pass with
+// TMDB IDs.
+func (r *Refresher) evaluateMatch(ctx context.Context, run *serverRun, lib plex.Library, it store.Item, d *decisionLog) (evaluation, error) {
 	paths, err := r.itemPaths(ctx, run, it)
 	if err != nil {
-		return nil, err
+		return evaluation{}, err
 	}
 	ids := parseIDs(paths)
-	results, err := searchIDs(ctx, run.server, lib, it, ids)
+	if len(ids) == 0 {
+		return evaluation{noIDs: true}, nil
+	}
+	results, err := searchIDs(ctx, run.server, lib, it, ids, d)
 	if err != nil {
-		return nil, err
+		return evaluation{}, err
 	}
 
 	action := store.ActionMatch
 	if !run.tmdbFailed && r.useTMDB(ids, results) {
-		if results, err = r.tmdbFallback(ctx, run, lib, it, ids); err != nil {
-			return nil, err
+		if results, err = r.tmdbFallback(ctx, run, lib, it, ids, d); err != nil {
+			return evaluation{}, err
 		}
 		action = store.ActionTMDBMatch
 	}
-	mc := matchContext{lib: lib, it: it, paths: paths, ids: ids, results: results}
+	mc := matchContext{lib: lib, it: it, paths: paths, ids: ids, results: results, d: d}
 	return r.resolveMatch(ctx, run, mc, action)
 }
 
 // resolveMatch evaluates search results, confirms pure year conflicts via
-// the path year or TMDB when possible, and logs unresolved conflicts.
-func (r *Refresher) resolveMatch(ctx context.Context, run *serverRun, mc matchContext, action store.Action) (*fixMatch, error) {
+// the path year or TMDB when possible, logs unresolved conflicts, and sets
+// the verdicts of the logged candidates.
+func (r *Refresher) resolveMatch(ctx context.Context, run *serverRun, mc matchContext, action store.Action) (evaluation, error) {
 	show := mc.it.Type == plex.ShowLibrary
 	cand, match, conflict := chooseMatch(mc.it.Year, mc.results)
 	var yr yearResolution
 	if conflict == conflictYear {
 		var err error
 		if yr, err = r.confirmYear(ctx, run, mc); err != nil {
-			return nil, err
+			return evaluation{}, err
 		}
 		if yr.ok {
 			cand, match, conflict = yr.cand, true, ""
@@ -259,17 +283,20 @@ func (r *Refresher) resolveMatch(ctx context.Context, run *serverRun, mc matchCo
 		}
 		ev.Strs("candidates", describeCandidates(mc.results, show)).Msg("Match conflict")
 	}
+	mc.d.judge(mc.results, cand, conflict)
+	result := evaluation{conflict: conflict, years: yr}
 	if !match {
-		return nil, nil
+		return result, nil
 	}
 	links := foundLinks(mc.results, show)
 	if yr.extraLink != "" && !slices.Contains(links, yr.extraLink) {
 		links = append(links, yr.extraLink)
 	}
-	return &fixMatch{
+	result.fm = &fixMatch{
 		cand: cand, links: links, action: action,
 		pathYear: yr.pathYear, tmdbYear: yr.tmdbYear, episodeCount: yr.episodeCount,
-	}, nil
+	}
+	return result, nil
 }
 
 // itemPaths returns the paths of the item: the movie files from the reads
@@ -303,13 +330,14 @@ func seriesFolder(itemType string, paths plex.Paths) string {
 	return paths.Locations[0]
 }
 
-// searchIDs searches Plex once for each path ID of the item. A failed
-// search that searchFailureIsEmpty accepts counts as a search without a
-// candidate. Any other failure returns its error.
-func searchIDs(ctx context.Context, srv Server, lib plex.Library, it store.Item, ids []pathID) ([]searchResult, error) {
+// searchIDs searches Plex once for each path ID of the item and logs each
+// search in d. A failed search that searchFailureIsEmpty accepts counts as
+// a search without a candidate. Any other failure returns its error.
+func searchIDs(ctx context.Context, srv Server, lib plex.Library, it store.Item, ids []pathID, d *decisionLog) ([]searchResult, error) {
 	var results []searchResult
 	for _, id := range ids {
 		candidates, err := srv.Plex.SearchMatches(ctx, it.RatingKey, id.title(), lib.Agent, lib.Language)
+		d.add(id, searchPath, "", candidates, err != nil)
 		if err != nil {
 			if !searchFailureIsEmpty(ctx, id, err) {
 				return nil, err
@@ -318,7 +346,7 @@ func searchIDs(ctx context.Context, srv Server, lib plex.Library, it store.Item,
 		}
 		itemEvent(log.Debug(), srv.Name, lib, it).Str("id", id.title()).Int("candidates", len(candidates)).
 			Msg("Match search result")
-		results = append(results, searchResult{id: id, candidates: candidates})
+		results = append(results, searchResult{id: id, candidates: candidates, pos: len(d.searches) - 1})
 	}
 	return results, nil
 }
@@ -334,20 +362,25 @@ func foundLinks(results []searchResult, show bool) []string {
 	return links
 }
 
-// tmdbFallback returns the results of the second pass with TMDB IDs. If a
-// TMDB lookup fails, it logs the failure, turns the second pass off for the
-// rest of the run, and returns no result. The first pass found no candidate,
-// so the item then gets a plain refresh, as without a TMDB client.
-func (r *Refresher) tmdbFallback(ctx context.Context, run *serverRun, lib plex.Library, it store.Item, ids []pathID) ([]searchResult, error) {
-	results, err := r.tmdbResults(ctx, run.server, lib, it, ids)
+// tmdbFallback returns the results of the second pass with TMDB IDs and logs
+// each search in d. If a TMDB lookup fails, it logs the failure, turns the
+// second pass off for the rest of the run, and returns no result. The first
+// pass found no candidate, so the item then gets a plain refresh, as
+// without a TMDB client.
+func (r *Refresher) tmdbFallback(ctx context.Context, run *serverRun, lib plex.Library, it store.Item, ids []pathID, d *decisionLog) ([]searchResult, error) {
+	results, err := r.tmdbResults(ctx, run.server, lib, it, ids, d)
 	if !errors.Is(err, errTMDB) || ctx.Err() != nil {
 		return results, err
 	}
-	r.recordTMDBFailure(run, lib, it, err)
+	r.recordTMDBFailure(run, lib, it, d, err)
 	return nil, nil
 }
 
-func (r *Refresher) recordTMDBFailure(run *serverRun, lib plex.Library, it store.Item, err error) {
+// recordTMDBFailure counts and logs a failed TMDB lookup that the fix match
+// handles, turns TMDB off for the rest of the run, and keeps the failure in
+// the decision log d.
+func (r *Refresher) recordTMDBFailure(run *serverRun, lib plex.Library, it store.Item, d *decisionLog, err error) {
+	d.fail(err)
 	run.tmdbFailed = true
 	run.failures++
 	itemEvent(log.Warn(), run.server.Name, lib, it).Err(err).Msg("TMDB lookup failed")

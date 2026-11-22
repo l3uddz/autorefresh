@@ -36,6 +36,7 @@ type Store interface {
 	CountIncomplete(server string, sections []string, ignored store.Reasons) (int, error)
 	RecordRequest(r store.Request) error
 	RecordGone(server, ratingKey string, at time.Time, source store.Source) error
+	RecordMatchDecision(d store.MatchDecision) error
 	SaveLibraries(server string, libs []store.LibraryInfo) error
 	SetPath(server, ratingKey, path string) error
 	TMDBID(server, ratingKey, source, externalID string) (tmdbID string, ok bool, err error)

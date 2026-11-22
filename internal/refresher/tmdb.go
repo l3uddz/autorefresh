@@ -23,7 +23,7 @@ var (
 	// errTMDB marks a failed TMDB request.
 	errTMDB = errors.New("tmdb lookup")
 	// errCache marks a store error of a fix match: a failed read or write of
-	// the TMDB ID cache or of the series path.
+	// the TMDB ID cache, of the series path, or of the match decision.
 	errCache = errors.New("cache")
 )
 
@@ -48,8 +48,9 @@ func (r *Refresher) useTMDB(ids []pathID, results []searchResult) bool {
 }
 
 // tmdbResults translates the imdb path IDs, and the tvdb path IDs of a
-// series, to TMDB IDs and searches Plex once for each different TMDB ID.
-func (r *Refresher) tmdbResults(ctx context.Context, srv Server, lib plex.Library, it store.Item, ids []pathID) ([]searchResult, error) {
+// series, to TMDB IDs and searches Plex once for each different TMDB ID. It
+// logs each search in d.
+func (r *Refresher) tmdbResults(ctx context.Context, srv Server, lib plex.Library, it store.Item, ids []pathID, d *decisionLog) ([]searchResult, error) {
 	var results []searchResult
 	searched := map[string]bool{}
 	for _, from := range ids {
@@ -67,12 +68,13 @@ func (r *Refresher) tmdbResults(ctx context.Context, srv Server, lib plex.Librar
 
 		id := pathID{"tmdb", tmdbID}
 		candidates, err := srv.Plex.SearchMatches(ctx, it.RatingKey, id.title(), lib.Agent, lib.Language)
+		d.add(id, searchTMDB, from.title(), candidates, err != nil)
 		if err != nil {
 			return nil, err
 		}
 		itemEvent(log.Debug(), srv.Name, lib, it).Str("id", id.title()).Str("from", from.title()).
 			Int("candidates", len(candidates)).Msg("Match search result")
-		results = append(results, searchResult{id: id, candidates: candidates})
+		results = append(results, searchResult{id: id, candidates: candidates, pos: len(d.searches) - 1})
 	}
 	return results, nil
 }
@@ -109,6 +111,7 @@ type matchContext struct {
 	paths   []string
 	ids     []pathID
 	results []searchResult
+	d       *decisionLog // the log of the searches and of a handled failure
 }
 
 // yearResolution is the outcome of confirming a pure year conflict.
@@ -146,7 +149,7 @@ func (r *Refresher) confirmWithTMDB(ctx context.Context, run *serverRun, mc matc
 	tmdbID, needSearch, err := r.resolveOneTMDBID(ctx, run.server.Name, mc)
 	if err != nil {
 		if errors.Is(err, errTMDB) && ctx.Err() == nil {
-			r.recordTMDBFailure(run, mc.lib, mc.it, err)
+			r.recordTMDBFailure(run, mc.lib, mc.it, mc.d, err)
 			return yearResolution{}, nil
 		}
 		return yearResolution{}, err
@@ -189,7 +192,7 @@ func (r *Refresher) confirmationLookupFailed(ctx context.Context, run *serverRun
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	r.recordTMDBFailure(run, mc.lib, mc.it, fmt.Errorf("%w: tmdb-%s: %w", errTMDB, id, err))
+	r.recordTMDBFailure(run, mc.lib, mc.it, mc.d, fmt.Errorf("%w: tmdb-%s: %w", errTMDB, id, err))
 	return nil
 }
 
@@ -255,11 +258,13 @@ func singleTMDBResult(results []searchResult) (id string, found bool) {
 }
 
 // tieTMDBCandidate checks that Plex resolves tmdb-<tmdbID> to the exact same
-// candidate GUID as mc.results. A failed Plex search propagates its error,
-// matching the tmdb search handling in tmdbResults.
+// candidate GUID as mc.results, and logs the search in mc.d. A failed Plex
+// search propagates its error, matching the tmdb search handling in
+// tmdbResults.
 func tieTMDBCandidate(ctx context.Context, srv Server, mc matchContext, tmdbID string) (bool, error) {
 	id := pathID{"tmdb", tmdbID}
 	candidates, err := srv.Plex.SearchMatches(ctx, mc.it.RatingKey, id.title(), mc.lib.Agent, mc.lib.Language)
+	mc.d.add(id, searchTie, "", candidates, err != nil)
 	if err != nil {
 		return false, err
 	}
