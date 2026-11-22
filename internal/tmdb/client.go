@@ -280,6 +280,9 @@ func (c *Client) get(ctx context.Context, segments []string, query url.Values, o
 		if ctx.Err() != nil {
 			return fmt.Errorf("GET %s: %s: %w", path, reason, ctx.Err())
 		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("GET %s: %s: %w", path, reason, context.DeadlineExceeded)
+		}
 		return fmt.Errorf("GET %s: %s", path, reason)
 	}
 	defer func() {

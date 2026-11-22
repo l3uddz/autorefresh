@@ -461,3 +461,21 @@ func TestYearErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestClientTimeoutPreservesDeadlineWithoutTransportDetails(t *testing.T) {
+	c := serve(t, func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})
+	c.http.Timeout = 50 * time.Millisecond
+	ctx := t.Context()
+	err := c.Check(ctx)
+	if ctx.Err() != nil {
+		t.Fatalf("caller context ended: %v", ctx.Err())
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context.DeadlineExceeded", err)
+	}
+	if strings.Contains(err.Error(), c.base.Host) || strings.Contains(err.Error(), token) {
+		t.Fatalf("timeout exposed transport details: %v", err)
+	}
+}
