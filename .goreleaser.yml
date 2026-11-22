@@ -3,6 +3,10 @@ version: 2
 
 project_name: autorefresh
 
+before:
+  hooks:
+    - mise run web-build
+
 # Build
 builds:
   - env:
@@ -23,6 +27,8 @@ builds:
       - -X "main.Version={{ .Version }}"
       - -X "main.GitCommit={{ .ShortCommit }}"
       - -X "main.Timestamp={{ .Timestamp }}"
+    tags:
+      - webui
     flags:
       - -trimpath
     ignore:

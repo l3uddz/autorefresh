@@ -9,3 +9,5 @@ dist/
 /config.yml
 
 mise.local.toml
+
+/web/node_modules/
