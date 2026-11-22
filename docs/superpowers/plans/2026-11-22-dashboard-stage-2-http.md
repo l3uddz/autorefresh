@@ -17,11 +17,11 @@
 - Tests need no network, no Plex, and no TMDB token. Web tests use a real store (`store.Open` in `t.TempDir()`) and a fake `web.Plex`. Plex client tests use `httptest` and recorded responses in `internal/plex/testdata/`.
 - Each production function has a cognitive complexity of 15 or less (`mise run lint`). Split into named steps when needed.
 - Do not change any existing log line or field. New log lines are listed in their task.
-- **One SQLite connection is now shared with HTTP handlers.** No handler holds a transaction or an open `*sql.Rows` across a Plex request or a response write: read, close, then call Plex or write. Never run a query while another query's rows are open. Inside a store transaction, every query uses the transaction handle, never `s.db` (the transaction owns the only connection, so `s.db` would deadlock). The SSE handler never touches the store. Progress hook calls never block on a subscriber. Every store method that a handler calls takes the request context first and uses `QueryContext`, `QueryRowContext`, `ExecContext`, and `BeginTx(ctx, ...)`, so a canceled request stops waiting for the only connection and interrupts its query. These are the new methods of Tasks 2 and 3, `Runs` (its signature changes in Task 3 anyway), and `TimelineContext` (Task 3; `Timeline` stays for the refresher tests and calls it with `context.Background()`).
+- **One SQLite connection is now shared with HTTP handlers.** No handler holds a transaction or an open `*sql.Rows` across a Plex request or a response write: read, close, then call Plex or write. Never run a query while another query's rows are open. Inside a store transaction, every query uses the transaction handle, never `s.db` (the transaction owns the only connection, so `s.db` would deadlock). The SSE handler never touches the store. Progress hook calls never block on a subscriber. Every store method that a handler calls takes the request context first and uses `QueryContext`, `QueryRowContext`, `ExecContext`, and `BeginTx(ctx, ...)`, so a canceled request stops waiting for the only connection and interrupts its query. These are the new methods of Tasks 2 and 3, `Runs` (its signature changes in Task 3 anyway), and `TimelineContext` (Task 3; `Timeline` stays for the refresher tests and calls it with `context.Background()`). The pinned driver (`modernc.org/sqlite`) also ends SQLite's busy wait when the context ends: checked on 2026-11-22, an `ExecContext` waiting on another connection's write lock returned `context deadline exceeded` 200 ms after a 200 ms deadline. Task 3 pins that with a test. So after `Stop` cancels the request contexts, no handler statement outlives it, and `Store.Close` does not wait on a handler.
 - Each task that adds a public store method adds it to `TestMethodsReportDatabaseFailure` (`internal/store/store_test.go`).
 - Build URLs with `net/url`. Every URL the server emits (image URLs in JSON, links in the placeholder page) is relative with no leading slash (`api/items/thumb?...`), so the UI works behind a proxy at any sub-path.
 - The Plex token never reaches the browser. No Plex header or body is passed to a response, and a handler answers a failed Plex request with a fixed message.
-- The stored diagnostic texts `event.error` and `run.error` are shown, because explaining failures is a goal of the dashboard and the operator reads the same texts in the log. The `plex` package already keeps addresses and tokens out of its error texts. As a second guard, the API replaces every occurrence of a configured Plex token, Plex URL host, TMDB token, and UI password in these texts with `<redacted>` before it sends them (`web.Options.Secrets []string`, filled by `cmd`; empty values are skipped).
+- The stored diagnostic texts `event.error` and `run.error` are shown, because explaining failures is a goal of the dashboard and the operator reads the same texts in the log. The `plex` package already keeps addresses and tokens out of its error texts. As a second guard, the API replaces every occurrence of a configured Plex token, Plex URL host, Plex URL path prefix (the `BaseURL.Path` without its trailing `/`, when it is not empty or `/`; a reverse proxy can put a credential there, and `plex` error texts include the request path), TMDB token, and UI password in these texts with `<redacted>` before it sends them (`web.Options.Secrets []string`, filled by `cmd`; empty values are skipped). The method, the rest of the path, and the status stay, for example `GET <redacted>/library/sections: 500 Internal Server Error`.
 - Cursors are opaque to the client but not secret. The server rejects a cursor that does not decode, lacks a required field, has another version, or belongs to another tab, sort, or filter (400 `invalid cursor`). The required fields are listed with each cursor; an item cursor needs only the value field of its sort type. A well-formed cursor with an edited position is only a position, and the API is authenticated, so cursors are not signed.
 - A server is identified by `srv`, its 0-based position in the configured list, as a query parameter. No server name is ever a path segment.
 - JSON keys are camelCase. Times are RFC 3339 (`time.Time`); a zero time is left out with `omitzero`. Every error response is `{"error": "<fixed message>"}` with `Content-Type: application/json`. A store error is logged (`log.Error().Err(err).Str("path", r.URL.Path).Msg("API request failed")`) and answered `500 {"error":"internal error"}`.
@@ -38,7 +38,7 @@
 1. **A stored image path that is not this item's thumb or art (another item's path, a remote URL, or junk).** The proxy answers 404 and sends no Plex request. Test in Task 10.
 2. **Plex answers an image request with HTML, an unknown type, or more than 10 MB.** The answer is 502 with our JSON error, and no Plex byte or header reaches the browser. Tests in Tasks 4 and 10.
 3. **A malformed, truncated, or foreign cursor (another tab, sort, server, or filter), and a `srv` that is negative, out of range, or not a number.** The answer is 400, never 500, and never a silently skipped page. Tests in Tasks 8 and 9.
-4. **A browser tab that keeps an SSE stream open, never reads it, or stalls the connection, during a busy run and at shutdown.** Progress calls never block, a stalled write ends at its write deadline, and `Stop` returns before its deadline. Tests in Task 7.
+4. **A browser tab that keeps an SSE stream open, never reads it, or stalls the connection, during a busy run and at shutdown.** Progress calls never block, a stalled write ends at its write deadline, and `Stop` returns within its budget: the deadline of its context plus `forceWait` (5 s + 5 s from `cmd`). Tests in Tasks 6 and 7.
 5. **An item that exists only in history (it completed, so its row is gone).** Detail, timeline, and poster work from the newest event snapshot, and the live view creates no row. Tests in Tasks 3, 9, and 10.
 
 ---
@@ -254,6 +254,9 @@ func TestRunsFiltersAndPages(t *testing.T)
 // filter; Before the second run returns the rest without repeating it (the equal-time pair
 // is split by id); Limit 1 returns the newest.
 func TestFillPathKeepsExistingPath(t *testing.T) // empty path -> set; non-empty path -> unchanged; missing row -> nil
+func TestFillPathStopsBusyWaitWhenCanceled(t *testing.T)
+// a second Store on the same file holds the write lock in an open transaction; FillPath with
+// a 200 ms context returns an error wrapping context.DeadlineExceeded within 2 s.
 ```
 
 - [ ] **Step 2: Run** `go test ./internal/store -run 'Fixed|Count|ItemDetail|Libraries|Runs|FillPath' -v` — Expected: FAIL.
@@ -516,16 +519,17 @@ func TestEventsStreamSnapshots(t *testing.T)
 // next event has a run.
 func TestEventsKeepalive(t *testing.T) // keepalive 20 ms -> a ": keepalive" line
 func TestStopEndsOpenStreams(t *testing.T)
-// Start on 127.0.0.1:0, open a stream, Stop(ctx with 2 s) returns nil before the deadline,
+// Start on 127.0.0.1:0, open a stream, Stop(ctx with 2 s) returns nil before the deadline (the stream ends, so no forced close is needed),
 // and the stream reader gets EOF.
 func TestEventsStalledWriterEnds(t *testing.T)
 // call the handler with a fake ResponseWriter that implements SetWriteDeadline and Flush,
 // and whose Write blocks until the deadline it was given passes, then fails; writeTimeout
 // 50 ms -> the handler returns within 1 s, and it set a deadline before the write.
-func TestEventsFlushFailureEnds(t *testing.T) // a fake whose Write succeeds and Flush fails -> the handler returns
+func TestEventsFlushFailureEnds(t *testing.T) // a fake with FlushError() error (ResponseController uses it) whose Write succeeds and FlushError fails -> the handler returns
 func TestEventsKeepaliveAfterLongIdle(t *testing.T)
-// writeTimeout 20 ms, keepalive 100 ms, over a real httptest server -> the first keepalive
-// arrives, so an expired deadline from the first write did not break the stream; the fake
+// writeTimeout 20 ms, keepalive 100 ms, over a real httptest server, with a 2 s overall
+// test deadline -> the first keepalive arrives, so an expired deadline from the first write
+// did not break the stream; the fake
 // writer test also checks that the deadline was cleared after each flush.
 ```
 
@@ -662,6 +666,10 @@ func TestItemTimelineDropsUnsafeCandidateThumbs(t *testing.T) // a stored candid
 func TestStoredErrorsAreRedacted(t *testing.T)
 // Secrets {"sentinel-token"}; a request event and a run whose error texts contain it ->
 // the item timeline and the runs answer contain "<redacted>" and never "sentinel-token".
+func TestRunErrorFromPrefixedPlexURLIsRedacted(t *testing.T)
+// a real plex.Client with base URL <httptest>/sentinel-path answers Libraries with 500; store
+// its err.Error() as a run error (StartRun, FinishRun); Secrets {"/sentinel-path"} -> the runs
+// answer has "GET <redacted>/library/sections" and "500", and never "sentinel-path".
 func TestItemLive(t *testing.T)
 // show without a path -> path is the first location and the store row now has it; movie keeps
 // its cached path; an uncached item gets the path in the answer and still has no row.
@@ -754,7 +762,7 @@ Behaviour:
 
 - The UI runs only when `cfg.UI.Listen != ""` and neither `--once` nor `--dry-run` is set. With `ui.listen` set in those modes, log `log.Info().Msg("UI is off with --once or --dry-run")` once and bind nothing.
 - Build `web.NewStatus` before the refresher, and pass it as `Options.Progress` only when the UI runs.
-- Keep each server's `*plex.Client` beside its `refresher.Server`, and pass it as `web.PlexServer.Plex`. `web.Options` gets the store, the status, `cfg.UI.Username` and `cfg.UI.Password`, `Rules: store.DueRules{MinimumAge, RefreshInterval, MaxRefreshInterval, Ignored: cfg.Ignored}`, and `Secrets`: each server's token and `BaseURL.Host`, `cfg.TMDBToken`, and `cfg.UI.Password`.
+- Keep each server's `*plex.Client` beside its `refresher.Server`, and pass it as `web.PlexServer.Plex`. `web.Options` gets the store, the status, `cfg.UI.Username` and `cfg.UI.Password`, `Rules: store.DueRules{MinimumAge, RefreshInterval, MaxRefreshInterval, Ignored: cfg.Ignored}`, and `Secrets`: each server's token, `BaseURL.Host`, and `BaseURL.Path` prefix (as in Global Constraints), `cfg.TMDBToken`, and `cfg.UI.Password`.
 - After the `--once` branch and before `checkTokens`, bind with `listenFunc("tcp", cfg.UI.Listen)`. On error, close the store and `return fatal(err, "Failed starting UI listener")`. No Plex request is sent before the bind.
 - Start the server, then log `log.Info().Str("listen", ln.Addr().String()).Bool("auth", cfg.UI.Username != "").Msg("UI listening")`. Without auth, also log `log.Warn().Msg("UI has no authentication, so allow access only through an authenticating reverse proxy or a trusted network")`.
 - Pass the status as `rec` to `checkTokens`, or nil. Report a check only if ctx has not ended.
@@ -764,7 +772,7 @@ Behaviour:
   3. Cancel `schedCtx` and wait for `serve` to return (run it in a goroutine; a busy run stops before its next request, as today).
   4. Close the store.
 
-  Without a UI, skip step 2; the behaviour is as today. A run can go on for up to the UI stop timeout after the signal before its context ends; the second signal still ends the process at once.
+  Without a UI, skip step 2; the behaviour is as today. A run can go on for up to the HTTP stop budget (5 s timeout plus 5 s `forceWait`) after the signal before its context ends; the second signal still ends the process at once.
 - Keep `run` at a complexity of 15 or less: put the UI setup and stop in `ui.go`.
 - Dockerfile: `EXPOSE 7380`, with a comment that nothing listens until `ui.listen` is set.
 - README: a "Dashboard" section.
