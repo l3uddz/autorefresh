@@ -18,7 +18,7 @@ import { ApiError, api, type RunDetail, type RunRecord } from './api';
 import { dateTime, label, plural, runDuration, runTitle, titleYear } from './format';
 import { Poster } from './media';
 import { itemHash } from './route';
-import { runGroups, type RunEntry, type RunGroup } from './runs';
+import { runCounts, runGroups, type RunEntry, type RunGroup } from './runs';
 import { statusDots } from './status';
 
 /** How often the details of a running run reload. */
@@ -124,10 +124,7 @@ function RunBody({ detail, srv }: { detail: RunDetail; srv?: number }) {
 }
 
 function RunCounts({ run }: { run: RunRecord }) {
-  const counts: [string, number][] =
-    run.kind === 'bulk-refresh'
-      ? [['Selected', run.selected], ['Refreshed', run.refreshed], ['Failed', run.failed], ['Skipped', run.skipped]]
-      : [['Read', run.readItems], ['Refreshed', run.refreshed], ['Matched', run.matched], ['Failed', run.failed], ['Fixed', run.fixed], ['Due', run.due]];
+  const counts = runCounts(run);
   return (
     <Grid columns={{ minWidth: 80, repeat: 'fit' }} gap={2}>
       {counts.map(([name, value]) => (

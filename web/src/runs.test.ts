@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RunDetail, RunEvent, RunItem, RunRecord } from './api';
-import { runGroups } from './runs';
+import { runCounts, runGroups } from './runs';
 
 const record = (change: Partial<RunRecord> = {}): RunRecord => ({
   id: 9, srv: 0, server: 'Home', kind: 'run', source: 'schedule', status: 'finished',
@@ -57,6 +57,14 @@ describe('run groups', () => {
     // Plex answered 404 to the match request, so the item is gone.
     const groups = shape(detail([event('1', 'match-decision', { outcome: 'matched' }), event('1', 'gone')]));
     expect(groups).toEqual([['Removed', [['1', 'Plex no longer had it', 'Fix match: matched', 'attention']]]]);
+  });
+
+  it('counts requests sent, which include the ones that failed', () => {
+    const run = record({ readItems: 40, refreshed: 2, matched: 1, failed: 1, fixed: 3, due: 5 });
+    expect(runCounts(run)).toEqual([['Read', 40], ['Refreshes sent', 2], ['Matches sent', 1], ['Failed', 1], ['Fixed', 3], ['Due', 5]]);
+    expect(runCounts(record({ kind: 'bulk-refresh', selected: 4, refreshed: 3, failed: 1, skipped: 1 }))).toEqual([
+      ['Selected', 4], ['Refreshes sent', 3], ['Failed', 1], ['Skipped', 1],
+    ]);
   });
 
   it('keeps the item of each entry', () => {

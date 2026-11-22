@@ -1,6 +1,6 @@
 import { useToast } from '@astryxdesign/core/Toast';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ApiError, post, type RunDetail, type RunEvent, type RunItem } from './api';
+import { ApiError, post, type RunDetail, type RunEvent, type RunItem, type RunRecord } from './api';
 import { fixedBy } from './format';
 import { cancelQueueOfJob } from './queue';
 import type { TabName } from './route';
@@ -111,6 +111,13 @@ const itemOutcomes: Record<string, { group: string; summary: string; tone: Tone 
   'not-cached': { group: 'skipped', summary: 'No longer in the cache', tone: 'neutral' },
   'not-reached': { group: 'not-reached', summary: 'The job ended before this item', tone: 'neutral' },
 };
+
+/** Returns the counts of a run, by name. The refreshes and matches are the
+ * requests sent, so they include the ones that failed. */
+export function runCounts(run: RunRecord): [name: string, value: number][] {
+  if (run.kind === 'bulk-refresh') return [['Selected', run.selected], ['Refreshes sent', run.refreshed], ['Failed', run.failed], ['Skipped', run.skipped]];
+  return [['Read', run.readItems], ['Refreshes sent', run.refreshed], ['Matches sent', run.matched], ['Failed', run.failed], ['Fixed', run.fixed], ['Due', run.due]];
+}
 
 /** Returns the items of a run grouped by outcome, in a fixed group order,
  * without empty groups. A bulk refresh groups its selected items. A run
