@@ -67,7 +67,7 @@ func (r *Refresher) tmdbResults(ctx context.Context, srv Server, lib plex.Librar
 		searched[tmdbID] = true
 
 		id := pathID{"tmdb", tmdbID}
-		candidates, err := srv.Plex.SearchMatches(ctx, it.RatingKey, id.title(), lib.Agent, lib.Language)
+		candidates, err := srv.Plex.SearchMatches(ctx, it.RatingKey, id.title(), lib.Agent, lib.Language, 0)
 		d.add(id, searchTMDB, from.title(), candidates, err != nil)
 		if err != nil {
 			return nil, err
@@ -263,7 +263,7 @@ func singleTMDBResult(results []searchResult) (id string, found bool) {
 // tmdbResults.
 func tieTMDBCandidate(ctx context.Context, srv Server, mc matchContext, tmdbID string) (bool, error) {
 	id := pathID{"tmdb", tmdbID}
-	candidates, err := srv.Plex.SearchMatches(ctx, mc.it.RatingKey, id.title(), mc.lib.Agent, mc.lib.Language)
+	candidates, err := srv.Plex.SearchMatches(ctx, mc.it.RatingKey, id.title(), mc.lib.Agent, mc.lib.Language, 0)
 	mc.d.add(id, searchTie, "", candidates, err != nil)
 	if err != nil {
 		return false, err

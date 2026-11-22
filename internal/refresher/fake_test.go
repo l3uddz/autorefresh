@@ -91,6 +91,10 @@ func (f *fakePlex) List(ctx context.Context, section string, itemType int, filte
 	return f.lists[key], nil
 }
 
+func (f *fakePlex) Item(ctx context.Context, ratingKey string) (plex.Item, error) {
+	return plex.Item{}, plex.ErrNotFound
+}
+
 func (f *fakePlex) ItemPaths(ctx context.Context, ratingKey string) (plex.Paths, error) {
 	if err := canceled(ctx); err != nil {
 		return plex.Paths{}, err
@@ -119,7 +123,7 @@ func (f *fakePlex) Refresh(ctx context.Context, ratingKey string) error {
 }
 
 // SearchMatches records "SearchMatches <rating key> <title> <agent> <language>".
-func (f *fakePlex) SearchMatches(ctx context.Context, ratingKey, title, agent, language string) ([]plex.Candidate, error) {
+func (f *fakePlex) SearchMatches(ctx context.Context, ratingKey, title, agent, language string, year int) ([]plex.Candidate, error) {
 	if err := canceled(ctx); err != nil {
 		return nil, err
 	}

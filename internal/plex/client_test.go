@@ -115,7 +115,7 @@ func TestRequestsSendTokenHeaderAndAcceptJSON(t *testing.T) {
 	c.List(ctx, "1", TypeMovie)
 	c.ItemPaths(ctx, "1001")
 	c.Refresh(ctx, "1001")
-	c.SearchMatches(ctx, "1001", "t", "a", "l")
+	c.SearchMatches(ctx, "1001", "t", "a", "l", 0)
 	c.Match(ctx, "1001", Candidate{GUID: "g", Name: "n"})
 
 	reqs := rec.all()
@@ -145,7 +145,7 @@ func TestRejectsInvalidRatingKey(t *testing.T) {
 			"Match":   c.Match(ctx, key, Candidate{GUID: "g", Name: "n"}),
 		}
 		_, calls["ItemPaths"] = c.ItemPaths(ctx, key)
-		_, calls["SearchMatches"] = c.SearchMatches(ctx, key, "t", "a", "l")
+		_, calls["SearchMatches"] = c.SearchMatches(ctx, key, "t", "a", "l", 0)
 
 		for name, err := range calls {
 			if err == nil {

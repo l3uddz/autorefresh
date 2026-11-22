@@ -21,6 +21,22 @@ func TestRefreshSendsPutToItem(t *testing.T) {
 	}
 }
 
+func TestSearchMatchesYear(t *testing.T) {
+	for _, tc := range []struct {
+		year int
+		want string
+	}{{2019, "2019"}, {0, ""}} {
+		rec, c := newServer(t, serveFixture(t, "matches_none.json"))
+		if _, err := c.SearchMatches(context.Background(), "1001", "Movie", "agent", "en", tc.year); err != nil {
+			t.Fatal(err)
+		}
+		q := rec.all()[0].URL.Query()
+		if q.Get("year") != tc.want || q.Has("year") != (tc.year > 0) {
+			t.Errorf("year %d: got query %v", tc.year, q)
+		}
+	}
+}
+
 func TestSearchMatchesDecodesCandidates(t *testing.T) {
 	tests := []struct {
 		fixture string
@@ -37,7 +53,7 @@ func TestSearchMatchesDecodesCandidates(t *testing.T) {
 		t.Run(tt.fixture, func(t *testing.T) {
 			rec, c := newServer(t, serveFixture(t, tt.fixture))
 
-			got, err := c.SearchMatches(context.Background(), "1001", "Fixture Movie One", "tv.plex.agents.movie", "en-GB")
+			got, err := c.SearchMatches(context.Background(), "1001", "Fixture Movie One", "tv.plex.agents.movie", "en-GB", 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -66,7 +82,7 @@ func TestSearchMatchesDecodesCandidates(t *testing.T) {
 func TestSearchMatchesRejectsBadMatchField(t *testing.T) {
 	_, c := newServer(t, serveFixture(t, "matches_bad_year.json"))
 
-	_, err := c.SearchMatches(context.Background(), "1001", "Fixture Movie Four", "tv.plex.agents.movie", "en-GB")
+	_, err := c.SearchMatches(context.Background(), "1001", "Fixture Movie Four", "tv.plex.agents.movie", "en-GB", 0)
 	if err == nil || !strings.Contains(err.Error(), "decoding candidate") {
 		t.Fatalf("err = %v, want a candidate decoding error", err)
 	}

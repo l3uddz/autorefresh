@@ -487,3 +487,24 @@ func TestItemPathsEmptyResponseIsNotNotFound(t *testing.T) {
 		t.Errorf("error %q wraps ErrNotFound or ErrUnavailable, want a plain error", err)
 	}
 }
+
+func TestItemReadsMetadata(t *testing.T) {
+	rec, c := newServer(t, serveFixture(t, "item_movie.json"))
+	got, err := c.Item(context.Background(), "1001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RatingKey != "1001" || got.Title != "Fixture Movie One" || got.Year != 2020 || len(got.Files) != 3 {
+		t.Errorf("unexpected item: %+v", got)
+	}
+	if path := rec.all()[0].URL.Path; path != "/library/metadata/1001" {
+		t.Errorf("path = %q", path)
+	}
+}
+
+func TestItemNotFound(t *testing.T) {
+	_, c := newServer(t, http.NotFound)
+	if _, err := c.Item(context.Background(), "1001"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("error = %v, want ErrNotFound", err)
+	}
+}

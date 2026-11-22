@@ -348,7 +348,7 @@ func seriesFolder(itemType string, paths plex.Paths) string {
 func searchIDs(ctx context.Context, srv Server, lib plex.Library, it store.Item, ids []pathID, d *decisionLog) ([]searchResult, error) {
 	var results []searchResult
 	for _, id := range ids {
-		candidates, err := srv.Plex.SearchMatches(ctx, it.RatingKey, id.title(), lib.Agent, lib.Language)
+		candidates, err := srv.Plex.SearchMatches(ctx, it.RatingKey, id.title(), lib.Agent, lib.Language, 0)
 		d.add(id, searchPath, "", candidates, err != nil)
 		if err != nil {
 			if !searchFailureIsEmpty(ctx, id, err) {
