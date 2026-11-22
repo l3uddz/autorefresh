@@ -338,6 +338,7 @@ func TestSaveTMDBIDWithoutRowIsNoop(t *testing.T)      // nil error, tmdb_id emp
 **Files:**
 - Create: `internal/store/migrations/10_run_items.sql`
 - Modify: `internal/store/run.go`, `internal/web/runs.go` (the `skipped` field only)
+- Update for the new `FinishRun` return values (find them with `grep -rn "FinishRun(" --include=*.go`): `internal/refresher/refresher.go` (`Store` interface and `recordFinish`, which ignores `written` until Task 5), `internal/refresher/progress_test.go` (`failingFinish`), `cmd/autorefresh/ui_test.go`, `internal/web/servers_test.go`, and every other test that calls it
 - Test: `internal/store/run_test.go`, `internal/web/runs_test.go`, `internal/store/store_test.go`
 
 **Interfaces:**
@@ -383,7 +384,8 @@ type RunItem struct {
 // written is true when an update or a restore wrote the row, false (nil error) when the server was
 // pruned meanwhile. Update every caller and fake now (the refresher keeps ignoring written until
 // Task 5). Both share one unexported helper that runs
-// inside the transaction.
+// inside the transaction and reports written; when it wrote no row, FinishJob returns
+// (false, nil) before it inserts any item, because run_item needs its run row.
 func (s *Store) FinishJob(id int64, start RunStart, r RunResult, items []RunItem) (written bool, err error)
 // RunItems returns the results of a run in position order ([] when none).
 func (s *Store) RunItems(ctx context.Context, runID int64) ([]RunItem, error)
@@ -398,6 +400,7 @@ func TestFinishRunStoresSkipped(t *testing.T)     // Skipped 3 -> Runs() Skipped
 func TestRunItemsRoundTrip(t *testing.T)          // FinishJob with 2 items -> run finished, RunItems same order and fields
 func TestFinishJobIsAtomic(t *testing.T)          // an item that violates the primary key (duplicate position) -> error, run still running, no items
 func TestFinishRunReportsWritten(t *testing.T)    // normal finish -> written true; restore after retention -> true; pruned server -> false, nil error
+func TestFinishJobPrunedServer(t *testing.T)      // pruned server, 2 result items -> (false, nil), no run row, no run_item rows
 func TestRunItemsGoWithRun(t *testing.T)          // PruneHistory removes the run -> RunItems []
 func TestServeRunsShowsSkipped(t *testing.T)      // kind "bulk-refresh", skipped 2 in JSON
 ```
