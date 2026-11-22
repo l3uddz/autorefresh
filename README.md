@@ -500,6 +500,31 @@ autorefresh --once --dry-run
 
 ## Dashboard
 
+![The Items dashboard with the Attention queue, poster artwork, and the selected item's details and history](docs/screenshots/items.png)
+
+Screenshots show the running dashboard with sample library data and generated artwork.
+
+<details>
+<summary>More dashboard screenshots</summary>
+
+**Status** shows server health, live progress, recently fixed items, and recent runs.
+
+![Status dashboard showing two servers, a running scan, and recent fixes with posters](docs/screenshots/status.png)
+
+**Fix match** shows candidate posters, Plex scores, and evidence from the last automatic match attempt.
+
+![Fix match dialog with candidate artwork, title and folder ID evidence, and the last automatic decision](docs/screenshots/fix-match.png)
+
+**Runs** shows run history and results across servers.
+
+![Runs table showing manual and scheduled runs, results, and one failed run](docs/screenshots/runs.png)
+
+**Items on a phone** keeps the tabs, filters, and posters in a single column.
+
+<img src="docs/screenshots/phone.png" alt="Phone layout of the Items dashboard with filter controls and the Attention queue" width="390">
+
+</details>
+
 Autorefresh can serve a dashboard over HTTP from the same process. The
 dashboard has a JSON API under `api/`. The API serves the live status of
 each run, the incomplete items, the fixed items, and the history of each
