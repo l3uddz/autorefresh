@@ -12,6 +12,10 @@ import (
 type Candidate struct {
 	GUID, Name string
 	Year       int // 0 when absent
+	Type       string
+	Summary    string
+	Thumb      string // an https URL without credentials, or "" when unsafe
+	Score      int
 }
 
 // Refresh asks Plex to refresh the metadata of one item.
@@ -44,9 +48,13 @@ func (c *Client) SearchMatches(ctx context.Context, ratingKey, title, agent, lan
 	var resp struct {
 		MediaContainer struct {
 			SearchResult []struct {
-				GUID string `json:"guid"`
-				Name string `json:"name"`
-				Year int    `json:"year"`
+				GUID    string `json:"guid"`
+				Name    string `json:"name"`
+				Year    int    `json:"year"`
+				Type    string `json:"type"`
+				Summary string `json:"summary"`
+				Thumb   string `json:"thumb"`
+				Score   int    `json:"score"`
 			} `json:"SearchResult"`
 		} `json:"MediaContainer"`
 	}
@@ -56,7 +64,10 @@ func (c *Client) SearchMatches(ctx context.Context, ratingKey, title, agent, lan
 
 	candidates := make([]Candidate, 0, len(resp.MediaContainer.SearchResult))
 	for _, r := range resp.MediaContainer.SearchResult {
-		candidates = append(candidates, Candidate{GUID: r.GUID, Name: r.Name, Year: r.Year})
+		candidates = append(candidates, Candidate{
+			GUID: r.GUID, Name: r.Name, Year: r.Year, Type: r.Type,
+			Summary: r.Summary, Thumb: SafeRemoteImage(r.Thumb), Score: r.Score,
+		})
 	}
 	return candidates, nil
 }

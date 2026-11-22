@@ -6,6 +6,7 @@
         "guid": "plex://movie/000000000000000000000001",
         "name": "Fixture Movie One",
         "year": 2020,
+        "score": 98,
         "type": "movie",
         "summary": "A neutral summary.",
         "thumb": "https://metadata.example.invalid/thumb.jpg"
