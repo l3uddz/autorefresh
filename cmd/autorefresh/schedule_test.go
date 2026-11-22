@@ -119,7 +119,9 @@ type soon struct{}
 func (soon) Next(t time.Time) time.Time { return t.Add(50 * time.Millisecond) }
 
 // serve publishes the next start of the schedule when it starts and at each
-// time of the schedule, also when the run is busy and skips the time.
+// time of the schedule, also when the run is busy and skips the time. Two
+// callbacks can publish the same time when one is late, so the test counts
+// the times that advance, as Status.SetNextRun keeps them.
 func TestServePublishesNextStart(t *testing.T) {
 	captureLog(t)
 
@@ -127,12 +129,16 @@ func TestServePublishesNextStart(t *testing.T) {
 	busy := make(chan struct{})
 	r := fakeStarter(func(context.Context) { <-busy })
 	var mu sync.Mutex
-	var published []time.Time
+	var latest time.Time
+	advances := 0
 	onNext := func(next time.Time) {
 		mu.Lock()
 		defer mu.Unlock()
-		published = append(published, next)
-		if len(published) == 3 {
+		if next.After(latest) {
+			latest = next
+			advances++
+		}
+		if advances == 3 {
 			cancel()
 		}
 	}
@@ -141,18 +147,19 @@ func TestServePublishesNextStart(t *testing.T) {
 		serve(ctx, r, soon{}, onNext)
 		close(done)
 	}()
+	timedOut := false
 	select {
 	case <-ctx.Done():
 	case <-time.After(5 * time.Second):
-		t.Fatal("serve did not publish three next starts")
+		timedOut = true
+		cancel()
 	}
+	// Release the blocked runs, so serve can stop in either case.
 	close(busy)
 	<-done
-	mu.Lock()
-	defer mu.Unlock()
-	for i := 1; i < len(published); i++ {
-		if !published[i].After(published[i-1]) {
-			t.Fatalf("published starts %v do not advance", published)
-		}
+	if timedOut {
+		mu.Lock()
+		defer mu.Unlock()
+		t.Fatalf("the published next start advanced %d times in 5 s, want 3", advances)
 	}
 }
