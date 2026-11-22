@@ -121,7 +121,7 @@ function ServerCard({ server, info, isMulti, isBusy }: { server: ServerStatus; i
         {server.health === 'unauthorized' && <Banner status="error" title="Plex rejected the token" description="Check the token of this server in the configuration." />}
         {server.health === 'unreachable' && <Banner status="warning" title="Plex is unreachable" description="Autorefresh tries again on the next run." />}
         {run ? <RunLive run={run} /> : <LastRun last={last} />}
-        <NextFullRead value={info?.nextFullRead} />
+        <NextFullRead value={info?.nextFullRead} isDue={info?.fullReadDue ?? false} />
         <HStack gap={3} vAlign="center" wrap="wrap">
           <StackItem size="fill">
             <ServerCounts counts={counts.data} error={counts.error} isScanned={info?.scanned ?? true} srv={isMulti ? server.srv : undefined} />
@@ -178,9 +178,9 @@ function RunLive({ run }: { run: RunProgress }) {
 }
 
 /** When the next full cache refresh of the server is due. */
-function NextFullRead({ value }: { value?: string }) {
+function NextFullRead({ value, isDue }: { value?: string; isDue: boolean }) {
   const now = useNow();
-  const text = fullReadText(value, now);
+  const text = fullReadText(value, isDue, now);
   if (!text) return null;
   return (
     <Text type="supporting" color="secondary">

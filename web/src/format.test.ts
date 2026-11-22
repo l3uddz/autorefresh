@@ -79,11 +79,15 @@ describe('type names', () => {
   });
 
   it('describes the next full cache refresh', () => {
-    expect(fullReadText(undefined, now)).toBeUndefined();
-    expect(fullReadText(at(-60), now)).toBe('with the next run');
-    expect(fullReadText(at(0), now)).toBe('with the next run');
+    expect(fullReadText(undefined, false, now)).toBeUndefined();
+    expect(fullReadText(at(-60), false, now)).toBe('with the next run');
+    expect(fullReadText(at(0), false, now)).toBe('with the next run');
+    expect(fullReadText(at(0.3), false, now)).toBe('with the next run');
+    // The server says when a full read is due, also when the page clock is
+    // behind it.
+    expect(fullReadText(at(15), true, now)).toBe('with the next run');
     const soon = at(4 * 86400 + 4 * 3600);
     const when = new Date(soon).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
-    expect(fullReadText(soon, now)).toBe(`in 4d 4h · ${when}`);
+    expect(fullReadText(soon, false, now)).toBe(`in 4d 4h · ${when}`);
   });
 });

@@ -144,6 +144,9 @@ export interface ServerInfo {
   /** When the next full cache refresh of a library is due, absent without
    * libraries. */
   nextFullRead?: string;
+  /** True when the next full cache refresh is due at the time of the
+   * answer. */
+  fullReadDue?: boolean;
   libraries: Library[];
 }
 

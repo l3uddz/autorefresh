@@ -40,11 +40,12 @@ export function nextRunText(value: string | undefined, now: number): string | un
 
 /** Returns when the next full cache refresh is due, as "in 4d 4h · Sun
  * 3:00 AM", or "with the next run" once it is due: the first run at or
- * after that time reads the libraries fully. */
-export function fullReadText(value: string | undefined, now: number): string | undefined {
+ * after that time reads the libraries fully. isDue is the server's word that
+ * the time has come, which wins over the page clock. */
+export function fullReadText(value: string | undefined, isDue: boolean, now: number): string | undefined {
   if (!value) return undefined;
   const diff = (Date.parse(value) - now) / 1000;
-  if (diff <= 0) return 'with the next run';
+  if (isDue || Math.round(diff) <= 0) return 'with the next run';
   return `in ${duration(diff)} · ${new Date(value).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`;
 }
 

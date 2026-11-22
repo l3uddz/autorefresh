@@ -32,8 +32,11 @@ type serverJSON struct {
 	// NextFullRead is when the next full read of a library of the server
 	// is due: the first run at or after it reads that library fully. It is
 	// absent without libraries or a cache refresh schedule.
-	NextFullRead time.Time     `json:"nextFullRead,omitzero"`
-	Libraries    []libraryJSON `json:"libraries"`
+	NextFullRead time.Time `json:"nextFullRead,omitzero"`
+	// FullReadDue is true when NextFullRead is not after the time of the
+	// answer, so the dashboard need not compare it with its own clock.
+	FullReadDue bool          `json:"fullReadDue,omitempty"`
+	Libraries   []libraryJSON `json:"libraries"`
 }
 
 type libraryJSON struct {
@@ -70,6 +73,7 @@ func (s *Server) serverInfo(ctx context.Context, srv int, name string) (serverJS
 		return serverJSON{}, err
 	}
 	info := serverJSON{Srv: srv, Name: name, Libraries: make([]libraryJSON, 0, len(libs))}
+	now := s.now()
 	for _, l := range libs {
 		info.Libraries = append(info.Libraries, libraryJSON{
 			Section: l.Section, Title: l.Title, Type: l.Type, LastRead: l.LastRead, LastFullRead: l.LastFullRead,
@@ -77,10 +81,11 @@ func (s *Server) serverInfo(ctx context.Context, srv int, name string) (serverJS
 		if !l.LastRead.IsZero() {
 			info.Scanned = true
 		}
-		if due := s.fullReadDue(l.LastFullRead); info.NextFullRead.IsZero() || due.Before(info.NextFullRead) {
+		if due := s.fullReadDue(l.LastFullRead, now); info.NextFullRead.IsZero() || due.Before(info.NextFullRead) {
 			info.NextFullRead = due
 		}
 	}
+	info.FullReadDue = !info.NextFullRead.IsZero() && !info.NextFullRead.After(now)
 	if len(libs) > 0 {
 		return info, nil
 	}
@@ -97,17 +102,17 @@ func (s *Server) serverInfo(ctx context.Context, srv int, name string) (serverJS
 // for a full read, or zero without a cache refresh schedule. Like the
 // scanner, it takes a library without a full read, or a schedule without a
 // next time, as due now.
-func (s *Server) fullReadDue(at time.Time) time.Time {
+func (s *Server) fullReadDue(at, now time.Time) time.Time {
 	if s.cacheRefresh == nil {
 		return time.Time{}
 	}
 	if at.IsZero() {
-		return s.now()
+		return now
 	}
 	if next := s.cacheRefresh.Next(at); !next.IsZero() {
 		return next
 	}
-	return s.now()
+	return now
 }
 
 // machineIdentifiers returns the machine identifier of each server, "" for

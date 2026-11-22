@@ -145,6 +145,7 @@ type serversAnswer struct {
 		MachineIdentifier *string    `json:"machineIdentifier"`
 		Scanned           bool       `json:"scanned"`
 		NextFullRead      *time.Time `json:"nextFullRead"`
+		FullReadDue       bool       `json:"fullReadDue"`
 		Libraries         []struct {
 			Section      string     `json:"section"`
 			Title        string     `json:"title"`
@@ -289,8 +290,8 @@ func TestServersNextFullRead(t *testing.T) {
 
 	var got serversAnswer
 	getJSON(t, s, "/api/servers", &got)
-	if got.Servers[0].NextFullRead != nil {
-		t.Errorf("next full read without a schedule = %v", got.Servers[0].NextFullRead)
+	if got.Servers[0].NextFullRead != nil || got.Servers[0].FullReadDue {
+		t.Errorf("next full read without a schedule = %v, due %v", got.Servers[0].NextFullRead, got.Servers[0].FullReadDue)
 	}
 
 	s.cacheRefresh = daily{}
@@ -300,6 +301,26 @@ func TestServersNextFullRead(t *testing.T) {
 	}
 	if a := got.Servers[1].NextFullRead; a == nil || !a.Equal(testNow) {
 		t.Errorf("srv 1 next full read = %v, want now (%v), for its unread library", a, testNow)
+	}
+	if got.Servers[0].FullReadDue || !got.Servers[1].FullReadDue {
+		t.Errorf("full read due = %v, %v, want false, true", got.Servers[0].FullReadDue, got.Servers[1].FullReadDue)
+	}
+}
+
+// A full read whose time passed is due, so the dashboard need not compare
+// the time with its own clock.
+func TestServersFullReadOverdue(t *testing.T) {
+	st := openStore(t)
+	if err := st.SaveLibraries("Home", []store.LibraryInfo{{Section: "1", Title: "Movies"}}); err != nil {
+		t.Fatal(err)
+	}
+	readLibrary(t, st, "Home", "1", testNow.Add(-25*time.Hour))
+	s := newServerWith(st, 0, []PlexServer{{Name: "Home", Plex: &fakePlex{}}})
+	s.cacheRefresh = daily{}
+	var got serversAnswer
+	getJSON(t, s, "/api/servers", &got)
+	if h := got.Servers[0].NextFullRead; h == nil || !h.Equal(testNow.Add(-time.Hour)) || !got.Servers[0].FullReadDue {
+		t.Errorf("next full read = %v, due %v, want %v and due", h, got.Servers[0].FullReadDue, testNow.Add(-time.Hour))
 	}
 }
 
@@ -321,7 +342,7 @@ func TestServersNextFullReadWithoutNextTime(t *testing.T) {
 	s.cacheRefresh = never{}
 	var got serversAnswer
 	getJSON(t, s, "/api/servers", &got)
-	if h := got.Servers[0].NextFullRead; h == nil || !h.Equal(testNow) {
-		t.Errorf("next full read = %v, want now (%v)", h, testNow)
+	if h := got.Servers[0].NextFullRead; h == nil || !h.Equal(testNow) || !got.Servers[0].FullReadDue {
+		t.Errorf("next full read = %v, due %v, want now (%v) and due", h, got.Servers[0].FullReadDue, testNow)
 	}
 }
