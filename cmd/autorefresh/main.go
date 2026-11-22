@@ -108,6 +108,10 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 	if err != nil {
 		return fatal(err, "Failed opening database")
 	}
+	if err := interruptRuns(st, opts, time.Now()); err != nil {
+		closeStore(st)
+		return fatal(err, "Failed marking interrupted runs")
+	}
 
 	// refresher
 	servers := make([]refresher.Server, 0, len(cfg.Plex))
@@ -140,6 +144,7 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 		MaxRefreshesPerRun: cfg.MaxRefreshesPerRun,
 		IgnoreReasons:      cfg.Ignored,
 		DryRun:             opts.DryRun,
+		HistoryRetention:   cfg.HistoryRetention,
 		TMDB:               lookup,
 	})
 
@@ -173,6 +178,23 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 	}
 	closeStore(st)
 	log.Info().Msg("Stopped")
+	return nil
+}
+
+// interruptRuns marks the runs that a stopped process left as running, so a
+// scheduled start finds none. A process with --once or --dry-run may run
+// beside a scheduled process, so it leaves them.
+func interruptRuns(st *store.Store, opts options, now time.Time) error {
+	if opts.Once || opts.DryRun {
+		return nil
+	}
+	runs, err := st.InterruptRuns(now)
+	if err != nil {
+		return err
+	}
+	if runs > 0 {
+		log.Info().Int("runs", runs).Msg("Marked interrupted runs")
+	}
 	return nil
 }
 

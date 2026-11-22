@@ -186,3 +186,91 @@ func TestRunStopsDuringTokenCheck(t *testing.T) {
 		t.Errorf("want Stopped and no Run summary:\n%s", logs)
 	}
 }
+
+// startRunning stores a run of server "test" that is still running.
+func startRunning(t *testing.T, st *store.Store) {
+	t.Helper()
+	_, err := st.StartRun(store.RunStart{Server: "test", Kind: store.RunKindRun, Source: store.RunSourceSchedule, StartedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// onlyRunStatus returns the status of the only stored run.
+func onlyRunStatus(t *testing.T, st *store.Store) store.RunStatus {
+	t.Helper()
+	runs, err := st.Runs(0)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("runs = %+v, %v, want 1", runs, err)
+	}
+	return runs[0].Status
+}
+
+func TestScheduledStartMarksInterruptedRuns(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts options
+		want store.RunStatus
+	}{
+		{"scheduled", options{}, store.RunInterrupted},
+		{"once", options{Once: true}, store.RunRunning},
+		{"dry run", options{DryRun: true}, store.RunRunning},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := captureLog(t)
+			st, err := store.Open(filepath.Join(t.TempDir(), "autorefresh.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			startRunning(t, st)
+
+			if err := interruptRuns(st, tc.opts, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := onlyRunStatus(t, st); got != tc.want {
+				t.Errorf("status = %q, want %q", got, tc.want)
+			}
+			if logged := strings.Contains(buf.String(), `"message":"Marked interrupted runs"`); logged != (tc.want == store.RunInterrupted) {
+				t.Errorf("Marked interrupted runs logged = %v:\n%s", logged, buf)
+			}
+		})
+	}
+}
+
+// With --once, run leaves the running rows of another process alone.
+func TestRunOnceKeepsRunningRows(t *testing.T) {
+	captureLog(t)
+	opts := runOptions(t, runTarget(t, http.StatusOK, nil).URL)
+	opts.Once = true
+	st, err := store.Open(opts.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startRunning(t, st)
+	st.Close()
+
+	if err := run(context.Background(), func() {}, opts, "test"); err != nil {
+		t.Fatalf("run = %v, want nil", err)
+	}
+
+	st, err = store.Open(opts.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	runs, err := st.Runs(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	running := 0
+	for _, r := range runs {
+		if r.Status == store.RunRunning {
+			running++
+		}
+	}
+	if running != 1 {
+		t.Errorf("running rows = %d, want 1 (runs %+v)", running, runs)
+	}
+}

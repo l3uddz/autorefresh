@@ -33,7 +33,7 @@ func (r *Refresher) refreshDue(ctx context.Context, run *serverRun) error {
 	if err != nil {
 		return err
 	}
-	run.due, run.remaining = total, total
+	run.due, run.remaining, run.selected = total, total, len(due)
 	for i, it := range due {
 		if i > 0 && !r.opts.DryRun {
 			if err := r.sleep(ctx, r.opts.RefreshDelay); err != nil {
@@ -54,6 +54,7 @@ func (r *Refresher) logSummary(run *serverRun) error {
 	if err != nil {
 		return err
 	}
+	run.incomplete = incomplete
 	log.Info().Str("server", run.server.Name).
 		Int("full_read_items", run.fullReadItems).Int("incremental_read_items", run.incrementalReadItems).
 		Int("incomplete_items", incomplete).Int("due_items", run.due).
