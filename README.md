@@ -329,7 +329,7 @@ tmdb-token: ""                # optional; the TMDB API Read Access Token for the
 history-retention: 720h       # how long the dashboard history is kept
 
 ui:                           # optional; the dashboard, see "Dashboard"
-  listen: ":7380"             # host:port; empty or omitted for no dashboard
+  listen: ""                  # host:port, for example ":7380"; empty or omitted for no dashboard
   username: ""                # optional; set both for HTTP Basic auth
   password: ""
 
