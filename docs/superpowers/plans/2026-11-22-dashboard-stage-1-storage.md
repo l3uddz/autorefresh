@@ -309,7 +309,7 @@ func TestTimelineOrdersSameSecondByID(t *testing.T)           // two events at t
 **Interfaces:**
 - Produces: `Read.DryRun bool` — when true, `ApplyRead` writes no event; the rows and read times change exactly as today (see the known limit in Global Constraints).
 - When not `DryRun`, `ApplyRead` writes in its transaction:
-  - one `completed` event (source `auto`, `section = r.Section`) for each row it deletes because its final reasons are 0. Snapshot: title, year, thumb, art, and path from the read when the read lists the key (`readKey.present`) and the value is not empty, else from the row. Attribution: `fixed_action = last_action`, `fixed_match = last_match`, and `fixed_match_event_id = (SELECT id FROM event WHERE id = ?)` with the row's `last_match_event_id`, so an expired or deleted request (or 0) gives null instead of a foreign-key failure.
+  - one `completed` event (source `auto`, `section = r.Section`) for each row it deletes because its final reasons are 0. Snapshot: title, year, thumb, art, and path from the read when the read lists the key (`readKey.present`) and the value is not empty, else from the row; for path, a non-empty `r.Folders[key]` (Task 4) comes before the row's path, because a full read can find a series folder and complete that series in the same read. Attribution: `fixed_action = last_action`, `fixed_match = last_match`, and `fixed_match_event_id = (SELECT id FROM event WHERE id = ?)` with the row's `last_match_event_id`, so an expired or deleted request (or 0) gives null instead of a foreign-key failure.
   - one `gone` event for each `r.Gone` row that exists, before it is deleted.
 - `applyOldRows` collects the completed `(prev, readKey)` pairs; `writeCompleted(tx, r, prev, in)` writes one event.
 
@@ -324,6 +324,7 @@ func TestCompletedAfterPlainRefreshHasNoMatch(t *testing.T)     // occurrence 2 
 func TestCompletedEventPrefersReadMetadata(t *testing.T)        // row Title "Old", Thumb ""; read Title "New", Thumb set -> event Title "New", Thumb set; Path from row
 func TestMovedRowCompletesInNewSection(t *testing.T)            // as TestApplyReadMovedCompleteRowIsFixed -> event Section is the read's section
 func TestLegacyRowCompletesWithoutMatchEvent(t *testing.T)      // openAtVersion(t, 5) row with last_match 'match' completes -> FixedMatch match, FixedMatchEventID 0
+func TestCompletedEventUsesStagedFolder(t *testing.T)          // row with path "" completed by a full read whose Folders holds its key -> completed event path == the folder
 func TestCompletesAfterMatchEventExpired(t *testing.T)          // accepted match, its request event deleted by SQL, then the row completes -> ApplyRead succeeds, FixedMatch match, FixedMatchEventID 0
 func TestApplyReadWritesGoneEvents(t *testing.T)
 func TestDryRunReadWritesNoEvents(t *testing.T)                 // Read.DryRun with a completed and a gone row -> rows change as today, Timeline empty
