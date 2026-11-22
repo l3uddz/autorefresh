@@ -428,6 +428,7 @@ function ItemsHeader({ tab, counts, mode, onMode, srv, server, filters, onFilter
 /** The sort of list mode: a sort key of the tab and its direction. */
 function SortControl({ tab, sort, onSort }: { tab: TabName; sort: string; onSort: (sort: string) => void }) {
   const { key, desc } = parseSort(sort);
+  const direction = desc ? 'Descending, change to ascending' : 'Ascending, change to descending';
   return (
     <HStack gap={1} vAlign="center">
       <Selector
@@ -443,8 +444,8 @@ function SortControl({ tab, sort, onSort }: { tab: TabName; sort: string; onSort
       />
       {key && (
         <IconButton
-          label={desc ? 'Descending, change to ascending' : 'Ascending, change to descending'}
-          tooltip={desc ? 'Descending' : 'Ascending'}
+          label={direction}
+          tooltip={direction}
           icon={<Icon icon={desc ? BarsArrowDownIcon : BarsArrowUpIcon} size="sm" />}
           variant="ghost"
           size="sm"
