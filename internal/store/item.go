@@ -25,6 +25,13 @@ type Item struct {
 	Refreshes                  int
 	LastAction                 Action // the last request that Plex accepted
 	LastMatch                  Action // the last match request that Plex accepted
+
+	Thumb, Art, Path string    // Plex image paths and the folder or file path; "": unknown
+	StoppedAt        time.Time // zero: not stopped
+	// LastOutcome and LastMatchOutcome are the outcomes of the last request
+	// and of the last match request. "": none, or from before they were recorded.
+	LastOutcome, LastMatchOutcome string
+	LastMatchEventID              int64 // the last match decision event; 0: none
 }
 
 // Action is a request that Plex accepted for an item. The empty Action
@@ -53,10 +60,13 @@ type Read struct {
 	EpisodeSkipped   Reasons  // show reads only: the episode reasons without a request, which the rows keep
 	EpisodeNoSummary []Item   // the series of the first episode request
 	EpisodeUnmatched []Item   // the series of the second episode request
+	// Folders maps a rating key to its series folder. ApplyRead saves each
+	// non-empty value as the path of the row, if the read keeps the row.
+	Folders map[string]string
 }
 
 const itemColumns = `server, section, rating_key, type, title, year, added_at, reasons, last_refresh, last_attempt, refreshes,
-	last_action, last_match`
+	last_action, last_match, thumb, art, path, stopped_at, last_outcome, last_match_outcome, last_match_event_id`
 
 // nullTime stores a zero time as NULL and any other time as Unix seconds.
 func nullTime(t time.Time) any {
@@ -81,9 +91,11 @@ func scanItem(row scanner) (Item, error) {
 		addedAt                  int64
 		reasons                  int
 		lastRefresh, lastAttempt sql.NullInt64
+		stoppedAt, matchEventID  sql.NullInt64
 	)
 	err := row.Scan(&it.Server, &it.Section, &it.RatingKey, &it.Type, &it.Title, &it.Year,
-		&addedAt, &reasons, &lastRefresh, &lastAttempt, &it.Refreshes, &it.LastAction, &it.LastMatch)
+		&addedAt, &reasons, &lastRefresh, &lastAttempt, &it.Refreshes, &it.LastAction, &it.LastMatch,
+		&it.Thumb, &it.Art, &it.Path, &stoppedAt, &it.LastOutcome, &it.LastMatchOutcome, &matchEventID)
 	if err != nil {
 		return Item{}, err
 	}
@@ -91,6 +103,8 @@ func scanItem(row scanner) (Item, error) {
 	it.Reasons = Reasons(reasons)
 	it.LastRefresh = timeFrom(lastRefresh)
 	it.LastAttempt = timeFrom(lastAttempt)
+	it.StoppedAt = timeFrom(stoppedAt)
+	it.LastMatchEventID = matchEventID.Int64
 	return it, nil
 }
 
@@ -136,7 +150,8 @@ func (s *Store) Library(server, section string) (Library, error) {
 // lists and the old bits of r.EpisodeSkipped (or else the old episode bits).
 // It deletes the r.Gone rows, inserts rows for new items with final reasons
 // that are not 0, deletes the other rows whose final reasons are 0 and
-// returns them as fixed, and sets the read times. LastFullRead changes only
+// returns them as fixed, writes the thumb and art of each listed row and its
+// path unless the read has none, saves the r.Folders paths, and sets the read times. LastFullRead changes only
 // if r.Full. The caller must set AddedAt on every item, because a zero time
 // is stored as a negative number, and must not put a key in both r.Items and
 // r.Gone. A row of the same rating key in another section moves to r.Section
@@ -165,6 +180,9 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 		return nil, err
 	}
 	if err := insertNewRows(tx, r, old, incoming); err != nil {
+		return nil, err
+	}
+	if err := writeFolders(tx, r); err != nil {
 		return nil, err
 	}
 
@@ -232,9 +250,11 @@ func writeExisting(tx *sql.Tx, r Read, prev Item, in readKey) (fixed bool, err e
 		}
 		return true, nil
 	case in.present:
-		_, err = tx.Exec(`UPDATE item SET section = ?, type = ?, title = ?, year = ?, added_at = ?, reasons = ?
+		_, err = tx.Exec(`UPDATE item SET section = ?, type = ?, title = ?, year = ?, added_at = ?, reasons = ?,
+			thumb = ?, art = ?, path = CASE WHEN ? = '' THEN path ELSE ? END
 			WHERE server = ? AND rating_key = ?`,
-			r.Section, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final), r.Server, prev.RatingKey)
+			r.Section, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final),
+			in.meta.Thumb, in.meta.Art, in.meta.Path, in.meta.Path, r.Server, prev.RatingKey)
 	case final != prev.Reasons:
 		_, err = tx.Exec(`UPDATE item SET reasons = ? WHERE server = ? AND rating_key = ?`, int(final), r.Server, prev.RatingKey)
 	}
@@ -255,11 +275,26 @@ func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]
 		if final == 0 {
 			continue
 		}
-		_, err := tx.Exec(`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			r.Server, r.Section, key, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final))
+		_, err := tx.Exec(`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons, thumb, art, path)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			r.Server, r.Section, key, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final),
+			in.meta.Thumb, in.meta.Art, in.meta.Path)
 		if err != nil {
 			return fmt.Errorf("write item %s: %w", key, err)
+		}
+	}
+	return nil
+}
+
+// writeFolders saves the staged folder of each row that the read kept. A key
+// without a row, such as a deleted one, matches nothing.
+func writeFolders(tx *sql.Tx, r Read) error {
+	for key, folder := range r.Folders {
+		if folder == "" {
+			continue
+		}
+		if _, err := tx.Exec(`UPDATE item SET path = ? WHERE server = ? AND rating_key = ?`, folder, r.Server, key); err != nil {
+			return fmt.Errorf("write item folder %s: %w", key, err)
 		}
 	}
 	return nil
@@ -418,7 +453,7 @@ func (s *Store) Due(q DueQuery) (items []Item, total int, err error) {
 
 	// The query rounds the cutoff down to whole seconds, like the stored times.
 	where := `server = ? AND section IN (` + placeholders(len(q.Sections)) + `)
-		AND reasons & ~? != 0 AND added_at <= ?
+		AND stopped_at IS NULL AND reasons & ~? != 0 AND added_at <= ?
 		AND (last_attempt IS NULL OR last_attempt <= (? - MIN(?, ? << MIN(MAX(refreshes - 1, 0), ?))) / 1000)`
 	args := append([]any{q.Server}, stringArgs(q.Sections)...)
 	args = append(args, int(q.Ignored), q.Now.Add(-q.MinimumAge).Unix(), q.Now.UnixMilli(), maxWait, interval, doublings)
@@ -461,7 +496,7 @@ func (s *Store) CountIncomplete(server string, sections []string, ignored Reason
 
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM item WHERE server = ? AND section IN (`+placeholders(len(sections))+`)
-		AND reasons & ~? != 0`, args...).Scan(&n)
+		AND stopped_at IS NULL AND reasons & ~? != 0`, args...).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count items: %w", err)
 	}

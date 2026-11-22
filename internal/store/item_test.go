@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"reflect"
 	"sort"
@@ -818,5 +819,117 @@ func TestPruneSectionsWithoutSectionsRemovesServer(t *testing.T) {
 	}
 	if got, want := libraryState(t, s), map[string]int{"a/1": 2, "a/2": 1}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("libraries = %v, want %v", got, want)
+	}
+}
+
+func dueAll(t *testing.T, s *Store) ([]Item, int) {
+	t.Helper()
+	got, total, err := s.Due(DueQuery{Server: srv, Sections: []string{sec}, Now: base.Add(time.Hour), RefreshInterval: time.Hour, MaxRefreshInterval: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got, total
+}
+
+func TestApplyReadStoresImagesAndPath(t *testing.T) {
+	s := openTest(t)
+	it := item("a", NoArt)
+	it.Thumb, it.Art, it.Path = "/library/metadata/1/thumb/9", "/library/metadata/1/art/8", "/movies/A"
+	apply(t, s, Read{Items: []Item{it}})
+	got := rows(t, s)["a"]
+	if got.Thumb != it.Thumb || got.Art != it.Art || got.Path != it.Path {
+		t.Fatalf("row = %q %q %q", got.Thumb, got.Art, got.Path)
+	}
+}
+
+func TestApplyReadKeepsSavedPathWhenReadHasNone(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	if err := s.SetPath(srv, "a", "/tv/Show"); err != nil {
+		t.Fatal(err)
+	}
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	if got := rows(t, s)["a"].Path; got != "/tv/Show" {
+		t.Fatalf("path = %q, want /tv/Show", got)
+	}
+}
+
+func TestApplyReadReplacesImages(t *testing.T) {
+	s := openTest(t)
+	it := item("a", NoArt)
+	it.Thumb, it.Art = "/t1", "/a1"
+	apply(t, s, Read{Items: []Item{it}})
+	it.Thumb, it.Art = "", "/a2"
+	apply(t, s, Read{Items: []Item{it}})
+	got := rows(t, s)["a"]
+	if got.Thumb != "" || got.Art != "/a2" {
+		t.Fatalf("images = %q %q, want empty /a2", got.Thumb, got.Art)
+	}
+}
+
+func TestApplyReadKeepsStoppedAt(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	if _, err := s.db.Exec(`UPDATE item SET stopped_at = 5000, last_outcome = 'refreshed', last_match_outcome = 'matched', last_match_event_id = NULL`); err != nil {
+		t.Fatal(err)
+	}
+	apply(t, s, Read{Items: []Item{item("a", NoArt|NoSummary)}})
+	got := rows(t, s)["a"]
+	if !got.StoppedAt.Equal(time.Unix(5000, 0)) || got.LastOutcome != "refreshed" || got.LastMatchOutcome != "matched" {
+		t.Fatalf("row = %+v", got)
+	}
+}
+
+func TestDueAndCountSkipStoppedItems(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt), item("b", NoArt)}})
+	if _, err := s.db.Exec(`UPDATE item SET stopped_at = 5000 WHERE rating_key = 'b'`); err != nil {
+		t.Fatal(err)
+	}
+	got, total := dueAll(t, s)
+	if k := keys(got); !reflect.DeepEqual(k, []string{"a"}) || total != 1 {
+		t.Fatalf("Due = %v, total %d, want [a], 1", k, total)
+	}
+	if n, err := s.CountIncomplete(srv, []string{sec}, 0); err != nil || n != 1 {
+		t.Fatalf("CountIncomplete = %d, %v, want 1", n, err)
+	}
+}
+
+func TestMigratedRowIsStillDue(t *testing.T) {
+	file := openAtVersion(t, 5)
+	db, err := sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO library (server, section) VALUES ('srv', '1')`,
+		`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons)
+			VALUES ('srv', '1', 'a', 'movie', 'Title a', 2020, 1000, 2)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	s, err := Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	got, total := dueAll(t, s)
+	if len(got) != 1 || total != 1 {
+		t.Fatalf("Due = %v, total %d, want one row", keys(got), total)
+	}
+	if it := got[0]; it.Thumb != "" || !it.StoppedAt.IsZero() || it.LastOutcome != "" || it.LastMatchEventID != 0 {
+		t.Fatalf("row = %+v", it)
+	}
+}
+
+func TestApplyReadWritesStagedFolders(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}, Folders: map[string]string{"a": "/tv/A", "gone": "/tv/G", "empty": ""}})
+	if got := rows(t, s); got["a"].Path != "/tv/A" || len(got) != 1 {
+		t.Fatalf("rows = %+v", got)
 	}
 }

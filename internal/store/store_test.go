@@ -531,6 +531,8 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 		"PruneSections":   func() error { _, err := s.PruneSections(srv, nil); return err },
 		"TMDBID":          func() error { _, _, err := s.TMDBID(srv, "101", "tvdb", "5"); return err },
 		"SaveTMDBID":      func() error { return s.SaveTMDBID(srv, "101", "tvdb", "5", "77") },
+		"SaveLibraries":   func() error { return s.SaveLibraries(srv, []LibraryInfo{{Section: sec, Title: "TV"}}) },
+		"SetPath":         func() error { return s.SetPath(srv, "101", "/x") },
 	}
 	for name, call := range calls {
 		if err := call(); err == nil {
