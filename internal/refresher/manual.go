@@ -154,6 +154,7 @@ func (r *Refresher) CheckItem(ctx context.Context, server, key string) error {
 		return err
 	}
 	row := storeItem(server, plex.Library{ID: item.row.Section, Type: item.row.Type}, live, itemReasons(live))
+	row.RatingKey = key
 	fixed, err := r.store.ApplyCheck(server, row, r.now())
 	if err != nil {
 		return manualStoreError(err)

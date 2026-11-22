@@ -170,8 +170,8 @@ func (s *Server) serveCheck(w http.ResponseWriter, r *http.Request) {
 		s.writeActionError(w, r, err)
 		return
 	}
-	if srv, it, ok := s.knownItem(w, r.WithContext(ctx), a.params); ok {
-		s.writeItemDetail(w, r.WithContext(ctx), srv, it)
+	if srv, it, ok := s.knownItem(w, r, a.params); ok {
+		s.writeItemDetail(w, r, srv, it)
 	}
 }
 
