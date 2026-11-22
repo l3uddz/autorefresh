@@ -101,11 +101,12 @@ func TestCanceledRunWritesCanceledRow(t *testing.T) {
 // startedRun stores a finished run that started at.
 func (f *fixture) startedRun(at time.Time) {
 	f.t.Helper()
-	id, err := f.store.StartRun(store.RunStart{Server: testServer, Kind: store.RunKindRun, Source: store.RunSourceSchedule, StartedAt: at})
+	start := store.RunStart{Server: testServer, Kind: store.RunKindRun, Source: store.RunSourceSchedule, StartedAt: at}
+	id, err := f.store.StartRun(start)
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	if err := f.store.FinishRun(id, store.RunResult{FinishedAt: at, Status: store.RunFinished}); err != nil {
+	if err := f.store.FinishRun(id, start, store.RunResult{FinishedAt: at, Status: store.RunFinished}); err != nil {
 		f.t.Fatal(err)
 	}
 }
@@ -173,12 +174,12 @@ func (s *runStore) StartRun(r store.RunStart) (int64, error) {
 	return id, err
 }
 
-func (s *runStore) FinishRun(id int64, r store.RunResult) error {
+func (s *runStore) FinishRun(id int64, start store.RunStart, r store.RunResult) error {
 	s.finishes++
 	if s.failFinish {
 		return errRun
 	}
-	return s.Store.FinishRun(id, r)
+	return s.Store.FinishRun(id, start, r)
 }
 
 func TestRunStartRunErrorNamesServer(t *testing.T) {

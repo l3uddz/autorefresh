@@ -44,7 +44,7 @@ type Store interface {
 	PruneServers(servers []string) ([]store.Pruned, error)
 	PruneSections(server string, sections []string) ([]store.Pruned, error)
 	StartRun(r store.RunStart) (int64, error)
-	FinishRun(id int64, r store.RunResult) error
+	FinishRun(id int64, start store.RunStart, r store.RunResult) error
 	PruneHistory(before time.Time) (events, runs int, err error)
 }
 
@@ -242,9 +242,7 @@ func (r *Refresher) runServer(ctx context.Context, srv Server) error {
 	var id int64
 	if !r.opts.DryRun {
 		var err error
-		id, err = r.store.StartRun(store.RunStart{
-			Server: srv.Name, Kind: store.RunKindRun, Source: store.RunSourceSchedule, StartedAt: run.began,
-		})
+		id, err = r.store.StartRun(run.start())
 		if err != nil {
 			return fmt.Errorf("server %s: %w", srv.Name, err)
 		}
@@ -289,6 +287,13 @@ func (r *Refresher) checkServer(ctx context.Context, run *serverRun) error {
 	return err
 }
 
+// start returns how the run started, as StartRun and FinishRun store it.
+func (run *serverRun) start() store.RunStart {
+	return store.RunStart{
+		Server: run.server.Name, Kind: store.RunKindRun, Source: store.RunSourceSchedule, StartedAt: run.began,
+	}
+}
+
 // finishRun records the end of the run id, unless it is a dry run, and
 // returns the result of runServer. A canceled run returns nil. A failed
 // FinishRun is the error of the run only if the run has no error.
@@ -307,7 +312,7 @@ func (r *Refresher) finishRun(ctx context.Context, run *serverRun, id int64, err
 		case err != nil:
 			res.Status, res.Error = store.RunFailed, err.Error()
 		}
-		if finishErr := r.store.FinishRun(id, res); err == nil {
+		if finishErr := r.store.FinishRun(id, run.start(), res); err == nil {
 			err = finishErr
 		}
 	}

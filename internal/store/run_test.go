@@ -8,7 +8,8 @@ import (
 
 func TestStartAndFinishRun(t *testing.T) {
 	s := openTest(t)
-	id, err := s.StartRun(RunStart{Server: srv, Kind: RunKindRun, Source: RunSourceSchedule, StartedAt: base})
+	start := RunStart{Server: srv, Kind: RunKindRun, Source: RunSourceSchedule, StartedAt: base}
+	id, err := s.StartRun(start)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +23,7 @@ func TestStartAndFinishRun(t *testing.T) {
 	}
 
 	end := base.Add(time.Minute)
-	err = s.FinishRun(id, RunResult{
+	err = s.FinishRun(id, start, RunResult{
 		FinishedAt: end, Status: RunFailed, Error: "boom",
 		ReadItems: 1, Refreshed: 2, Matched: 3, Failed: 4, Completed: 5, Fixed: 6, Incomplete: 7, Due: 8, Selected: 9,
 	})
@@ -43,9 +44,14 @@ func TestStartAndFinishRun(t *testing.T) {
 	}
 }
 
+// runStart is how startRun starts a run of server at.
+func runStart(server string, at time.Time) RunStart {
+	return RunStart{Server: server, Kind: RunKindRun, Source: RunSourceManual, StartedAt: at}
+}
+
 func startRun(t *testing.T, s *Store, server string, at time.Time) int64 {
 	t.Helper()
-	id, err := s.StartRun(RunStart{Server: server, Kind: RunKindRun, Source: RunSourceManual, StartedAt: at})
+	id, err := s.StartRun(runStart(server, at))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +78,7 @@ func TestInterruptRunsMarksOnlyRunning(t *testing.T) {
 	s := openTest(t)
 	done := startRun(t, s, srv, base)
 	end := base.Add(time.Minute)
-	if err := s.FinishRun(done, RunResult{FinishedAt: end, Status: RunFinished}); err != nil {
+	if err := s.FinishRun(done, runStart(srv, base), RunResult{FinishedAt: end, Status: RunFinished}); err != nil {
 		t.Fatal(err)
 	}
 	open := startRun(t, s, srv, base.Add(time.Hour))
@@ -119,7 +125,7 @@ func TestPruneHistoryKeepsRunningRuns(t *testing.T) {
 	if runs != 0 {
 		t.Fatalf("pruned runs = %d, want 0", runs)
 	}
-	if err := s.FinishRun(id, RunResult{FinishedAt: base.Add(2 * time.Hour), Status: RunFinished, Refreshed: 3}); err != nil {
+	if err := s.FinishRun(id, RunStart{Server: srv, Kind: RunKindRun, Source: RunSourceSchedule, StartedAt: base}, RunResult{FinishedAt: base.Add(2 * time.Hour), Status: RunFinished, Refreshed: 3}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Runs(0)
@@ -150,7 +156,7 @@ func TestPruneHistoryKeepsRecentlyInterruptedRuns(t *testing.T) {
 	if _, runs, err := s.PruneHistory(restart.Add(-720 * time.Hour)); err != nil || runs != 0 {
 		t.Fatalf("prune = %d runs, %v; want 0, nil", runs, err)
 	}
-	if err := s.FinishRun(id, RunResult{FinishedAt: restart.Add(time.Hour), Status: RunFinished, Refreshed: 2}); err != nil {
+	if err := s.FinishRun(id, runStart(srv, base), RunResult{FinishedAt: restart.Add(time.Hour), Status: RunFinished, Refreshed: 2}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Runs(0)
@@ -159,6 +165,39 @@ func TestPruneHistoryKeepsRecentlyInterruptedRuns(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Status != RunFinished || got[0].Refreshed != 2 {
 		t.Fatalf("runs = %+v, want the finished run %d", got, id)
+	}
+}
+
+// A run whose row another process removed while it ran (for example the
+// retention of the scheduled service after it marked the run interrupted)
+// is stored again by FinishRun, under the same ID.
+func TestFinishRunRestoresRemovedRow(t *testing.T) {
+	s := openTest(t)
+	start := runStart(srv, base)
+	id := startRun(t, s, srv, base)
+	if _, err := s.InterruptRuns(base.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, runs, err := s.PruneHistory(base.Add(2 * time.Minute)); err != nil || runs != 1 {
+		t.Fatalf("prune = %d runs, %v; want 1, nil", runs, err)
+	}
+
+	end := base.Add(5 * time.Minute)
+	if err := s.FinishRun(id, start, RunResult{FinishedAt: end, Status: RunFinished, Refreshed: 4}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Runs(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Run{ID: id, Server: srv, Kind: RunKindRun, Source: RunSourceManual, Status: RunFinished,
+		StartedAt: base, FinishedAt: end, Refreshed: 4}
+	if len(got) != 1 || !reflect.DeepEqual(got[0], want) {
+		t.Fatalf("runs = %+v, want %+v", got, want)
+	}
+	// A later run still gets a new ID.
+	if next := startRun(t, s, srv, end); next <= id {
+		t.Errorf("next run ID = %d, want above %d", next, id)
 	}
 }
 
@@ -174,7 +213,7 @@ func TestPruneHistoryDeletesOldRowsWithChildren(t *testing.T) {
 	fresh := base.Add(48 * time.Hour)
 	accept(t, s, "a", fresh, ActionRefresh)
 	oldRun := startRun(t, s, srv, old)
-	if err := s.FinishRun(oldRun, RunResult{FinishedAt: old, Status: RunFinished}); err != nil {
+	if err := s.FinishRun(oldRun, runStart(srv, old), RunResult{FinishedAt: old, Status: RunFinished}); err != nil {
 		t.Fatal(err)
 	}
 	newRun := startRun(t, s, srv, fresh)

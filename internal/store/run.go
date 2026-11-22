@@ -77,12 +77,20 @@ func (s *Store) StartRun(r RunStart) (int64, error) {
 	return id, nil
 }
 
-// FinishRun records the end and the counts of the run id.
-func (s *Store) FinishRun(id int64, r RunResult) error {
-	_, err := s.db.Exec(`UPDATE run SET status = ?, finished_at = ?, error = ?, read_items = ?, refreshed = ?,
-		matched = ?, failed = ?, completed = ?, fixed = ?, incomplete = ?, due = ?, selected = ? WHERE id = ?`,
-		r.Status, r.FinishedAt.Unix(), r.Error, r.ReadItems, r.Refreshed,
-		r.Matched, r.Failed, r.Completed, r.Fixed, r.Incomplete, r.Due, r.Selected, id)
+// FinishRun records the end and the counts of the run id, which StartRun
+// stored from start. It writes the whole row: if retention or another
+// process removed the row meanwhile, FinishRun stores it again under the
+// same ID, so a finished run is never lost.
+func (s *Store) FinishRun(id int64, start RunStart, r RunResult) error {
+	_, err := s.db.Exec(`INSERT INTO run (id, server, kind, source, started_at, status, finished_at, error,
+		read_items, refreshed, matched, failed, completed, fixed, incomplete, due, selected)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (id) DO UPDATE SET status = excluded.status, finished_at = excluded.finished_at,
+		error = excluded.error, read_items = excluded.read_items, refreshed = excluded.refreshed,
+		matched = excluded.matched, failed = excluded.failed, completed = excluded.completed,
+		fixed = excluded.fixed, incomplete = excluded.incomplete, due = excluded.due, selected = excluded.selected`,
+		id, start.Server, start.Kind, start.Source, start.StartedAt.Unix(), r.Status, r.FinishedAt.Unix(), r.Error,
+		r.ReadItems, r.Refreshed, r.Matched, r.Failed, r.Completed, r.Fixed, r.Incomplete, r.Due, r.Selected)
 	if err != nil {
 		return fmt.Errorf("finish run: %w", err)
 	}
