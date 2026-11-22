@@ -20,8 +20,8 @@ type TMDB interface {
 }
 
 var (
-	// errTMDB marks a failed TMDB request.
-	errTMDB = errors.New("tmdb lookup")
+	// ErrTMDB marks a failed TMDB request.
+	ErrTMDB = errors.New("tmdb lookup")
 	// errCache marks a store error of a fix match: a failed read or write of
 	// the TMDB ID cache, of the series path, or of the match decision.
 	errCache = errors.New("cache")
@@ -57,7 +57,7 @@ func (r *Refresher) tmdbResults(ctx context.Context, srv Server, lib plex.Librar
 		if from.Source != "imdb" && (from.Source != "tvdb" || it.Type != plex.ShowLibrary) {
 			continue
 		}
-		tmdbID, ok, err := r.tmdbID(ctx, srv.Name, it, from)
+		tmdbID, ok, err := r.tmdbID(ctx, srv.Name, it, from, true)
 		if err != nil {
 			return nil, err
 		}
@@ -81,7 +81,7 @@ func (r *Refresher) tmdbResults(ctx context.Context, srv Server, lib plex.Librar
 
 // tmdbID returns the TMDB ID of a path ID of the item, from the cache or from
 // TMDB. It caches each ID that TMDB found.
-func (r *Refresher) tmdbID(ctx context.Context, server string, it store.Item, from pathID) (string, bool, error) {
+func (r *Refresher) tmdbID(ctx context.Context, server string, it store.Item, from pathID, save bool) (string, bool, error) {
 	tmdbID, ok, err := r.store.TMDBID(server, it.RatingKey, from.Source, from.Value)
 	if err != nil {
 		return "", false, fmt.Errorf("%w: %w", errCache, err)
@@ -92,10 +92,10 @@ func (r *Refresher) tmdbID(ctx context.Context, server string, it store.Item, fr
 
 	tmdbID, ok, err = r.opts.TMDB.Find(ctx, from.Source, from.Value, it.Type == plex.ShowLibrary)
 	if err != nil {
-		return "", false, fmt.Errorf("%w: %s: %w", errTMDB, from.title(), err)
+		return "", false, fmt.Errorf("%w: %s: %w", ErrTMDB, from.title(), err)
 	}
-	if !ok {
-		return "", false, nil
+	if !ok || !save {
+		return tmdbID, ok, nil
 	}
 	if err := r.store.SaveTMDBID(server, it.RatingKey, from.Source, from.Value, tmdbID); err != nil {
 		return "", false, fmt.Errorf("%w: %w", errCache, err)
@@ -148,7 +148,7 @@ func (r *Refresher) confirmYear(ctx context.Context, run *serverRun, mc matchCon
 func (r *Refresher) confirmWithTMDB(ctx context.Context, run *serverRun, mc matchContext, pathYear int) (yearResolution, error) {
 	tmdbID, needSearch, err := r.resolveOneTMDBID(ctx, run.server.Name, mc)
 	if err != nil {
-		if errors.Is(err, errTMDB) && ctx.Err() == nil {
+		if errors.Is(err, ErrTMDB) && ctx.Err() == nil {
 			r.recordTMDBFailure(run, mc.lib, mc.it, mc.d, err)
 			return yearResolution{}, nil
 		}
@@ -192,7 +192,7 @@ func (r *Refresher) confirmationLookupFailed(ctx context.Context, run *serverRun
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	r.recordTMDBFailure(run, mc.lib, mc.it, mc.d, fmt.Errorf("%w: tmdb-%s: %w", errTMDB, id, err))
+	r.recordTMDBFailure(run, mc.lib, mc.it, mc.d, fmt.Errorf("%w: tmdb-%s: %w", ErrTMDB, id, err))
 	return nil
 }
 
@@ -226,7 +226,7 @@ func (r *Refresher) singlePathTMDBID(ctx context.Context, server string, mc matc
 		if id.Source != "imdb" && (id.Source != "tvdb" || mc.it.Type != plex.ShowLibrary) {
 			continue
 		}
-		tmdbID, ok, err := r.tmdbID(ctx, server, mc.it, id)
+		tmdbID, ok, err := r.tmdbID(ctx, server, mc.it, id, true)
 		if err != nil {
 			return "", err
 		}

@@ -426,7 +426,7 @@ func foundLinks(results []searchResult, show bool) []string {
 // without a TMDB client.
 func (r *Refresher) tmdbFallback(ctx context.Context, run *serverRun, lib plex.Library, it store.Item, ids []pathID, d *decisionLog) ([]searchResult, error) {
 	results, err := r.tmdbResults(ctx, run.server, lib, it, ids, d)
-	if !errors.Is(err, errTMDB) || ctx.Err() != nil {
+	if !errors.Is(err, ErrTMDB) || ctx.Err() != nil {
 		return results, err
 	}
 	r.recordTMDBFailure(run, lib, it, d, err)
