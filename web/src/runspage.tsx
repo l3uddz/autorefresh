@@ -2,6 +2,7 @@ import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { EmptyState } from '@astryxdesign/core/EmptyState';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
+import { DEFAULT_WIDTH_BREAKPOINTS } from '@astryxdesign/core/theme';
 import { Icon } from '@astryxdesign/core/Icon';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { List } from '@astryxdesign/core/List';
@@ -17,7 +18,7 @@ import { useNow } from './clock';
 import { dateTime, label, relative, runDuration } from './format';
 import { RunRow, statusDots } from './status';
 
-const tableQuery = '(min-width: 1000px)';
+const tableQuery = `(min-width: ${DEFAULT_WIDTH_BREAKPOINTS.lg}px)`;
 const pageSize = 50;
 
 interface RunPage {
@@ -75,7 +76,14 @@ export function RunsPage({ srv }: { srv?: number }) {
       )}
       {pages.hasNextPage && (
         <HStack hAlign="center">
-          <Button label="Load more" isLoading={pages.isFetchingNextPage} onClick={() => void pages.fetchNextPage()} />
+          <Button
+            label="Load more"
+            isLoading={pages.isFetchingNextPage}
+            isDisabled={pages.isFetching}
+            onClick={() => {
+              if (!pages.isFetching) void pages.fetchNextPage({ cancelRefetch: false });
+            }}
+          />
         </HStack>
       )}
     </VStack>

@@ -1,5 +1,4 @@
 import { useImperativeAlertDialog } from '@astryxdesign/core/AlertDialog';
-import { Badge } from '@astryxdesign/core/Badge';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { Card } from '@astryxdesign/core/Card';
@@ -7,6 +6,7 @@ import { Collapsible } from '@astryxdesign/core/Collapsible';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { EmptyState } from '@astryxdesign/core/EmptyState';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
+import { DEFAULT_WIDTH_BREAKPOINTS } from '@astryxdesign/core/theme';
 import { HStack, Layout, LayoutContent, LayoutPanel, StackItem, VStack } from '@astryxdesign/core/Layout';
 import { Link } from '@astryxdesign/core/Link';
 import { Skeleton } from '@astryxdesign/core/Skeleton';
@@ -29,7 +29,7 @@ import { lastDecision, verdictName } from './timeline';
 // left, the last automatic fix match on the right. It never applies a
 // match without a confirmation that names the item and the candidate.
 
-const wideQuery = '(min-width: 900px)';
+const wideQuery = `(min-width: ${DEFAULT_WIDTH_BREAKPOINTS.lg}px)`;
 
 /** Match searches call Plex several times, so they run only when asked:
  * no refetch on focus or on a list refresh, no retry, and no cache after
@@ -368,7 +368,7 @@ function CandidateCard({ group, item, params, decision, isCurrent, hasEpisodeChe
           <VStack gap={2}>
             <HStack gap={2} wrap="wrap" vAlign="center">
               <Text weight="semibold" wordBreak="break-word">{candidate.name || candidate.guid || 'Unnamed candidate'}</Text>
-              {isCurrent && <Badge variant="info" label="currently matched" />}
+              {isCurrent && <Token size="sm" color="blue" label="currently matched" />}
             </HStack>
             {facts && <Text type="supporting" color="secondary">{facts}</Text>}
             {candidate.summary && <Text type="supporting" maxLines={3}>{candidate.summary}</Text>}

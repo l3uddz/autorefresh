@@ -3,6 +3,7 @@ import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
+import { DEFAULT_WIDTH_BREAKPOINTS } from '@astryxdesign/core/theme';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Selector } from '@astryxdesign/core/Selector';
 import { Skeleton } from '@astryxdesign/core/Skeleton';
@@ -115,7 +116,7 @@ function ServerPicker({ servers, route, srv }: { servers: ServerStatus[]; route:
 
 // Below this width, with several servers, the top bar keeps its room for
 // the server picker and Run now. The Status page shows each run.
-const roomyTopBar = '(min-width: 640px)';
+const roomyTopBar = `(min-width: ${DEFAULT_WIDTH_BREAKPOINTS.sm}px)`;
 
 /** Shows the progress of the running servers, combined when several run. */
 function RunSummary({ servers }: { servers: ServerStatus[] }) {

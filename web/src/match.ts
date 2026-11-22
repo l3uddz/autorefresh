@@ -184,10 +184,11 @@ export function checkSearch(text: string, year: string): SearchInput {
   const q = text.trim();
   if (!q) return { error: 'Enter a title or an ID.' };
   if (new TextEncoder().encode(q).length > maxSearchBytes) return { error: `Use at most ${maxSearchBytes} bytes.` };
+  if (isIDSearch(q)) return { q };
   const y = year.trim();
   if (!y) return { q };
   if (!/^\d{1,4}$/.test(y) || Number(y) < 1) return { error: 'The year must be a number from 1 to 9999.' };
-  return isIDSearch(q) ? { q } : { q, year: Number(y) };
+  return { q, year: Number(y) };
 }
 
 export interface TypedSearch {

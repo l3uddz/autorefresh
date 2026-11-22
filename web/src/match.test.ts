@@ -174,7 +174,7 @@ describe('checkSearch', () => {
   });
 
   it('drops the year of an ID search, which the API ignores', () => {
-    expect(checkSearch('tmdb-1', '2019')).toEqual({ q: 'tmdb-1' });
+    for (const year of ['2019', '0', 'abc']) expect(checkSearch('tmdb-1', year)).toEqual({ q: 'tmdb-1' });
   });
 
   it('builds the request paths and the exact match body', () => {
