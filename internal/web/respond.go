@@ -100,7 +100,7 @@ func secretSpans(text string, secrets []string) []span {
 }
 
 // containsCredential reports whether the URL raw holds a non-empty
-// configured credential: as it is, percent-decoded in its path, or
+// configured credential: as it is, percent-decoded in its host or path, or
 // percent-decoded in its query, both with the form rules ('+' is a space)
 // and without them, as a host that decodes only percent escapes does. A
 // URL that does not parse or decode counts as one that holds a credential.
@@ -117,7 +117,7 @@ func (s *Server) containsCredential(raw string) bool {
 	if err != nil {
 		return true
 	}
-	forms := []string{raw, u.Path, formQuery, query}
+	forms := []string{raw, u.Host, u.Path, formQuery, query}
 	for _, cred := range s.credentials {
 		if cred != "" && slices.ContainsFunc(forms, func(f string) bool { return strings.Contains(f, cred) }) {
 			return true

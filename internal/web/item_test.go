@@ -248,9 +248,13 @@ func TestItemTimelineDropsCandidateThumbsWithCredentials(t *testing.T) {
 		"clean":          "https://img.example/p.jpg?w=300",
 		"encoded-clean":  "https://img.example/a%20b.jpg",
 		"secret-in-host": "https://" + secret + ".example/p.jpg",
+		// url.Parse rejects an ASCII escape in a host, but it decodes the
+		// escape of a non-ASCII byte.
+		"ascii-encoded-host": "https://%73entinel-secret.example/p.jpg",
+		"encoded-host":       "https://p%C3%A4ss.example/p.jpg",
 	}
-	got, body := candidateThumbs(t, Options{Credentials: []string{"", secret}}, thumbs)
-	if strings.Contains(body, secret) || strings.Contains(body, "entinel") {
+	got, body := candidateThumbs(t, Options{Credentials: []string{"", secret, "päss"}}, thumbs)
+	if strings.Contains(body, secret) || strings.Contains(body, "entinel") || strings.Contains(body, "%C3%A4ss") {
 		t.Errorf("body holds the secret: %s", body)
 	}
 	assertThumbs(t, thumbs, got, "clean", "encoded-clean")
