@@ -34,7 +34,7 @@ import { fixedBy, label, plural, queueState, relative } from './format';
 import { Poster, Reasons } from './media';
 import { NothingMatched, startBulkRefresh, useIsRefreshBusy } from './queue';
 import { itemHash, navigate, tabNames, type ItemKey, type TabName } from './route';
-import { formatSort, parseSort, sortKeys, stableRows, tableRow, type TableRow } from './table';
+import { chooseSort, formatSort, parseSort, sortKeys, stableRows, tableRow, type TableRow } from './table';
 
 const tabTitles: Record<TabName, string> = { attention: 'Attention', fixed: 'Fixed', stopped: 'Stopped' };
 const reasonOptions = ['unmatched', 'no-summary', 'no-poster', 'no-art', 'episode-no-summary', 'episode-unmatched'];
@@ -425,8 +425,7 @@ function ItemsHeader({ tab, counts, mode, onMode, srv, server, filters, onFilter
   );
 }
 
-/** The sort of list mode: a sort key of the tab and its direction. A new
- * key starts in its natural direction, such as the most tries first. */
+/** The sort of list mode: a sort key of the tab and its direction. */
 function SortControl({ tab, sort, onSort }: { tab: TabName; sort: string; onSort: (sort: string) => void }) {
   const { key, desc } = parseSort(sort);
   return (
@@ -440,7 +439,7 @@ function SortControl({ tab, sort, onSort }: { tab: TabName; sort: string; onSort
         // control says what the value means.
         options={[{ value: '', label: 'Default order' }, ...sortKeys[tab].map(entry => ({ value: entry.key, label: entry.label }))]}
         renderValue={option => (option.value ? `Sort by ${(option.label ?? option.value).toLowerCase()}` : option.label)}
-        onChange={value => onSort(formatSort(value ?? '', sortKeys[tab].find(entry => entry.key === value)?.desc ?? false))}
+        onChange={value => onSort(chooseSort(tab, sort, value ?? ''))}
       />
       {key && (
         <IconButton

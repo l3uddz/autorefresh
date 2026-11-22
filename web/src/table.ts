@@ -64,6 +64,16 @@ export function formatSort(key: string, desc: boolean): string {
   return desc ? `-${key}` : key;
 }
 
+/** Returns the sort after a pick of key in the sort menu of tab. A new key
+ * starts in its natural direction, such as the most tries first. The
+ * current key keeps its direction, because the menu also reports a pick of
+ * the selected option. */
+export function chooseSort(tab: TabName, sort: string, key: string): string {
+  const current = parseSort(sort);
+  if (key === current.key) return sort;
+  return formatSort(key, sortKeys[tab].find(entry => entry.key === key)?.desc ?? false);
+}
+
 /** Returns the text row of item. Ignored reasons are named as ignored. */
 export function tableRow(item: ItemRecord, now: number, isMulti: boolean, ignored: readonly string[]): TableRow {
   const reasons = (item.reasons ?? []).map(reason => (ignored.includes(reason) ? `${label(reason)} (ignored)` : label(reason)));

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ItemRecord } from './api';
-import { formatSort, parseSort, sortKeys, stableRows, tableRow } from './table';
+import { chooseSort, formatSort, parseSort, sortKeys, stableRows, tableRow } from './table';
 
 describe('table rows', () => {
   const now = Date.parse('2026-11-22T12:00:00Z');
@@ -62,6 +62,13 @@ describe('sorts', () => {
     expect(formatSort('due', false)).toBe('due');
     expect(formatSort('tries', true)).toBe('-tries');
     expect(formatSort('', true)).toBe('');
+  });
+
+  it('starts a new sort key in its natural direction and keeps the direction of the current key', () => {
+    expect(chooseSort('attention', '', 'tries')).toBe('-tries');
+    expect(chooseSort('attention', '-tries', 'due')).toBe('due');
+    expect(chooseSort('attention', 'tries', 'tries')).toBe('tries');
+    expect(chooseSort('attention', '-tries', '')).toBe('');
   });
 
   it('offers the sorts of each tab that the API knows', () => {
