@@ -107,12 +107,17 @@ func stopUI(ui *web.Server) {
 	}
 }
 
+type scheduledJobs interface {
+	scheduledStarter
+	Close()
+}
+
 // serveUntilStopped runs the schedule until ctx ends. If ctx already ended,
 // for example during the token checks, the schedule never starts. Then it
 // stops in this order: the UI, so that no request still reads the store,
 // then the schedule and the busy run. The schedule has its own context, so
 // a busy run goes on while the UI stops. ui can be nil.
-func serveUntilStopped(ctx context.Context, ui *web.Server, r *runner, sched cron.Schedule) {
+func serveUntilStopped(ctx context.Context, ui *web.Server, r scheduledJobs, sched cron.Schedule) {
 	schedCtx, cancelSched := context.WithCancel(context.Background())
 	defer cancelSched()
 	var served sync.WaitGroup
@@ -123,4 +128,5 @@ func serveUntilStopped(ctx context.Context, ui *web.Server, r *runner, sched cro
 	stopUI(ui)
 	cancelSched()
 	served.Wait()
+	r.Close()
 }

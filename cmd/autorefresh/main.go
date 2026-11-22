@@ -184,7 +184,7 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 	// schedule. A check of each server and TMDB shows a wrong token or URL at
 	// once, before the first run.
 	checkTokens(ctx, servers, tmdbCheck, rec)
-	serveUntilStopped(ctx, ui, &runner{run: r.Run}, cfg.RunSchedule)
+	serveUntilStopped(ctx, ui, refresher.NewJobs(r), cfg.RunSchedule)
 	closeStore(st)
 	log.Info().Msg("Stopped")
 	return nil

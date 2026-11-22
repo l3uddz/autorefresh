@@ -30,6 +30,7 @@ type Plex interface {
 
 // Store is the part of store.Store that the refresher uses.
 type Store interface {
+	FinishJob(int64, store.RunStart, store.RunResult, []store.RunItem) (bool, error)
 	SetStopped(context.Context, string, string, time.Time, bool) (bool, error)
 	ApplyCheck(string, store.Item, time.Time) (bool, error)
 	LibraryInfo(string, string) (store.LibraryInfo, bool, error)
