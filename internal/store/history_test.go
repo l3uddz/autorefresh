@@ -63,7 +63,7 @@ func TestRecordRequestFailedMatchKeepsTarget(t *testing.T) {
 func TestRecordRequestAcceptedMatchSetsMatchEventID(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
-	target := &MatchTarget{GUID: "g", Title: "Show", Year: 2020, Links: []string{"tvdb-1", "tmdb-2"},
+	target := &MatchTarget{GUID: "g", Title: "Show", Year: 2020, Links: []string{"tvdb-1", "imdb-tt1,x"},
 		PathYear: 2019, TMDBYear: 2020, EpisodeCount: 8}
 
 	err := s.RecordRequest(Request{Server: srv, RatingKey: "a", At: base.Add(time.Hour), Source: SourceAuto,
@@ -80,7 +80,7 @@ func TestRecordRequestAcceptedMatchSetsMatchEventID(t *testing.T) {
 		t.Fatalf("row = %+v, event %d", got, events[0].ID)
 	}
 	e := events[0]
-	if !reflect.DeepEqual(e.Links, []string{"tvdb-1", "tmdb-2"}) || e.PathYear != 2019 || e.TMDBYear != 2020 || e.EpisodeCount != 8 {
+	if !reflect.DeepEqual(e.Links, []string{"tvdb-1", "imdb-tt1,x"}) || e.PathYear != 2019 || e.TMDBYear != 2020 || e.EpisodeCount != 8 {
 		t.Fatalf("event = %+v", e)
 	}
 }

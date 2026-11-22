@@ -216,17 +216,13 @@ func readItem(tx *sql.Tx, server, ratingKey string) (it Item, found bool, err er
 
 // insertEvent writes e and returns its ID.
 func insertEvent(tx *sql.Tx, e Event) (int64, error) {
-	var links string
-	if len(e.Links) > 0 {
-		links = strings.Join(e.Links, ",")
-	}
 	res, err := tx.Exec(`INSERT INTO event (server, section, rating_key, at, kind, source, title, year, type, thumb, art, path,
 		action, accepted, outcome, error, match_guid, match_title, match_year, conflict, path_year, tmdb_year,
 		episode_count, links, fixed_action, fixed_match)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.Server, e.Section, e.RatingKey, e.At.Unix(), e.Kind, e.Source, e.Title, e.Year, e.Type, e.Thumb, e.Art, e.Path,
 		e.Action, e.Accepted, e.Outcome, e.Error, e.MatchGUID, e.MatchTitle, e.MatchYear, e.Conflict,
-		e.PathYear, e.TMDBYear, e.EpisodeCount, links, e.FixedAction, e.FixedMatch)
+		e.PathYear, e.TMDBYear, e.EpisodeCount, strings.Join(e.Links, "\n"), e.FixedAction, e.FixedMatch)
 	if err != nil {
 		return 0, fmt.Errorf("write event: %w", err)
 	}
@@ -277,7 +273,7 @@ func scanEvent(row scanner) (Event, error) {
 	e.At = time.Unix(at, 0)
 	e.FixedMatchEventID = fixedID.Int64
 	if links != "" {
-		e.Links = strings.Split(links, ",")
+		e.Links = strings.Split(links, "\n")
 	}
 	return e, nil
 }
