@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -318,5 +319,26 @@ func TestUISecretsRedactPrefixedPlexError(t *testing.T) {
 	}
 	if got := body.Runs[0].Error; !strings.Contains(got, "<redacted>") || strings.Contains(got, "sentinel-path") {
 		t.Errorf("error = %q, want the path prefix redacted", got)
+	}
+}
+
+// The poster check gets only the credentials, and the redaction gets them
+// once with the Plex host and path prefix.
+func TestUICredentialsAndSecrets(t *testing.T) {
+	cfg, err := config.Decode(strings.NewReader("plex:\n  - name: test\n    url: http://plex:32400/gateway\n" +
+		"    token: plex-token\ntmdb-token: tmdb-token\nui:\n  listen: \":0\"\n  username: u\n  password: ui-password\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := cfg.Plex[0]
+	client := plex.New(s.Name, s.BaseURL, s.Token, s.RequestTimeout())
+
+	credentials := uiCredentials(cfg)
+	if want := []string{"plex-token", "tmdb-token", "ui-password"}; !slices.Equal(credentials, want) {
+		t.Errorf("credentials = %q, want %q", credentials, want)
+	}
+	secrets := uiSecrets(cfg, credentials, []*plex.Client{client})
+	if want := []string{"plex-token", "tmdb-token", "ui-password", "plex:32400", "/gateway"}; !slices.Equal(secrets, want) {
+		t.Errorf("secrets = %q, want %q", secrets, want)
 	}
 }

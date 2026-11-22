@@ -185,17 +185,11 @@ func TestItemTimelineDropsUnsafeCandidateThumbs(t *testing.T) {
 	}
 }
 
-func TestItemTimelineDropsCandidateThumbsWithSecrets(t *testing.T) {
-	const secret = "sentinel-secret"
-	thumbs := map[string]string{
-		"query":          "https://img.example/p.jpg?sig=" + secret,
-		"path":           "https://img.example/" + secret + "/p.jpg",
-		"encoded-path":   "https://img.example/%73entinel-secret/p.jpg",
-		"encoded-query":  "https://img.example/p.jpg?sig=%73entinel%2Dsecret",
-		"clean":          "https://img.example/p.jpg?w=300",
-		"encoded-clean":  "https://img.example/a%20b.jpg",
-		"secret-in-host": "https://" + secret + ".example/p.jpg",
-	}
+// candidateThumbs records one match decision of the item 101 with a
+// candidate for each named thumb, and reads it through /api/item of a
+// Server with opts. It returns the thumb of each name and the body.
+func candidateThumbs(t *testing.T, opts Options, thumbs map[string]string) (map[string]any, string) {
+	t.Helper()
 	var candidates []store.MatchCandidate
 	for name, thumb := range thumbs {
 		candidates = append(candidates, store.MatchCandidate{GUID: "plex://movie/" + name, Thumb: thumb})
@@ -209,16 +203,10 @@ func TestItemTimelineDropsCandidateThumbsWithSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(Options{
-		Servers: []PlexServer{{Name: "Home", Plex: &fakePlex{}}},
-		Store:   st,
-		Secrets: []string{"", secret},
-	})
+	opts.Servers = []PlexServer{{Name: "Home", Plex: &fakePlex{}}}
+	opts.Store = st
 
-	got, body := getItem(t, s, "srv=0&key=101")
-	if strings.Contains(body, secret) || strings.Contains(body, "entinel") {
-		t.Errorf("body holds the secret: %s", body)
-	}
+	got, body := getItem(t, New(opts), "srv=0&key=101")
 	if len(got.Timeline) != 1 {
 		t.Fatalf("timeline = %v", got.Timeline)
 	}
@@ -233,12 +221,51 @@ func TestItemTimelineDropsCandidateThumbsWithSecrets(t *testing.T) {
 		name, _ := strings.CutPrefix(c["guid"].(string), "plex://movie/")
 		gotThumbs[name] = c["thumb"]
 	}
-	want := map[string]any{"clean": thumbs["clean"], "encoded-clean": thumbs["encoded-clean"]}
+	return gotThumbs, body
+}
+
+// assertThumbs checks that only the thumbs named in kept are in got.
+func assertThumbs(t *testing.T, thumbs map[string]string, got map[string]any, kept ...string) {
+	t.Helper()
+	want := map[string]any{}
+	for _, name := range kept {
+		want[name] = thumbs[name]
+	}
 	for name := range thumbs {
-		if gotThumbs[name] != want[name] {
-			t.Errorf("thumb of %s = %v, want %v", name, gotThumbs[name], want[name])
+		if got[name] != want[name] {
+			t.Errorf("thumb of %s = %v, want %v", name, got[name], want[name])
 		}
 	}
+}
+
+func TestItemTimelineDropsCandidateThumbsWithCredentials(t *testing.T) {
+	const secret = "sentinel-secret"
+	thumbs := map[string]string{
+		"query":          "https://img.example/p.jpg?sig=" + secret,
+		"path":           "https://img.example/" + secret + "/p.jpg",
+		"encoded-path":   "https://img.example/%73entinel-secret/p.jpg",
+		"encoded-query":  "https://img.example/p.jpg?sig=%73entinel%2Dsecret",
+		"clean":          "https://img.example/p.jpg?w=300",
+		"encoded-clean":  "https://img.example/a%20b.jpg",
+		"secret-in-host": "https://" + secret + ".example/p.jpg",
+	}
+	got, body := candidateThumbs(t, Options{Credentials: []string{"", secret}}, thumbs)
+	if strings.Contains(body, secret) || strings.Contains(body, "entinel") {
+		t.Errorf("body holds the secret: %s", body)
+	}
+	assertThumbs(t, thumbs, got, "clean", "encoded-clean")
+}
+
+// A redacted value that is not a credential, such as a short Plex host or
+// a path prefix, does not drop a candidate thumb.
+func TestItemTimelineKeepsCandidateThumbsWithRedactedHosts(t *testing.T) {
+	thumbs := map[string]string{
+		"plex-tv":   "https://metadata-static.plex.tv/p.jpg",
+		"in-path":   "https://img.example/plex/p.jpg",
+		"in-prefix": "https://img.example/gateway/p.jpg",
+	}
+	got, _ := candidateThumbs(t, Options{Secrets: []string{"plex", "/gateway"}}, thumbs)
+	assertThumbs(t, thumbs, got, "plex-tv", "in-path", "in-prefix")
 }
 
 func TestItemTimelineEmptyIsArray(t *testing.T) {

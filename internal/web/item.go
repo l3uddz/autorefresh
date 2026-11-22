@@ -172,11 +172,11 @@ func (s *Server) toSearchJSON(m store.MatchSearch) searchJSON {
 }
 
 // toCandidateJSON returns c. It checks the stored thumb again, so only a
-// safe remote image URL without a configured secret reaches the browser,
-// which loads it from a third-party host.
+// safe remote image URL without a configured credential reaches the
+// browser, which loads it from a third-party host.
 func (s *Server) toCandidateJSON(c store.MatchCandidate) candidateJSON {
 	thumb := plex.SafeRemoteImage(c.Thumb)
-	if s.containsSecret(thumb) {
+	if s.containsCredential(thumb) {
 		thumb = ""
 	}
 	return candidateJSON{

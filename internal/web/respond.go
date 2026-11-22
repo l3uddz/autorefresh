@@ -99,10 +99,11 @@ func secretSpans(text string, secrets []string) []span {
 	return spans
 }
 
-// containsSecret reports whether the URL raw holds a non-empty configured
-// secret: as it is, or percent-decoded in its path or query. A URL that
-// does not parse or decode counts as one that holds a secret.
-func (s *Server) containsSecret(raw string) bool {
+// containsCredential reports whether the URL raw holds a non-empty
+// configured credential: as it is, or percent-decoded in its path or query.
+// A URL that does not parse or decode counts as one that holds a
+// credential.
+func (s *Server) containsCredential(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return true
@@ -111,11 +112,11 @@ func (s *Server) containsSecret(raw string) bool {
 	if err != nil {
 		return true
 	}
-	for _, secret := range s.secrets {
-		if secret == "" {
+	for _, cred := range s.credentials {
+		if cred == "" {
 			continue
 		}
-		if strings.Contains(raw, secret) || strings.Contains(u.Path, secret) || strings.Contains(query, secret) {
+		if strings.Contains(raw, cred) || strings.Contains(u.Path, cred) || strings.Contains(query, cred) {
 			return true
 		}
 	}

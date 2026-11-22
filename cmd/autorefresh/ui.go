@@ -45,27 +45,40 @@ func newUIServer(cfg config.Config, rules store.DueRules, st *store.Store, statu
 	for i, client := range clients {
 		servers[i] = web.PlexServer{Name: cfg.Plex[i].Name, Plex: client}
 	}
+	credentials := uiCredentials(cfg)
 	return web.New(web.Options{
-		Username: cfg.UI.Username,
-		Password: cfg.UI.Password,
-		Status:   status,
-		Servers:  servers,
-		Store:    st,
-		Rules:    rules,
-		Secrets:  uiSecrets(cfg, clients),
+		Username:    cfg.UI.Username,
+		Password:    cfg.UI.Password,
+		Status:      status,
+		Servers:     servers,
+		Store:       st,
+		Rules:       rules,
+		Secrets:     uiSecrets(cfg, credentials, clients),
+		Credentials: credentials,
 	})
 }
 
-// uiSecrets returns the values that the API redacts from stored error
-// texts: the token, the URL host, and the path prefix of each Plex server,
-// the TMDB token, and the UI password.
-func uiSecrets(cfg config.Config, clients []*plex.Client) []string {
-	secrets := make([]string, 0, 3*len(clients)+2)
-	for i, client := range clients {
-		s := cfg.Plex[i]
-		secrets = append(secrets, s.Token, s.BaseURL.Host, client.PathPrefix())
+// uiCredentials returns the credentials of cfg: the token of each Plex
+// server, the TMDB token, and the UI password. The API drops a candidate
+// poster whose URL holds one.
+func uiCredentials(cfg config.Config) []string {
+	creds := make([]string, 0, len(cfg.Plex)+2)
+	for _, s := range cfg.Plex {
+		creds = append(creds, s.Token)
 	}
-	return append(secrets, cfg.TMDBToken, cfg.UI.Password)
+	return append(creds, cfg.TMDBToken, cfg.UI.Password)
+}
+
+// uiSecrets returns the values that the API redacts from stored error
+// texts: the credentials, and the URL host and the path prefix of each
+// Plex server.
+func uiSecrets(cfg config.Config, credentials []string, clients []*plex.Client) []string {
+	secrets := make([]string, 0, len(credentials)+2*len(clients))
+	secrets = append(secrets, credentials...)
+	for i, client := range clients {
+		secrets = append(secrets, cfg.Plex[i].BaseURL.Host, client.PathPrefix())
+	}
+	return secrets
 }
 
 // startUI binds the listen address of cfg and serves ui on it.

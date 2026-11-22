@@ -60,6 +60,10 @@ type Options struct {
 	// the stored error texts: Plex tokens, hosts, and path prefixes, the
 	// TMDB token, and the UI password. Empty values are skipped.
 	Secrets []string
+	// Credentials are the Plex tokens, the TMDB token, and the UI
+	// password. The API drops a candidate poster whose URL holds one.
+	// Empty values are skipped.
+	Credentials []string
 }
 
 // Server is the HTTP server of the dashboard.
@@ -75,6 +79,8 @@ type Server struct {
 	rules    store.DueRules
 	now      func() time.Time
 	secrets  []string
+	// credentials are the values that no candidate poster URL may hold.
+	credentials []string
 	// liveTimeout bounds the Plex request of GET /api/item/live.
 	liveTimeout time.Duration
 
@@ -129,6 +135,7 @@ func New(opts Options) *Server {
 		rules:        opts.Rules,
 		now:          time.Now,
 		secrets:      opts.Secrets,
+		credentials:  opts.Credentials,
 		liveTimeout:  defaultLiveTimeout,
 		identities:   make([]string, len(opts.Servers)),
 		sseCtx:       sseCtx,
