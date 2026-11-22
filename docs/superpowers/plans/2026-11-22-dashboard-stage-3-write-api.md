@@ -264,7 +264,9 @@ var ErrNoItem = errors.New("no item row") // a write that needs a row that does 
 func (s *Store) KnownItem(server, ratingKey string) (it Item, cached, found bool, err error)
 func (s *Store) LibraryInfo(server, section string) (info LibraryInfo, found bool, err error)
 // SetStopped sets (stop) or clears stopped_at and writes a stopped or resumed event
-// (source manual) in one transaction begun with BeginTx(ctx, nil). Already in that
+// (source manual) in one transaction begun with BeginTx(ctx, nil); a commit or exec error
+// returned after ctx ended (including sql.ErrTxDone from the cancellation rollback) is
+// returned as ctx.Err() via a helper txError(ctx, err). Already in that
 // state: changed=false, nothing written. Missing row: ErrNoItem.
 func (s *Store) SetStopped(ctx context.Context, server, ratingKey string, at time.Time, stop bool) (changed bool, err error)
 
@@ -315,7 +317,8 @@ func TestRecordManualTable(t *testing.T)
 // fields), the row's attempts/outcome, and whether the row exists afterwards. The "history-only, row exists now"
 // case inserts a row before recording and asserts its attempts and last_outcome are untouched.
 func TestRecordManualAfterRowAndEventsPruned(t *testing.T) // cached, row deleted and its events pruned -> event from Snapshot
-func TestSetStoppedHonoursContext(t *testing.T)            // canceled ctx -> error, stopped_at unchanged, no event
+func TestSetStoppedHonoursContext(t *testing.T)            // canceled ctx -> context error, stopped_at unchanged, no event
+func TestTxError(t *testing.T)                             // (canceled ctx, sql.ErrTxDone) -> context.Canceled; (live ctx, sql.ErrTxDone) -> sql.ErrTxDone; (any, nil) -> nil; (canceled, other db error) -> context.Canceled
 func TestApplyCheckKeepsEpisodeReasons(t *testing.T)   // show NoSummary|EpisodeNoSummary, check with 0 -> EpisodeNoSummary, !completed
 func TestApplyCheckCompletes(t *testing.T)             // accepted request before; check with 0 -> completed, row gone, completed event fixed_action "refresh", new thumb
 func TestApplyCheckKeepsReadTimes(t *testing.T)        // last_read and last_full_read unchanged
@@ -609,7 +612,7 @@ store.ManualRecord{
 - The store applies the table of Task 2.
 - A stopped item stays stopped.
 
-**`CheckItem`** builds the row with `storeItem(server, plex.Library{ID: row.Section, Type: row.Type}, item, itemReasons(item))` and calls `ApplyCheck`. A 404 calls `RecordManual{Cached: true, Gone: true}`. `ErrNoItem` from the store (the row went away in between) is returned as `ErrNotCached`.
+**`CheckItem`** builds the row with `storeItem(server, plex.Library{ID: row.Section, Type: row.Type}, item, itemReasons(item))` and calls `ApplyCheck`. A 404 calls `RecordManual(store.ManualRecord{Request: store.Request{Server: server, RatingKey: key, At: r.now(), Source: store.SourceManual}, Snapshot: row, Cached: true, Gone: true})`, where `row` is the admission row; no action, so the store writes only the gone event (from the row if it still exists, else from `Snapshot`). `ErrNoItem` from the store (the row went away in between) is returned as `ErrNotCached`.
 
 **`SetStopped`** maps `ErrNoItem` to `ErrNotCached`, and returns a context error as it is.
 
@@ -644,6 +647,7 @@ func TestCheckItemUpdatesReasons(t *testing.T)           // NoSummary cleared, a
 func TestCheckItemCompletes(t *testing.T)                // row gone, completed event
 func TestCheckItemNotCached(t *testing.T)                // history-only -> ErrNotCached, no Plex call
 func TestCheckItemNotFound(t *testing.T)                 // 404 -> gone event manual
+func TestCheckItemNotFoundAfterRowDeleted(t *testing.T)  // fakePlex blocks Item; the test deletes the row; release with 404 -> one gone event: same key, source manual, At = the fixed clock, snapshot title/section of the admission row
 func TestSetStoppedItem(t *testing.T)                    // changed, unchanged, history-only -> ErrNotCached
 func TestManualActionStoreFailure(t *testing.T)          // embedded store fails RecordManual -> errors.Is(err, ErrStore), sent true
 func TestSetStoppedItemContext(t *testing.T)             // canceled ctx -> context error, not changed
@@ -739,10 +743,10 @@ func (j *Jobs) Close()
   - `run.skipped` counts `stopped`, `changed`, and `not-cached`.
   - `ItemDone` reports each item with these counts.
 - **Terminal write.** The results are collected in memory in key order. When the job ends, by cancel, `Close`, store failure, unavailable server, or completion, every key it did not reach is added as `not-reached`. Then one `FinishJob(id, start, res, items)` call writes the run row and the results in one transaction.
-  - The bulk job has its own `finishJob` next to `finishRun`. It uses the same status rules: canceled when `ctx` ended, failed with the error, or else finished.
-  - A `FinishJob` failure is returned as the job's error also when the job was canceled. It is never dropped.
-  - The job goroutine logs a job error with `log.Error().Str("server").Int64("run", id).Err(err).Msg("Bulk refresh failed")`. This is the store or unavailable error, which today's run logging already logs raw.
-- **Progress** gets `RunStarted`, `Batch(server, n, n)`, `ItemStarted` and `ItemDone` for each item, and `RunFinished`. `RunFinished` is called after `FinishJob` returned. So when an event stream client sees `Last.ID` with a final status, the results are committed and `GET /api/runs/items?id=` returns them. That is how the stream delivers the item results (Task 10).
+  - The bulk job has its own `finishJob` next to `finishRun`. Its status rule, first match wins: a store error (recording or other) -> failed with that error; `plex.ErrUnavailable` -> failed with that error; `ctx` ended -> canceled; else finished. A store failure therefore wins over a cancellation that arrived during the same item.
+  - A `FinishJob` failure is returned as the job's error also when the job was canceled. It is never dropped. The row then stays `running` until `InterruptRuns` at the next start.
+  - The job goroutine logs a job error with `log.Error().Str("server").Int64("run", id).Str("reason", reason).Msg("Bulk refresh failed")`, where `reason` is a fixed text: `store`, `result not recorded` (FinishJob failed), or `plex unavailable`. No error text is logged; the diagnostic text stays in the stored results and run error, which the API redacts.
+- **Progress** gets `RunStarted`, `Batch(server, n, n)`, `ItemStarted` and `ItemDone` for each item, and `RunFinished`. `RunFinished` is called after `FinishJob` returned. On success it gets the committed `res`, so when an event stream client sees `Last.ID` with a final status, the results are committed and `GET /api/runs/items?id=` returns them. That is how the stream delivers the item results (Task 10). When `FinishJob` failed, `RunFinished` gets `res` with `Status: store.RunFailed` and the fixed `Error: "result not recorded"`, so the live status clears the job and says why, instead of showing a terminal result that the database does not have.
 - **New log line,** at info: `log.Info().Str("server").Int("selected").Int("refresh_requests").Int("failed_requests").Int("skipped_items").Dur("duration").Msg("Bulk refresh summary")`. The bulk job logs no `Run summary`.
 
 **CLI:**
@@ -783,8 +787,15 @@ func TestBulkRecordingFailureEndsJob(t *testing.T)
 // embedded store fails RecordManual on item 1 -> item 1 failed "recording failed", others not-reached, row failed,
 // "Bulk refresh failed" logged
 func TestBulkFinishJobFailureDuringCancel(t *testing.T)
-// canceled job whose FinishJob fails -> the job error is logged (not dropped), the row stays running for
-// InterruptRuns at the next start
+// canceled job whose FinishJob fails -> "Bulk refresh failed" reason "result not recorded" logged; the row stays
+// running; the recording progress got RunFinished with Status failed and Error "result not recorded"
+func TestBulkFinishJobSuccessPublishesResult(t *testing.T) // RunFinished res equals the committed row's status and counts
+func TestBulkRecordingFailureWinsOverCancel(t *testing.T)
+// item 1's fake Refresh cancels the job and returns ctx.Err(); the embedded store then fails RecordManual ->
+// refreshed 1, item 1 failed "recording failed", row failed with the recording error (not canceled)
+func TestBulkFailureLogHasNoSecret(t *testing.T)
+// fake Refresh returns an ErrUnavailable error whose text holds a configured path prefix -> the log has
+// reason "plex unavailable" and not the prefix; RunItems error keeps the text (redacted only on API output)
 func TestCancelUnknownOrScheduled(t *testing.T)          // wrong id, or during a scheduled run -> ErrNoJob
 func TestCloseDrainsAdmission(t *testing.T)
 // embedded store blocks KnownItem inside BulkRefresh admission; Close in a goroutine does not return until the
@@ -851,7 +862,7 @@ func parseID(text string) (pathID, bool) // the rules of parseGroup, for a typed
    - First, a title search of `it.Title` with year 0 (source `title`).
    - Then `srv.Plex.ItemPaths` directly, without `SetPath`, for `Locations` and `Files`. `parseIDs(paths.All())` gives `IDs`, each with `id.link(show)`.
    - Then one search for each path ID (source `path`).
-   - Then, when `r.opts.TMDB != nil`, the TMDB step. It uses the IDs that `tmdbResults` uses: `imdb`, and `tvdb` for a show, and nothing when the paths hold a `tmdb` ID. Each ID goes through the existing `tmdbID`. Its `SaveTMDBID` is now a no-op without a row (Task 2), so a deleted row cannot fail it. Then one search for each new TMDB ID (source `tmdb`, `FromID` = the path ID).
+   - Then, when `r.opts.TMDB != nil`, the TMDB step. It uses the IDs that `tmdbResults` uses: `imdb`, and `tvdb` for a show, and nothing when the paths hold a `tmdb` ID. Each ID goes through `tmdbID`, which gets a `save bool` parameter (the automatic path passes `true`); the search passes `save = cached` from its `KnownItem` admission, so a history-only admission never writes the cache, even if a read inserts a row meanwhile. With `save` true, `SaveTMDBID` is still a no-op when the row was deleted (Task 2). Then one search for each new TMDB ID (source `tmdb`, `FromID` = the path ID).
 4. **Failures:**
    - A failed search with `stopError(ctx, err) == nil` that is not a 404 is marked `Failed`, and the searches go on.
    - A 404, a stop error, or an `ItemPaths` failure returns the error.
@@ -880,6 +891,7 @@ func TestSearchMatchesTMDBFailure(t *testing.T)  // Find fails -> TMDBFailed, ea
 func TestSearchMatchesRowDeletedDuringTMDB(t *testing.T)
 // fake Find blocks; the test deletes the row; release -> nil error, candidates returned, tmdb_id empty
 func TestSearchMatchesHistoryItemCachesNothing(t *testing.T)
+func TestSearchMatchesHistoryItemRowInsertedDuringTMDB(t *testing.T) // fake Find blocks; the test inserts a row; release -> tmdb_id empty
 func TestSearchMatchesNotFound(t *testing.T)     // ItemPaths 404 -> plex.ErrNotFound
 func TestEpisodeCheck(t *testing.T)              // equal -> Match, Episodes 2; differing -> !Match
 func TestEpisodeCheckGuards(t *testing.T)        // movie -> ErrNotShow; no TMDB -> ErrTMDBOff
