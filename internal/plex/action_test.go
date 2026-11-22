@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -57,6 +58,17 @@ func TestSearchMatchesDecodesCandidates(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A match field of an unexpected type fails the search, as before the
+// shown fields were decoded: a match must not use a guessed value.
+func TestSearchMatchesRejectsBadMatchField(t *testing.T) {
+	_, c := newServer(t, serveFixture(t, "matches_bad_year.json"))
+
+	_, err := c.SearchMatches(context.Background(), "1001", "Fixture Movie Four", "tv.plex.agents.movie", "en-GB")
+	if err == nil || !strings.Contains(err.Error(), "decoding candidate") {
+		t.Fatalf("err = %v, want a candidate decoding error", err)
 	}
 }
 
