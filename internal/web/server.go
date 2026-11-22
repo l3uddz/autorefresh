@@ -23,6 +23,7 @@ const defaultForceWait = 5 * time.Second
 type Plex interface {
 	Identity(ctx context.Context) (string, error)
 	ItemDetails(ctx context.Context, ratingKey string) (plex.Details, error)
+	Photo(ctx context.Context, ratingKey, imagePath string, width, height int) ([]byte, error)
 }
 
 // Store is the part of store.Store that the web server uses.
@@ -144,6 +145,8 @@ func New(opts Options) *Server {
 	s.mux.HandleFunc("GET /api/items", s.serveItems)
 	s.mux.HandleFunc("GET /api/item", s.serveItem)
 	s.mux.HandleFunc("GET /api/item/live", s.serveItemLive)
+	s.mux.HandleFunc("GET /api/items/thumb", s.serveThumb)
+	s.mux.HandleFunc("GET /api/items/art", s.serveArt)
 	s.mux.HandleFunc("GET /api/runs", s.serveRuns)
 	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")

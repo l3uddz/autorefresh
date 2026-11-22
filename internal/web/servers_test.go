@@ -25,9 +25,18 @@ type fakePlex struct {
 	id      string
 	err     error
 	details func(ctx context.Context, ratingKey string) (plex.Details, error)
+	// photo answers Photo; without it, Photo gives plex.ErrNotFound.
+	photo func(ctx context.Context, ratingKey, imagePath string, width, height int) ([]byte, error)
 
 	mu    sync.Mutex
 	calls int
+}
+
+func (f *fakePlex) Photo(ctx context.Context, ratingKey, imagePath string, width, height int) ([]byte, error) {
+	if f.photo == nil {
+		return nil, plex.ErrNotFound
+	}
+	return f.photo(ctx, ratingKey, imagePath, width, height)
 }
 
 func (f *fakePlex) Identity(context.Context) (string, error) {
