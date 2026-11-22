@@ -54,6 +54,64 @@ export interface TimelineEvent {
   fixedAction?: string;
   /** The match that fixed the item, on a completed event. */
   fixedMatch?: string;
+  /** The ID of the accepted match request that fixed the item. */
+  fixedMatchEventId?: number;
+  /** The match rule that stopped a match, on a match decision. */
+  conflict?: string;
+  pathYear?: number;
+  tmdbYear?: number;
+  episodeCount?: number;
+  /** The IDs whose search found or confirmed the request. */
+  links?: string[];
+  /** The searches of a match decision, in the order autorefresh made them. */
+  searches: MatchSearch[];
+}
+
+/** One Plex match search: of a match decision, or of the Fix match dialog.
+ * Source is path, tmdb, or tie in a decision, and title, id, path, or tmdb
+ * in the dialog. FromId is the folder ID that a TMDB search came from. */
+export interface MatchSearch {
+  query: string;
+  source?: string;
+  fromId?: string;
+  failed: boolean;
+  candidates: Candidate[];
+}
+
+/** A match candidate of Plex. A score of 0 means that Plex gave none. The
+ * thumb is a remote https URL, or absent. */
+export interface Candidate {
+  guid: string;
+  name?: string;
+  year?: number;
+  type?: string;
+  summary?: string;
+  thumb?: string;
+  score: number;
+  /** The verdict of a match decision: picked, or why it was not. */
+  verdict?: string;
+}
+
+/** A folder ID of an item, with the page of its provider. */
+export interface FolderID {
+  id: string;
+  link: string;
+}
+
+/** The answer of GET /api/item/matches. Only the opening search (without
+ * q) reads the paths, so a typed search has no IDs, locations, or files. */
+export interface Matches {
+  ids: FolderID[];
+  locations: string[];
+  files: string[];
+  searches: MatchSearch[];
+  tmdbFailed: boolean;
+}
+
+/** The answer of POST /api/item/episode-check. */
+export interface EpisodeCheck {
+  match: boolean;
+  episodes: number;
 }
 
 export interface ItemDetail {
@@ -273,8 +331,8 @@ const retryDelay = 3000;
 
 /** Keeps the status query up to date from GET /api/events and refreshes
  * the lists when a run ends, and when a stream connects: a run may have
- * ended before it, after the lists loaded. It returns the state of the
- * stream. */
+ * ended before it, after the lists loaded. A run that starts refreshes the
+ * run history. It returns the state of the stream. */
 export function useLiveStatus(): Connection {
   const client = useQueryClient();
   const [connection, setConnection] = useState<Connection>('connecting');
@@ -285,6 +343,8 @@ export function useLiveStatus(): Connection {
     // The last runs of the newest status, undefined until the first
     // status after each open.
     let lastRuns: string | undefined;
+    // The running runs of the newest status.
+    let lastRunning: string | undefined;
     let wasOpen = false;
 
     const onStatus = (event: MessageEvent<string>) => {
@@ -293,6 +353,10 @@ export function useLiveStatus(): Connection {
       const runs = JSON.stringify(status.servers.map(({ last }) => [last?.id, last?.finishedAt]));
       if (runs !== lastRuns) invalidateLists(client);
       lastRuns = runs;
+      // A run that starts adds a row to the run history.
+      const running = JSON.stringify(status.servers.map(({ run }) => run?.id));
+      if (lastRunning !== undefined && running !== lastRunning) void client.invalidateQueries({ queryKey: ['runs'] });
+      lastRunning = running;
       if (status === next) client.setQueryData(['status'], status);
     };
 

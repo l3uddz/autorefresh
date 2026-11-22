@@ -4,6 +4,7 @@ import { useSyncExternalStore } from 'react';
 // proxy without configuration:
 //
 //   #/status
+//   #/runs
 //   #/items/<tab>
 //   #/items/<tab>/<srv>/<key>
 //
@@ -19,11 +20,12 @@ export interface ItemKey {
   key: string;
 }
 
-export type Route = ({ page: 'status' } | { page: 'items'; tab: TabName; item?: ItemKey }) & {
+export type Route = ({ page: 'status' } | { page: 'runs' } | { page: 'items'; tab: TabName; item?: ItemKey }) & {
   /** The server that scopes the page, or undefined for every server. */
   srv?: number;
 };
 
+const runsPattern = /^#\/runs\/?$/;
 const itemsPattern = /^#\/items(?:\/(attention|fixed|stopped))?(?:\/(\d+)\/(\d+))?\/?$/;
 
 function scopeParam(query: string): number | undefined {
@@ -36,6 +38,7 @@ export function parseRoute(hash: string): Route {
   const [path, query = ''] = hash.split('?', 2);
   const srv = scopeParam(query);
   const scope = srv === undefined ? {} : { srv };
+  if (runsPattern.test(path)) return { page: 'runs', ...scope };
   const match = itemsPattern.exec(path);
   if (!match) return { page: 'status', ...scope };
   const tab = (match[1] as TabName | undefined) ?? 'attention';
@@ -46,7 +49,7 @@ export function parseRoute(hash: string): Route {
 /** Returns the hash of route. */
 export function routeHash(route: Route): string {
   const query = route.srv === undefined ? '' : `?${new URLSearchParams({ srv: String(route.srv) })}`;
-  if (route.page === 'status') return `#/status${query}`;
+  if (route.page === 'status' || route.page === 'runs') return `#/${route.page}${query}`;
   const base = `#/items/${route.tab}`;
   return `${route.item ? `${base}/${route.item.srv}/${route.item.key}` : base}${query}`;
 }

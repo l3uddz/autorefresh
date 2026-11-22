@@ -25,11 +25,22 @@ describe('routes', () => {
   });
 
   it('formats what it parses', () => {
-    for (const hash of ['#/status', '#/items/attention', '#/items/fixed/0/7', '#/status?srv=2', '#/items/stopped/1/9?srv=1']) {
+    for (const hash of ['#/status', '#/runs', '#/runs?srv=1', '#/items/attention', '#/items/fixed/0/7', '#/status?srv=2', '#/items/stopped/1/9?srv=1']) {
       expect(routeHash(parseRoute(hash))).toBe(hash);
     }
     expect(itemHash('stopped', { srv: 2, key: '9' })).toBe('#/items/stopped/2/9');
     expect(itemHash('stopped', { srv: 2, key: '9' }, 2)).toBe('#/items/stopped/2/9?srv=2');
+  });
+
+  it('parses the Runs page with its scope and ignores an invalid scope', () => {
+    expect(parseRoute('#/runs')).toEqual({ page: 'runs' });
+    expect(parseRoute('#/runs/')).toEqual({ page: 'runs' });
+    expect(parseRoute('#/runs?srv=1')).toEqual({ page: 'runs', srv: 1 });
+    expect(parseRoute('#/runs?srv=one')).toEqual({ page: 'runs' });
+    expect(parseRoute('#/runs/3')).toEqual({ page: 'status' });
+    // A scope that names no configured server shows every server.
+    expect(routeScope(parseRoute('#/runs?srv=5'), 2)).toBeUndefined();
+    expect(withScope({ page: 'runs', srv: 1 }, 0)).toEqual({ page: 'runs', srv: 0 });
   });
 
   it('scopes only installs with several servers to a server that exists', () => {

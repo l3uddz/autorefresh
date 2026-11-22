@@ -12,11 +12,15 @@ import { useToast } from '@astryxdesign/core/Toast';
 import { ArrowTopRightOnSquareIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import * as stylex from '@stylexjs/stylex';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { ApiError, api, invalidateLists, itemParams, post, type ItemDetail as Detail, type ItemRecord, type LiveItem, type ServerInfo, type TimelineEvent } from './api';
 import { useNow } from './clock';
-import { dateTime, fixedBy, label, lastAction, plural, queueState, relative, typeName } from './format';
+import { dateTime, fixedBy, label, lastAction, plural, queueState, relative, titleYear, typeName } from './format';
 import { askThen } from './confirm';
 import { Backdrop, Poster, Reasons } from './media';
+import { actionError } from './errors';
+import { FixMatchDialog } from './fixmatch';
+import { ItemTimeline } from './history';
 import { checkResult, disposition } from './timeline';
 import type { ItemKey } from './route';
 
@@ -143,7 +147,8 @@ function DetailBody({ detail, server, ignored, params }: BodyProps) {
         )}
         {match && <MetadataListItem label="Match">{match}</MetadataListItem>}
       </MetadataList>
-      <DetailActions item={item} server={server} params={params} />
+      <DetailActions item={item} server={server} params={params} timeline={timeline} liveGuid={live.data?.guid} />
+      <ItemTimeline timeline={timeline} />
     </>
   );
 }
@@ -164,28 +169,21 @@ function LiveError({ error }: { error: Error }) {
 function lastMatch(timeline: TimelineEvent[]): string | undefined {
   const event = timeline.find(e => e.kind === 'request' && e.accepted && (e.action === 'match' || e.action === 'tmdb-match') && e.match);
   if (!event?.match) return undefined;
-  const name = event.match.title ? `${event.match.title}${event.match.year ? ` (${event.match.year})` : ''}` : event.match.guid;
+  const name = event.match.title ? titleYear(event.match.title, event.match.year) : event.match.guid;
   const by = event.source === 'manual' ? 'matched by hand' : 'matched by autorefresh';
   return `${name} · ${by}, ${dateTime(event.at)}`;
 }
 
-function actionError(error: Error): string {
-  if (error instanceof ApiError) {
-    switch (error.status) {
-      case 409:
-        return error.message === 'item not cached' ? 'Autorefresh no longer tracks this item.' : 'This item is busy with another request. Try again in a moment.';
-      case 404:
-        return error.message === 'not found in Plex' ? 'Plex no longer has this item. It was deleted or moved.' : 'Autorefresh no longer knows this item. Its history may have expired.';
-      case 502:
-        return `${error.message}. Try again later.`;
-      case 504:
-        return 'Plex did not answer in time. The request may still have reached Plex.';
-    }
-  }
-  return error.message;
+interface ActionProps {
+  item: ItemRecord;
+  server?: ServerInfo;
+  params: string;
+  timeline: TimelineEvent[];
+  liveGuid?: string;
 }
 
-function DetailActions({ item, server, params }: { item: ItemRecord; server?: ServerInfo; params: string }) {
+function DetailActions({ item, server, params, timeline, liveGuid }: ActionProps) {
+  const [isMatching, setIsMatching] = useState(false);
   const client = useQueryClient();
   const showToast = useToast();
   const confirm = useImperativeAlertDialog();
@@ -235,6 +233,7 @@ function DetailActions({ item, server, params }: { item: ItemRecord; server?: Se
     <VStack gap={3}>
       <HStack gap={2} wrap="wrap" vAlign="center">
         <Button label="Refresh now" variant="primary" isLoading={busy && running === 'refresh'} isDisabled={busy && running !== 'refresh'} onClick={() => action.mutate('refresh')} />
+        <Button label="Fix match" isDisabled={busy} onClick={() => setIsMatching(true)} />
         {item.cached && (
           <Button
             label="Check now"
@@ -267,6 +266,7 @@ function DetailActions({ item, server, params }: { item: ItemRecord; server?: Se
         </Text>
       )}
       {confirm.element}
+      <FixMatchDialog isOpen={isMatching} onClose={() => setIsMatching(false)} item={item} params={params} timeline={timeline} liveGuid={liveGuid} />
     </VStack>
   );
 }

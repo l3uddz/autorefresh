@@ -18,6 +18,7 @@ import { useRunNow } from './runs';
 import { StatusPage } from './status';
 
 const ItemsPage = lazy(async () => ({ default: (await import('./items')).ItemsPage }));
+const RunsPage = lazy(async () => ({ default: (await import('./runspage')).RunsPage }));
 
 export function App() {
   const connection = useLiveStatus();
@@ -38,6 +39,10 @@ export function App() {
       ) : route.page === 'items' ? (
         <Suspense fallback={<PageSkeleton />}>
           <ItemsPage tab={route.tab} item={route.item} srv={srv} />
+        </Suspense>
+      ) : route.page === 'runs' ? (
+        <Suspense fallback={<PageSkeleton />}>
+          <RunsPage srv={srv} />
         </Suspense>
       ) : (
         <StatusPage srv={srv} />
@@ -76,6 +81,7 @@ function TopBar({ route, srv }: { route: Route; srv?: number }) {
         <>
           <TopNavItem label="Status" href={routeHash({ page: 'status', srv })} isSelected={route.page === 'status'} />
           <TopNavItem label="Items" href={routeHash({ page: 'items', tab: 'attention', srv })} isSelected={route.page === 'items'} />
+          <TopNavItem label="Runs" href={routeHash({ page: 'runs', srv })} isSelected={route.page === 'runs'} />
         </>
       }
       endContent={
