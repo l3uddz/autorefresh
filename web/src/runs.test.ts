@@ -47,9 +47,16 @@ describe('run groups', () => {
     ]);
   });
 
-  it('lists a match decision that no request followed as failed', () => {
-    const groups = shape(detail([event('1', 'match-decision', { outcome: 'failed', error: 'Plex answered 500' })]));
-    expect(groups).toEqual([['Failed', [['1', 'Fix match: search failed', 'Plex answered 500', 'attention']]]]);
+  it('lists a match decision that no request followed as not sent', () => {
+    // The run ended between the decision and its request.
+    const groups = shape(detail([event('1', 'match-decision', { outcome: 'matched' })]));
+    expect(groups).toEqual([['Not sent', [['1', 'Fix match: matched', 'The run ended before the request', 'attention']]]]);
+  });
+
+  it('joins a match decision to the removal of its item', () => {
+    // Plex answered 404 to the match request, so the item is gone.
+    const groups = shape(detail([event('1', 'match-decision', { outcome: 'matched' }), event('1', 'gone')]));
+    expect(groups).toEqual([['Removed', [['1', 'Plex no longer had it', 'Fix match: matched', 'attention']]]]);
   });
 
   it('keeps the item of each entry', () => {

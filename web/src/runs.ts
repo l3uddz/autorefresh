@@ -90,6 +90,7 @@ const eventGroups: [id: string, title: string][] = [
   ['fixed', 'Fixed'],
   ['completed', 'Completed by Plex'],
   ['removed', 'Removed'],
+  ['not-sent', 'Not sent'],
 ];
 
 const itemGroups: [id: string, title: string][] = [
@@ -113,8 +114,8 @@ const itemOutcomes: Record<string, { group: string; summary: string; tone: Tone 
 
 /** Returns the items of a run grouped by outcome, in a fixed group order,
  * without empty groups. A bulk refresh groups its selected items. A run
- * groups its events: a match decision joins the request of its item that
- * followed it, or counts as failed when no request followed. */
+ * groups its events: a match decision joins the request or the removal of
+ * its item that followed it, or is not sent when neither followed. */
 export function runGroups(detail: RunDetail): RunGroup[] {
   if (detail.run.kind === 'bulk-refresh') return grouped(itemGroups, detail.items.map(itemEntry));
   return grouped(eventGroups, eventEntries(detail.events));
@@ -142,11 +143,14 @@ function eventEntries(events: RunEvent[]): [string, RunEntry][] {
     }
     const group = eventGroup(event);
     if (!group) continue;
-    const decision = event.kind === 'request' ? decisions.get(event.key) : undefined;
+    // A request or a removal ends the decision of its item: Plex answers a
+    // match request of an item that it no longer has with a removal.
+    const decision = event.kind === 'request' || event.kind === 'gone' ? decisions.get(event.key) : undefined;
     if (decision) decisions.delete(event.key);
     entries.push([group, eventEntry(event, decision)]);
   }
-  for (const decision of decisions.values()) entries.push(['failed', eventEntry(decision)]);
+  // The run ended before it sent the request of these decisions.
+  for (const decision of decisions.values()) entries.push(['not-sent', { ...eventEntry(decision), detail: 'The run ended before the request' }]);
   return entries;
 }
 
