@@ -11,9 +11,14 @@ export interface Evidence {
   fromId?: string;
   /** The search was typed in the dialog, not part of the opening search. */
   isTyped: boolean;
+  /** The year of a typed title search. */
+  year?: number;
 }
 
 export interface CandidateGroup {
+  /** A key that stays the same while the searches change: the GUID, or
+   * the position of a candidate without one. */
+  key: string;
   /** The Plex GUID, or empty for a candidate without one. */
   guid: string;
   candidate: Candidate;
@@ -23,11 +28,17 @@ export interface CandidateGroup {
   tmdbId?: string;
 }
 
-const tmdbQuery = /^tmdb-(\d+)$/;
+// The API takes a TMDB ID of at most 12 digits for the episode check.
+const tmdbQuery = /^tmdb-(\d{1,12})$/;
 
-/** Returns the TMDB ID of the search query, such as 48213 of tmdb-48213. */
-export function tmdbIdOf(query: string): string | undefined {
-  return tmdbQuery.exec(query)?.[1];
+// The sources whose query is an ID: a folder ID, the TMDB ID of one, or a
+// typed ID search. A title search sends the title as it is, so a title
+// such as tmdb-5 names no ID.
+const idSources = new Set(['path', 'tmdb', 'id']);
+
+/** Returns the TMDB ID of an ID search, such as 48213 of tmdb-48213. */
+export function tmdbIdOf(search: Pick<MatchSearch, 'query' | 'source'>): string | undefined {
+  return search.source && idSources.has(search.source) ? tmdbQuery.exec(search.query)?.[1] : undefined;
 }
 
 /** Reports whether the search ties its candidate to a TMDB ID: a search by
@@ -35,11 +46,13 @@ export function tmdbIdOf(query: string): string | undefined {
  * candidates cannot tell which one the ID names, as in the automatic fix
  * match. */
 function tmdbTie(search: MatchSearch): string | undefined {
-  return search.candidates.length === 1 ? tmdbIdOf(search.query) : undefined;
+  return search.candidates.length === 1 ? tmdbIdOf(search) : undefined;
 }
 
+/** A typed search repeats an opening search when it sends the same title,
+ * but it is still evidence of its own. */
 function sameEvidence(a: Evidence, b: Evidence): boolean {
-  return a.query === b.query && a.source === b.source && a.fromId === b.fromId;
+  return a.query === b.query && a.source === b.source && a.fromId === b.fromId && a.isTyped === b.isTyped && a.year === b.year;
 }
 
 /** Fills the empty fields of into from more, so a candidate that one search
@@ -71,18 +84,21 @@ interface Builder {
 /** Groups the candidates of the opening and the typed searches by GUID.
  * Candidates without a GUID stay apart, because Plex cannot apply them.
  * Groups that the typed search found come first, then those that more
- * folder IDs found, then the higher Plex score. */
-export function groupCandidates(opening: MatchSearch[], typed: MatchSearch[] = []): CandidateGroup[] {
+ * folder IDs found, then the higher Plex score. typedYear is the year
+ * that the typed search sent, which its answer does not carry. */
+export function groupCandidates(opening: MatchSearch[], typed: MatchSearch[] = [], typedYear?: number): CandidateGroup[] {
   const groups = new Map<string, Builder>();
   const loose: Builder[] = [];
   let order = 0;
   const add = (search: MatchSearch, isTyped: boolean) => {
-    const evidence: Evidence = { query: search.query, source: search.source, fromId: search.fromId, isTyped };
+    const year = isTyped && search.source === 'title' ? typedYear : undefined;
+    const evidence: Evidence = { query: search.query, source: search.source, fromId: search.fromId, isTyped, ...(year ? { year } : {}) };
     const tie = tmdbTie(search);
     for (const candidate of search.candidates) {
       let entry = candidate.guid ? groups.get(candidate.guid) : undefined;
       if (!entry) {
-        entry = { group: { guid: candidate.guid, candidate: { ...candidate, verdict: undefined }, foundBy: [] }, tmdbIds: new Set(), order: order++ };
+        const key = candidate.guid ? `guid:${candidate.guid}` : `loose:${order}`;
+        entry = { group: { key, guid: candidate.guid, candidate: { ...candidate, verdict: undefined }, foundBy: [] }, tmdbIds: new Set(), order: order++ };
         if (candidate.guid) groups.set(candidate.guid, entry);
         else loose.push(entry);
       } else {
@@ -159,7 +175,7 @@ export function isIDSearch(text: string): boolean {
   return match[1].toLowerCase() === 'imdb' ? imdbValue.test(match[2]) : /^\d+$/.test(match[2]);
 }
 
-export type SearchInput = { error: string } | { q: string; year?: number };
+export type SearchInput = { error: string } | TypedSearch;
 
 /** Checks a typed search before it is sent. The API runs the opening
  * search for an empty text, so a typed search needs text. The year is
@@ -174,9 +190,31 @@ export function checkSearch(text: string, year: string): SearchInput {
   return isIDSearch(q) ? { q } : { q, year: Number(y) };
 }
 
+export interface TypedSearch {
+  q: string;
+  year?: number;
+}
+
+/** Reports whether two typed searches send the same request. */
+export function sameSearch(a: TypedSearch | undefined, b: TypedSearch): boolean {
+  return a !== undefined && a.q === b.q && a.year === b.year;
+}
+
+export type ListView = 'loading' | 'empty' | 'list' | 'none';
+
+/** Chooses what the candidate list shows: the candidates whenever any
+ * search found some, placeholders while a search runs, and "no
+ * candidates" only after a search answered. A failed search shows its own
+ * banner. */
+export function listView(count: number, isSearching: boolean, hasAnswer: boolean): ListView {
+  if (count > 0) return 'list';
+  if (isSearching) return 'loading';
+  return hasAnswer ? 'empty' : 'none';
+}
+
 /** Returns the query of GET /api/item/matches for the item params and an
  * optional typed search. */
-export function matchesPath(params: string, search?: { q: string; year?: number }): string {
+export function matchesPath(params: string, search?: TypedSearch): string {
   const query = new URLSearchParams(params);
   if (search) {
     query.set('q', search.q);

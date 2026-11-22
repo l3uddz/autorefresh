@@ -21,7 +21,7 @@ import { askThen } from './confirm';
 import { actionError } from './errors';
 import { plural, titleYear, typeName } from './format';
 import { DecisionPanel } from './history';
-import { autoEvidence, checkSearch, compareYear, groupCandidates, isCurrentMatch, isFolderEvidence, matchBody, matchesPath, offersEpisodeCheck, type CandidateGroup, type Evidence, type YearCheck } from './match';
+import { autoEvidence, checkSearch, compareYear, groupCandidates, isCurrentMatch, isFolderEvidence, listView, matchBody, matchesPath, offersEpisodeCheck, sameSearch, type CandidateGroup, type Evidence, type TypedSearch, type YearCheck } from './match';
 import { RemotePoster } from './media';
 import { lastDecision, verdictName } from './timeline';
 
@@ -53,7 +53,9 @@ export function FixMatchDialog({ isOpen, onClose, ...props }: Props) {
     <Dialog isOpen={isOpen} onOpenChange={open => !open && onClose()} width={1120} maxHeight="90dvh" variant={isWide ? 'standard' : 'fullscreen'} purpose="form" padding={0}>
       {/* The body mounts only while the dialog is open, so closing it
           aborts its searches and forgets their answers. */}
-      {isOpen && <FixMatchBody {...props} isWide={isWide} onClose={onClose} />}
+      {/* Another item gets a new body, so no search or episode check of
+          the previous item carries over. */}
+      {isOpen && <FixMatchBody key={props.params} {...props} isWide={isWide} onClose={onClose} />}
     </Dialog>
   );
 }
@@ -68,6 +70,11 @@ interface Applying {
   candidate: Candidate;
 }
 
+/** Reports whether a search failed because Plex no longer has the item. */
+function isGoneError(error: Error | null): boolean {
+  return error instanceof ApiError && error.status === 404 && error.message === 'not found in Plex';
+}
+
 function candidateTitle(candidate: Candidate): string {
   return titleYear(candidate.name || candidate.guid, candidate.year);
 }
@@ -77,7 +84,7 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
   const showToast = useToast();
   const confirm = useImperativeAlertDialog();
   const isTMDBOn = (useStatus().data?.tmdb ?? 'off') !== 'off';
-  const [typed, setTyped] = useState<{ q: string; year?: number }>();
+  const [typed, setTyped] = useState<TypedSearch>();
 
   const opening = useQuery({
     queryKey: ['matches', params],
@@ -103,8 +110,17 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
   });
 
   const decision = lastDecision(timeline);
-  const groups = groupCandidates(opening.data?.searches ?? [], typed ? search.data?.searches : []);
+  const groups = groupCandidates(opening.data?.searches ?? [], typed ? search.data?.searches : [], typed?.year);
   const title = titleYear(item.title ?? `Item ${item.key}`, item.year);
+  const isTypedPending = typed !== undefined && search.isPending;
+  const view = listView(groups.length, opening.isPending || isTypedPending, opening.isSuccess || (typed !== undefined && search.isSuccess));
+
+  // The same search again is a retry: its key is unchanged, so it runs
+  // only when asked. A search that still runs is joined, not restarted.
+  const onSearch = (input: TypedSearch) => {
+    if (sameSearch(typed, input)) void search.refetch({ cancelRefetch: false });
+    else setTyped(input);
+  };
 
   const choose = (group: CandidateGroup) => {
     if (apply.isPending) return;
@@ -126,21 +142,22 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
 
   const candidates = (
     <VStack gap={4}>
-      <SearchForm isSearching={search.isFetching} onSearch={setTyped} onClear={typed && (() => setTyped(undefined))} />
+      <SearchForm isSearching={search.isFetching} onSearch={onSearch} onClear={typed && (() => setTyped(undefined))} />
       <FolderEvidence matches={opening.data} path={item.path} />
-      <SearchStatus label="Opening search" query={opening} />
-      {typed && <SearchStatus label={`Search for “${typed.q}”`} query={search} />}
-      {opening.isPending ? (
+      <SearchStatus label="Opening search" query={opening} isGone={isGoneError(opening.error)} onRetry={() => void opening.refetch()} />
+      {typed && <SearchStatus label={`Search for “${typed.q}”`} query={search} isGone={isGoneError(search.error)} onRetry={() => void search.refetch()} />}
+      {view === 'list' && opening.isPending && <Text type="supporting" color="secondary">The opening search is still running. Its candidates join the list when it ends.</Text>}
+      {view === 'loading' && (
         <VStack gap={3}>
           {[0, 1, 2].map(i => <Skeleton key={i} index={i} height={128} />)}
         </VStack>
-      ) : groups.length === 0 ? (
-        opening.isSuccess && <EmptyState isCompact title="No candidates" description="Plex found no candidate. Search by another title, or by an ID such as tmdb-48213." />
-      ) : (
+      )}
+      {view === 'empty' && <EmptyState isCompact title="No candidates" description="Plex found no candidate. Search by another title, or by an ID such as tmdb-48213." />}
+      {view === 'list' && (
         <VStack gap={3}>
-          {groups.map((group, index) => (
+          {groups.map(group => (
             <CandidateCard
-              key={group.guid || `loose-${index}`}
+              key={group.key}
               group={group}
               item={item}
               params={params}
@@ -191,7 +208,7 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
   );
 }
 
-function SearchForm({ isSearching, onSearch, onClear }: { isSearching: boolean; onSearch: (search: { q: string; year?: number }) => void; onClear?: () => void }) {
+function SearchForm({ isSearching, onSearch, onClear }: { isSearching: boolean; onSearch: (search: TypedSearch) => void; onClear?: () => void }) {
   const [text, setText] = useState('');
   const [year, setYear] = useState('');
   const [error, setError] = useState<string>();
@@ -255,8 +272,8 @@ function FolderEvidence({ matches, path }: { matches?: Matches; path?: string })
       {files.length > 0 && (
         <Collapsible defaultIsOpen={false} chevronPosition="start" trigger={<Text type="supporting">{matches.files.length ? plural(files.length, 'file') : plural(files.length, 'folder')}</Text>}>
           <VStack gap={1} paddingBlockStart={2}>
-            {files.map(file => (
-              <Text key={file} type="code" wordBreak="break-all">{file}</Text>
+            {files.map((file, index) => (
+              <Text key={`${index}-${file}`} type="code" wordBreak="break-all">{file}</Text>
             ))}
           </VStack>
         </Collapsible>
@@ -265,12 +282,20 @@ function FolderEvidence({ matches, path }: { matches?: Matches; path?: string })
   );
 }
 
+interface StatusProps {
+  label: string;
+  query: { error: Error | null; data?: Matches };
+  /** Plex no longer has the item, so a retry cannot help. */
+  isGone: boolean;
+  onRetry: () => void;
+}
+
 /** Reports a failed search request, failed searches, and a failed TMDB
- * step, which are no "0 candidates". */
-function SearchStatus({ label, query }: { label: string; query: { error: Error | null; data?: Matches } }) {
+ * step, which are no "0 candidates". A failed request offers a retry. */
+function SearchStatus({ label, query, isGone, onRetry }: StatusProps) {
   if (query.error) {
-    const gone = query.error instanceof ApiError && query.error.status === 404 && query.error.message === 'not found in Plex';
-    return <Banner status="error" title={gone ? 'Plex no longer has this item' : `${label} failed`} description={gone ? 'It was deleted or moved, so it cannot be matched.' : actionError(query.error)} />;
+    if (isGone) return <Banner status="error" title="Plex no longer has this item" description="It was deleted or moved, so it cannot be matched." />;
+    return <Banner status="error" title={`${label} failed`} description={actionError(query.error)} endContent={<Button label="Retry" size="sm" variant="secondary" onClick={onRetry} />} />;
   }
   const failed = query.data?.searches.filter((s: MatchSearch) => s.failed) ?? [];
   return (
@@ -296,6 +321,11 @@ function yearToken(check: YearCheck) {
     default:
       return null;
   }
+}
+
+function foundLabel(evidence: Evidence): string {
+  const year = evidence.year ? ` (${evidence.year})` : '';
+  return `Found by ${evidence.isTyped ? 'your' : 'the'} ${evidence.source === 'id' ? 'ID' : 'title'} search “${evidence.query}”${year}`;
 }
 
 function evidenceLabel(evidence: Evidence): string {
@@ -343,22 +373,25 @@ function CandidateCard({ group, item, params, decision, isCurrent, hasEpisodeChe
             {facts && <Text type="supporting" color="secondary">{facts}</Text>}
             {candidate.summary && <Text type="supporting" maxLines={3}>{candidate.summary}</Text>}
             <HStack gap={1} wrap="wrap">
-              {folder.map(e => <Token key={`${e.query}-${e.fromId}`} size="sm" color="green" label={evidenceLabel(e)} />)}
+              {folder.map((e, index) => <Token key={`${index}-${e.query}`} size="sm" color="green" label={evidenceLabel(e)} />)}
               {yearToken(compareYear(item.year, candidate.year))}
             </HStack>
             {/* Longer evidence is text, so it wraps instead of being cut. */}
-            {found.map(e => (
-              <Text key={`${e.isTyped}-${e.query}`} type="supporting" color="secondary" wordBreak="break-word">
-                {`Found by ${e.isTyped ? 'your' : 'the'} ${e.source === 'id' ? 'ID' : 'title'} search “${e.query}”`}
+            {found.map((e, index) => (
+              <Text key={`${index}-${e.query}`} type="supporting" color="secondary" wordBreak="break-word">
+                {foundLabel(e)}
               </Text>
             ))}
-            {auto.map(a => (
-              <Text key={a.query} type="supporting" wordBreak="break-word">
+            {auto.map((a, index) => (
+              <Text key={`${index}-${a.query}`} type="supporting" wordBreak="break-word">
                 {`The last automatic fix match found it via ${a.query}${verdictName(a.verdict) ? `: ${verdictName(a.verdict)}` : ''}`}
               </Text>
             ))}
             {group.guid && <Text type="code" color="secondary" wordBreak="break-all">{group.guid}</Text>}
-            {hasEpisodeCheck && group.tmdbId && <EpisodeCheckRow params={params} tmdbId={group.tmdbId} />}
+            {/* The key ties the check to the item and the TMDB ID: when a
+                search ties the candidate to another ID, the row starts
+                again and drops the answer of the previous ID. */}
+            {hasEpisodeCheck && group.tmdbId && <EpisodeCheckRow key={`${params}|${group.tmdbId}`} params={params} tmdbId={group.tmdbId} />}
           </VStack>
         </StackItem>
         {!isCompact && <VStack gap={2} hAlign="end">{score}{match}</VStack>}
@@ -374,20 +407,22 @@ function CandidateCard({ group, item, params, decision, isCurrent, hasEpisodeChe
 }
 
 /** Compares the episode numbers of the item with the TMDB series tmdbId.
- * It applies nothing. The result belongs to this candidate. */
+ * It applies nothing. Its parent keys it by item and TMDB ID, and it shows
+ * only an answer for the ID that it sent. */
 function EpisodeCheckRow({ params, tmdbId }: { params: string; tmdbId: string }) {
   const check = useMutation({
-    mutationFn: () => post<EpisodeCheck>(`item/episode-check?${params}&${new URLSearchParams({ tmdb: tmdbId })}`),
+    mutationFn: (id: string) => post<EpisodeCheck>(`item/episode-check?${params}&${new URLSearchParams({ tmdb: id })}`),
   });
+  const isThisID = check.variables === tmdbId;
   return (
     <HStack gap={3} wrap="wrap" vAlign="center">
-      <Button label="Compare episodes" size="sm" variant="secondary" isLoading={check.isPending} onClick={() => check.mutate()} tooltip={`Compare the episode numbers of this item with TMDB tmdb-${tmdbId}`} />
-      {check.data && (
+      <Button label="Compare episodes" size="sm" variant="secondary" isLoading={check.isPending} onClick={() => check.mutate(tmdbId)} tooltip={`Compare the episode numbers of this item with TMDB tmdb-${tmdbId}`} />
+      {isThisID && check.data && (
         <Text type="supporting">
-          {check.data.match ? `The episode numbers match tmdb-${tmdbId} (${plural(check.data.episodes, 'episode')} compared).` : `The episode numbers do not match tmdb-${tmdbId}.`}
+          {check.data.match ? `The episode numbers match tmdb-${check.variables} (${plural(check.data.episodes, 'episode')} compared).` : `The episode numbers do not match tmdb-${check.variables}.`}
         </Text>
       )}
-      {check.error && <Text type="supporting">{`The episode check failed: ${actionError(check.error)}`}</Text>}
+      {isThisID && check.error && <Text type="supporting">{`The episode check failed: ${actionError(check.error)}`}</Text>}
     </HStack>
   );
 }

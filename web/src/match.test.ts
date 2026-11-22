@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Candidate, MatchSearch, TimelineEvent } from './api';
-import { autoEvidence, checkSearch, compareYear, groupCandidates, isCurrentMatch, isIDSearch, matchBody, matchesPath, offersEpisodeCheck, tmdbIdOf } from './match';
+import { autoEvidence, checkSearch, compareYear, groupCandidates, isCurrentMatch, isIDSearch, listView, matchBody, matchesPath, offersEpisodeCheck, sameSearch, tmdbIdOf } from './match';
 
 const cand = (guid: string, change: Partial<Candidate> = {}): Candidate => ({ guid, score: 0, ...change });
 const search = (query: string, candidates: Candidate[], change: Partial<MatchSearch> = {}): MatchSearch => ({ query, failed: false, candidates, ...change });
@@ -51,6 +51,41 @@ describe('groupCandidates', () => {
     const [group] = groupCandidates([], [search('tmdb-77', [cand('plex://x')], { source: 'id' })]);
     expect(group.tmdbId).toBe('77');
   });
+
+  it('does not tie a title search whose title looks like a TMDB ID', () => {
+    const [group] = groupCandidates([search('tmdb-5', [cand('plex://x', { type: 'show' })], { source: 'title' })]);
+    expect(group.tmdbId).toBeUndefined();
+    expect(offersEpisodeCheck(group, 'show', true)).toBe(false);
+  });
+
+  it('keeps typed evidence and its rank when the typed search repeats the opening title', () => {
+    const opening = [
+      search('The Quiet Harbor', [cand('plex://wrong', { score: 64 }), cand('plex://folder', { score: 98 })], { source: 'title' }),
+      search('tmdb-1', [cand('plex://folder')], { source: 'path' }),
+    ];
+    const typed = [search('The Quiet Harbor', [cand('plex://wrong')], { source: 'title' })];
+    const groups = groupCandidates(opening, typed, 2019);
+    expect(groups.map(g => g.guid)).toEqual(['plex://wrong', 'plex://folder']);
+    expect(groups[0].foundBy).toEqual([
+      { query: 'The Quiet Harbor', source: 'title', fromId: undefined, isTyped: false },
+      { query: 'The Quiet Harbor', source: 'title', fromId: undefined, isTyped: true, year: 2019 },
+    ]);
+  });
+
+  it('gives the typed year only to a typed title search', () => {
+    const [group] = groupCandidates([], [search('tmdb-7', [cand('plex://x')], { source: 'id' })], 2019);
+    expect(group.foundBy[0]).not.toHaveProperty('year');
+  });
+
+  it('gives every group a key that survives other searches', () => {
+    const opening = [search('x', [cand(''), cand('plex://a'), cand('')], { source: 'title' })];
+    const keys = groupCandidates(opening).map(g => g.key);
+    expect(new Set(keys).size).toBe(3);
+    const typed = [search('y', [cand(''), cand('plex://b', { score: 99 })], { source: 'title' })];
+    const after = groupCandidates(opening, typed).map(g => g.key);
+    expect(new Set(after).size).toBe(5);
+    for (const key of keys) expect(after).toContain(key);
+  });
 });
 
 describe('match helpers', () => {
@@ -64,22 +99,25 @@ describe('match helpers', () => {
   });
 
   it('offers the episode check only for a tied series candidate of a series with TMDB on', () => {
-    const [show] = groupCandidates([search('tmdb-1', [cand('plex://s', { type: 'show' })])]);
+    const [show] = groupCandidates([search('tmdb-1', [cand('plex://s', { type: 'show' })], { source: 'path' })]);
     expect(offersEpisodeCheck(show, 'show', true)).toBe(true);
     expect(offersEpisodeCheck(show, 'show', false)).toBe(false);
     expect(offersEpisodeCheck(show, 'movie', true)).toBe(false);
-    const [movie] = groupCandidates([search('tmdb-1', [cand('plex://m', { type: 'movie' })])]);
+    const [movie] = groupCandidates([search('tmdb-1', [cand('plex://m', { type: 'movie' })], { source: 'path' })]);
     expect(offersEpisodeCheck(movie, 'show', true)).toBe(false);
-    const [untyped] = groupCandidates([search('tmdb-1', [cand('plex://u')])]);
+    const [untyped] = groupCandidates([search('tmdb-1', [cand('plex://u')], { source: 'path' })]);
     expect(offersEpisodeCheck(untyped, 'show', true)).toBe(true);
     const [untied] = groupCandidates([search('Title', [cand('plex://s', { type: 'show' })])]);
     expect(offersEpisodeCheck(untied, 'show', true)).toBe(false);
   });
 
   it('reads TMDB IDs and ID searches like the API', () => {
-    expect(tmdbIdOf('tmdb-48213')).toBe('48213');
-    expect(tmdbIdOf('tvdb-48213')).toBeUndefined();
-    expect(tmdbIdOf('tmdb-48213x')).toBeUndefined();
+    for (const source of ['path', 'tmdb', 'id']) expect(tmdbIdOf({ query: 'tmdb-48213', source })).toBe('48213');
+    expect(tmdbIdOf({ query: 'tmdb-123456789012', source: 'id' })).toBe('123456789012');
+    for (const query of ['tvdb-48213', 'tmdb-48213x', 'TMDB-48213', 'tmdb-1234567890123']) expect(tmdbIdOf({ query, source: 'id' })).toBeUndefined();
+    // A title search sends the item title as it is, so it names no ID.
+    expect(tmdbIdOf({ query: 'tmdb-5', source: 'title' })).toBeUndefined();
+    expect(tmdbIdOf({ query: 'tmdb-5' })).toBeUndefined();
     for (const id of ['tmdb-1', 'TVDB-2', 'imdb-tt3', 'tt4', 'tmdbid=5', ' tt6 ']) expect(isIDSearch(id)).toBe(true);
     for (const text of ['tmdb-x', 'imdb-123', 'tt', 'The Quiet Harbor', 'tmdb5']) expect(isIDSearch(text)).toBe(false);
   });
@@ -99,6 +137,24 @@ describe('match helpers', () => {
     expect(autoEvidence(decision, 'plex://b')).toEqual([{ query: 'imdb-tt2', verdict: 'different candidates' }]);
     expect(autoEvidence(decision, '')).toEqual([]);
     expect(autoEvidence(undefined, 'plex://a')).toEqual([]);
+  });
+});
+
+describe('dialog state', () => {
+  it('treats only the same text and year as the same search', () => {
+    expect(sameSearch({ q: 'A', year: 2019 }, { q: 'A', year: 2019 })).toBe(true);
+    expect(sameSearch({ q: 'A' }, { q: 'A', year: undefined })).toBe(true);
+    expect(sameSearch({ q: 'A', year: 2019 }, { q: 'A' })).toBe(false);
+    expect(sameSearch({ q: 'A' }, { q: 'B' })).toBe(false);
+    expect(sameSearch(undefined, { q: 'A' })).toBe(false);
+  });
+
+  it('shows candidates whenever any search found some', () => {
+    expect(listView(2, true, false)).toBe('list');
+    expect(listView(0, true, false)).toBe('loading');
+    expect(listView(0, true, true)).toBe('loading');
+    expect(listView(0, false, true)).toBe('empty');
+    expect(listView(0, false, false)).toBe('none');
   });
 });
 
