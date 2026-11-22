@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"reflect"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ func TestStartAndFinishRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runs, err := s.Runs(0)
+	runs, err := s.Runs(context.Background(), RunQuery{})
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("Runs = %v, %v", runs, err)
 	}
@@ -30,7 +31,7 @@ func TestStartAndFinishRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runs, err = s.Runs(0)
+	runs, err = s.Runs(context.Background(), RunQuery{})
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("Runs = %v, %v", runs, err)
 	}
@@ -64,13 +65,13 @@ func TestRunsOrderAndLimit(t *testing.T) {
 	b := startRun(t, s, srv, base)
 	c := startRun(t, s, srv, base.Add(time.Hour))
 
-	runs, err := s.Runs(0)
+	runs, err := s.Runs(context.Background(), RunQuery{})
 	if err != nil || len(runs) != 3 || runs[0].ID != c || runs[1].ID != b || runs[2].ID != a {
-		t.Fatalf("Runs(0) = %+v, %v", runs, err)
+		t.Fatalf("Runs = %+v, %v", runs, err)
 	}
-	runs, err = s.Runs(1)
+	runs, err = s.Runs(context.Background(), RunQuery{Limit: 1})
 	if err != nil || len(runs) != 1 || runs[0].ID != c {
-		t.Fatalf("Runs(1) = %+v, %v", runs, err)
+		t.Fatalf("Runs with Limit 1 = %+v, %v", runs, err)
 	}
 }
 
@@ -88,7 +89,7 @@ func TestInterruptRunsMarksOnlyRunning(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("InterruptRuns = %d, %v", n, err)
 	}
-	runs, err := s.Runs(0)
+	runs, err := s.Runs(context.Background(), RunQuery{})
 	if err != nil || len(runs) != 2 {
 		t.Fatalf("Runs = %+v, %v", runs, err)
 	}
@@ -128,7 +129,7 @@ func TestPruneHistoryKeepsRunningRuns(t *testing.T) {
 	if err := s.FinishRun(id, RunStart{Server: srv, Kind: RunKindRun, Source: RunSourceSchedule, StartedAt: base}, RunResult{FinishedAt: base.Add(2 * time.Hour), Status: RunFinished, Refreshed: 3}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Runs(0)
+	got, err := s.Runs(context.Background(), RunQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +160,7 @@ func TestPruneHistoryKeepsRecentlyInterruptedRuns(t *testing.T) {
 	if err := s.FinishRun(id, runStart(srv, base), RunResult{FinishedAt: restart.Add(time.Hour), Status: RunFinished, Refreshed: 2}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Runs(0)
+	got, err := s.Runs(context.Background(), RunQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +188,7 @@ func TestFinishRunRestoresRemovedRow(t *testing.T) {
 	if err := s.FinishRun(id, start, RunResult{FinishedAt: end, Status: RunFinished, Refreshed: 4}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Runs(0)
+	got, err := s.Runs(context.Background(), RunQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +217,7 @@ func TestFinishRunKeepsRemovedServerRemoved(t *testing.T) {
 	if err := s.FinishRun(id, start, RunResult{FinishedAt: base.Add(time.Minute), Status: RunFinished}); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.Runs(0); err != nil || len(got) != 0 {
+	if got, err := s.Runs(context.Background(), RunQuery{}); err != nil || len(got) != 0 {
 		t.Fatalf("runs = %+v, %v; want none", got, err)
 	}
 }
@@ -250,7 +251,7 @@ func TestPruneHistoryDeletesOldRowsWithChildren(t *testing.T) {
 			t.Errorf("%s rows = %d, want 0", table, n)
 		}
 	}
-	if got, _ := s.Runs(0); len(got) != 1 || got[0].ID != newRun {
+	if got, _ := s.Runs(context.Background(), RunQuery{}); len(got) != 1 || got[0].ID != newRun {
 		t.Fatalf("runs = %+v", got)
 	}
 }
@@ -284,13 +285,56 @@ func TestPruneServersDeletesRunsOfRemovedServers(t *testing.T) {
 	if _, err := s.PruneServers([]string{srv}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := s.Runs(0); len(got) != 1 || got[0].ID != keep {
+	if got, _ := s.Runs(context.Background(), RunQuery{}); len(got) != 1 || got[0].ID != keep {
 		t.Fatalf("runs = %+v", got)
 	}
 	if _, err := s.PruneServers(nil); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.Runs(0); err != nil || len(got) != 0 {
+	if got, err := s.Runs(context.Background(), RunQuery{}); err != nil || len(got) != 0 {
 		t.Fatalf("runs = %+v, %v", got, err)
+	}
+}
+
+func runIDs(runs []Run) []int64 {
+	out := []int64{}
+	for _, r := range runs {
+		out = append(out, r.ID)
+	}
+	return out
+}
+
+func TestRunsFiltersAndPages(t *testing.T) {
+	s := openTest(t)
+	r1 := startRun(t, s, srv, base)
+	r2 := startRun(t, s, "srv2", base.Add(time.Hour))
+	// r3 starts at the same time as r2, so the id splits the pair.
+	r3 := startRun(t, s, srv, base.Add(time.Hour))
+	r4 := startRun(t, s, "srv2", base.Add(2*time.Hour))
+	if err := s.FinishRun(r1, runStart(srv, base), RunResult{FinishedAt: base.Add(time.Minute), Status: RunFinished}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		q    RunQuery
+		want []int64
+	}{
+		{"all", RunQuery{}, []int64{r4, r3, r2, r1}},
+		{"servers", RunQuery{Servers: []string{srv}}, []int64{r3, r1}},
+		{"several servers", RunQuery{Servers: []string{srv, "srv2"}}, []int64{r4, r3, r2, r1}},
+		{"status", RunQuery{Status: RunFinished}, []int64{r1}},
+		{"before the second run", RunQuery{Before: &RunCursor{StartedAt: base.Add(time.Hour), ID: r3}}, []int64{r2, r1}},
+		{"limit", RunQuery{Limit: 1}, []int64{r4}},
+		{"combined", RunQuery{Servers: []string{"srv2"}, Status: RunRunning, Before: &RunCursor{StartedAt: base.Add(2 * time.Hour), ID: r4}}, []int64{r2}},
+	}
+	for _, tt := range tests {
+		runs, err := s.Runs(context.Background(), tt.q)
+		if err != nil {
+			t.Fatalf("%s: %v", tt.name, err)
+		}
+		if got := runIDs(runs); !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("%s: runs = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }

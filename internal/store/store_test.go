@@ -530,6 +530,14 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 			_, _, err := s.ListItems(context.Background(), ListQuery{Tab: TabAttention, Limit: 10, Rules: DueRules{Now: base}})
 			return err
 		},
+		"CountItems": func() error {
+			_, err := s.CountItems(context.Background(), ListQuery{Rules: DueRules{Now: base}})
+			return err
+		},
+		"ItemDetail": func() error {
+			_, _, err := s.ItemDetail(context.Background(), srv, "101", DueRules{Now: base})
+			return err
+		},
 		"RecordRequest": func() error {
 			return s.RecordRequest(Request{Server: srv, RatingKey: "101", At: base, Source: SourceAuto, Action: ActionRefresh})
 		},
@@ -546,14 +554,20 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 		},
 		"InterruptRuns": func() error { _, err := s.InterruptRuns(base); return err },
 		"PruneHistory":  func() error { _, _, err := s.PruneHistory(base); return err },
-		"Runs":          func() error { _, err := s.Runs(10); return err },
+		"Runs":          func() error { _, err := s.Runs(context.Background(), RunQuery{Limit: 10}); return err },
 		"Timeline":      func() error { _, err := s.Timeline(srv, "101"); return err },
+		"TimelineContext": func() error {
+			_, err := s.TimelineContext(context.Background(), srv, "101")
+			return err
+		},
 		"PruneServers":  func() error { _, err := s.PruneServers(nil); return err },
 		"PruneSections": func() error { _, err := s.PruneSections(srv, nil); return err },
 		"TMDBID":        func() error { _, _, err := s.TMDBID(srv, "101", "tvdb", "5"); return err },
 		"SaveTMDBID":    func() error { return s.SaveTMDBID(srv, "101", "tvdb", "5", "77") },
 		"SaveLibraries": func() error { return s.SaveLibraries(srv, []LibraryInfo{{Section: sec, Title: "TV"}}) },
 		"SetPath":       func() error { return s.SetPath(srv, "101", "/x") },
+		"FillPath":      func() error { return s.FillPath(context.Background(), srv, "101", "/x") },
+		"Libraries":     func() error { _, err := s.Libraries(context.Background(), srv); return err },
 	}
 	for name, call := range calls {
 		if err := call(); err == nil {

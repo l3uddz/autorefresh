@@ -139,17 +139,17 @@ type ListItem struct {
 // ErrInvalidQuery is the error of a ListQuery that ListItems cannot run.
 var ErrInvalidQuery = errors.New("invalid list query")
 
-// queueSort is a sort column of the queue tabs. text is true for a column
-// whose cursor value is Cursor.Text.
-type queueSort struct {
+// sortColumn is a sort column of a list. text is true for a column whose
+// cursor value is Cursor.Text.
+type sortColumn struct {
 	expr sqlPart
 	text bool
 }
 
 // queueSorts returns the sort columns of the queue tabs. Each is not null,
 // so the keyset comparison sees every row.
-func queueSorts(r DueRules) map[SortKey]queueSort {
-	return map[SortKey]queueSort{
+func queueSorts(r DueRules) map[SortKey]sortColumn {
+	return map[SortKey]sortColumn{
 		SortTitle:       {sqlPart{sql: `item.title COLLATE NOCASE`}, true},
 		SortYear:        {sqlPart{sql: `item.year`}, false},
 		SortAdded:       {sqlPart{sql: `item.added_at`}, false},
@@ -160,19 +160,39 @@ func queueSorts(r DueRules) map[SortKey]queueSort {
 	}
 }
 
-// queueOrder returns the sort column and the direction of a query on a
-// queue tab.
-func queueOrder(q ListQuery) (queueSort, bool, error) {
+// fixedSorts are the sort columns of TabFixed, on the completed event e.
+var fixedSorts = map[SortKey]sortColumn{
+	SortTitle:     {sqlPart{sql: `e.title COLLATE NOCASE`}, true},
+	SortYear:      {sqlPart{sql: `e.year`}, false},
+	SortCompleted: {sqlPart{sql: `e.at`}, false},
+}
+
+// listOrder returns the sort column and the direction of q.
+func listOrder(q ListQuery) (sortColumn, bool, error) {
 	key, desc := q.Sort, q.Desc
-	if key == "" {
-		key, desc = SortDue, false
-		if q.Tab == TabStopped {
+	var sorts map[SortKey]sortColumn
+	switch q.Tab {
+	case TabAttention:
+		sorts = queueSorts(q.Rules)
+		if key == "" {
+			key, desc = SortDue, false
+		}
+	case TabStopped:
+		sorts = queueSorts(q.Rules)
+		if key == "" {
 			key, desc = SortStopped, true
 		}
+	case TabFixed:
+		sorts = fixedSorts
+		if key == "" {
+			key, desc = SortCompleted, true
+		}
+	default:
+		return sortColumn{}, false, fmt.Errorf("%w: tab %q", ErrInvalidQuery, q.Tab)
 	}
-	s, ok := queueSorts(q.Rules)[key]
+	s, ok := sorts[key]
 	if !ok {
-		return queueSort{}, false, fmt.Errorf("%w: sort %q on tab %q", ErrInvalidQuery, key, q.Tab)
+		return sortColumn{}, false, fmt.Errorf("%w: sort %q on tab %q", ErrInvalidQuery, key, q.Tab)
 	}
 	return s, desc, nil
 }
@@ -194,7 +214,25 @@ func (b *queryBuilder) part(p sqlPart) { b.add(p.sql, p.args...) }
 // likeEscaper escapes the LIKE wildcards and the escape character itself.
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
-// queueFilters adds the conditions of the tab and the filters of q.
+// commonFilters adds the filters of q that every tab has. table is the name
+// of the listed table in the query.
+func commonFilters(b *queryBuilder, q ListQuery, table string) {
+	if len(q.Servers) > 0 {
+		b.add(` AND `+table+`.server IN (`+placeholders(len(q.Servers))+`)`, stringArgs(q.Servers)...)
+	}
+	if q.Section != "" {
+		b.add(` AND `+table+`.section = ?`, q.Section)
+	}
+	if q.Type != "" {
+		b.add(` AND `+table+`.type = ?`, q.Type)
+	}
+	if q.Search != "" {
+		pattern := "%" + likeEscaper.Replace(q.Search) + "%"
+		b.add(` AND (`+table+`.title LIKE ? ESCAPE '\' OR `+table+`.path LIKE ? ESCAPE '\')`, pattern, pattern)
+	}
+}
+
+// queueFilters adds the conditions of a queue tab and the filters of q.
 func queueFilters(b *queryBuilder, q ListQuery) {
 	if q.Tab == TabStopped {
 		b.add(` WHERE item.stopped_at IS NOT NULL`)
@@ -204,42 +242,34 @@ func queueFilters(b *queryBuilder, q ListQuery) {
 			b.add(` AND item.reasons & ~? != 0`, int(q.Rules.Ignored))
 		}
 	}
-	if len(q.Servers) > 0 {
-		b.add(` AND item.server IN (`+placeholders(len(q.Servers))+`)`, stringArgs(q.Servers)...)
-	}
-	if q.Section != "" {
-		b.add(` AND item.section = ?`, q.Section)
-	}
-	if q.Type != "" {
-		b.add(` AND item.type = ?`, q.Type)
-	}
+	commonFilters(b, q, "item")
 	if q.Reason != 0 {
 		b.add(` AND item.reasons & ? != 0`, int(q.Reason))
 	}
-	if q.Search != "" {
-		pattern := "%" + likeEscaper.Replace(q.Search) + "%"
-		b.add(` AND (item.title LIKE ? ESCAPE '\' OR item.path LIKE ? ESCAPE '\')`, pattern, pattern)
-	}
 }
 
-// queueQuery builds the query of one page of a queue tab. It reads one row
-// more than q.Limit, to find out whether another page follows.
-func queueQuery(q ListQuery, order queueSort, desc bool) (string, []any) {
+// fixedFilters adds the conditions of TabFixed and the filters of q. It
+// first keeps only the newest completed event of each item, in the order of
+// Timeline, and filters that event, so an older completion never shows in
+// place of a newer one.
+func fixedFilters(b *queryBuilder, q ListQuery) {
+	b.add(` WHERE e.kind = ? AND e.id = (SELECT id FROM event WHERE kind = ?
+		AND server = e.server AND rating_key = e.rating_key ORDER BY at DESC, id DESC LIMIT 1)`,
+		EventCompleted, EventCompleted)
+	if !q.WithUnrequested {
+		b.add(` AND e.fixed_action != ''`)
+	}
+	commonFilters(b, q, "e")
+}
+
+// pageClause adds the keyset condition of q.After, the order, and a limit of
+// one row more than q.Limit, to find out whether another page follows. The
+// server and the rating key of table break ties.
+func pageClause(b *queryBuilder, q ListQuery, order sortColumn, desc bool, table string) {
 	dir, cmp := "ASC", ">"
 	if desc {
 		dir, cmp = "DESC", "<"
 	}
-	var b queryBuilder
-	b.add(`SELECT item.server, item.section, item.rating_key, COALESCE(library.title, ''), item.type, item.title,
-		item.year, item.thumb, item.art, item.path, item.reasons, `)
-	b.part(q.Rules.state())
-	b.add(`, `)
-	b.part(q.Rules.nextDue())
-	b.add(`, item.added_at, item.last_attempt, item.stopped_at, item.attempts, item.refreshes,
-		item.last_action, item.last_outcome, item.last_match_outcome, `)
-	b.part(order.expr)
-	b.add(` FROM item LEFT JOIN library ON library.server = item.server AND library.section = item.section`)
-	queueFilters(&b, q)
 	if q.After != nil {
 		var value any = q.After.Num
 		if order.text {
@@ -247,34 +277,87 @@ func queueQuery(q ListQuery, order queueSort, desc bool) (string, []any) {
 		}
 		b.add(` AND (`)
 		b.part(order.expr)
-		b.add(`, item.server, item.rating_key) `+cmp+` (?, ?, ?)`, value, q.After.Server, q.After.RatingKey)
+		b.add(`, `+table+`.server, `+table+`.rating_key) `+cmp+` (?, ?, ?)`, value, q.After.Server, q.After.RatingKey)
 	}
 	b.add(` ORDER BY `)
 	b.part(order.expr)
-	b.add(` `+dir+`, item.server `+dir+`, item.rating_key `+dir+` LIMIT ?`, q.Limit+1)
+	b.add(` `+dir+`, `+table+`.server `+dir+`, `+table+`.rating_key `+dir+` LIMIT ?`, q.Limit+1)
+}
+
+// queueColumns adds the select list of a cached row, which scanQueueRow reads.
+func queueColumns(b *queryBuilder, r DueRules) {
+	b.add(`SELECT item.server, item.section, item.rating_key, COALESCE(library.title, ''), item.type, item.title,
+		item.year, item.thumb, item.art, item.path, item.reasons, `)
+	b.part(r.state())
+	b.add(`, `)
+	b.part(r.nextDue())
+	b.add(`, item.added_at, item.last_attempt, item.stopped_at, item.attempts, item.refreshes,
+		item.last_action, item.last_outcome, item.last_match_outcome`)
+}
+
+const queueFrom = ` FROM item LEFT JOIN library ON library.server = item.server AND library.section = item.section`
+
+// queueQuery builds the query of one page of a queue tab.
+func queueQuery(q ListQuery, order sortColumn, desc bool) (string, []any) {
+	var b queryBuilder
+	queueColumns(&b, q.Rules)
+	b.add(`, `)
+	b.part(order.expr)
+	b.add(queueFrom)
+	queueFilters(&b, q)
+	pageClause(&b, q, order, desc, "item")
 	return b.sql.String(), b.args
 }
 
-// scanQueueRow reads one row of queueQuery and the cursor that points at it.
-func scanQueueRow(row scanner, text bool) (ListItem, Cursor, error) {
+// snapshotColumns are the item snapshot of the event e and the title of its
+// library, which snapshotDest reads.
+const snapshotColumns = `e.server, e.section, e.rating_key, COALESCE(library.title, ''), e.type, e.title, e.year,
+	e.thumb, e.art, e.path`
+
+const eventFrom = ` FROM event e LEFT JOIN library ON library.server = e.server AND library.section = e.section`
+
+// fixedQuery builds the query of one page of TabFixed.
+func fixedQuery(q ListQuery, order sortColumn, desc bool) (string, []any) {
+	var b queryBuilder
+	b.add(`SELECT ` + snapshotColumns + `,
+		EXISTS (SELECT 1 FROM item WHERE item.server = e.server AND item.rating_key = e.rating_key),
+		e.at, e.fixed_action, e.fixed_match, `)
+	b.part(order.expr)
+	b.add(eventFrom)
+	fixedFilters(&b, q)
+	pageClause(&b, q, order, desc, "e")
+	return b.sql.String(), b.args
+}
+
+// rowScanner reads one row of a list query into a ListItem, and the columns
+// after it into extra.
+type rowScanner func(row scanner, extra ...any) (ListItem, error)
+
+// listQuery returns the query of one page of q and the scanner of its rows.
+func listQuery(q ListQuery, order sortColumn, desc bool) (string, []any, rowScanner) {
+	if q.Tab == TabFixed {
+		query, args := fixedQuery(q, order, desc)
+		return query, args, scanFixedRow
+	}
+	query, args := queueQuery(q, order, desc)
+	return query, args, scanQueueRow
+}
+
+// scanQueueRow reads the queueColumns of one row, and the columns after them
+// into extra.
+func scanQueueRow(row scanner, extra ...any) (ListItem, error) {
 	var (
 		it                     ListItem
 		reasons                int
 		nextDue, addedAt       int64
 		lastAttempt, stoppedAt sql.NullInt64
-		sortNum                int64
-		sortText               string
-		sortValue              any = &sortNum
 	)
-	if text {
-		sortValue = &sortText
-	}
-	err := row.Scan(&it.Server, &it.Section, &it.RatingKey, &it.Library, &it.Type, &it.Title,
+	dest := append([]any{&it.Server, &it.Section, &it.RatingKey, &it.Library, &it.Type, &it.Title,
 		&it.Year, &it.Thumb, &it.Art, &it.Path, &reasons, &it.State, &nextDue,
 		&addedAt, &lastAttempt, &stoppedAt, &it.Attempts, &it.Refreshes,
-		&it.LastAction, &it.LastOutcome, &it.LastMatchOutcome, sortValue)
-	if err != nil {
-		return ListItem{}, Cursor{}, err
+		&it.LastAction, &it.LastOutcome, &it.LastMatchOutcome}, extra...)
+	if err := row.Scan(dest...); err != nil {
+		return ListItem{}, err
 	}
 	it.Cached = true
 	it.Reasons = Reasons(reasons)
@@ -284,7 +367,28 @@ func scanQueueRow(row scanner, text bool) (ListItem, Cursor, error) {
 	it.AddedAt = time.Unix(addedAt, 0)
 	it.LastAttempt = timeFrom(lastAttempt)
 	it.StoppedAt = timeFrom(stoppedAt)
-	return it, Cursor{Num: sortNum, Text: sortText, Server: it.Server, RatingKey: it.RatingKey}, nil
+	return it, nil
+}
+
+// snapshotDest returns the scan targets of snapshotColumns in it.
+func snapshotDest(it *ListItem) []any {
+	return []any{&it.Server, &it.Section, &it.RatingKey, &it.Library, &it.Type, &it.Title, &it.Year,
+		&it.Thumb, &it.Art, &it.Path}
+}
+
+// scanFixedRow reads one row of fixedQuery before its sort value, and the
+// columns after it into extra.
+func scanFixedRow(row scanner, extra ...any) (ListItem, error) {
+	var (
+		it ListItem
+		at int64
+	)
+	dest := append(snapshotDest(&it), &it.Cached, &at, &it.FixedAction, &it.FixedMatch)
+	if err := row.Scan(append(dest, extra...)...); err != nil {
+		return ListItem{}, err
+	}
+	it.CompletedAt = time.Unix(at, 0)
+	return it, nil
 }
 
 // ListItems returns one page of a tab, in the order of the sort column, then
@@ -295,14 +399,11 @@ func (s *Store) ListItems(ctx context.Context, q ListQuery) (items []ListItem, n
 	if q.Limit <= 0 {
 		return nil, nil, fmt.Errorf("%w: limit %d", ErrInvalidQuery, q.Limit)
 	}
-	if q.Tab != TabAttention && q.Tab != TabStopped {
-		return nil, nil, fmt.Errorf("%w: tab %q", ErrInvalidQuery, q.Tab)
-	}
-	order, desc, err := queueOrder(q)
+	order, desc, err := listOrder(q)
 	if err != nil {
 		return nil, nil, err
 	}
-	query, args := queueQuery(q, order, desc)
+	query, args, scan := listQuery(q, order, desc)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -318,15 +419,95 @@ func (s *Store) ListItems(ctx context.Context, q ListQuery) (items []ListItem, n
 			next = &last
 			break
 		}
-		it, cursor, err := scanQueueRow(rows, order.text)
+		var sortValue any = &last.Num
+		if order.text {
+			sortValue = &last.Text
+		}
+		it, err := scan(rows, sortValue)
 		if err != nil {
 			return nil, nil, fmt.Errorf("list items: %w", err)
 		}
 		items = append(items, it)
-		last = cursor
+		last.Server, last.RatingKey = it.Server, it.RatingKey
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, fmt.Errorf("list items: %w", err)
 	}
 	return items, next, nil
+}
+
+// ListCounts are the numbers of rows of each tab.
+type ListCounts struct{ Attention, Fixed, Stopped int }
+
+// countQuery builds the query that counts the rows of the tab of q.
+func countQuery(q ListQuery) (string, []any) {
+	var b queryBuilder
+	if q.Tab == TabFixed {
+		b.add(`SELECT COUNT(*)` + eventFrom)
+		fixedFilters(&b, q)
+	} else {
+		b.add(`SELECT COUNT(*) FROM item`)
+		queueFilters(&b, q)
+	}
+	return b.sql.String(), b.args
+}
+
+// CountItems counts each tab under the filters of q (Servers, Section, Type,
+// Search; Reason for the queue tabs; WithIgnored and WithUnrequested for
+// their tab). It ignores Tab, Sort, Desc, After, and Limit, and reads in one
+// read-only transaction.
+func (s *Store) CountItems(ctx context.Context, q ListQuery) (ListCounts, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return ListCounts{}, fmt.Errorf("begin count items: %w", err)
+	}
+	defer tx.Rollback()
+
+	var c ListCounts
+	for _, tab := range []struct {
+		tab Tab
+		n   *int
+	}{{TabAttention, &c.Attention}, {TabFixed, &c.Fixed}, {TabStopped, &c.Stopped}} {
+		q.Tab = tab.tab
+		query, args := countQuery(q)
+		if err := tx.QueryRowContext(ctx, query, args...).Scan(tab.n); err != nil {
+			return ListCounts{}, fmt.Errorf("count %s items: %w", tab.tab, err)
+		}
+	}
+	return c, nil
+}
+
+// ItemDetail returns the item row as ListItems shows it (Cached true), or
+// else the snapshot of the newest event of the item (Cached false; no
+// State). found is false when neither exists. It reads in one read-only
+// transaction.
+func (s *Store) ItemDetail(ctx context.Context, server, ratingKey string, rules DueRules) (item ListItem, found bool, err error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return ListItem{}, false, fmt.Errorf("begin item detail: %w", err)
+	}
+	defer tx.Rollback()
+
+	var b queryBuilder
+	queueColumns(&b, rules)
+	b.add(queueFrom+` WHERE item.server = ? AND item.rating_key = ?`, server, ratingKey)
+	switch item, err = scanQueueRow(tx.QueryRowContext(ctx, b.sql.String(), b.args...)); {
+	case err == nil:
+		return item, true, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return ListItem{}, false, fmt.Errorf("read item detail: %w", err)
+	}
+
+	// The row is gone: show the snapshot of the newest event.
+	item = ListItem{}
+	err = tx.QueryRowContext(ctx, `SELECT `+snapshotColumns+eventFrom+`
+		WHERE e.server = ? AND e.rating_key = ? ORDER BY e.at DESC, e.id DESC LIMIT 1`,
+		server, ratingKey).Scan(snapshotDest(&item)...)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ListItem{}, false, nil
+	}
+	if err != nil {
+		return ListItem{}, false, fmt.Errorf("read item snapshot: %w", err)
+	}
+	return item, true, nil
 }

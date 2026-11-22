@@ -346,31 +346,36 @@ func insertEvent(tx *sql.Tx, e Event) (int64, error) {
 // Timeline returns the events of one item, ordered at DESC, id DESC. Match
 // decisions carry their searches and candidates.
 func (s *Store) Timeline(server, ratingKey string) ([]Event, error) {
+	return s.TimelineContext(context.Background(), server, ratingKey)
+}
+
+// TimelineContext is Timeline with a context.
+func (s *Store) TimelineContext(ctx context.Context, server, ratingKey string) ([]Event, error) {
 	// One read transaction gives the events, searches, and candidates the
 	// same snapshot. The store has one connection, so each query ends
 	// before the next one starts.
-	tx, err := s.db.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, fmt.Errorf("begin timeline: %w", err)
 	}
 	defer tx.Rollback()
 
-	events, err := queryEvents(tx, server, ratingKey)
+	events, err := queryEvents(ctx, tx, server, ratingKey)
 	if err != nil {
 		return nil, err
 	}
-	searchAt, err := attachSearches(tx, events, server, ratingKey)
+	searchAt, err := attachSearches(ctx, tx, events, server, ratingKey)
 	if err != nil {
 		return nil, err
 	}
-	if err := attachCandidates(tx, events, searchAt, server, ratingKey); err != nil {
+	if err := attachCandidates(ctx, tx, events, searchAt, server, ratingKey); err != nil {
 		return nil, err
 	}
 	return events, nil
 }
 
-func queryEvents(tx *sql.Tx, server, ratingKey string) ([]Event, error) {
-	rows, err := tx.Query(`SELECT `+eventColumns+` FROM event WHERE server = ? AND rating_key = ?
+func queryEvents(ctx context.Context, tx *sql.Tx, server, ratingKey string) ([]Event, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT `+eventColumns+` FROM event WHERE server = ? AND rating_key = ?
 		ORDER BY at DESC, id DESC`, server, ratingKey)
 	if err != nil {
 		return nil, fmt.Errorf("read timeline: %w", err)
@@ -397,12 +402,12 @@ type searchRef struct{ event, search int }
 
 // attachSearches reads the searches of the item and adds them to their
 // events. It returns the place of each search by ID.
-func attachSearches(tx *sql.Tx, events []Event, server, ratingKey string) (map[int64]searchRef, error) {
+func attachSearches(ctx context.Context, tx *sql.Tx, events []Event, server, ratingKey string) (map[int64]searchRef, error) {
 	eventAt := make(map[int64]int, len(events))
 	for i, e := range events {
 		eventAt[e.ID] = i
 	}
-	rows, err := tx.Query(`SELECT match_search.id, match_search.event_id, match_search.query, match_search.source,
+	rows, err := tx.QueryContext(ctx, `SELECT match_search.id, match_search.event_id, match_search.query, match_search.source,
 		match_search.from_id, match_search.failed
 		FROM match_search JOIN event ON event.id = match_search.event_id
 		WHERE event.server = ? AND event.rating_key = ?
@@ -433,8 +438,8 @@ func attachSearches(tx *sql.Tx, events []Event, server, ratingKey string) (map[i
 
 // attachCandidates reads the candidates of the item and adds them to their
 // searches.
-func attachCandidates(tx *sql.Tx, events []Event, searchAt map[int64]searchRef, server, ratingKey string) error {
-	rows, err := tx.Query(`SELECT match_candidate.search_id, match_candidate.guid, match_candidate.name,
+func attachCandidates(ctx context.Context, tx *sql.Tx, events []Event, searchAt map[int64]searchRef, server, ratingKey string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT match_candidate.search_id, match_candidate.guid, match_candidate.name,
 		match_candidate.year, match_candidate.type, match_candidate.summary, match_candidate.thumb,
 		match_candidate.score, match_candidate.verdict
 		FROM match_candidate

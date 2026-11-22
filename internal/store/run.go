@@ -1,8 +1,10 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -205,28 +207,76 @@ func sqlLimit(limit int) int {
 	return limit
 }
 
-// Runs returns the runs, newest first. A limit of 0 or less returns all of them.
-func (s *Store) Runs(limit int) ([]Run, error) {
-	rows, err := s.db.Query(`SELECT id, server, kind, source, status, started_at, finished_at, error, read_items,
-		refreshed, matched, failed, completed, fixed, incomplete, due, selected
-		FROM run ORDER BY started_at DESC, id DESC LIMIT ?`, sqlLimit(limit))
+// RunCursor is the position of a run in the order of Runs.
+type RunCursor struct {
+	StartedAt time.Time
+	ID        int64
+}
+
+// RunQuery selects runs.
+type RunQuery struct {
+	Servers []string   // empty: every server
+	Status  RunStatus  // "": any
+	Before  *RunCursor // only the runs that follow this one in the order of Runs
+	Limit   int        // <= 0: all
+}
+
+// runsQuery builds the query of q.
+func runsQuery(q RunQuery) (string, []any) {
+	var (
+		conds []string
+		args  []any
+	)
+	if len(q.Servers) > 0 {
+		conds = append(conds, `server IN (`+placeholders(len(q.Servers))+`)`)
+		args = append(args, stringArgs(q.Servers)...)
+	}
+	if q.Status != "" {
+		conds = append(conds, `status = ?`)
+		args = append(args, q.Status)
+	}
+	if q.Before != nil {
+		conds = append(conds, `(started_at, id) < (?, ?)`)
+		args = append(args, q.Before.StartedAt.Unix(), q.Before.ID)
+	}
+	query := `SELECT id, server, kind, source, status, started_at, finished_at, error, read_items,
+		refreshed, matched, failed, completed, fixed, incomplete, due, selected FROM run`
+	if len(conds) > 0 {
+		query += ` WHERE ` + strings.Join(conds, ` AND `)
+	}
+	query += ` ORDER BY started_at DESC, id DESC LIMIT ?`
+	return query, append(args, sqlLimit(q.Limit))
+}
+
+func scanRun(row scanner) (Run, error) {
+	var (
+		r        Run
+		started  int64
+		finished sql.NullInt64
+	)
+	if err := row.Scan(&r.ID, &r.Server, &r.Kind, &r.Source, &r.Status, &started, &finished, &r.Error,
+		&r.ReadItems, &r.Refreshed, &r.Matched, &r.Failed, &r.Completed, &r.Fixed, &r.Incomplete,
+		&r.Due, &r.Selected); err != nil {
+		return Run{}, err
+	}
+	r.StartedAt, r.FinishedAt = time.Unix(started, 0), timeFrom(finished)
+	return r, nil
+}
+
+// Runs returns the runs that q selects, ordered started_at DESC, id DESC.
+func (s *Store) Runs(ctx context.Context, q RunQuery) ([]Run, error) {
+	query, args := runsQuery(q)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read runs: %w", err)
 	}
 	defer rows.Close()
 	var runs []Run
 	for rows.Next() {
-		var (
-			r        Run
-			started  int64
-			finished sql.NullInt64
-		)
-		if err := rows.Scan(&r.ID, &r.Server, &r.Kind, &r.Source, &r.Status, &started, &finished, &r.Error,
-			&r.ReadItems, &r.Refreshed, &r.Matched, &r.Failed, &r.Completed, &r.Fixed, &r.Incomplete,
-			&r.Due, &r.Selected); err != nil {
+		r, err := scanRun(rows)
+		if err != nil {
 			return nil, fmt.Errorf("read runs: %w", err)
 		}
-		r.StartedAt, r.FinishedAt = time.Unix(started, 0), timeFrom(finished)
 		runs = append(runs, r)
 	}
 	if err := rows.Err(); err != nil {

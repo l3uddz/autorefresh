@@ -1,6 +1,10 @@
 package store
 
 import (
+	"context"
+	"errors"
+	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -51,5 +55,92 @@ func TestSetPathIgnoresMissingRow(t *testing.T) {
 	s := openTest(t)
 	if err := s.SetPath(srv, "nope", "/x"); err != nil {
 		t.Fatalf("SetPath = %v, want nil", err)
+	}
+}
+
+func TestLibrariesListsMetadataAndReadTimes(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Full: true})
+	err := s.SaveLibraries(srv, []LibraryInfo{
+		{Section: "2", Title: "Movies", Type: "movie", Agent: "tv.plex.agents.movie", Language: "en-US"},
+		{Section: sec, Title: "TV", Type: "show", Agent: "tv.plex.agents.series", Language: "de-DE"},
+		{Section: "3", Title: "Movies", Type: "movie"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveLibraries("srv2", []LibraryInfo{{Section: "9", Title: "Other"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.Libraries(context.Background(), srv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []LibraryEntry{
+		{LibraryInfo{Section: "2", Title: "Movies", Type: "movie", Agent: "tv.plex.agents.movie", Language: "en-US"}, Library{}},
+		{LibraryInfo{Section: "3", Title: "Movies", Type: "movie"}, Library{}},
+		{LibraryInfo{Section: sec, Title: "TV", Type: "show", Agent: "tv.plex.agents.series", Language: "de-DE"}, Library{LastFullRead: base, LastRead: base}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Libraries = %+v, want %+v", got, want)
+	}
+
+	none, err := s.Libraries(context.Background(), "unknown")
+	if err != nil || none == nil || len(none) != 0 {
+		t.Fatalf("Libraries of an unknown server = %#v, %v, want an empty slice", none, err)
+	}
+}
+
+func TestFillPathKeepsExistingPath(t *testing.T) {
+	s := openTest(t)
+	kept := item("kept", NoArt)
+	kept.Path = "/old"
+	apply(t, s, Read{Items: []Item{item("empty", NoArt), kept}})
+	ctx := context.Background()
+	for _, key := range []string{"empty", "kept", "missing"} {
+		if err := s.FillPath(ctx, srv, key, "/new"); err != nil {
+			t.Fatalf("FillPath %s = %v, want nil", key, err)
+		}
+	}
+	got := rows(t, s)
+	if got["empty"].Path != "/new" || got["kept"].Path != "/old" {
+		t.Fatalf("paths = %q, %q, want /new, /old", got["empty"].Path, got["kept"].Path)
+	}
+	if _, ok := got["missing"]; ok {
+		t.Fatal("FillPath created a row")
+	}
+}
+
+func TestFillPathStopsBusyWaitWhenCanceled(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "store.db")
+	s, err := Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	other, err := Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	// The DSN begins each transaction immediate, so this one holds the
+	// write lock of the file.
+	tx, err := other.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err = s.FillPath(ctx, srv, "a", "/x")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("FillPath = %v, want context.DeadlineExceeded", err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("FillPath returned after %v, want within 2s", d)
 	}
 }

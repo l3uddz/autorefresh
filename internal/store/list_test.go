@@ -45,6 +45,31 @@ func sortedKeys(items []ListItem) []string {
 	return out
 }
 
+// listPages follows the pages of q with limit rows each and returns the
+// keys of all pages.
+func listPages(t *testing.T, s *Store, q ListQuery, limit int) []string {
+	t.Helper()
+	paged := []string{}
+	q.Limit = limit
+	for page := 0; ; page++ {
+		if page > 10 {
+			t.Fatalf("%s %s desc=%v: too many pages", q.Tab, q.Sort, q.Desc)
+		}
+		items, next, err := s.ListItems(context.Background(), q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		paged = append(paged, listKeys(items)...)
+		if next == nil {
+			return paged
+		}
+		if len(items) != limit {
+			t.Fatalf("%s %s desc=%v: page %d has %d rows and a next cursor", q.Tab, q.Sort, q.Desc, page, len(items))
+		}
+		q.After = next
+	}
+}
+
 func addedAt(key string, at time.Time) Item {
 	it := item(key, NoSummary)
 	it.AddedAt = at
@@ -128,7 +153,7 @@ func TestListNextDue(t *testing.T) {
 		RefreshInterval: time.Hour, MaxRefreshInterval: 8 * time.Hour,
 	}
 	young := now.Add(-time.Hour)
-	// Too new until now+23h, and waiting for 4h after now-1m.
+	// Too new until now+1h, and waiting for 4h after now-1m.
 	both := now.Add(-23 * time.Hour)
 	apply(t, s, Read{Items: []Item{
 		addedAt("waiting", base), addedAt("young", young), addedAt("both", both), addedAt("due", base),
@@ -280,26 +305,7 @@ func TestListPagesWithoutGapsOrRepeats(t *testing.T) {
 			t.Errorf("%s desc=%v: one call = %v, want %v", tt.sort, tt.desc, got, tt.want)
 		}
 
-		var paged []string
-		q.Limit = 3
-		for page := 0; ; page++ {
-			if page > 3 {
-				t.Fatalf("%s desc=%v: too many pages", tt.sort, tt.desc)
-			}
-			items, next, err := s.ListItems(context.Background(), q)
-			if err != nil {
-				t.Fatal(err)
-			}
-			paged = append(paged, listKeys(items)...)
-			if next == nil {
-				break
-			}
-			if len(items) != 3 {
-				t.Fatalf("%s desc=%v: page %d has %d rows and a next cursor", tt.sort, tt.desc, page, len(items))
-			}
-			q.After = next
-		}
-		if !reflect.DeepEqual(paged, tt.want) {
+		if paged := listPages(t, s, q, 3); !reflect.DeepEqual(paged, tt.want) {
 			t.Errorf("%s desc=%v: pages = %v, want %v", tt.sort, tt.desc, paged, tt.want)
 		}
 	}
@@ -337,11 +343,275 @@ func TestListRejectsInvalidQuery(t *testing.T) {
 		{"unknown sort", ListQuery{Tab: TabAttention, Sort: "bogus", Limit: 10}},
 		{"zero limit", ListQuery{Tab: TabAttention}},
 		{"unknown tab", ListQuery{Tab: "x", Limit: 10}},
-		{"fixed tab", ListQuery{Tab: TabFixed, Limit: 10}},
+		{"due on fixed", ListQuery{Tab: TabFixed, Sort: SortDue, Limit: 10}},
+		{"zero limit on fixed", ListQuery{Tab: TabFixed}},
 	}
 	for _, tt := range tests {
 		if _, _, err := s.ListItems(context.Background(), tt.q); !errors.Is(err, ErrInvalidQuery) {
 			t.Errorf("%s: err = %v, want ErrInvalidQuery", tt.name, err)
 		}
+	}
+}
+
+// complete completes the row of key at at, with the metadata of it.
+func complete(t *testing.T, s *Store, it Item, at time.Time) {
+	t.Helper()
+	it.Reasons = 0
+	apply(t, s, Read{At: at, Items: []Item{it}})
+}
+
+// insertCompleted writes a completed event of key by SQL.
+func insertCompleted(t *testing.T, s *Store, key string, at time.Time, action Action) {
+	t.Helper()
+	_, err := s.db.Exec(`INSERT INTO event (server, section, rating_key, at, kind, source, title, fixed_action)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, srv, sec, key, at.Unix(), EventCompleted, SourceAuto, "Title "+key, action)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestListFixedShowsNewestCompletionOnce(t *testing.T) {
+	s := openTest(t)
+	if err := s.SaveLibraries(srv, []LibraryInfo{{Section: sec, Title: "TV"}}); err != nil {
+		t.Fatal(err)
+	}
+	a := item("a", NoArt)
+	a.Thumb, a.Art, a.Path = "/t", "/a", "/tv/A"
+	apply(t, s, Read{Items: []Item{a, item("u", NoArt)}})
+	accept(t, s, "a", base.Add(time.Minute), ActionRefresh)
+	complete(t, s, a, base.Add(time.Hour))
+	complete(t, s, item("u", NoArt), base.Add(30*time.Minute))
+	apply(t, s, Read{At: base.Add(2 * time.Hour), Items: []Item{a}})
+	accept(t, s, "a", base.Add(2*time.Hour+time.Minute), ActionMatch)
+	complete(t, s, a, base.Add(3*time.Hour))
+
+	rules := DueRules{Now: base.Add(1000 * time.Hour)}
+	got := listAll(t, s, ListQuery{Tab: TabFixed, Rules: rules})
+	want := []ListItem{{
+		Server: srv, Section: sec, RatingKey: "a", Library: "TV", Type: "show", Title: "Title a", Year: 2020,
+		Thumb: "/t", Art: "/a", Path: "/tv/A",
+		CompletedAt: base.Add(3 * time.Hour), FixedAction: ActionMatch, FixedMatch: ActionMatch,
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Fixed = %+v, want %+v", got, want)
+	}
+
+	all := listAll(t, s, ListQuery{Tab: TabFixed, WithUnrequested: true, Rules: rules})
+	if keys := listKeys(all); !reflect.DeepEqual(keys, []string{"a", "u"}) {
+		t.Fatalf("Fixed with unrequested = %v, want [a u]", keys)
+	}
+	if u := all[1]; u.FixedAction != "" || !u.CompletedAt.Equal(base.Add(30*time.Minute)) {
+		t.Errorf("unrequested row = %+v, want no FixedAction and CompletedAt %v", u, base.Add(30*time.Minute))
+	}
+
+	apply(t, s, Read{At: base.Add(4 * time.Hour), Items: []Item{a}})
+	again := listAll(t, s, ListQuery{Tab: TabFixed, Rules: rules})
+	if len(again) != 1 || !again[0].Cached || !again[0].CompletedAt.Equal(base.Add(3*time.Hour)) {
+		t.Fatalf("Fixed while cached again = %+v, want the row of a with Cached", again)
+	}
+}
+
+func TestListFixedOrdersCompletionsByTime(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("late", NoArt)}})
+	accept(t, s, "late", base.Add(time.Minute), ActionRefresh)
+	complete(t, s, item("late", NoArt), base.Add(2*time.Hour))
+	// The last event of late has the highest id but an older time.
+	insertCompleted(t, s, "late", base.Add(time.Hour), ActionMatch)
+	insertCompleted(t, s, "tie", base.Add(3*time.Hour), ActionRefresh)
+	insertCompleted(t, s, "tie", base.Add(3*time.Hour), ActionMatch)
+
+	rules := DueRules{Now: base.Add(1000 * time.Hour)}
+	got := listAll(t, s, ListQuery{Tab: TabFixed, Rules: rules})
+	if keys := listKeys(got); !reflect.DeepEqual(keys, []string{"tie", "late"}) {
+		t.Fatalf("Fixed = %v, want [tie late]", keys)
+	}
+	if got[0].FixedAction != ActionMatch {
+		t.Errorf("tie: FixedAction = %q, want the higher id with %q", got[0].FixedAction, ActionMatch)
+	}
+	if got[1].FixedAction != ActionRefresh || !got[1].CompletedAt.Equal(base.Add(2*time.Hour)) {
+		t.Errorf("late = %+v, want the newest time with %q", got[1], ActionRefresh)
+	}
+
+	tests := []struct {
+		sort SortKey
+		desc bool
+		want []string
+	}{
+		{"", false, []string{"tie", "late"}},
+		{SortCompleted, false, []string{"late", "tie"}},
+		{SortTitle, false, []string{"late", "tie"}},
+		{SortTitle, true, []string{"tie", "late"}},
+		{SortYear, false, []string{"tie", "late"}},
+	}
+	for _, tt := range tests {
+		q := ListQuery{Tab: TabFixed, Sort: tt.sort, Desc: tt.desc, Rules: rules}
+		if paged := listPages(t, s, q, 1); !reflect.DeepEqual(paged, tt.want) {
+			t.Errorf("%q desc=%v: pages = %v, want %v", tt.sort, tt.desc, paged, tt.want)
+		}
+	}
+}
+
+func TestListFixedFiltersAfterChoosingNewest(t *testing.T) {
+	s := openTest(t)
+	a := item("a", NoArt)
+	apply(t, s, Read{Items: []Item{a}})
+	accept(t, s, "a", base.Add(time.Minute), ActionRefresh)
+	complete(t, s, a, base.Add(time.Hour))
+	apply(t, s, Read{At: base.Add(2 * time.Hour), Items: []Item{a}})
+	complete(t, s, a, base.Add(3*time.Hour))
+
+	rules := DueRules{Now: base.Add(1000 * time.Hour)}
+	if got := listAll(t, s, ListQuery{Tab: TabFixed, Rules: rules}); len(got) != 0 {
+		t.Fatalf("Fixed = %+v, want none", got)
+	}
+	got := listAll(t, s, ListQuery{Tab: TabFixed, WithUnrequested: true, Rules: rules})
+	if len(got) != 1 || got[0].FixedAction != "" || !got[0].CompletedAt.Equal(base.Add(3*time.Hour)) {
+		t.Fatalf("Fixed with unrequested = %+v, want the newer completion without FixedAction", got)
+	}
+}
+
+func TestListFixedFilters(t *testing.T) {
+	s := openTest(t)
+	mk := func(key, typ, title, path string) Item {
+		it := item(key, NoArt)
+		it.Type, it.Title, it.Path = typ, title, path
+		return it
+	}
+	reads := []Read{
+		{Items: []Item{mk("m", "movie", "100% Pure", "/m/1"), mk("t", "show", "Plain", "/data/needle/x")}},
+		{Section: "2", Items: []Item{mk("o", "show", "Other", "/o")}},
+		{Server: "srv2", Items: []Item{mk("r", "show", "Remote", "/r")}},
+	}
+	for _, r := range reads {
+		apply(t, s, r)
+	}
+	for _, r := range reads {
+		r.At = base.Add(time.Hour)
+		for i := range r.Items {
+			r.Items[i].Reasons = 0
+		}
+		apply(t, s, r)
+	}
+
+	tests := []struct {
+		name string
+		q    ListQuery
+		want []string
+	}{
+		{"none", ListQuery{}, []string{"m", "o", "r", "t"}},
+		{"servers", ListQuery{Servers: []string{"srv2"}}, []string{"r"}},
+		{"section", ListQuery{Section: "2"}, []string{"o"}},
+		{"type", ListQuery{Type: "movie"}, []string{"m"}},
+		{"reason is not used", ListQuery{Reason: NoSummary}, []string{"m", "o", "r", "t"}},
+		{"search title", ListQuery{Search: "100%"}, []string{"m"}},
+		{"search path", ListQuery{Search: "needle/"}, []string{"t"}},
+	}
+	for _, tt := range tests {
+		tt.q.Tab, tt.q.WithUnrequested, tt.q.Rules = TabFixed, true, DueRules{Now: base}
+		if got := sortedKeys(listAll(t, s, tt.q)); !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("%s: keys = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestCountItemsMatchesLists(t *testing.T) {
+	s := openTest(t)
+	movie := item("movie", NoSummary)
+	movie.Type = "movie"
+	apply(t, s, Read{Items: []Item{
+		item("a", NoSummary), item("b", Unmatched), item("ignored", NoArt), movie,
+		item("s1", NoSummary), item("s2", Unmatched), item("fixed", NoSummary), item("plain", NoSummary),
+	}})
+	apply(t, s, Read{Server: "srv2", Items: []Item{item("remote", NoSummary)}})
+	stopItem(t, s, srv, "s1", base)
+	stopItem(t, s, srv, "s2", base)
+	accept(t, s, "fixed", base.Add(time.Minute), ActionRefresh)
+	apply(t, s, Read{At: base.Add(time.Hour), Items: []Item{item("fixed", 0), item("plain", 0)}})
+	rules := DueRules{Now: base.Add(1000 * time.Hour), RefreshInterval: time.Hour, Ignored: NoArt}
+
+	ctx := context.Background()
+	unfiltered, err := s.CountItems(ctx, ListQuery{Rules: rules})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (ListCounts{Attention: 4, Fixed: 1, Stopped: 2}); unfiltered != want {
+		t.Fatalf("counts = %+v, want %+v", unfiltered, want)
+	}
+
+	queries := []ListQuery{
+		{},
+		{Servers: []string{srv}},
+		{Section: "2"},
+		{Type: "movie"},
+		{Search: "Title a"},
+		{Reason: Unmatched},
+		{WithIgnored: true, WithUnrequested: true},
+		// CountItems ignores the tab, sort, and paging fields.
+		{Tab: TabFixed, Sort: SortCompleted, Desc: true, Limit: 0, After: &Cursor{Server: "zzz"}},
+	}
+	for _, q := range queries {
+		q.Rules = rules
+		got, err := s.CountItems(ctx, q)
+		if err != nil {
+			t.Fatalf("%+v: %v", q, err)
+		}
+		tab := func(tab Tab) int {
+			tq := q
+			tq.Tab, tq.Sort, tq.Desc, tq.After = tab, "", false, nil
+			return len(listAll(t, s, tq))
+		}
+		want := ListCounts{Attention: tab(TabAttention), Fixed: tab(TabFixed), Stopped: tab(TabStopped)}
+		if got != want {
+			t.Errorf("%+v: counts = %+v, want %+v", q, got, want)
+		}
+	}
+}
+
+func TestItemDetailFromRowOrHistory(t *testing.T) {
+	s := openTest(t)
+	if err := s.SaveLibraries(srv, []LibraryInfo{{Section: sec, Title: "TV"}}); err != nil {
+		t.Fatal(err)
+	}
+	a := item("a", NoSummary)
+	a.Thumb, a.Art, a.Path = "/t", "/a", "/tv/A"
+	apply(t, s, Read{Items: []Item{a, item("ignored", NoArt), item("stopped", NoSummary)}})
+	accept(t, s, "a", base.Add(time.Minute), ActionRefresh)
+	stopItem(t, s, srv, "stopped", base.Add(time.Hour))
+	rules := DueRules{Now: base.Add(time.Minute + time.Second), RefreshInterval: time.Hour, Ignored: NoArt}
+
+	ctx := context.Background()
+	listed := append(listAll(t, s, ListQuery{Tab: TabAttention, WithIgnored: true, Rules: rules}),
+		listAll(t, s, ListQuery{Tab: TabStopped, Rules: rules})...)
+	if len(listed) != 3 {
+		t.Fatalf("listed = %+v, want 3 rows", listed)
+	}
+	for _, want := range listed {
+		got, found, err := s.ItemDetail(ctx, srv, want.RatingKey, rules)
+		if err != nil || !found {
+			t.Fatalf("ItemDetail %s = %v, %v", want.RatingKey, found, err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("ItemDetail %s = %+v, want %+v", want.RatingKey, got, want)
+		}
+	}
+
+	done := a
+	done.Title, done.Year, done.Thumb, done.Art, done.Path = "New a", 2021, "/t2", "/a2", "/tv/New"
+	complete(t, s, done, base.Add(2*time.Hour))
+	got, found, err := s.ItemDetail(ctx, srv, "a", rules)
+	if err != nil || !found {
+		t.Fatalf("ItemDetail after completion = %v, %v", found, err)
+	}
+	want := ListItem{
+		Server: srv, Section: sec, RatingKey: "a", Library: "TV", Type: "show", Title: "New a", Year: 2021,
+		Thumb: "/t2", Art: "/a2", Path: "/tv/New",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ItemDetail after completion = %+v, want %+v", got, want)
+	}
+
+	if _, found, err := s.ItemDetail(ctx, srv, "unknown", rules); err != nil || found {
+		t.Fatalf("ItemDetail of an unknown key = %v, %v, want not found", found, err)
 	}
 }

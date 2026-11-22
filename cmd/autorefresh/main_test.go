@@ -199,7 +199,7 @@ func startRunning(t *testing.T, st *store.Store) {
 // onlyRunStatus returns the status of the only stored run.
 func onlyRunStatus(t *testing.T, st *store.Store) store.RunStatus {
 	t.Helper()
-	runs, err := st.Runs(0)
+	runs, err := st.Runs(context.Background(), store.RunQuery{})
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("runs = %+v, %v, want 1", runs, err)
 	}
@@ -260,7 +260,7 @@ func TestRunOnceKeepsRunningRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	runs, err := st.Runs(0)
+	runs, err := st.Runs(context.Background(), store.RunQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
