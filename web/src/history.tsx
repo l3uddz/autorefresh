@@ -4,7 +4,9 @@ import { Icon } from '@astryxdesign/core/Icon';
 import { HStack, StackItem, VStack } from '@astryxdesign/core/Layout';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Heading, Text } from '@astryxdesign/core/Text';
+import { borderVars, colorVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { ClockIcon } from '@heroicons/react/24/outline';
+import * as stylex from '@stylexjs/stylex';
 import type { MatchSearch, TimelineEvent } from './api';
 import { useNow } from './clock';
 import { dateTime, plural, relative } from './format';
@@ -16,21 +18,42 @@ import { decisionView, eventView, searchSource, verdictName, type EventView, typ
 
 const toneLabel: Record<Tone, string> = { success: 'Succeeded', error: 'Failed', warning: 'Needs attention', neutral: 'Info' };
 
-function EntryHead({ view, at }: { view: EventView; at?: string }) {
+const styles = stylex.create({
+  // The rail of the timeline: a thin line that joins each marker to the
+  // next one, with the same gap above and below it. It is decoration only.
+  connector: {
+    flexGrow: 1,
+    width: borderVars['--border-width'],
+    marginBlockStart: spacingVars['--spacing-1-5'],
+    backgroundColor: colorVars['--color-border-emphasized'],
+  },
+});
+
+function EntryMarker({ tone }: { tone: Tone }) {
+  return <StatusDot variant={tone} label={toneLabel[tone]} />;
+}
+
+function EntryText({ view, at }: { view: EventView; at?: string }) {
   const now = useNow();
+  return (
+    <VStack gap={0.5}>
+      <Text weight="semibold" wordBreak="break-word">{view.title}</Text>
+      <Text type="supporting" color="secondary">
+        {[view.by, at ? `${relative(at, now)} · ${dateTime(at)}` : undefined].filter(Boolean).join(' · ')}
+      </Text>
+      {view.detail && <Text type="supporting" wordBreak="break-word">{view.detail}</Text>}
+    </VStack>
+  );
+}
+
+function EntryHead({ view, at }: { view: EventView; at?: string }) {
   return (
     <HStack gap={3} vAlign="start">
       <VStack paddingBlockStart={1.5}>
-        <StatusDot variant={view.tone} label={toneLabel[view.tone]} />
+        <EntryMarker tone={view.tone} />
       </VStack>
       <StackItem size="fill">
-        <VStack gap={0.5}>
-          <Text weight="semibold" wordBreak="break-word">{view.title}</Text>
-          <Text type="supporting" color="secondary">
-            {[view.by, at ? `${relative(at, now)} · ${dateTime(at)}` : undefined].filter(Boolean).join(' · ')}
-          </Text>
-          {view.detail && <Text type="supporting" wordBreak="break-word">{view.detail}</Text>}
-        </VStack>
+        <EntryText view={view} at={at} />
       </StackItem>
     </HStack>
   );
@@ -60,6 +83,33 @@ export function DecisionSearches({ searches }: { searches: MatchSearch[] }) {
   );
 }
 
+/** One event of the timeline. A line in the marker column joins its
+ * marker to the marker of the next, older event. It grows with the row, so
+ * wrapped text and open searches keep it whole. The last event has none. */
+function TimelineEntry({ event, isLast }: { event: TimelineEvent; isLast: boolean }) {
+  const view = eventView(event);
+  return (
+    <HStack gap={3}>
+      <VStack hAlign="center" paddingBlockStart={1.5}>
+        <EntryMarker tone={view.tone} />
+        {!isLast && <VStack xstyle={styles.connector} aria-hidden="true" />}
+      </VStack>
+      <StackItem size="fill">
+        <VStack gap={2} paddingBlockEnd={isLast ? 0 : 4}>
+          <EntryText view={view} at={event.at} />
+          {event.kind === 'match-decision' && event.searches.length > 0 && (
+            <Collapsible defaultIsOpen={false} chevronPosition="start" trigger={<Text type="supporting">{plural(event.searches.length, 'search', 'searches')}</Text>}>
+              <VStack paddingBlockStart={2}>
+                <DecisionSearches searches={event.searches} />
+              </VStack>
+            </Collapsible>
+          )}
+        </VStack>
+      </StackItem>
+    </HStack>
+  );
+}
+
 /** The full timeline of an item, newest event first. A match decision
  * opens its searches on request. */
 export function ItemTimeline({ timeline }: { timeline: TimelineEvent[] }) {
@@ -69,20 +119,9 @@ export function ItemTimeline({ timeline }: { timeline: TimelineEvent[] }) {
       {timeline.length === 0 ? (
         <Text color="secondary">Nothing happened to this item yet.</Text>
       ) : (
-        <VStack gap={4}>
-          {timeline.map(event => (
-            <VStack key={event.id} gap={2}>
-              <EntryHead view={eventView(event)} at={event.at} />
-              {event.kind === 'match-decision' && event.searches.length > 0 && (
-                <VStack paddingInlineStart={6}>
-                  <Collapsible defaultIsOpen={false} chevronPosition="start" trigger={<Text type="supporting">{plural(event.searches.length, 'search', 'searches')}</Text>}>
-                    <VStack paddingBlockStart={2}>
-                      <DecisionSearches searches={event.searches} />
-                    </VStack>
-                  </Collapsible>
-                </VStack>
-              )}
-            </VStack>
+        <VStack>
+          {timeline.map((event, index) => (
+            <TimelineEntry key={event.id} event={event} isLast={index === timeline.length - 1} />
           ))}
         </VStack>
       )}
