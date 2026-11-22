@@ -292,7 +292,7 @@ func TestTimelineOrdersSameSecondByID(t *testing.T)           // two events at t
 ```
 
 - [ ] **Step 2: Run** `go test ./internal/store -run 'RecordRequest|RecordGone|Timeline' -v` — Expected: FAIL.
-- [ ] **Step 3: Implement.** Keep `RecordAttempt` and `Delete` (Task 10 removes them). Add the three new methods to `TestMethodsReportDatabaseFailure`.
+- [ ] **Step 3: Implement.** Keep `RecordAttempt` and `Delete` (Task 10 removes them). The `RecordRequest` entry of `TestMethodsReportDatabaseFailure` passes `Source: SourceAuto`, so it reaches the closed database instead of the input check. Add the three new methods to `TestMethodsReportDatabaseFailure`.
 - [ ] **Step 4: Run** the store package — Expected: PASS.
 - [ ] **Step 5: Commit** — `feat(store): record requests and gone items as events`
 
@@ -494,7 +494,7 @@ func TestDryRunPrunesNothing(t *testing.T)
 - `storeItem` sets `Thumb: plex.ItemImagePath(it.RatingKey, it.Thumb)`, `Art: plex.ItemImagePath(it.RatingKey, it.Art)`, and for movies `Path: folderOf(it.Files)`. `folderOf(files []string) string` returns the first file up to its last `/` or `\`, or `""`.
 - `(r *Refresher) itemPaths(ctx, run, it)` keeps returning `[]string` (`p.All()`). After a successful `ItemPaths` of a series (`it.Type == plex.ShowLibrary`), when `len(p.Locations) > 0 && p.Locations[0] != ""`, it calls `SetPath` with `p.Locations[0]` (never a file from `p.Files`; dry runs too, because the path is cache metadata like `SaveLibraries`); a `SetPath` error returns wrapped with `errCache` so `itemFailed` treats it as a store error.
 - `readLibraries` calls `SaveLibraries` with the selected libraries after `selectLibraries` (dry runs too: it is cache metadata, not history).
-- `goneKeys(...) (gone []string, folders map[string]string, err error)`: for an unseen row that `ItemPaths` answers, it stages `p.Locations[0]` when not empty; `readLibrary` puts it in `rd.Folders`, so `ApplyRead` saves it with the read (Task 4) and a failed read saves nothing.
+- `goneKeys(...) (gone []string, folders map[string]string, err error)`: for an unseen row that `ItemPaths` answers, it stages `p.Locations[0]` when not empty and `lib.Type == plex.ShowLibrary` (the same guard as `itemPaths`; the fake returns every path as a location); `readLibrary` puts it in `rd.Folders`, so `ApplyRead` saves it with the read (Task 4) and a failed read saves nothing.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -540,7 +540,7 @@ func (d *decisionLog) fail(err error)                                           
 ```
 
 - `findMatch` creates the `decisionLog` right after its guard (unmatched, not ignored, refreshed before), before `itemPaths`, and passes it down: `searchIDs` (source `path`), `tmdbResults` (source `tmdb`, `fromID` = the path ID's `title()`), and `tieTMDBCandidate` (source `tie`). Every `SearchMatches` call adds its result before any return, with `failed: true` for any error (also one that `searchFailureIsEmpty` accepts). A failure that `searchFailureIsEmpty` accepts does not set `d.err` and counts as an empty search, exactly as the match code treats it today: the outcome follows the other searches and the TMDB fallback (which this empty result can trigger). The search keeps `Failed` in every outcome, so the UI can tell it apart from an empty answer. First-pass searches stay in the log when the TMDB pass replaces `results`.
-- `searchResult` gains `pos int`, the index of its search in the `decisionLog`, so `resolveMatch` sets verdicts on the logged copy of exactly the results it evaluated.
+- `searchResult` gains `pos int`, the index of its search in the `decisionLog`, so `resolveMatch` sets verdicts on the logged copy of exactly the results it evaluated. A `tie` search is not in `mc.results`; `resolveMatch` also sets the verdicts of the `tie` searches in the `decisionLog` (rule 3 below).
 - Handled failures: `recordTMDBFailure` and `confirmationLookupFailed` call `d.fail(err)` and keep returning exactly what they return today, so the item still gets its plain refresh. In `confirmEpisodeNumbers` this covers a TMDB `SeasonEpisodes` error (through `confirmationLookupFailed`: plain refresh as today).
 - A Plex `EpisodeNumbers` error is not handled: it returns as today, so no request is sent and `countFailure` records the failed attempt (`Match search failed`). The decision is `failed` through rule 2 below. `TestEpisodeEvidenceLookupFailures` keeps its three cases unchanged and gains the decision assertions: Plex error -> `failed` and no request; TMDB error -> `failed` and the `Refresh 201` request; cancel -> no decision.
 - `findMatch` records one decision on its way out, with `Source: store.SourceAuto`, never in a dry run. The classification, in this order:
