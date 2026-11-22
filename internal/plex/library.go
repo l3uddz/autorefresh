@@ -2,6 +2,7 @@ package plex
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -54,19 +55,22 @@ type Item struct {
 type Filter struct{ Key, Value string }
 
 type metadata struct {
-	RatingKey  string `json:"ratingKey"`
-	Index      int    `json:"index"`
-	Season     *int   `json:"parentIndex"`
-	GUID       string `json:"guid"`
-	Title      string `json:"title"`
-	Year       int    `json:"year"`
-	Summary    string `json:"summary"`
-	Thumb      string `json:"thumb"`
-	Art        string `json:"art"`
-	AddedAt    int64  `json:"addedAt"`
-	ChildCount int    `json:"childCount"`
-	LeafCount  int    `json:"leafCount"`
-	Media      []struct {
+	RatingKey string `json:"ratingKey"`
+	Index     int    `json:"index"`
+	Season    *int   `json:"parentIndex"`
+	GUID      string `json:"guid"`
+	// ExternalGuids receives the "Guid" list of external IDs. An exact key
+	// match wins over the case-insensitive one, so the list cannot fall into GUID.
+	ExternalGuids json.RawMessage `json:"Guid"`
+	Title         string          `json:"title"`
+	Year          int             `json:"year"`
+	Summary       string          `json:"summary"`
+	Thumb         string          `json:"thumb"`
+	Art           string          `json:"art"`
+	AddedAt       int64           `json:"addedAt"`
+	ChildCount    int             `json:"childCount"`
+	LeafCount     int             `json:"leafCount"`
+	Media         []struct {
 		Part []struct {
 			File string `json:"file"`
 		} `json:"Part"`

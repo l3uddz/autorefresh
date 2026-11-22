@@ -1,0 +1,28 @@
+{
+  "MediaContainer": {
+    "size": 1,
+    "Metadata": [
+      {
+        "ratingKey": "1004",
+        "key": "/library/metadata/1004/children",
+        "guid": "plex://show/fixture0000000000000001",
+        "type": "show",
+        "childCount": 2,
+        "leafCount": 12,
+        "title": "Fixture Series One",
+        "summary": "",
+        "addedAt": 1700000300,
+        "Guid": [
+          {"id": "imdb://tt0000001"},
+          {"id": "tmdb://100001"},
+          {"id": "tvdb://200004"}
+        ],
+        "Location": [
+          {
+            "path": "/fixture/tv/Fixture Series One (2021) {tvdb-200004}"
+          }
+        ]
+      }
+    ]
+  }
+}

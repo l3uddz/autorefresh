@@ -442,6 +442,7 @@ func TestItemPathsReadsLocationsAndFiles(t *testing.T) {
 		files   bool // want holds the files, not the locations
 	}{
 		{"item_show.json", []string{"/fixture/tv/Fixture Series One (2021) {tvdb-200004}"}, false},
+		{"item_show_guids.json", []string{"/fixture/tv/Fixture Series One (2021) {tvdb-200004}"}, false},
 		{"item_movie.json", []string{
 			"/fixture/movies/Fixture Movie One (2020) {tmdb-100001}/Fixture Movie One (2020).mkv",
 			"/fixture/movies/Fixture Movie One (2020) {tmdb-100001}/Fixture Movie One (2020) - version2.mkv",

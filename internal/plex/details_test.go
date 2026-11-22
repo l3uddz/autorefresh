@@ -52,6 +52,19 @@ func TestItemDetails(t *testing.T) {
 	}
 }
 
+// A matched item lists its external guids in "Guid", an array. The key must
+// not fall into the string field "guid".
+func TestItemDetailsReadsItemWithExternalGuids(t *testing.T) {
+	_, c := newServer(t, serveFixture(t, "item_show_guids.json"))
+	got, err := c.ItemDetails(context.Background(), "1004")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GUID != "plex://show/fixture0000000000000001" || len(got.Paths.Locations) != 1 {
+		t.Fatalf("ItemDetails = %+v", got)
+	}
+}
+
 func TestItemDetailsErrors(t *testing.T) {
 	_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte(`{"MediaContainer":{}}`))
