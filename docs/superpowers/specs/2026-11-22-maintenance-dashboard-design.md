@@ -180,8 +180,12 @@ New and changed tables (one migration each, numbered after `5_actions.sql`):
     that completes is deleted as today.
   - `last_outcome TEXT NOT NULL DEFAULT ''`: the outcome of the last
     attempt (`refresh`, `match`, `tmdb-match`, `refresh-failed`,
-    `match-failed`, `no-match`, `no-ids`), so the table can show and sort
-    "Last action" without reading events.
+    `match-failed`, `tmdb-match-failed`, `search-failed`), and
+    `last_match_outcome TEXT NOT NULL DEFAULT ''`: the outcome of the last
+    automatic fix match evaluation (`matched`, `no-match`, `no-ids`,
+    `failed`). A fix match that finds nothing is followed by a plain
+    refresh, so both are needed for "Last action" ("refresh · no match").
+    The table shows and sorts them without reading events.
   - `last_match_at INTEGER` (null: unknown): the time of the last match
     request that Plex accepted for this row. `RecordAttempt` sets it with
     `last_match`. Rows from before this migration keep null, so their
@@ -238,9 +242,11 @@ New and changed tables (one migration each, numbered after `5_actions.sql`):
   `error` (for example an unavailable server). `run` has no library
   (a server can fail before it reads one), so `PruneServers` deletes the
   `run` rows of removed servers itself; the library query does not reach
-  them. Removed by retention too. Indexes on `(started_at)` and `(server)`. At start,
-  autorefresh marks rows still `running` from an earlier process as
-  `interrupted`.
+  them. Removed by retention too. Indexes on `(started_at)` and
+  `(server)`. At start, autorefresh marks rows still `running` from an
+  earlier process as `interrupted`. Only the scheduled mode does this: a
+  `--once` or `--dry-run` process can share the database with a running
+  daemon, so it must not mark the daemon's runs.
 
 Retention: at the start of each run, delete `event` and `run` rows older than
 `history-retention`. The cascade removes their searches and candidates. The
@@ -680,8 +686,10 @@ working.
 
 0. Separate: default `max-refreshes-per-run` 250 → 100.
 1. Storage and recording: migrations, events, match decisions, runs,
-   retention, stopped flag (respected by `Due` and `CountIncomplete`),
-   thumb, art, and path columns. No UI yet.
+   retention and `history-retention`, stopped flag (respected by `Due` and
+   `CountIncomplete`), library metadata, thumb, art, and path columns, and
+   the decoding of candidate `type`, `summary`, `thumb`, and `score` in
+   `plex.SearchMatches` (the year parameter waits for stage 3). No UI yet.
 2. HTTP server: config, auth, same-origin checks, read API, image proxy,
    status and SSE, the progress hook, placeholder page.
 3. Write API: refresh, check now, bulk refresh, cancel, fix match search
