@@ -260,6 +260,23 @@ func TestRunNowReadsIncrementally(t *testing.T) {
 	}
 }
 
+// A run that reads one library fully and another incrementally counts
+// each read once.
+func TestRunNowCountsMixedReads(t *testing.T) {
+	f := newRefreshFixture(t, Server{Name: "home", Plex: newFakePlex(moviesLib, showsLib)})
+	f.now = t0
+	f.seed("home", moviesLib, incompleteItem("1"), store.NoSummary, 0)
+	jobs := NewJobs(f.r)
+	t.Cleanup(jobs.Close)
+	if _, err := jobs.RunNow(nil, false); err != nil {
+		t.Fatal(err)
+	}
+	jobs.wg.Wait()
+	if run := f.onlyRun(); run.FullReads != 1 || run.IncrementalReads != 1 {
+		t.Errorf("run reads = %d full, %d incremental; want 1 and 1", run.FullReads, run.IncrementalReads)
+	}
+}
+
 type failedBulkRecheck struct{ Store }
 
 func (failedBulkRecheck) KnownItem(string, string) (store.Item, bool, bool, error) {
