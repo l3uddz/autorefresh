@@ -522,3 +522,37 @@ func TestTMDBFallbackKeepsPositions(t *testing.T) {
 		"tmdb tmdb-77 from tvdb-5: plex://show/a=several candidates plex://show/b=several candidates",
 		"tmdb tmdb-78 from imdb-tt1: plex://show/a=not compared")
 }
+
+func TestFailedTMDBSearchRecordsFailed(t *testing.T) {
+	t.Run("TMDB fallback search", func(t *testing.T) {
+		fp := newFakePlex(showsLib)
+		fp.searchErrs["201 tmdb-77"] = errServer
+		ft := &fakeTMDB{ids: map[string]string{"tvdb 5 true": "77"}}
+		f := newTMDBFixture(t, fp, ft, "tvdb-5")
+
+		f.run(t0)
+
+		e := f.decision("201")
+		wantDecision(t, e, store.DecisionFailed, "", "path tvdb-5:", "tmdb tmdb-77 from tvdb-5 failed:")
+		if e.Error != errServer.Error() {
+			t.Errorf("error = %q, want %q", e.Error, errServer)
+		}
+		wantCalls(t, sends(fp.calls))
+	})
+	t.Run("tie search", func(t *testing.T) {
+		fp := newFakePlex(showsLib)
+		fp.candidates["201 tvdb-5"] = []plex.Candidate{{GUID: "plex://show/a", Name: "Show", Year: 2017}}
+		fp.searchErrs["201 tmdb-77"] = errServer
+		ft := &fakeTMDB{ids: map[string]string{"tvdb 5 true": "77"}, years: map[string]int{"77 true": 2022}}
+		f := yearConflictFixture(t, fp, ft)
+
+		f.run(t0)
+
+		e := f.decision("201")
+		wantDecision(t, e, store.DecisionFailed, "", "path tvdb-5: plex://show/a=", "tie tmdb-77 failed:")
+		if e.Error != errServer.Error() {
+			t.Errorf("error = %q, want %q", e.Error, errServer)
+		}
+		wantCalls(t, sends(fp.calls))
+	})
+}
