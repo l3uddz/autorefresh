@@ -29,6 +29,10 @@ COPY ["dist/autorefresh_${TARGETOS}_${TARGETARCH}_*/autorefresh", "/app/autorefr
 
 VOLUME ["/config"]
 
+# The port of the dashboard. Nothing listens on it until ui.listen is set
+# in config.yml, for example to ":7380".
+EXPOSE 7380
+
 # The default user is not root. Set your own UID:GID with --user, or with
 # user: in compose. That user must own the directory at /config.
 USER 65532:65532
