@@ -234,9 +234,10 @@ export function statusQuery(client: QueryClient) {
     queryFn: async ({ signal }: { signal: AbortSignal }) => {
       const startingBoot = client.getQueryData<Status>(['status'])?.boot;
       const next = await api<Status>('status', { signal });
-      // A stream event may have reported a restart while the GET was in flight.
+      // If the cache switched boots during the GET, a response from a
+      // different boot cannot establish which process is current.
       const cached = client.getQueryData<Status>(['status']);
-      if (cached && cached.boot !== startingBoot && next.boot === startingBoot) return cached;
+      if (cached && cached.boot !== startingBoot && cached.boot !== next.boot) return cached;
       return newerStatus(cached, next, client);
     },
   };

@@ -379,6 +379,24 @@ describe('bulk refresh queue', () => {
     expect((await done).steps.map(step => step.state)).toEqual(['finished']);
   });
 
+  it('keeps waiting when the stream reports running during the final recovery lookup', async () => {
+    Object.assign(queueTiming, { pollInterval: 5, unknownAfter: 1 });
+    const stored: Stored = { status: freshStatus() };
+    const running = freshStatus('restarted', 1);
+    running.servers[0].run = lastRun(7, 'running');
+    Object.defineProperty(stored, 'runs', { get: () => {
+      client.setQueryData(['status'], running);
+      stored.status = running;
+      return { 0: [] };
+    } });
+    const calls = fakeApi({ 0: [accepted(7, 2)] }, { 7: ['accepted'] }, stored);
+    const done = nextDone();
+    await startBulkRefresh(client, requests.slice(0, 1), names);
+    await vi.waitFor(() => expect(!isQueueActive() || calls.filter(call => call === 'GET status').length >= 2).toBe(true));
+    end(client, 0, lastRun(7, 'finished'));
+    expect((await done).steps.map(step => step.state)).toEqual(['finished']);
+  });
+
   it('ends a job as unknown when the status and the stored runs are both unavailable', async () => {
     Object.assign(queueTiming, { pollInterval: 5 });
     fakeApi({ 0: [accepted(7, 2)], 1: [accepted(8, 1)] });

@@ -57,4 +57,19 @@ describe('status order', () => {
     expect(await query.queryFn({ signal: new AbortController().signal })).toEqual(restarted);
     client.clear();
   });
+
+  it('keeps the first streamed boot when the initial GET returns another boot', async () => {
+    const client = new QueryClient();
+    const first = status('b', 1);
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      client.setQueryData(['status'], first);
+      return new Response(JSON.stringify(status('a', 8)));
+    }));
+
+    const result = await client.fetchQuery(statusQuery(client));
+    expect(result).toEqual(first);
+    const next = status('b', 2);
+    expect(newerStatus(result, next, client)).toEqual(next);
+    client.clear();
+  });
 });

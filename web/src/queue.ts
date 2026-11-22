@@ -300,7 +300,8 @@ async function waitForJob(client: QueryClient, srv: number, id: number): Promise
         }
         const latest = reportedEnd(client.getQueryData<Status>(['status']), srv, id);
         if (latest && latest !== 'running') return latest;
-        if (++misses >= queueTiming.unknownAfter) return { status: 'unknown', hasItems: false };
+        if (latest === 'running') misses = 0;
+        else if (++misses >= queueTiming.unknownAfter) return { status: 'unknown', hasItems: false };
       }
       // The cache may have changed during the requests: check it again
       // before waiting. The check and the wait start in the same tick.
