@@ -161,7 +161,7 @@ func (p manualMetadata) Item(context.Context, string) (plex.Item, error) { retur
 func TestCheckItemValidatesImagesAgainstRequestedKey(t *testing.T) {
 	lib := plex.Library{ID: "1", Type: "movie"}
 	const thumb = "/library/metadata/1/thumb/1700000050"
-	p := manualMetadata{fakePlex: newFakePlex(lib), live: plex.Item{Title: "Updated", Thumb: thumb}}
+	p := manualMetadata{fakePlex: newFakePlex(lib), live: plex.Item{RatingKey: "2", Title: "Updated", Thumb: thumb, Art: "/library/metadata/2/art/1700000050"}}
 	f := newRefreshFixture(t, Server{Name: "home", Plex: p})
 	f.now = t0
 	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
@@ -169,7 +169,7 @@ func TestCheckItemValidatesImagesAgainstRequestedKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	row, found := f.row("home", "1", "1")
-	if !found || row.Thumb != thumb || row.Title != "Updated" || row.Attempts != 0 {
+	if !found || row.Thumb != thumb || row.Art != "" || row.Title != "Updated" || row.Attempts != 0 {
 		t.Fatalf("checked item = %+v, found %v", row, found)
 	}
 }

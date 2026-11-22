@@ -198,7 +198,7 @@ func (s fakeMatchSearch) SearchMatches(context.Context, string, string, refreshe
 func TestMatchSearchOmitsCredentialFromCandidateThumb(t *testing.T) {
 	const secret = "fake-private-token"
 	actions := fakeMatchSearch{result: refresher.MatchResult{Searches: []store.MatchSearch{{Candidates: []store.MatchCandidate{
-		{GUID: "plex://movie/1", Thumb: "https://example.invalid/1?token=" + secret},
+		{GUID: "plex://movie/1", Thumb: "https://example.invalid/1?sig=" + secret},
 		{GUID: "plex://movie/2", Thumb: "https://example.invalid/2"},
 	}}}}}
 	server := New(Options{Actions: actions, Credentials: []string{secret}, Servers: []PlexServer{{Name: "home"}}})
