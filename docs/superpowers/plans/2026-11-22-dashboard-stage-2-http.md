@@ -170,7 +170,9 @@ func TestListFilters(t *testing.T)
 // "100% Pure" and not "1000 Pure"; Search "a_b" matches "a_b" and not "axb"; library title joined.
 func TestListPagesWithoutGapsOrRepeats(t *testing.T)
 // 7 rows with duplicate titles and years, "Beta" and "beta" among them, and several due rows;
-// Limit 3; for title asc, title desc, due asc, last-attempt asc (never-tried rows give 0):
+// Limit 3; for title asc, title desc, due asc, last-attempt asc (never-tried rows give 0).
+// Arrange the fixture so that "Beta" and "beta" fall on opposite sides of a page boundary in
+// title order, and a page ends on a due row (NextDue zero) in due order:
 // the pages joined equal one Limit-100 call, and the last page has next == nil.
 func TestListStopsWaitingWhenCanceled(t *testing.T)
 // a transaction begun on s.db holds the only connection; ListItems with a 50 ms context
@@ -242,6 +244,9 @@ func TestListFixedShowsNewestCompletionOnce(t *testing.T)
 // an item fixed after an accepted request, back in the cache, and fixed again ->
 // one row with the newer CompletedAt and FixedAction; an item that completed without
 // a request is listed only with WithUnrequested; Cached is true while the item is cached again.
+func TestListFixedOrdersCompletionsByTime(t *testing.T)
+// insert (by SQL) a backdated completed event last -> the row with the newest at still wins;
+// two completions with the same at -> the higher id wins.
 func TestListFixedFiltersAfterChoosingNewest(t *testing.T)
 // fixed once after an accepted request, then again without one -> hidden; with
 // WithUnrequested -> one row, the newer completion with an empty FixedAction.
