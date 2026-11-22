@@ -222,6 +222,19 @@ func TestRunsRejectsInvalidParams(t *testing.T) {
 	}
 }
 
+// The store reads an empty server list as every server, so a server
+// without configured servers lists no run.
+func TestRunsWithoutServersListsNothing(t *testing.T) {
+	st := openStore(t)
+	recordRunError(t, st, "Home", "")
+	s := newServerWith(st, 0, nil)
+
+	got, body := getRuns(t, s, "")
+	if len(got.Runs) != 0 || got.Next != "" || !strings.Contains(body, `"runs":[]`) {
+		t.Errorf("answer = %s, want no runs", body)
+	}
+}
+
 func TestRunsEmptyIsArray(t *testing.T) {
 	_, body := getRuns(t, newAPIServer(openStore(t), 0, "Home"), "")
 	if !strings.Contains(body, `"runs":[]`) || strings.Contains(body, `"next"`) {

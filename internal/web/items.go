@@ -101,6 +101,12 @@ func (s *Server) serveItems(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if len(q.Servers) == 0 {
+		// No server is configured. The store would read the empty list as
+		// every server.
+		writeJSON(w, http.StatusOK, itemsJSON{Items: []itemJSON{}})
+		return
+	}
 	q.Rules = s.rules
 	q.Rules.Now = s.now()
 

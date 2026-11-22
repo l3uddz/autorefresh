@@ -371,6 +371,22 @@ func TestItemsHidesRemovedServers(t *testing.T) {
 	}
 }
 
+// The store reads an empty server list as every server, so a server
+// without configured servers lists nothing.
+func TestItemsWithoutServersListsNothing(t *testing.T) {
+	st := openStore(t)
+	seedMovies(t, st, 2)
+	s := newServerWith(st, 0, nil)
+
+	got, body := getItems(t, s, "")
+	if len(got.Items) != 0 || got.Next != "" || got.Counts.Attention != 0 || got.Counts.Fixed != 0 || got.Counts.Stopped != 0 {
+		t.Errorf("answer = %s, want no items and zero counts", body)
+	}
+	if !strings.Contains(body, `"items":[]`) {
+		t.Errorf("body = %s, want an empty items array", body)
+	}
+}
+
 // editCursor decodes cursor, applies edit to its JSON fields, and encodes
 // it again.
 func editCursor(t *testing.T, cursor string, edit func(map[string]any)) string {

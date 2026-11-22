@@ -62,6 +62,12 @@ func (s *Server) serveRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if len(q.Servers) == 0 {
+		// No server is configured. The store would read the empty list as
+		// every server.
+		writeJSON(w, http.StatusOK, runsJSON{Runs: []runJSON{}})
+		return
+	}
 	limit := q.Limit
 	q.Limit++ // one more run tells whether a next page exists
 	runs, err := s.store.Runs(r.Context(), q)
