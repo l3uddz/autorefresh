@@ -349,7 +349,7 @@ func (k readKey) reasons(r Read, prev Reasons) Reasons {
 	return final | prev&^ItemReasons
 }
 
-func deleteItem(tx *sql.Tx, server, key string) error {
+func deleteItem(tx execer, server, key string) error {
 	if _, err := tx.Exec(`DELETE FROM item WHERE server = ? AND rating_key = ?`, server, key); err != nil {
 		return fmt.Errorf("delete item %s: %w", key, err)
 	}
@@ -503,37 +503,44 @@ func (s *Store) CountIncomplete(server string, sections []string, ignored Reason
 	return n, nil
 }
 
+// execer runs a statement on the database or in a transaction.
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
 // RecordAttempt sets LastAttempt and counts the attempt. accepted is the
 // request that Plex accepted, or "" for a failed attempt. An accepted request
 // also sets LastRefresh and LastAction and adds 1 to Refreshes. An accepted
 // match request also sets LastMatch.
 func (s *Store) RecordAttempt(server, ratingKey string, at time.Time, accepted Action) error {
-	var err error
-	switch {
-	case accepted.isMatch():
-		_, err = s.db.Exec(`UPDATE item SET last_attempt = ?, last_refresh = ?, refreshes = refreshes + 1,
-			attempts = attempts + 1, last_action = ?, last_match = ? WHERE server = ? AND rating_key = ?`,
-			at.Unix(), at.Unix(), accepted, accepted, server, ratingKey)
-	case accepted != "":
-		_, err = s.db.Exec(`UPDATE item SET last_attempt = ?, last_refresh = ?, refreshes = refreshes + 1,
-			attempts = attempts + 1, last_action = ? WHERE server = ? AND rating_key = ?`,
-			at.Unix(), at.Unix(), accepted, server, ratingKey)
-	default:
-		_, err = s.db.Exec(`UPDATE item SET last_attempt = ?, attempts = attempts + 1 WHERE server = ? AND rating_key = ?`,
-			at.Unix(), server, ratingKey)
-	}
-	if err != nil {
+	if err := updateAttempt(s.db, server, ratingKey, at, accepted); err != nil {
 		return fmt.Errorf("record attempt: %w", err)
 	}
 	return nil
 }
 
+// updateAttempt counts one attempt of a row. A missing row is not an error.
+func updateAttempt(db execer, server, ratingKey string, at time.Time, accepted Action) error {
+	var err error
+	switch {
+	case accepted.isMatch():
+		_, err = db.Exec(`UPDATE item SET last_attempt = ?, last_refresh = ?, refreshes = refreshes + 1,
+			attempts = attempts + 1, last_action = ?, last_match = ? WHERE server = ? AND rating_key = ?`,
+			at.Unix(), at.Unix(), accepted, accepted, server, ratingKey)
+	case accepted != "":
+		_, err = db.Exec(`UPDATE item SET last_attempt = ?, last_refresh = ?, refreshes = refreshes + 1,
+			attempts = attempts + 1, last_action = ? WHERE server = ? AND rating_key = ?`,
+			at.Unix(), at.Unix(), accepted, server, ratingKey)
+	default:
+		_, err = db.Exec(`UPDATE item SET last_attempt = ?, attempts = attempts + 1 WHERE server = ? AND rating_key = ?`,
+			at.Unix(), server, ratingKey)
+	}
+	return err
+}
+
 // Delete removes a row. A missing row is not an error.
 func (s *Store) Delete(server, ratingKey string) error {
-	if _, err := s.db.Exec(`DELETE FROM item WHERE server = ? AND rating_key = ?`, server, ratingKey); err != nil {
-		return fmt.Errorf("delete item: %w", err)
-	}
-	return nil
+	return deleteItem(s.db, server, ratingKey)
 }
 
 func placeholders(n int) string {

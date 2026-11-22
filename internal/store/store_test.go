@@ -527,12 +527,17 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 		"CountIncomplete": func() error { _, err := s.CountIncomplete(srv, []string{sec}, 0); return err },
 		"RecordAttempt":   func() error { return s.RecordAttempt(srv, "101", base, ActionRefresh) },
 		"Delete":          func() error { return s.Delete(srv, "101") },
-		"PruneServers":    func() error { _, err := s.PruneServers(nil); return err },
-		"PruneSections":   func() error { _, err := s.PruneSections(srv, nil); return err },
-		"TMDBID":          func() error { _, _, err := s.TMDBID(srv, "101", "tvdb", "5"); return err },
-		"SaveTMDBID":      func() error { return s.SaveTMDBID(srv, "101", "tvdb", "5", "77") },
-		"SaveLibraries":   func() error { return s.SaveLibraries(srv, []LibraryInfo{{Section: sec, Title: "TV"}}) },
-		"SetPath":         func() error { return s.SetPath(srv, "101", "/x") },
+		"RecordRequest": func() error {
+			return s.RecordRequest(Request{Server: srv, RatingKey: "101", At: base, Source: SourceAuto, Action: ActionRefresh})
+		},
+		"RecordGone":    func() error { return s.RecordGone(srv, "101", base, SourceAuto) },
+		"Timeline":      func() error { _, err := s.Timeline(srv, "101"); return err },
+		"PruneServers":  func() error { _, err := s.PruneServers(nil); return err },
+		"PruneSections": func() error { _, err := s.PruneSections(srv, nil); return err },
+		"TMDBID":        func() error { _, _, err := s.TMDBID(srv, "101", "tvdb", "5"); return err },
+		"SaveTMDBID":    func() error { return s.SaveTMDBID(srv, "101", "tvdb", "5", "77") },
+		"SaveLibraries": func() error { return s.SaveLibraries(srv, []LibraryInfo{{Section: sec, Title: "TV"}}) },
+		"SetPath":       func() error { return s.SetPath(srv, "101", "/x") },
 	}
 	for name, call := range calls {
 		if err := call(); err == nil {
