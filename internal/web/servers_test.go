@@ -302,3 +302,26 @@ func TestServersNextFullRead(t *testing.T) {
 		t.Errorf("srv 1 next full read = %v, want now (%v), for its unread library", a, testNow)
 	}
 }
+
+// never is a cron schedule without a next time, such as 0 3 31 2 *.
+type never struct{}
+
+func (never) Next(time.Time) time.Time { return time.Time{} }
+
+// A schedule without a next time makes the scanner read every library in
+// full, so the full read is due now.
+func TestServersNextFullReadWithoutNextTime(t *testing.T) {
+	st := openStore(t)
+	if err := st.SaveLibraries("Home", []store.LibraryInfo{{Section: "1", Title: "Movies"}, {Section: "2", Title: "Shows"}}); err != nil {
+		t.Fatal(err)
+	}
+	readLibrary(t, st, "Home", "1", testNow.Add(-2*time.Hour))
+	readLibrary(t, st, "Home", "2", testNow.Add(-time.Hour))
+	s := newServerWith(st, 0, []PlexServer{{Name: "Home", Plex: &fakePlex{}}})
+	s.cacheRefresh = never{}
+	var got serversAnswer
+	getJSON(t, s, "/api/servers", &got)
+	if h := got.Servers[0].NextFullRead; h == nil || !h.Equal(testNow) {
+		t.Errorf("next full read = %v, want now (%v)", h, testNow)
+	}
+}

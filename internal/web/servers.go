@@ -94,17 +94,20 @@ func (s *Server) serverInfo(ctx context.Context, srv int, name string) (serverJS
 }
 
 // fullReadDue returns when a library whose last full read was at is due
-// for a full read: now for a library without one, or zero without a cache
-// refresh schedule.
+// for a full read, or zero without a cache refresh schedule. Like the
+// scanner, it takes a library without a full read, or a schedule without a
+// next time, as due now.
 func (s *Server) fullReadDue(at time.Time) time.Time {
-	switch {
-	case s.cacheRefresh == nil:
+	if s.cacheRefresh == nil {
 		return time.Time{}
-	case at.IsZero():
-		return s.now()
-	default:
-		return s.cacheRefresh.Next(at)
 	}
+	if at.IsZero() {
+		return s.now()
+	}
+	if next := s.cacheRefresh.Next(at); !next.IsZero() {
+		return next
+	}
+	return s.now()
 }
 
 // machineIdentifiers returns the machine identifier of each server, "" for
