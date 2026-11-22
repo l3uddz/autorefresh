@@ -295,10 +295,14 @@ func (run *serverRun) start() store.RunStart {
 }
 
 // finishRun records the end of the run id, unless it is a dry run, and
-// returns the result of runServer. A canceled run returns nil. A failed
+// returns the result of runServer. The end of ctx is a clean exit, so a
+// canceled run returns only a failed FinishRun. Otherwise a failed
 // FinishRun is the error of the run only if the run has no error.
 func (r *Refresher) finishRun(ctx context.Context, run *serverRun, id int64, err error) error {
 	canceled := stopped(ctx, err)
+	if canceled {
+		err = nil
+	}
 	if !r.opts.DryRun {
 		res := store.RunResult{
 			FinishedAt: r.now(), Status: store.RunFinished,
@@ -316,7 +320,7 @@ func (r *Refresher) finishRun(ctx context.Context, run *serverRun, id int64, err
 			err = finishErr
 		}
 	}
-	if canceled || err == nil {
+	if err == nil {
 		return nil
 	}
 	return fmt.Errorf("server %s: %w", run.server.Name, err)

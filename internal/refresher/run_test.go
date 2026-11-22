@@ -220,7 +220,7 @@ func TestRunFinishRunError(t *testing.T) {
 			t.Errorf("error = %v, want the error of the run, not %v", err, errRun)
 		}
 	})
-	t.Run("canceled run returns nil", func(t *testing.T) {
+	t.Run("canceled run returns it", func(t *testing.T) {
 		f := newRefreshFixture(t, Server{Name: testServer, Plex: newFakePlex(moviesLib)})
 		st := &runStore{Store: f.store, failFinish: true}
 		f.r.store = st
@@ -229,8 +229,8 @@ func TestRunFinishRunError(t *testing.T) {
 
 		err := f.r.Run(ctx)
 
-		if err != nil || st.finishes != 1 {
-			t.Errorf("error = %v, FinishRun calls = %d, want nil and 1", err, st.finishes)
+		if !errors.Is(err, errRun) || st.finishes != 1 {
+			t.Errorf("error = %v, FinishRun calls = %d, want %v and 1", err, st.finishes, errRun)
 		}
 	})
 }
