@@ -32,8 +32,8 @@ func (p *recordingProgress) add(parts ...string) {
 	p.calls = append(p.calls, strings.Join(parts, " "))
 }
 
-func (p *recordingProgress) RunStarted(server string, at time.Time) {
-	p.add("RunStarted", server, strconv.FormatInt(at.Unix(), 10))
+func (p *recordingProgress) RunStarted(_ int64, start store.RunStart) {
+	p.add("RunStarted", start.Server, strconv.FormatInt(start.StartedAt.Unix(), 10))
 }
 
 func (p *recordingProgress) LibraryRead(server, library string) {
@@ -55,7 +55,7 @@ func (p *recordingProgress) ItemDone(server, ratingKey, outcome string, counts C
 	p.add("ItemDone", server, ratingKey, outcome)
 }
 
-func (p *recordingProgress) RunFinished(server string, res store.RunResult, err error) {
+func (p *recordingProgress) RunFinished(server string, res store.RunResult, err error, _ bool) {
 	p.mu.Lock()
 	p.results = append(p.results, res)
 	p.errs = append(p.errs, err)

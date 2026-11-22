@@ -21,7 +21,7 @@ var keepaliveComment = []byte(": keepalive\n\n")
 
 // serveStatus answers GET /api/status with the live status.
 func (s *Server) serveStatus(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.status.Snapshot())
+	writeJSON(w, http.StatusOK, s.redactStatus(s.status.Snapshot()))
 }
 
 // serveEvents answers GET /api/events with a stream of server-sent events.
@@ -78,7 +78,7 @@ func setStreamHeaders(h http.Header) {
 
 // sendStatus sends the live status as a status event.
 func (s *Server) sendStatus(rc *http.ResponseController, w io.Writer) error {
-	data, err := json.Marshal(s.status.Snapshot())
+	data, err := json.Marshal(s.redactStatus(s.status.Snapshot()))
 	if err != nil {
 		return err
 	}
@@ -102,4 +102,14 @@ func (s *Server) send(rc *http.ResponseController, w io.Writer, msg []byte) erro
 		return err
 	}
 	return rc.SetWriteDeadline(time.Time{})
+}
+
+// redactStatus removes configured secrets from the copied status view.
+func (s *Server) redactStatus(v StatusView) StatusView {
+	for _, server := range v.Servers {
+		if server.Last != nil {
+			server.Last.Error = s.redact(server.Last.Error)
+		}
+	}
+	return v
 }

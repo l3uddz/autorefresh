@@ -26,7 +26,7 @@ func TestStatusTracksRun(t *testing.T) {
 	st := NewStatus([]string{"one", "two"}, false)
 	started := time.Date(2026, 11, 22, 10, 0, 0, 0, time.UTC)
 
-	st.RunStarted("two", started)
+	st.RunStarted(0, store.RunStart{Server: "two", StartedAt: started})
 	st.LibraryRead("two", "Movies")
 	st.LibraryRead("two", "Shows")
 	st.Batch("two", 8, 12)
@@ -45,6 +45,7 @@ func TestStatusTracksRun(t *testing.T) {
 
 	got := st.Snapshot()
 	want := RunProgress{
+		Status:        store.RunRunning,
 		StartedAt:     started,
 		LibrariesRead: 2,
 		Library:       "Shows",
@@ -65,7 +66,7 @@ func TestStatusTracksRun(t *testing.T) {
 		t.Errorf("earlier snapshot = %+v, want Current Alien and Done 0", run)
 	}
 
-	st.RunFinished("two", store.RunResult{Status: store.RunFinished}, nil)
+	st.RunFinished("two", store.RunResult{Status: store.RunFinished}, nil, false)
 	end := st.Snapshot().Servers[1]
 	if end.Run != nil {
 		t.Errorf("run after RunFinished = %+v, want nil", end.Run)
@@ -92,22 +93,22 @@ func TestStatusHealth(t *testing.T) {
 		{"check ok", nil, func(s *Status) { s.ServerChecked("a", nil) }, HealthOK},
 		{"check unauthorized", nil, func(s *Status) { s.ServerChecked("a", errPlexUnauthorized) }, HealthUnauthorized},
 		{"check unreachable", nil, func(s *Status) { s.ServerChecked("a", errors.New("dial tcp: refused")) }, HealthUnreachable},
-		{"run unauthorized", errors.New("x"), func(s *Status) { s.RunFinished("a", failed, errPlexUnauthorized) }, HealthUnauthorized},
+		{"run unauthorized", errors.New("x"), func(s *Status) { s.RunFinished("a", failed, errPlexUnauthorized, false) }, HealthUnauthorized},
 		{"run unavailable", nil, func(s *Status) {
 			s.ServerChecked("a", nil)
-			s.RunFinished("a", failed, fmt.Errorf("read: %w", plex.ErrUnavailable))
+			s.RunFinished("a", failed, fmt.Errorf("read: %w", plex.ErrUnavailable), false)
 		}, HealthUnreachable},
 		{"run finished", nil, func(s *Status) {
 			s.ServerChecked("a", errPlexUnauthorized)
-			s.RunFinished("a", finished, nil)
+			s.RunFinished("a", finished, nil, false)
 		}, HealthOK},
 		{"run failed keeps", nil, func(s *Status) {
 			s.ServerChecked("a", errPlexUnauthorized)
-			s.RunFinished("a", failed, errors.New("database is locked"))
+			s.RunFinished("a", failed, errors.New("database is locked"), false)
 		}, HealthUnauthorized},
 		{"run canceled keeps", nil, func(s *Status) {
 			s.ServerChecked("a", errors.New("dial tcp: refused"))
-			s.RunFinished("a", canceled, context.Canceled)
+			s.RunFinished("a", canceled, context.Canceled, false)
 		}, HealthUnreachable},
 		{"unknown server ignored", nil, func(s *Status) { s.ServerChecked("b", nil) }, HealthUnknown},
 	}
@@ -151,7 +152,7 @@ func TestStatusNotifyNeverBlocks(t *testing.T) {
 	st := NewStatus([]string{"a"}, false)
 	signals, unsubscribe := st.subscribe()
 	defer unsubscribe()
-	st.RunStarted("a", time.Now())
+	st.RunStarted(0, store.RunStart{Server: "a", StartedAt: time.Now()})
 
 	done := make(chan struct{})
 	go func() {
@@ -173,7 +174,7 @@ func TestStatusNotifyNeverBlocks(t *testing.T) {
 func TestStatusEndpoint(t *testing.T) {
 	st := NewStatus([]string{"a", "b"}, true)
 	st.ServerChecked("a", nil)
-	st.RunStarted("b", time.Date(2026, 11, 22, 10, 0, 0, 0, time.UTC))
+	st.RunStarted(0, store.RunStart{Server: "b", StartedAt: time.Date(2026, 11, 22, 10, 0, 0, 0, time.UTC)})
 	st.ItemStarted("b", "1", "Alien")
 
 	rec := serve(New(Options{Status: st}), httptest.NewRequest(http.MethodGet, "/api/status", nil))
@@ -194,5 +195,17 @@ func TestStatusEndpoint(t *testing.T) {
 	empty := serve(New(Options{}), httptest.NewRequest(http.MethodGet, "/api/status", nil))
 	if body := empty.Body.String(); !strings.Contains(body, `"servers":[]`) || !strings.Contains(body, `"tmdb":"off"`) {
 		t.Errorf("body without a status = %s, want no servers and tmdb off", body)
+	}
+}
+
+func TestFinishedStatusRetainsRunIdentity(t *testing.T) {
+	s := NewStatus([]string{"a"}, false)
+	start := store.RunStart{Server: "a", Kind: store.RunKindRun, Source: store.RunSourceManual, StartedAt: time.Now()}
+	s.RunStarted(42, start)
+	s.ItemStarted("a", "1", "Current")
+	s.RunFinished("a", store.RunResult{Status: store.RunCanceled}, nil, true)
+	got := s.Snapshot().Servers[0]
+	if got.Run != nil || got.Last == nil || got.Last.ID != 42 || got.Last.Current != "" || !got.Last.Recorded || got.Last.Status != store.RunCanceled {
+		t.Fatalf("finished status = %+v, last = %+v", got, got.Last)
 	}
 }

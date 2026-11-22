@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/l3uddz/autorefresh/internal/store"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -86,7 +87,7 @@ func TestEventsStreamSnapshots(t *testing.T) {
 	if !strings.Contains(first, `"run":null`) {
 		t.Errorf("first event = %q, want an idle run", first)
 	}
-	st.RunStarted("a", time.Now())
+	st.RunStarted(0, store.RunStart{Server: "a", StartedAt: time.Now()})
 	if v := statusData(t, readEvent(t, br)); v.Servers[0].Run == nil {
 		t.Errorf("event after RunStarted = %+v, want a run", v)
 	}

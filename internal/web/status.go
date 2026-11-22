@@ -36,6 +36,7 @@ type ServerStatus struct {
 	Srv    int          `json:"srv"`
 	Name   string       `json:"name"`
 	Health Health       `json:"health"`
+	Last   *RunProgress `json:"last,omitempty"`
 	Run    *RunProgress `json:"run"` // nil while idle
 }
 
@@ -43,17 +44,24 @@ type ServerStatus struct {
 // and Failed are the request counts of the run as of the last finished
 // item, with the meaning of the same fields of the stored run.
 type RunProgress struct {
-	StartedAt     time.Time `json:"startedAt"`
-	LibrariesRead int       `json:"librariesRead"`
-	Library       string    `json:"library,omitempty"` // the last library read
-	Selected      int       `json:"selected"`
-	Due           int       `json:"due"`
-	Done          int       `json:"done"`
-	Refreshed     int       `json:"refreshed"`
-	Matched       int       `json:"matched"`
-	Failed        int       `json:"failed"`
-	Skipped       int       `json:"skipped"`
-	Current       string    `json:"current,omitempty"` // the title in work
+	ID            int64           `json:"id"`
+	Kind          store.RunKind   `json:"kind"`
+	Source        store.RunSource `json:"source"`
+	Status        store.RunStatus `json:"status"`
+	FinishedAt    time.Time       `json:"finishedAt,omitzero"`
+	Error         string          `json:"error,omitempty"`
+	Recorded      bool            `json:"recorded"`
+	StartedAt     time.Time       `json:"startedAt"`
+	LibrariesRead int             `json:"librariesRead"`
+	Library       string          `json:"library,omitempty"` // the last library read
+	Selected      int             `json:"selected"`
+	Due           int             `json:"due"`
+	Done          int             `json:"done"`
+	Refreshed     int             `json:"refreshed"`
+	Matched       int             `json:"matched"`
+	Failed        int             `json:"failed"`
+	Skipped       int             `json:"skipped"`
+	Current       string          `json:"current,omitempty"` // the title in work
 }
 
 // Status keeps the live status of each server and of TMDB, and signals each
@@ -98,6 +106,10 @@ func (s *Status) Snapshot() StatusView {
 			run := *srv.Run
 			srv.Run = &run
 		}
+		if srv.Last != nil {
+			last := *srv.Last
+			srv.Last = &last
+		}
 		servers[i] = srv
 	}
 	return StatusView{Servers: servers, TMDB: s.tmdb}
@@ -123,9 +135,9 @@ func (s *Status) TMDBChecked(err error) {
 }
 
 // RunStarted starts the progress of a run of server.
-func (s *Status) RunStarted(server string, at time.Time) {
-	s.updateServer(server, func(srv *ServerStatus) {
-		srv.Run = &RunProgress{StartedAt: at}
+func (s *Status) RunStarted(id int64, start store.RunStart) {
+	s.updateServer(start.Server, func(srv *ServerStatus) {
+		srv.Run = &RunProgress{ID: id, Kind: start.Kind, Source: start.Source, StartedAt: start.StartedAt, Status: store.RunRunning}
 	})
 }
 
@@ -168,8 +180,16 @@ func (s *Status) ItemDone(server, _, _ string, counts refresher.Counts) {
 
 // RunFinished ends the progress of the run of server and updates its health
 // from the result.
-func (s *Status) RunFinished(server string, res store.RunResult, err error) {
+func (s *Status) RunFinished(server string, res store.RunResult, err error, recorded bool) {
 	s.updateServer(server, func(srv *ServerStatus) {
+		if srv.Run != nil {
+			last := *srv.Run
+			last.Current = ""
+			last.Refreshed, last.Matched, last.Failed, last.Skipped = res.Refreshed, res.Matched, res.Failed, res.Skipped
+			last.Selected, last.Due = res.Selected, res.Due
+			last.Status, last.FinishedAt, last.Error, last.Recorded = res.Status, res.FinishedAt, res.Error, recorded
+			srv.Last = &last
+		}
 		srv.Run = nil
 		srv.Health = runHealth(srv.Health, res, err)
 	})

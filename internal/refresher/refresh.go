@@ -225,7 +225,7 @@ func (r *Refresher) countFailure(ctx context.Context, run *serverRun, it store.I
 // is not accepted and has no error.
 func (r *Refresher) request(run *serverRun, it store.Item, action store.Action, fm *fixMatch) store.Request {
 	return store.Request{
-		Server: run.server.Name, RatingKey: it.RatingKey, At: r.now(), Source: store.SourceAuto,
+		Server: run.server.Name, RatingKey: it.RatingKey, At: r.now(), Source: run.source,
 		Action: action, Match: target(fm),
 	}
 }
