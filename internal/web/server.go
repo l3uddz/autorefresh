@@ -34,7 +34,7 @@ type Store interface {
 	Runs(ctx context.Context, q store.RunQuery) ([]store.Run, error)
 	ItemDetail(ctx context.Context, server, ratingKey string, rules store.DueRules) (store.ListItem, bool, error)
 	TimelineContext(ctx context.Context, server, ratingKey string) ([]store.Event, error)
-	FillPath(ctx context.Context, server, ratingKey, path string) error
+	FillPath(ctx context.Context, server, ratingKey, path string) (string, error)
 }
 
 // PlexServer is one configured Plex server.

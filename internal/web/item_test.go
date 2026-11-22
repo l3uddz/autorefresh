@@ -494,6 +494,9 @@ func TestItemLiveKeepsPathSavedMeanwhile(t *testing.T) {
 	if p, _ := storedPath(t, st, "201"); p != "/run/path" {
 		t.Errorf("row path = %q, want /run/path", p)
 	}
+	if got.Path != "/run/path" {
+		t.Errorf("answer path = %q, want the stored /run/path", got.Path)
+	}
 }
 
 func TestItemLiveErrors(t *testing.T) {

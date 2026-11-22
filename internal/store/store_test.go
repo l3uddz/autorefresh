@@ -566,7 +566,7 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 		"SaveTMDBID":    func() error { return s.SaveTMDBID(srv, "101", "tvdb", "5", "77") },
 		"SaveLibraries": func() error { return s.SaveLibraries(srv, []LibraryInfo{{Section: sec, Title: "TV"}}) },
 		"SetPath":       func() error { return s.SetPath(srv, "101", "/x") },
-		"FillPath":      func() error { return s.FillPath(context.Background(), srv, "101", "/x") },
+		"FillPath":      func() error { _, err := s.FillPath(context.Background(), srv, "101", "/x"); return err },
 		"Libraries":     func() error { _, err := s.Libraries(context.Background(), srv); return err },
 	}
 	for name, call := range calls {

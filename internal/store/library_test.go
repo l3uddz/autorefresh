@@ -92,15 +92,20 @@ func TestLibrariesListsMetadataAndReadTimes(t *testing.T) {
 	}
 }
 
-func TestFillPathKeepsExistingPath(t *testing.T) {
+func TestFillPath(t *testing.T) {
 	s := openTest(t)
 	kept := item("kept", NoArt)
 	kept.Path = "/old"
 	apply(t, s, Read{Items: []Item{item("empty", NoArt), kept}})
-	ctx := context.Background()
-	for _, key := range []string{"empty", "kept", "missing"} {
-		if err := s.FillPath(ctx, srv, key, "/new"); err != nil {
-			t.Fatalf("FillPath %s = %v, want nil", key, err)
+
+	for _, tt := range []struct{ key, want string }{
+		{"empty", "/new"}, // fills the empty path
+		{"kept", "/old"},  // keeps the path that a run saved
+		{"missing", ""},   // no row, no error
+	} {
+		got, err := s.FillPath(context.Background(), srv, tt.key, "/new")
+		if err != nil || got != tt.want {
+			t.Errorf("FillPath %s = %q, %v, want %q, nil", tt.key, got, err, tt.want)
 		}
 	}
 	got := rows(t, s)
@@ -136,7 +141,7 @@ func TestFillPathStopsBusyWaitWhenCanceled(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	err = s.FillPath(ctx, srv, "a", "/x")
+	_, err = s.FillPath(ctx, srv, "a", "/x")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("FillPath = %v, want context.DeadlineExceeded", err)
 	}

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/http"
@@ -221,18 +222,22 @@ func (s *Server) serveItemLive(w http.ResponseWriter, r *http.Request) {
 
 // livePath returns the cached path of it. A show without one gets its first
 // location, which FillPath saves when the item is cached. FillPath keeps a
-// path that a run saved during the Plex request, and it adds no row.
+// path that a run saved during the Plex request, and the answer then shows
+// that path. FillPath adds no row: when the row is gone, the answer shows
+// the first location.
 func (s *Server) livePath(ctx context.Context, it store.ListItem, paths plex.Paths) (string, error) {
 	if it.Path != "" || it.Type != plex.ShowLibrary || len(paths.Locations) == 0 {
 		return it.Path, nil
 	}
 	path := paths.Locations[0]
-	if it.Cached {
-		if err := s.store.FillPath(ctx, it.Server, it.RatingKey, path); err != nil {
-			return "", err
-		}
+	if !it.Cached {
+		return path, nil
 	}
-	return path, nil
+	kept, err := s.store.FillPath(ctx, it.Server, it.RatingKey, path)
+	if err != nil {
+		return "", err
+	}
+	return cmp.Or(kept, path), nil
 }
 
 // writePlexError answers a failed Plex request with a fixed message, so no

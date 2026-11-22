@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -43,14 +44,19 @@ func (s *Store) SetPath(server, ratingKey, path string) error {
 }
 
 // FillPath sets the path of an item row only while its path is empty, so it
-// never replaces a path that a run saved. A missing row is not an error.
-func (s *Store) FillPath(ctx context.Context, server, ratingKey, path string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE item SET path = ? WHERE server = ? AND rating_key = ? AND path = ''`,
-		path, server, ratingKey)
-	if err != nil {
-		return fmt.Errorf("fill item path: %w", err)
+// never replaces a path that a run saved. It returns the path that the row
+// holds afterwards. A missing row is not an error: it returns "".
+func (s *Store) FillPath(ctx context.Context, server, ratingKey, path string) (string, error) {
+	var kept string
+	err := s.db.QueryRowContext(ctx, `UPDATE item SET path = CASE WHEN path = '' THEN ? ELSE path END
+		WHERE server = ? AND rating_key = ? RETURNING path`, path, server, ratingKey).Scan(&kept)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
 	}
-	return nil
+	if err != nil {
+		return "", fmt.Errorf("fill item path: %w", err)
+	}
+	return kept, nil
 }
 
 // LibraryEntry is the metadata and the read times of one library.
