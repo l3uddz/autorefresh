@@ -398,9 +398,9 @@ func TestFinishJobAfterServerPrune(t *testing.T) {
 	}
 }
 
-// RunEvents returns the events that a run wrote, oldest first: requests,
+// RunDetail returns the events that a run wrote, oldest first: requests,
 // match decisions, and the completions and gone items of its reads.
-func TestRunEventsOfRun(t *testing.T) {
+func TestRunDetailListsEventsOfRun(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("a", NoArt), item("b", NoArt), item("c", NoArt)}})
 	one := startRun(t, s, srv, base)
@@ -423,12 +423,12 @@ func TestRunEventsOfRun(t *testing.T) {
 	later := at.Add(time.Hour)
 	apply(t, s, Read{At: later, Full: true, Items: []Item{item("a", 0), item("b", NoArt)}, Gone: []string{"c"}, RunID: one})
 
-	events, err := s.RunEvents(context.Background(), one)
-	if err != nil {
-		t.Fatal(err)
+	detail, found, err := s.RunDetail(context.Background(), one)
+	if err != nil || !found {
+		t.Fatalf("detail = %v, %v", found, err)
 	}
 	var got []string
-	for _, e := range events {
+	for _, e := range detail.Events {
 		if e.RunID != one {
 			t.Errorf("event %d has run %d, want %d", e.ID, e.RunID, one)
 		}
@@ -477,14 +477,51 @@ func TestPruneRunKeepsItsEvents(t *testing.T) {
 	}
 }
 
-func TestRunByID(t *testing.T) {
+func TestRunDetailOfRun(t *testing.T) {
 	s := openTest(t)
 	id := startRun(t, s, srv, base)
-	run, found, err := s.Run(context.Background(), id)
-	if err != nil || !found || run.ID != id || run.Status != RunRunning {
-		t.Fatalf("Run(%d) = %+v, %v, %v", id, run, found, err)
+	detail, found, err := s.RunDetail(context.Background(), id)
+	if err != nil || !found || detail.Run.ID != id || detail.Run.Status != RunRunning || len(detail.Events) != 0 || len(detail.Items) != 0 {
+		t.Fatalf("RunDetail(%d) = %+v, %v, %v", id, detail, found, err)
 	}
-	if _, found, err := s.Run(context.Background(), id+1); err != nil || found {
-		t.Fatalf("Run(%d) = found %v, %v; want not found", id+1, found, err)
+	if _, found, err := s.RunDetail(context.Background(), id+1); err != nil || found {
+		t.Fatalf("RunDetail(%d) = found %v, %v; want not found", id+1, found, err)
+	}
+}
+
+// The items of a bulk job carry the type, year, poster, and section of the
+// cached row, or else of the newest event of the item.
+func TestRunItemsCarryTheirItem(t *testing.T) {
+	s := openTest(t)
+	cached := item("a", NoArt)
+	cached.Thumb = "/library/metadata/a/thumb/1"
+	gone := item("b", NoArt)
+	gone.Type, gone.Year, gone.Thumb = "movie", 1999, "/library/metadata/b/thumb/1"
+	apply(t, s, Read{Items: []Item{cached, gone}})
+	apply(t, s, Read{At: base.Add(time.Hour), Full: true, Items: []Item{cached}, Gone: []string{"b"}})
+	start := runStart(srv, base)
+	start.Kind = RunKindBulkRefresh
+	id, err := s.StartRun(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.FinishJob(id, start, RunResult{FinishedAt: base, Status: RunFinished}, []RunItem{
+		{Position: 0, RatingKey: "a", Title: "A", Outcome: ItemAccepted},
+		{Position: 1, RatingKey: "b", Title: "B", Outcome: ItemGone},
+		{Position: 2, RatingKey: "c", Title: "C", Outcome: ItemNotCached},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	detail, _, err := s.RunDetail(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []RunItem{
+		{Position: 0, RatingKey: "a", Title: "A", Outcome: ItemAccepted, Section: sec, Type: "show", Year: 2020, Thumb: cached.Thumb},
+		{Position: 1, RatingKey: "b", Title: "B", Outcome: ItemGone, Section: sec, Type: "movie", Year: 1999, Thumb: gone.Thumb},
+		{Position: 2, RatingKey: "c", Title: "C", Outcome: ItemNotCached},
+	}
+	if !reflect.DeepEqual(detail.Items, want) {
+		t.Fatalf("items = %+v\nwant %+v", detail.Items, want)
 	}
 }

@@ -323,22 +323,51 @@ func (s *Store) Runs(ctx context.Context, q RunQuery) ([]Run, error) {
 	return runs, nil
 }
 
-// Run returns the run id, or false if there is none.
-func (s *Store) Run(ctx context.Context, id int64) (Run, bool, error) {
-	r, err := scanRun(s.db.QueryRowContext(ctx, `SELECT `+runColumns+` FROM run WHERE id = ?`, id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return Run{}, false, nil
-	}
-	if err != nil {
-		return Run{}, false, fmt.Errorf("read run: %w", err)
-	}
-	return r, true, nil
+// RunDetail is one run with the events that it wrote and the items of a
+// bulk job.
+type RunDetail struct {
+	Run    Run
+	Events []Event
+	Items  []RunItem
 }
 
-// RunEvents returns the events that the run runID wrote, ordered at ASC,
-// id ASC, without the searches of match decisions.
-func (s *Store) RunEvents(ctx context.Context, runID int64) ([]Event, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+eventColumns+` FROM event WHERE run_id = ? ORDER BY at, id`, runID)
+// querier is a database or a transaction to read from.
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// RunDetail returns the run id with its events, ordered at ASC, id ASC and
+// without the searches of match decisions, and its bulk items, or false if
+// there is no such run. One read transaction gives them the same snapshot,
+// so a run that ends or is removed meanwhile gives no mixed answer.
+func (s *Store) RunDetail(ctx context.Context, id int64) (RunDetail, bool, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return RunDetail{}, false, fmt.Errorf("begin run detail: %w", err)
+	}
+	defer tx.Rollback()
+
+	run, err := scanRun(tx.QueryRowContext(ctx, `SELECT `+runColumns+` FROM run WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return RunDetail{}, false, nil
+	}
+	if err != nil {
+		return RunDetail{}, false, fmt.Errorf("read run: %w", err)
+	}
+	events, err := runEvents(ctx, tx, id)
+	if err != nil {
+		return RunDetail{}, false, err
+	}
+	items, err := runItems(ctx, tx, id)
+	if err != nil {
+		return RunDetail{}, false, err
+	}
+	return RunDetail{Run: run, Events: events, Items: items}, true, nil
+}
+
+func runEvents(ctx context.Context, q querier, runID int64) ([]Event, error) {
+	rows, err := q.QueryContext(ctx, `SELECT `+eventColumns+` FROM event WHERE run_id = ? ORDER BY at, id`, runID)
 	if err != nil {
 		return nil, fmt.Errorf("read run events: %w", err)
 	}
@@ -373,12 +402,31 @@ type RunItem struct {
 	Position         int
 	RatingKey, Title string
 	Outcome, Error   string
+	// Section, Type, Year, and Thumb come from the cached row of the item,
+	// or else from its newest event, when the items are read. FinishJob
+	// does not store them.
+	Section, Type, Thumb string
+	Year                 int
 }
+
+// runItemsQuery reads the bulk outcomes of a run in selection order, each
+// with the newest snapshot of its item.
+const runItemsQuery = `SELECT ri.position, ri.rating_key, ri.title, ri.outcome, ri.error,
+	COALESCE(i.section, e.section, ''), COALESCE(i.type, e.type, ''), COALESCE(i.thumb, e.thumb, ''), COALESCE(i.year, e.year, 0)
+  FROM run_item ri
+  JOIN run r ON r.id = ri.run_id
+  LEFT JOIN item i ON i.server = r.server AND i.rating_key = ri.rating_key
+  LEFT JOIN event e ON e.id = (SELECT id FROM event WHERE server = r.server AND rating_key = ri.rating_key
+    ORDER BY at DESC, id DESC LIMIT 1)
+  WHERE ri.run_id = ? ORDER BY ri.position`
 
 // RunItems returns the bulk outcomes in selection order.
 func (s *Store) RunItems(ctx context.Context, runID int64) ([]RunItem, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT position, rating_key, title, outcome, error
-  FROM run_item WHERE run_id = ? ORDER BY position`, runID)
+	return runItems(ctx, s.db, runID)
+}
+
+func runItems(ctx context.Context, q querier, runID int64) ([]RunItem, error) {
+	rows, err := q.QueryContext(ctx, runItemsQuery, runID)
 	if err != nil {
 		return nil, fmt.Errorf("read run items: %w", err)
 	}
@@ -386,7 +434,8 @@ func (s *Store) RunItems(ctx context.Context, runID int64) ([]RunItem, error) {
 	items := []RunItem{}
 	for rows.Next() {
 		var item RunItem
-		if err := rows.Scan(&item.Position, &item.RatingKey, &item.Title, &item.Outcome, &item.Error); err != nil {
+		if err := rows.Scan(&item.Position, &item.RatingKey, &item.Title, &item.Outcome, &item.Error,
+			&item.Section, &item.Type, &item.Thumb, &item.Year); err != nil {
 			return nil, fmt.Errorf("read run item: %w", err)
 		}
 		items = append(items, item)

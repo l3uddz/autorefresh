@@ -457,12 +457,12 @@ func TestRunLinksItsEvents(t *testing.T) {
 	f.run(t0)
 
 	run := f.onlyRun()
-	events, err := f.store.RunEvents(t.Context(), run.ID)
+	detail, _, err := f.store.RunDetail(t.Context(), run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var got []string
-	for _, e := range events {
+	for _, e := range detail.Events {
 		got = append(got, e.RatingKey+" "+string(e.Kind))
 	}
 	if want := []string{"102 completed", "101 request"}; !reflect.DeepEqual(got, want) {

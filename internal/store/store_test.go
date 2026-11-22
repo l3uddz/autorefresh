@@ -560,6 +560,7 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 		"LibraryInfo":   func() error { _, _, err := s.LibraryInfo(srv, sec); return err },
 		"FinishJob":     func() error { _, err := s.FinishJob(1, RunStart{}, RunResult{}, nil); return err },
 		"RunItems":      func() error { _, err := s.RunItems(context.Background(), 1); return err },
+		"RunDetail":     func() error { _, _, err := s.RunDetail(context.Background(), 1); return err },
 		"InterruptRuns": func() error { _, err := s.InterruptRuns(base); return err },
 		"PruneHistory":  func() error { _, _, err := s.PruneHistory(base); return err },
 		"Runs":          func() error { _, err := s.Runs(context.Background(), RunQuery{Limit: 10}); return err },
