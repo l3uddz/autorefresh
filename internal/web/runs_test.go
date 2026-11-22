@@ -45,7 +45,7 @@ func recordRunAt(t *testing.T, st *store.Store, server string, started time.Time
 	}
 	res := store.RunResult{FinishedAt: started.Add(time.Minute), Status: store.RunFinished, Error: errText,
 		ReadItems: 1, Refreshed: 2, Matched: 3, Failed: 4, Completed: 5, Fixed: 6, Incomplete: 7, Due: 8, Selected: 9}
-	if err := st.FinishRun(id, start, res); err != nil {
+	if _, err := st.FinishRun(id, start, res); err != nil {
 		t.Fatal(err)
 	}
 	return id

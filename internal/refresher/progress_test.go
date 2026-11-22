@@ -378,7 +378,9 @@ func TestProgressSkipsCanceledBeforeSend(t *testing.T) {
 // failingFinish is a store whose run ends fail.
 type failingFinish struct{ *store.Store }
 
-func (failingFinish) FinishRun(int64, store.RunStart, store.RunResult) error { return errDisk }
+func (failingFinish) FinishRun(int64, store.RunStart, store.RunResult) (bool, error) {
+	return false, errDisk
+}
 
 // A failed FinishRun is the error of Run, but the progress gets the result
 // of the run and its error, which is nil for a finished run.

@@ -19,7 +19,10 @@ const (
 // RunKind is the kind of work of a run.
 type RunKind string
 
-const RunKindRun RunKind = "run"
+const (
+	RunKindRun         RunKind = "run"
+	RunKindBulkRefresh RunKind = "bulk-refresh"
+)
 
 // RunStatus is the state of a run.
 type RunStatus string
@@ -47,7 +50,7 @@ type RunResult struct {
 	Error                                 string
 	ReadItems, Refreshed, Matched, Failed int
 	Completed, Fixed, Incomplete          int
-	Due, Selected                         int
+	Due, Selected, Skipped                int
 }
 
 // Run is one run of a server, with its counts.
@@ -62,7 +65,7 @@ type Run struct {
 	Error                                 string
 	ReadItems, Refreshed, Matched, Failed int
 	Completed, Fixed, Incomplete          int
-	Due, Selected                         int
+	Due, Selected, Skipped                int
 }
 
 // StartRun records a run with the status running and returns its ID.
@@ -86,47 +89,69 @@ func (s *Store) StartRun(r RunStart) (int64, error) {
 // run is not lost. A run of a server that PruneServers removed stays
 // removed: the row comes back only while the server still has a library
 // row. It runs in one transaction.
-func (s *Store) FinishRun(id int64, start RunStart, r RunResult) error {
+func (s *Store) FinishRun(id int64, start RunStart, r RunResult) (bool, error) {
+	return s.FinishJob(id, start, r, nil)
+}
+
+// FinishJob stores the final run counts and item results in one transaction.
+func (s *Store) FinishJob(id int64, start RunStart, r RunResult, items []RunItem) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("begin finish run: %w", err)
+		return false, fmt.Errorf("begin finish run: %w", err)
 	}
 	defer tx.Rollback()
-
-	res, err := tx.Exec(`UPDATE run SET status = ?, finished_at = ?, error = ?, read_items = ?, refreshed = ?,
-		matched = ?, failed = ?, completed = ?, fixed = ?, incomplete = ?, due = ?, selected = ? WHERE id = ?`,
-		r.Status, r.FinishedAt.Unix(), r.Error, r.ReadItems, r.Refreshed,
-		r.Matched, r.Failed, r.Completed, r.Fixed, r.Incomplete, r.Due, r.Selected, id)
-	if err != nil {
-		return fmt.Errorf("finish run: %w", err)
+	written, err := finishRunRow(tx, id, start, r)
+	if err != nil || !written {
+		return false, err
 	}
-	if n, err := res.RowsAffected(); err != nil {
-		return fmt.Errorf("finish run: %w", err)
-	} else if n == 0 {
-		if err := restoreRun(tx, id, start, r); err != nil {
-			return err
+	for _, item := range items {
+		if _, err := tx.Exec(`INSERT INTO run_item (run_id, position, rating_key, title, outcome, error)
+   VALUES (?, ?, ?, ?, ?, ?)`, id, item.Position, item.RatingKey, item.Title, item.Outcome, item.Error); err != nil {
+			return false, fmt.Errorf("record run item: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit finish run: %w", err)
+		return false, fmt.Errorf("commit finish run: %w", err)
 	}
-	return nil
+	return true, nil
+}
+
+func finishRunRow(tx *sql.Tx, id int64, start RunStart, r RunResult) (bool, error) {
+	res, err := tx.Exec(`UPDATE run SET status = ?, finished_at = ?, error = ?, read_items = ?, refreshed = ?,
+  matched = ?, failed = ?, completed = ?, fixed = ?, incomplete = ?, due = ?, selected = ?, skipped = ? WHERE id = ?`,
+		r.Status, r.FinishedAt.Unix(), r.Error, r.ReadItems, r.Refreshed,
+		r.Matched, r.Failed, r.Completed, r.Fixed, r.Incomplete, r.Due, r.Selected, r.Skipped, id)
+	if err != nil {
+		return false, fmt.Errorf("finish run: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("finish run: %w", err)
+	}
+	if n != 0 {
+		return true, nil
+	}
+	return restoreRun(tx, id, start, r)
 }
 
 // restoreRun stores the finished run id again, unless its server no longer
 // has a library row.
-func restoreRun(tx *sql.Tx, id int64, start RunStart, r RunResult) error {
-	_, err := tx.Exec(`INSERT INTO run (id, server, kind, source, started_at, status, finished_at, error,
-		read_items, refreshed, matched, failed, completed, fixed, incomplete, due, selected)
-		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-		WHERE EXISTS (SELECT 1 FROM library WHERE server = ?)`,
+func restoreRun(tx *sql.Tx, id int64, start RunStart, r RunResult) (bool, error) {
+	res, err := tx.Exec(`INSERT INTO run (id, server, kind, source, started_at, status, finished_at, error,
+  read_items, refreshed, matched, failed, completed, fixed, incomplete, due, selected, skipped)
+  SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+  WHERE EXISTS (SELECT 1 FROM library WHERE server = ?)`,
 		id, start.Server, start.Kind, start.Source, start.StartedAt.Unix(), r.Status, r.FinishedAt.Unix(), r.Error,
-		r.ReadItems, r.Refreshed, r.Matched, r.Failed, r.Completed, r.Fixed, r.Incomplete, r.Due, r.Selected,
+		r.ReadItems, r.Refreshed, r.Matched, r.Failed, r.Completed, r.Fixed, r.Incomplete, r.Due, r.Selected, r.Skipped,
 		start.Server)
 	if err != nil {
-		return fmt.Errorf("restore run: %w", err)
+		return false, fmt.Errorf("restore run: %w", err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("restore run: %w", err)
+	}
+	return n != 0, nil
 }
 
 // InterruptRuns marks every running run as interrupted, with the end time at.
@@ -240,7 +265,7 @@ func runsQuery(q RunQuery) (string, []any) {
 		args = append(args, q.Before.StartedAt.Unix(), q.Before.ID)
 	}
 	query := `SELECT id, server, kind, source, status, started_at, finished_at, error, read_items,
-		refreshed, matched, failed, completed, fixed, incomplete, due, selected FROM run`
+		refreshed, matched, failed, completed, fixed, incomplete, due, selected, skipped FROM run`
 	if len(conds) > 0 {
 		query += ` WHERE ` + strings.Join(conds, ` AND `)
 	}
@@ -256,7 +281,7 @@ func scanRun(row scanner) (Run, error) {
 	)
 	if err := row.Scan(&r.ID, &r.Server, &r.Kind, &r.Source, &r.Status, &started, &finished, &r.Error,
 		&r.ReadItems, &r.Refreshed, &r.Matched, &r.Failed, &r.Completed, &r.Fixed, &r.Incomplete,
-		&r.Due, &r.Selected); err != nil {
+		&r.Due, &r.Selected, &r.Skipped); err != nil {
 		return Run{}, err
 	}
 	r.StartedAt, r.FinishedAt = time.Unix(started, 0), timeFrom(finished)
@@ -283,4 +308,44 @@ func (s *Store) Runs(ctx context.Context, q RunQuery) ([]Run, error) {
 		return nil, fmt.Errorf("read runs: %w", err)
 	}
 	return runs, nil
+}
+
+// Outcomes of bulk refresh items.
+const (
+	ItemAccepted   = "accepted"
+	ItemFailed     = "failed"
+	ItemGone       = "gone"
+	ItemStopped    = "stopped"
+	ItemChanged    = "changed"
+	ItemNotCached  = "not-cached"
+	ItemNotReached = "not-reached"
+)
+
+// RunItem records the outcome of one selected item of a bulk job.
+type RunItem struct {
+	Position         int
+	RatingKey, Title string
+	Outcome, Error   string
+}
+
+// RunItems returns the bulk outcomes in selection order.
+func (s *Store) RunItems(ctx context.Context, runID int64) ([]RunItem, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT position, rating_key, title, outcome, error
+  FROM run_item WHERE run_id = ? ORDER BY position`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("read run items: %w", err)
+	}
+	defer rows.Close()
+	items := []RunItem{}
+	for rows.Next() {
+		var item RunItem
+		if err := rows.Scan(&item.Position, &item.RatingKey, &item.Title, &item.Outcome, &item.Error); err != nil {
+			return nil, fmt.Errorf("read run item: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read run items: %w", err)
+	}
+	return items, nil
 }

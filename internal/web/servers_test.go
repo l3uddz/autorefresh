@@ -133,7 +133,7 @@ func recordRun(t *testing.T, st *store.Store, server string, status store.RunSta
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.FinishRun(id, start, store.RunResult{FinishedAt: testNow, Status: status}); err != nil {
+	if _, err := st.FinishRun(id, start, store.RunResult{FinishedAt: testNow, Status: status}); err != nil {
 		t.Fatal(err)
 	}
 }

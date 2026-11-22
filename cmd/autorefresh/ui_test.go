@@ -295,7 +295,7 @@ func TestUISecretsRedactPrefixedPlexError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.FinishRun(id, start, store.RunResult{FinishedAt: time.Now(), Status: store.RunFailed, Error: plexErr.Error()}); err != nil {
+	if _, err := st.FinishRun(id, start, store.RunResult{FinishedAt: time.Now(), Status: store.RunFailed, Error: plexErr.Error()}); err != nil {
 		t.Fatal(err)
 	}
 

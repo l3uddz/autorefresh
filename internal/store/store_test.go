@@ -550,7 +550,8 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 			return err
 		},
 		"FinishRun": func() error {
-			return s.FinishRun(1, RunStart{Server: srv, StartedAt: base}, RunResult{FinishedAt: base, Status: RunFinished})
+			_, err := s.FinishRun(1, RunStart{Server: srv, StartedAt: base}, RunResult{FinishedAt: base, Status: RunFinished})
+			return err
 		},
 		"InterruptRuns": func() error { _, err := s.InterruptRuns(base); return err },
 		"PruneHistory":  func() error { _, _, err := s.PruneHistory(base); return err },

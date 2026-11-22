@@ -45,7 +45,7 @@ type Store interface {
 	PruneServers(servers []string) ([]store.Pruned, error)
 	PruneSections(server string, sections []string) ([]store.Pruned, error)
 	StartRun(r store.RunStart) (int64, error)
-	FinishRun(id int64, start store.RunStart, r store.RunResult) error
+	FinishRun(id int64, start store.RunStart, r store.RunResult) (bool, error)
 	PruneHistory(before time.Time) (events, runs int, err error)
 }
 
@@ -294,7 +294,7 @@ func (r *Refresher) checkServer(ctx context.Context, run *serverRun) error {
 // the run. A failed FinishRun becomes that error only if the run has none;
 // otherwise it is logged, so it is not lost.
 func (r *Refresher) recordFinish(run *serverRun, id int64, res store.RunResult, err error) error {
-	finishErr := r.store.FinishRun(id, run.start(), res)
+	_, finishErr := r.store.FinishRun(id, run.start(), res)
 	switch {
 	case finishErr == nil:
 		return err
