@@ -6,7 +6,7 @@ import { EmptyState } from '@astryxdesign/core/EmptyState';
 import { Grid } from '@astryxdesign/core/Grid';
 import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { HStack, StackItem, VStack } from '@astryxdesign/core/Layout';
+import { HStack, Layout, LayoutContent, LayoutHeader, StackItem, VStack } from '@astryxdesign/core/Layout';
 import { List, ListItem } from '@astryxdesign/core/List';
 import { Section } from '@astryxdesign/core/Section';
 import { Skeleton } from '@astryxdesign/core/Skeleton';
@@ -18,6 +18,7 @@ import { ApiError, api, type RunDetail, type RunRecord } from './api';
 import { dateTime, label, plural, runDuration, runTitle, titleYear } from './format';
 import { Poster } from './media';
 import { itemHash } from './route';
+import { useShown } from './presence';
 import { runCounts, runGroups, type RunEntry, type RunGroup } from './runs';
 import { statusDots } from './status';
 
@@ -38,15 +39,19 @@ interface Props {
  * A narrow screen shows RunDetails in place of the list instead, as the
  * Items page does. */
 export function RunDrawer({ id, isMulti, srv, onClose }: Props) {
+  // The drawer keeps the run while it slides out.
+  const shown = useShown(id, String);
   return (
     <Drawer isOpen={id !== undefined} onOpenChange={open => !open && onClose()} label="Run details" width={600} padding={0}>
-      {id !== undefined ? <RunDetails id={id} isMulti={isMulti} srv={srv} onClose={onClose} /> : null}
+      {shown !== undefined ? <RunDetails id={shown} isMulti={isMulti} srv={srv} onClose={onClose} isPinned /> : null}
     </Drawer>
   );
 }
 
-/** What the run id was, its counts, and its items grouped by outcome. */
-export function RunDetails({ id, isMulti, srv, onClose }: Props & { id: number }) {
+/** What the run id was, its counts, and its items grouped by outcome. In a
+ * drawer, isPinned keeps the head and its close button in view while the
+ * items scroll. */
+export function RunDetails({ id, isMulti, srv, onClose, isPinned = false }: Props & { id: number; isPinned?: boolean }) {
   const detail = useQuery({
     // Under 'runs', so the live status reloads it when a run starts or ends.
     queryKey: ['runs', 'detail', id],
@@ -61,14 +66,16 @@ export function RunDetails({ id, isMulti, srv, onClose }: Props & { id: number }
   // A run that retention removed while the drawer was open is gone: its
   // last details are not shown.
   const data = isGone ? undefined : detail.data;
-  return (
-    <VStack gap={6} padding={6}>
-      <HStack gap={3} vAlign="start">
-        <StackItem size="fill">
-          {data ? <RunHead run={data.run} isMulti={isMulti} /> : detail.isPending && <Skeleton height={32} width="60%" />}
-        </StackItem>
-        <IconButton label="Close details" icon={<Icon icon={XMarkIcon} size="sm" />} variant="secondary" onClick={onClose} />
-      </HStack>
+  const head = (
+    <HStack gap={3} vAlign="start">
+      <StackItem size="fill">
+        {data ? <RunHead run={data.run} isMulti={isMulti} /> : detail.isPending && <Skeleton height={32} width="60%" />}
+      </StackItem>
+      <IconButton label="Close details" icon={<Icon icon={XMarkIcon} size="sm" />} variant="secondary" onClick={onClose} />
+    </HStack>
+  );
+  const body = (
+    <>
       {detail.isPending && <DetailSkeleton />}
       {isGone && (
         <EmptyState
@@ -86,6 +93,29 @@ export function RunDetails({ id, isMulti, srv, onClose }: Props & { id: number }
         />
       )}
       {data && <RunBody detail={data} scope={srv === undefined || srv === data.run.srv ? srv : undefined} />}
+    </>
+  );
+  if (isPinned) {
+    return (
+      <Layout
+        height="fill"
+        header={
+          <LayoutHeader padding={6} paddingBlockEnd={4} hasDivider>
+            {head}
+          </LayoutHeader>
+        }
+        content={
+          <LayoutContent padding={6}>
+            <VStack gap={6}>{body}</VStack>
+          </LayoutContent>
+        }
+      />
+    );
+  }
+  return (
+    <VStack gap={6} padding={6}>
+      {head}
+      {body}
     </VStack>
   );
 }

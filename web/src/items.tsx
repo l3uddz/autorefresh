@@ -31,6 +31,7 @@ import { askThen } from './confirm';
 import { ItemDetail } from './detail';
 import { fixedBy, label, plural, queueState, relative } from './format';
 import { Poster, Reasons } from './media';
+import { useShown } from './presence';
 import { NothingMatched, startBulkRefresh, useIsRefreshBusy } from './queue';
 import { itemHash, navigate, tabNames, type ItemKey, type TabName } from './route';
 import { useRowOpen } from './rowopen';
@@ -170,6 +171,8 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
   const detail = item && (
     <ItemDetail key={itemID(item)} target={item} server={server(item)} ignored={ignored} onClose={close} />
   );
+  // The table drawer keeps the item while it slides out.
+  const drawerItem = useShown(item, itemID);
 
   const changeMode = (value: string) => {
     setMode(value as Mode);
@@ -268,7 +271,7 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
       <Layout height="fill" header={item && !isTwoPane ? undefined : header} content={content} end={mode === 'list' && isTwoPane ? <DetailPane detail={detail} /> : undefined} />
       {mode === 'table' && isTwoPane && (
         <Drawer isOpen={Boolean(item)} onOpenChange={open => !open && close()} label="Item details" width={600} padding={0}>
-          {detail ?? null}
+          {drawerItem ? <ItemDetail key={itemID(drawerItem)} target={drawerItem} server={server(drawerItem)} ignored={ignored} onClose={close} /> : null}
         </Drawer>
       )}
     </>
