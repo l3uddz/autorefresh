@@ -554,6 +554,10 @@ address keeps the choice, so a link or a reload shows the same server.
   whose reasons are all ignored. On Fixed, a separate switch includes the
   items that Plex completed without a request.
   **List** mode shows the posters and the item details beside the list.
+  Its **Sort** menu sorts by the same columns as Table mode, such as tries
+  or next due. A new sort starts in its natural direction, for example the
+  most tries first, and the arrow button beside it reverses it. Both modes
+  share the sort of each tab.
   **Table** mode shows the items as text rows. It renders only the rows on
   screen, so it stays fast with many items. It can sort the items and
   select several items, or every item that matches the filters, for a bulk

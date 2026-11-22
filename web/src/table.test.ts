@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ItemRecord } from './api';
-import { stableRows, tableRow } from './table';
+import { formatSort, parseSort, sortKeys, stableRows, tableRow } from './table';
 
 describe('table rows', () => {
   const now = Date.parse('2026-11-22T12:00:00Z');
@@ -51,5 +51,32 @@ describe('table rows', () => {
     const later = [tableRow(item, now + 86_400_000, false, [])];
     expect(stableRows(rows, later)).toBe(later);
     expect(stableRows(rows, [])).toEqual([]);
+  });
+});
+
+describe('sorts', () => {
+  it('reads and writes the sort parameter of the API', () => {
+    expect(parseSort('-tries')).toEqual({ key: 'tries', desc: true });
+    expect(parseSort('due')).toEqual({ key: 'due', desc: false });
+    expect(parseSort('')).toEqual({ key: '', desc: false });
+    expect(formatSort('due', false)).toBe('due');
+    expect(formatSort('tries', true)).toBe('-tries');
+    expect(formatSort('', true)).toBe('');
+  });
+
+  it('offers the sorts of each tab that the API knows', () => {
+    expect(sortKeys.attention.map(sort => sort.key)).toEqual(['title', 'tries', 'last-attempt', 'due']);
+    expect(sortKeys.stopped.map(sort => sort.key)).toEqual(['title', 'tries', 'stopped']);
+    expect(sortKeys.fixed.map(sort => sort.key)).toEqual(['title', 'completed']);
+    // A new choice of tries shows the most tries first.
+    expect(sortKeys.attention.find(sort => sort.key === 'tries')?.desc).toBe(true);
+    expect(sortKeys.attention.find(sort => sort.key === 'title')?.desc).toBe(false);
+  });
+
+  it('sorts only by columns that table rows have', () => {
+    const row = tableRow({ srv: 0, key: '1', cached: true, attempts: 0, refreshes: 0 }, 0, false, []);
+    for (const sorts of Object.values(sortKeys)) {
+      for (const { key } of sorts) expect(row).toHaveProperty(key);
+    }
   });
 });
