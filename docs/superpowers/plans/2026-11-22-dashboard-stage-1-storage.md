@@ -125,7 +125,7 @@ func TestDeletingEventClearsFixedMatchReference(t *testing.T)
 
 **Interfaces:**
 - Produces: `func ItemImagePath(ratingKey, p string) string` — returns `p` only if `ratingKey` matches `idPattern` (`client.go`) and `p` is exactly `/library/metadata/<ratingKey>/thumb/<digits>` or `/library/metadata/<ratingKey>/art/<digits>` (no query, fragment, or escape); else `""`.
-- Changes: `(c *Client) ItemPaths` falls back to `m.files()` only when the item is not a show (`m.Type != "show"`); a show without `Location` returns no paths. So every path of a show is a `Location`, which Task 10 saves as the series folder. A show's files are on its episodes, so match evaluation loses nothing.
+- Changes: `(c *Client) ItemPaths` falls back to `m.files()` only when the item is not a show (`metadata` gains `Type string \`json:"type"\``; the check is `m.Type != ShowLibrary`); a show without `Location` returns no paths. So every path of a show is a `Location`, which Task 10 saves as the series folder. A show's files are on its episodes, so match evaluation loses nothing.
 - Produces: `func SafeRemoteImage(raw string) string` — returns `raw` only if `raw` contains no `#` (a bare trailing `#` leaves `URL.Fragment` empty, as `config.go` already handles), `url.Parse` succeeds, the scheme is `https`, `Hostname()` is not empty, there is no user info, `url.ParseQuery(RawQuery)` succeeds, and no query key contains `token` (case-insensitive, so `X-Plex-Token` too); else `""`.
 - Produces: `Candidate{GUID, Name string; Year int; Type, Summary, Thumb string; Score int}`. `SearchMatches` sets `Thumb` through `SafeRemoteImage`. `Match` keeps sending only `guid`, `name`, `year`.
 
