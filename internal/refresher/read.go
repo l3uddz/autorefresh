@@ -195,6 +195,7 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 	}
 	run.recordRead(rd, lib, items, fixed)
 	r.logRead(rd, lib, r.now().Sub(at))
+	r.progress().LibraryRead(name, lib.Title)
 	return nil
 }
 

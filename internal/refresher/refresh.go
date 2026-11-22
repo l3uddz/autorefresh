@@ -34,6 +34,7 @@ func (r *Refresher) refreshDue(ctx context.Context, run *serverRun) error {
 		return err
 	}
 	run.due, run.remaining, run.selected = total, total, len(due)
+	r.progress().Batch(run.server.Name, len(due), total)
 	for i, it := range due {
 		if i > 0 && !r.opts.DryRun {
 			if err := r.sleep(ctx, r.opts.RefreshDelay); err != nil {
@@ -41,6 +42,7 @@ func (r *Refresher) refreshDue(ctx context.Context, run *serverRun) error {
 			}
 		}
 		run.remaining-- // the item is reached, also if it stops the server
+		r.progress().ItemStarted(run.server.Name, it.RatingKey, it.Title)
 		if err := r.refreshItem(ctx, run, it); err != nil {
 			return err
 		}
@@ -80,6 +82,7 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	}
 	if r.opts.DryRun {
 		requestEvent(log.Info(), run.server.Name, lib, it, action, fm).Msg("Dry run")
+		r.itemDone(run, it.RatingKey, OutcomeDryRun)
 		return nil
 	}
 
@@ -103,6 +106,7 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	if err := r.store.RecordRequest(req); err != nil {
 		return err
 	}
+	r.itemDone(run, it.RatingKey, req.Outcome())
 	requestEvent(log.Info(), run.server.Name, lib, it, action, fm).Msg("Sent request")
 	r.warnAtLongestWait(run.server.Name, lib, it)
 	return nil
@@ -133,8 +137,14 @@ func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Ite
 	notFound := ctx.Err() == nil && errors.Is(err, plex.ErrNotFound)
 	switch {
 	case notFound && !r.opts.DryRun:
-		return r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto)
-	case !notFound:
+		if err := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto); err != nil {
+			return err
+		}
+		r.itemDone(run, it.RatingKey, OutcomeGone)
+		return nil
+	case notFound:
+		r.itemDone(run, it.RatingKey, OutcomeGone)
+	default:
 		if err := r.countFailure(ctx, run, it, action, fm, err); err != nil {
 			return err
 		}
@@ -162,6 +172,7 @@ func (r *Refresher) countFailure(ctx context.Context, run *serverRun, it store.I
 			return err
 		}
 	}
+	r.itemDone(run, it.RatingKey, store.Request{Action: action}.Outcome())
 	return ctx.Err()
 }
 

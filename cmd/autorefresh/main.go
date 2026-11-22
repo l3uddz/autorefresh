@@ -18,6 +18,7 @@ import (
 	"github.com/l3uddz/autorefresh/internal/refresher"
 	"github.com/l3uddz/autorefresh/internal/store"
 	"github.com/l3uddz/autorefresh/internal/tmdb"
+	"github.com/l3uddz/autorefresh/internal/web"
 )
 
 // Release variables. goreleaser and the mise build task set them.
@@ -76,12 +77,13 @@ func main() {
 }
 
 // run loads the config, opens the database, and runs the refresher. With
-// opts.Once, it runs one check. Otherwise it checks the tokens, starts the
-// first run at once, then a run at each schedule time, until ctx ends. stop
-// ends the signal handling after the first signal, so a second signal ends
-// the process at once. run logs each error that it returns. With opts.Once,
-// a failed check or a failed close of the database returns an error, which
-// gives exit code 1.
+// opts.Once, it runs one check. Otherwise it starts the UI if ui.listen is
+// set, checks the tokens, starts the first run at once, then a run at each
+// schedule time, until ctx ends. It then stops the UI, the schedule, and the
+// database, in that order. stop ends the signal handling after the first
+// signal, so a second signal ends the process at once. run logs each error
+// that it returns. With opts.Once, a failed check or a failed close of the
+// database returns an error, which gives exit code 1.
 func run(ctx context.Context, stop context.CancelFunc, opts options, version string) error {
 	// A setup error ends the process, so it logs at fatal level.
 	fatal := func(err error, msg string) error {
@@ -114,16 +116,7 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 	}
 
 	// refresher
-	servers := make([]refresher.Server, 0, len(cfg.Plex))
-	names := make([]string, 0, len(cfg.Plex))
-	for _, s := range cfg.Plex {
-		servers = append(servers, refresher.Server{
-			Name:      s.Name,
-			Plex:      plex.New(s.Name, s.BaseURL, s.Token, s.RequestTimeout()),
-			Libraries: s.Libraries,
-		})
-		names = append(names, s.Name)
-	}
+	servers, clients, names := newServers(cfg)
 
 	// The interfaces stay nil without a token, so no TMDB request is sent.
 	var lookup refresher.TMDB
@@ -134,18 +127,32 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 		tmdbCheck = tmdbClient
 	}
 
+	// The interfaces stay nil without the UI, so no nil *web.Status is a
+	// non-nil interface.
+	uiOn := uiEnabled(cfg, opts)
+	var status *web.Status
+	var progress refresher.Progress
+	var rec healthRecorder
+	if uiOn {
+		status = web.NewStatus(names, cfg.TMDBToken != "")
+		progress = status
+		rec = status
+	}
+
+	rules := queueRules(cfg)
 	r := refresher.New(servers, st, refresher.Options{
-		MinimumAge:         cfg.MinimumAge,
-		RefreshInterval:    cfg.RefreshInterval,
-		MaxRefreshInterval: cfg.MaxRefreshInterval,
+		MinimumAge:         rules.MinimumAge,
+		RefreshInterval:    rules.RefreshInterval,
+		MaxRefreshInterval: rules.MaxRefreshInterval,
 		Oversample:         cfg.Oversample,
 		RefreshDelay:       cfg.RefreshDelay,
 		CacheRefresh:       cfg.CacheRefreshSchedule,
 		MaxRefreshesPerRun: cfg.MaxRefreshesPerRun,
-		IgnoreReasons:      cfg.Ignored,
+		IgnoreReasons:      rules.Ignored,
 		DryRun:             opts.DryRun,
 		HistoryRetention:   cfg.HistoryRetention,
 		TMDB:               lookup,
+		Progress:           progress,
 	})
 
 	log.Info().
@@ -160,25 +167,71 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 	defer context.AfterFunc(ctx, stop)()
 
 	if opts.Once {
-		err := r.Run(ctx)
-		if err != nil {
-			log.Error().Err(err).Msg("Run failed")
+		return runOnce(ctx, r, st)
+	}
+
+	// The UI binds before the token checks, so a bind error stops the start
+	// before any request to Plex.
+	var ui *web.Server
+	if uiOn {
+		ui = newUIServer(cfg, rules, st, status, clients)
+		if err := startUI(cfg.UI, ui); err != nil {
+			closeStore(st)
+			return fatal(err, "Failed starting UI listener")
 		}
-		if closeErr := closeStore(st); err == nil {
-			err = closeErr
-		}
-		return err
 	}
 
 	// schedule. A check of each server and TMDB shows a wrong token or URL at
 	// once, before the first run.
-	checkTokens(ctx, servers, tmdbCheck)
-	if ctx.Err() == nil {
-		serve(ctx, &runner{run: r.Run}, cfg.RunSchedule)
-	}
+	checkTokens(ctx, servers, tmdbCheck, rec)
+	serveUntilStopped(ctx, ui, &runner{run: r.Run}, cfg.RunSchedule)
 	closeStore(st)
 	log.Info().Msg("Stopped")
 	return nil
+}
+
+// queueRules returns the rules of cfg that decide the queue state of an
+// item. The refresher and the dashboard both get them, so the schedule and
+// the dashboard queue cannot disagree.
+func queueRules(cfg config.Config) store.DueRules {
+	return store.DueRules{
+		MinimumAge:         cfg.MinimumAge,
+		RefreshInterval:    cfg.RefreshInterval,
+		MaxRefreshInterval: cfg.MaxRefreshInterval,
+		Ignored:            cfg.Ignored,
+	}
+}
+
+// newServers returns the refresher server, the Plex client, and the name of
+// each configured Plex server, in the configured order.
+func newServers(cfg config.Config) ([]refresher.Server, []*plex.Client, []string) {
+	servers := make([]refresher.Server, 0, len(cfg.Plex))
+	clients := make([]*plex.Client, 0, len(cfg.Plex))
+	names := make([]string, 0, len(cfg.Plex))
+	for _, s := range cfg.Plex {
+		client := plex.New(s.Name, s.BaseURL, s.Token, s.RequestTimeout())
+		servers = append(servers, refresher.Server{
+			Name:      s.Name,
+			Plex:      client,
+			Libraries: s.Libraries,
+		})
+		clients = append(clients, client)
+		names = append(names, s.Name)
+	}
+	return servers, clients, names
+}
+
+// runOnce runs r once and closes the database. It returns the error of the
+// run, or else the error of the close.
+func runOnce(ctx context.Context, r *refresher.Refresher, st *store.Store) error {
+	err := r.Run(ctx)
+	if err != nil {
+		log.Error().Err(err).Msg("Run failed")
+	}
+	if closeErr := closeStore(st); err == nil {
+		err = closeErr
+	}
+	return err
 }
 
 // interruptRuns marks the runs that a stopped process left as running, so a

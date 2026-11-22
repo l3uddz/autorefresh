@@ -37,9 +37,16 @@ func runTarget(t *testing.T, status int, onRequest func(n int32)) *httptest.Serv
 // options with that config and a database in a temporary directory.
 func runOptions(t *testing.T, plexURL string) options {
 	t.Helper()
+	return runOptionsWith(t, plexURL, "")
+}
+
+// runOptionsWith is runOptions with extra lines of top-level config, such
+// as a ui section.
+func runOptionsWith(t *testing.T, plexURL, extra string) options {
+	t.Helper()
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config.yml")
-	body := "schedule: \"0 0 1 1 *\"\nplex:\n  - name: test\n    url: " + plexURL + "\n    token: token\n"
+	body := "schedule: \"0 0 1 1 *\"\n" + extra + "plex:\n  - name: test\n    url: " + plexURL + "\n    token: token\n"
 	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +206,7 @@ func startRunning(t *testing.T, st *store.Store) {
 // onlyRunStatus returns the status of the only stored run.
 func onlyRunStatus(t *testing.T, st *store.Store) store.RunStatus {
 	t.Helper()
-	runs, err := st.Runs(0)
+	runs, err := st.Runs(context.Background(), store.RunQuery{})
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("runs = %+v, %v, want 1", runs, err)
 	}
@@ -260,7 +267,7 @@ func TestRunOnceKeepsRunningRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	runs, err := st.Runs(0)
+	runs, err := st.Runs(context.Background(), store.RunQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}

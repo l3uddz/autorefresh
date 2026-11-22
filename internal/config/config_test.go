@@ -289,3 +289,63 @@ func TestDecodeRejectsNonPositiveHistoryRetention(t *testing.T) {
 		})
 	}
 }
+
+func TestDecodeWithoutUIHasNoListener(t *testing.T) {
+	cfg, err := Decode(strings.NewReader(minimalServer))
+	if err != nil {
+		t.Fatalf("Decode returned an error: %v", err)
+	}
+	if cfg.UI != (UI{}) {
+		t.Errorf("UI = %+v, want the zero value", cfg.UI)
+	}
+}
+
+func TestDecodeUI(t *testing.T) {
+	cfg, err := Decode(strings.NewReader("ui:\n  listen: \":7380\"\n  username: admin\n  password: \"p:w\"\n" + minimalServer))
+	if err != nil {
+		t.Fatalf("Decode returned an error: %v", err)
+	}
+	want := UI{Listen: ":7380", Username: "admin", Password: "p:w"}
+	if cfg.UI != want {
+		t.Errorf("UI = %+v, want %+v", cfg.UI, want)
+	}
+}
+
+func TestDecodeRejectsInvalidUI(t *testing.T) {
+	const secret = "s3cret-value"
+	const listenMsg = "ui.listen must be host:port, such as :7380"
+	const pairMsg = "ui.username and ui.password must both be set or both be empty"
+	tests := []struct {
+		name string
+		ui   string
+		want string
+	}{
+		{"listen without port", `listen: "7380"`, listenMsg},
+		{"listen with service name", `listen: "host:http"`, listenMsg},
+		{"listen port too large", `listen: ":70000"`, listenMsg},
+		{"username only", `username: admin`, pairMsg},
+		{"password only", `password: ` + secret, pairMsg},
+		{"username with colon", `{username: "a:b", password: ` + secret + `}`, "ui.username must not contain ':'"},
+		{"username with control", `{username: "a\x01", password: ` + secret + `}`, "ui.username must not contain control characters"},
+		{"password with control", `{username: admin, password: "` + secret + `\x7f"}`, "ui.password must not contain control characters"},
+		{"unknown key", `port: 1`, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ui := tt.ui
+			if !strings.HasPrefix(ui, "{") {
+				ui = "{" + ui + "}"
+			}
+			_, err := Decode(strings.NewReader("ui: " + ui + "\n" + minimalServer))
+			if err == nil {
+				t.Fatal("Decode returned no error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("error = %q, want it to contain %q", err, tt.want)
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("error contains the password: %q", err)
+			}
+		})
+	}
+}

@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,12 +31,21 @@ type Config struct {
 	IgnoreReasons      []string      `yaml:"ignore-reasons"`        // reason names such as "no-art"
 	TMDBToken          string        `yaml:"tmdb-token"`            // "": no TMDB fallback in fix match
 	HistoryRetention   time.Duration `yaml:"history-retention"`     // how long the dashboard history is kept
+	UI                 UI            `yaml:"ui"`
 	Plex               []Server      `yaml:"plex"`
 
 	// Decode parses these values from the keys above.
 	RunSchedule          cron.Schedule `yaml:"-"` // Schedule
 	CacheRefreshSchedule cron.Schedule `yaml:"-"` // CacheRefresh
 	Ignored              store.Reasons `yaml:"-"` // IgnoreReasons
+}
+
+// UI configures the optional HTTP listener of the dashboard. The zero value
+// starts no listener.
+type UI struct {
+	Listen   string `yaml:"listen"` // host:port, such as ":7380"; "": no listener
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
 }
 
 // DefaultTimeout limits each request to a server without a timeout key.
@@ -172,7 +183,36 @@ func (c *Config) validate() error {
 	if c.TMDBToken != "" && hasControlOrSpace(c.TMDBToken) {
 		return errors.New("tmdb-token must not contain whitespace or control characters")
 	}
+	if err := c.UI.validate(); err != nil {
+		return err
+	}
 	return c.validateServers()
+}
+
+// validate checks the listen address and the credentials. Its errors never
+// contain a configured value.
+func (u UI) validate() error {
+	if u.Listen != "" {
+		_, port, err := net.SplitHostPort(u.Listen)
+		if err == nil {
+			_, err = strconv.ParseUint(port, 10, 16)
+		}
+		if err != nil {
+			return errors.New("ui.listen must be host:port, such as :7380")
+		}
+	}
+	if (u.Username == "") != (u.Password == "") {
+		return errors.New("ui.username and ui.password must both be set or both be empty")
+	}
+	switch {
+	case strings.Contains(u.Username, ":"):
+		return errors.New("ui.username must not contain ':'")
+	case hasControl(u.Username):
+		return errors.New("ui.username must not contain control characters")
+	case hasControl(u.Password):
+		return errors.New("ui.password must not contain control characters")
+	}
+	return nil
 }
 
 // validateServers validates each configured Plex server and ensures unique

@@ -461,6 +461,12 @@ type DueQuery struct {
 	Limit              int     // the most rows that Due returns; 0: no limit
 }
 
+// rules returns the queue rules of q.
+func (q DueQuery) rules() DueRules {
+	return DueRules{Now: q.Now, MinimumAge: q.MinimumAge, RefreshInterval: q.RefreshInterval,
+		MaxRefreshInterval: q.MaxRefreshInterval, Ignored: q.Ignored}
+}
+
 // Due returns the first q.Limit rows of the sections that are incomplete,
 // added at or before Now-MinimumAge, and with no attempt in their wait
 // before Now. total is the number of all such rows.
@@ -477,14 +483,13 @@ func (s *Store) Due(q DueQuery) (items []Item, total int, err error) {
 	if len(q.Sections) == 0 {
 		return nil, 0, nil
 	}
-	interval, maxWait, doublings := backoff(q.RefreshInterval, q.MaxRefreshInterval)
-
-	// The query rounds the cutoff down to whole seconds, like the stored times.
+	rules := q.rules()
+	tooNew, waiting := rules.tooNew(), rules.waiting()
 	where := `server = ? AND section IN (` + placeholders(len(q.Sections)) + `)
-		AND stopped_at IS NULL AND reasons & ~? != 0 AND added_at <= ?
-		AND (last_attempt IS NULL OR last_attempt <= (? - MIN(?, ? << MIN(MAX(refreshes - 1, 0), ?))) / 1000)`
+		AND stopped_at IS NULL AND reasons & ~? != 0 AND NOT (` + tooNew.sql + `) AND NOT (` + waiting.sql + `)`
 	args := append([]any{q.Server}, stringArgs(q.Sections)...)
-	args = append(args, int(q.Ignored), q.Now.Add(-q.MinimumAge).Unix(), q.Now.UnixMilli(), maxWait, interval, doublings)
+	args = append(args, int(q.Ignored))
+	args = append(append(args, tooNew.args...), waiting.args...)
 
 	// One read transaction gives the count and the rows the same snapshot,
 	// also while another process writes. A read-only transaction does not

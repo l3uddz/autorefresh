@@ -14,7 +14,7 @@ import (
 // runs returns the stored runs, newest first.
 func (f *fixture) runs() []store.Run {
 	f.t.Helper()
-	runs, err := f.store.Runs(0)
+	runs, err := f.store.Runs(context.Background(), store.RunQuery{})
 	if err != nil {
 		f.t.Fatal(err)
 	}

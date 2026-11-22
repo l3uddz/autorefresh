@@ -68,6 +68,7 @@ type Options struct {
 	DryRun                                                bool
 	TMDB                                                  TMDB          // nil: no TMDB fallback in fix match
 	HistoryRetention                                      time.Duration // events and runs older than this are removed; 0: no retention
+	Progress                                              Progress      // nil: no progress
 }
 
 // Refresher checks the libraries of each server.
@@ -247,6 +248,7 @@ func (r *Refresher) runServer(ctx context.Context, srv Server) error {
 			return fmt.Errorf("server %s: %w", srv.Name, err)
 		}
 	}
+	r.progress().RunStarted(srv.Name, run.began)
 	return r.finishRun(ctx, run, id, r.checkServer(ctx, run))
 }
 
@@ -309,34 +311,48 @@ func (run *serverRun) start() store.RunStart {
 	}
 }
 
-// finishRun records the end of the run id, unless it is a dry run, and
-// returns the result of runServer. The end of ctx is a clean exit, so a
-// canceled run returns only a failed FinishRun. Otherwise a failed
-// FinishRun is the error of the run only if the run has no error.
+// finishRun records the end of the run id, unless it is a dry run, reports
+// it to the progress, and returns the result of runServer. The end of ctx is
+// a clean exit, so a canceled run returns only a failed FinishRun. Otherwise
+// a failed FinishRun is the error of the run only if the run has no error.
 func (r *Refresher) finishRun(ctx context.Context, run *serverRun, id int64, err error) error {
 	canceled := stopped(ctx, err)
 	if canceled {
 		err = nil
 	}
+	res := run.result(r.now(), canceled, err)
+	runErr := err // the progress gets the error of res, also if FinishRun fails
 	if !r.opts.DryRun {
-		res := store.RunResult{
-			FinishedAt: r.now(), Status: store.RunFinished,
-			ReadItems: run.fullReadItems + run.incrementalReadItems, Refreshed: run.refreshes,
-			Matched: run.matches, Failed: run.failures, Completed: len(run.completed), Fixed: run.fixed,
-			Incomplete: run.incomplete, Due: run.due, Selected: run.selected,
-		}
-		switch {
-		case canceled:
-			res.Status = store.RunCanceled
-		case err != nil:
-			res.Status, res.Error = store.RunFailed, err.Error()
-		}
 		err = r.recordFinish(run, id, res, err)
 	}
+	r.progress().RunFinished(run.server.Name, res, runErr)
 	if err == nil {
 		return nil
 	}
 	return fmt.Errorf("server %s: %w", run.server.Name, err)
+}
+
+// counts returns the request counts of the run so far.
+func (run *serverRun) counts() Counts {
+	return Counts{Refreshed: run.refreshes, Matched: run.matches, Failed: run.failures}
+}
+
+// result returns the end of the run at finishedAt: canceled, failed with
+// err, or else finished.
+func (run *serverRun) result(finishedAt time.Time, canceled bool, err error) store.RunResult {
+	res := store.RunResult{
+		FinishedAt: finishedAt, Status: store.RunFinished,
+		ReadItems: run.fullReadItems + run.incrementalReadItems, Refreshed: run.refreshes,
+		Matched: run.matches, Failed: run.failures, Completed: len(run.completed), Fixed: run.fixed,
+		Incomplete: run.incomplete, Due: run.due, Selected: run.selected,
+	}
+	switch {
+	case canceled:
+		res.Status = store.RunCanceled
+	case err != nil:
+		res.Status, res.Error = store.RunFailed, err.Error()
+	}
+	return res
 }
 
 // warnOnce reports whether the warning with key was not logged yet in this
