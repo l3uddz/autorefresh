@@ -597,8 +597,10 @@ The image declares port `7380`. Nothing listens on it until you set
 | `api/runs` | One page of the runs, newest first |
 
 The API names a server by its position in the `plex` list, from 0, in the
-`srv` query parameter. A query string that does not decode, for example
-one with a bad percent escape, gets a 400 answer.
+`srv` query parameter. On `api/items`, `api/item`, `api/item/live`,
+`api/items/thumb`, `api/items/art`, and `api/runs`, a query string that
+does not decode, for example one with a bad percent escape, gets a 400
+answer.
 
 ## Logging
 
