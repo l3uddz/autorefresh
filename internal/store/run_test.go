@@ -27,6 +27,7 @@ func TestStartAndFinishRun(t *testing.T) {
 	_, err = s.FinishRun(id, start, RunResult{
 		FinishedAt: end, Status: RunFailed, Error: "boom",
 		ReadItems: 1, Refreshed: 2, Matched: 3, Failed: 4, Completed: 5, Fixed: 6, Incomplete: 7, Due: 8, Selected: 9,
+		FullReads: 10, IncrementalReads: 11,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -39,6 +40,7 @@ func TestStartAndFinishRun(t *testing.T) {
 		ID: id, Server: srv, Kind: RunKindRun, Source: RunSourceSchedule, Status: RunFailed, StartedAt: base,
 		FinishedAt: end, Error: "boom",
 		ReadItems: 1, Refreshed: 2, Matched: 3, Failed: 4, Completed: 5, Fixed: 6, Incomplete: 7, Due: 8, Selected: 9,
+		FullReads: 10, IncrementalReads: 11,
 	}
 	if !reflect.DeepEqual(runs[0], want) {
 		t.Fatalf("finished = %+v, want %+v", runs[0], want)
@@ -185,7 +187,7 @@ func TestFinishRunRestoresRemovedRow(t *testing.T) {
 	}
 
 	end := base.Add(5 * time.Minute)
-	if _, err := s.FinishRun(id, start, RunResult{FinishedAt: end, Status: RunFinished, Refreshed: 4}); err != nil {
+	if _, err := s.FinishRun(id, start, RunResult{FinishedAt: end, Status: RunFinished, Refreshed: 4, FullReads: 2}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Runs(context.Background(), RunQuery{})
@@ -193,7 +195,7 @@ func TestFinishRunRestoresRemovedRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Run{ID: id, Server: srv, Kind: RunKindRun, Source: RunSourceManual, Status: RunFinished,
-		StartedAt: base, FinishedAt: end, Refreshed: 4}
+		StartedAt: base, FinishedAt: end, Refreshed: 4, FullReads: 2}
 	if len(got) != 1 || !reflect.DeepEqual(got[0], want) {
 		t.Fatalf("runs = %+v, want %+v", got, want)
 	}

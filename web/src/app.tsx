@@ -1,9 +1,11 @@
 import { AppShell } from '@astryxdesign/core/AppShell';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
-import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
+import { ButtonGroup } from '@astryxdesign/core/ButtonGroup';
+import { DropdownMenu, DropdownMenuDivider, DropdownMenuItem, DropdownMenuSubMenu } from '@astryxdesign/core/DropdownMenu';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
 import { DEFAULT_WIDTH_BREAKPOINTS } from '@astryxdesign/core/theme';
+import { Icon } from '@astryxdesign/core/Icon';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Selector } from '@astryxdesign/core/Selector';
 import { Skeleton } from '@astryxdesign/core/Skeleton';
@@ -11,6 +13,7 @@ import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Text } from '@astryxdesign/core/Text';
 import { useToast } from '@astryxdesign/core/Toast';
 import { TopNav, TopNavHeading, TopNavItem } from '@astryxdesign/core/TopNav';
+import { ChevronDownIcon } from '@heroicons/react/24/outline';
 import { lazy, Suspense, useEffect } from 'react';
 import { useLiveStatus, useStatus, type Connection, type ServerStatus } from './api';
 import { plural } from './format';
@@ -142,22 +145,40 @@ function RunNow({ servers }: { servers: ServerStatus[] }) {
   const reason = busy ? 'A run is busy' : undefined;
   if (servers.length <= 1) {
     return (
-      <Button
-        label="Run now"
-        variant="primary"
-        isLoading={runNow.isPending}
-        isDisabled={busy || !servers.length}
-        tooltip={reason}
-        onClick={() => runNow.mutate(null)}
-      />
+      <ButtonGroup label="Run now">
+        <Button
+          label="Run now"
+          variant="primary"
+          isLoading={runNow.isPending}
+          isDisabled={busy || !servers.length}
+          tooltip={reason}
+          onClick={() => runNow.mutate({ srv: null, full: false })}
+        />
+        <DropdownMenu
+          button={{ label: 'More run options', variant: 'primary', isIconOnly: true, icon: <Icon icon={ChevronDownIcon} size="sm" />, isDisabled: busy || !servers.length, tooltip: reason }}
+          hasChevron={false}
+          alignment="end"
+        >
+          <DropdownMenuItem label="Full cache refresh, then run" description={fullDescription} onClick={() => runNow.mutate({ srv: null, full: true })} />
+        </DropdownMenu>
+      </ButtonGroup>
     );
   }
   return (
     <DropdownMenu button={{ label: 'Run now', variant: 'primary', isLoading: runNow.isPending, isDisabled: busy, tooltip: reason }} alignment="end">
-      <DropdownMenuItem label="All servers" onClick={() => runNow.mutate(null)} />
+      <DropdownMenuItem label="All servers" onClick={() => runNow.mutate({ srv: null, full: false })} />
       {servers.map(server => (
-        <DropdownMenuItem key={server.srv} label={server.name} onClick={() => runNow.mutate(server.srv)} />
+        <DropdownMenuItem key={server.srv} label={server.name} onClick={() => runNow.mutate({ srv: server.srv, full: false })} />
       ))}
+      <DropdownMenuDivider />
+      <DropdownMenuSubMenu label="Full cache refresh, then run" description={fullDescription}>
+        <DropdownMenuItem label="All servers" onClick={() => runNow.mutate({ srv: null, full: true })} />
+        {servers.map(server => (
+          <DropdownMenuItem key={server.srv} label={server.name} onClick={() => runNow.mutate({ srv: server.srv, full: true })} />
+        ))}
+      </DropdownMenuSubMenu>
     </DropdownMenu>
   );
 }
+
+const fullDescription = 'Reads every library in full, then refreshes the due items';

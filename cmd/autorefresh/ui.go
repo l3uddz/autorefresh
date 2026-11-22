@@ -47,16 +47,17 @@ func newUIServer(cfg config.Config, rules store.DueRules, st *store.Store, statu
 	}
 	credentials := uiCredentials(cfg)
 	return web.New(web.Options{
-		Actions:     actions,
-		Jobs:        jobs,
-		Username:    cfg.UI.Username,
-		Password:    cfg.UI.Password,
-		Status:      status,
-		Servers:     servers,
-		Store:       st,
-		Rules:       rules,
-		Secrets:     uiSecrets(cfg, credentials, clients),
-		Credentials: credentials,
+		Actions:      actions,
+		Jobs:         jobs,
+		Username:     cfg.UI.Username,
+		Password:     cfg.UI.Password,
+		Status:       status,
+		Servers:      servers,
+		Store:        st,
+		Rules:        rules,
+		Secrets:      uiSecrets(cfg, credentials, clients),
+		Credentials:  credentials,
+		CacheRefresh: cfg.CacheRefreshSchedule,
 	})
 }
 

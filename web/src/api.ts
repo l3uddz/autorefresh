@@ -141,6 +141,9 @@ export interface ServerInfo {
   name: string;
   machineIdentifier?: string;
   scanned: boolean;
+  /** When the next full cache refresh of a library is due, absent without
+   * libraries. */
+  nextFullRead?: string;
   libraries: Library[];
 }
 
@@ -211,6 +214,10 @@ export interface RunRecord {
   due: number;
   selected: number;
   skipped: number;
+  /** The libraries that the run read fully and incrementally. Older runs
+   * have neither. */
+  fullReads?: number;
+  incrementalReads?: number;
 }
 
 export interface RunItem {

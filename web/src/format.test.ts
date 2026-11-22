@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { duration, fixedBy, lastAction, nextRunText, plural, queueState, relative, runDuration, typeName } from './format';
+import { duration, fixedBy, fullReadText, lastAction, nextRunText, plural, queueState, relative, runDuration, runKind, typeName } from './format';
 
 const now = Date.parse('2026-11-22T12:00:00Z');
 const at = (seconds: number) => new Date(now + seconds * 1000).toISOString();
@@ -65,5 +65,25 @@ describe('type names', () => {
     const time = new Date(at(45 * 60)).toLocaleTimeString(undefined, { timeStyle: 'short' });
     expect(nextRunText(at(45 * 60), now)).toBe(`in 45m · ${time}`);
     expect(nextRunText(at(12), now)).toMatch(/^in 12s · /);
+  });
+
+  it('tells a full run from an incremental run', () => {
+    const run = { kind: 'run', fullReads: 0, incrementalReads: 0 };
+    expect(runKind({ ...run, kind: 'bulk-refresh' })).toBe('Bulk refresh');
+    expect(runKind({ ...run, fullReads: 3 })).toBe('Full run');
+    expect(runKind({ ...run, incrementalReads: 3 })).toBe('Incremental run');
+    expect(runKind({ ...run, fullReads: 1, incrementalReads: 2 })).toBe('Full and incremental run');
+    // Runs from before the read counts, and runs that read no library.
+    expect(runKind(run)).toBe('Run');
+    expect(runKind({ kind: 'run' })).toBe('Run');
+  });
+
+  it('describes the next full cache refresh', () => {
+    expect(fullReadText(undefined, now)).toBeUndefined();
+    expect(fullReadText(at(-60), now)).toBe('with the next run');
+    expect(fullReadText(at(0), now)).toBe('with the next run');
+    const soon = at(4 * 86400 + 4 * 3600);
+    const when = new Date(soon).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+    expect(fullReadText(soon, now)).toBe(`in 4d 4h · ${when}`);
   });
 });

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -142,7 +143,7 @@ func TestCancelBulkRecordsInFlightAttemptAndRemainingKey(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("bulk refresh did not reach Plex")
 	}
-	if _, err := jobs.RunNow(nil); !errors.Is(err, ErrBusy) {
+	if _, err := jobs.RunNow(nil, false); !errors.Is(err, ErrBusy) {
 		t.Fatalf("overlapping run error = %v", err)
 	}
 	if err := jobs.Cancel(id); err != nil {
@@ -171,11 +172,11 @@ func TestRunNowStartFailureReleasesAdmission(t *testing.T) {
 	f.r.store = st
 	jobs := NewJobs(f.r)
 	t.Cleanup(jobs.Close)
-	if _, err := jobs.RunNow(nil); !errors.Is(err, errRun) {
+	if _, err := jobs.RunNow(nil, false); !errors.Is(err, errRun) {
 		t.Fatalf("first admission error = %v", err)
 	}
 	st.failStart = false
-	ids, err := jobs.RunNow(nil)
+	ids, err := jobs.RunNow(nil, false)
 	if err != nil || len(ids) != 1 {
 		t.Fatalf("second admission = %v, %v", ids, err)
 	}
@@ -202,7 +203,7 @@ func TestRunNowSubsetKeepsOtherConfiguredServer(t *testing.T) {
 	}
 	jobs := NewJobs(f.r)
 	t.Cleanup(jobs.Close)
-	if ids, err := jobs.RunNow([]string{"home"}); err != nil || len(ids) != 1 {
+	if ids, err := jobs.RunNow([]string{"home"}, false); err != nil || len(ids) != 1 {
 		t.Fatalf("start = %v, %v", ids, err)
 	}
 	jobs.wg.Wait()
@@ -217,6 +218,45 @@ func TestRunNowSubsetKeepsOtherConfiguredServer(t *testing.T) {
 	runs, err := f.store.Runs(t.Context(), store.RunQuery{Servers: []string{"away"}})
 	if err != nil || len(runs) != 1 || runs[0].ID != awayRun {
 		t.Fatalf("away runs = %+v, %v", runs, err)
+	}
+}
+
+// A full run reads a library fully, although its last full read is not
+// due, and records the full read.
+func TestRunNowFullReadsEveryLibrary(t *testing.T) {
+	lib := moviesLib
+	fp := newFakePlex(lib)
+	f := newRefreshFixture(t, Server{Name: "home", Plex: fp})
+	f.now = t0
+	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
+	jobs := NewJobs(f.r)
+	t.Cleanup(jobs.Close)
+	if _, err := jobs.RunNow(nil, true); err != nil {
+		t.Fatal(err)
+	}
+	jobs.wg.Wait()
+	if !slices.Contains(fp.calls, "List 1?type=1") {
+		t.Errorf("calls = %v, want the full listing", fp.calls)
+	}
+	if run := f.onlyRun(); run.FullReads != 1 || run.IncrementalReads != 0 {
+		t.Errorf("run reads = %d full, %d incremental; want 1 and 0", run.FullReads, run.IncrementalReads)
+	}
+}
+
+// Without full, a library whose full read is not due gets an incremental read.
+func TestRunNowReadsIncrementally(t *testing.T) {
+	lib := moviesLib
+	f := newRefreshFixture(t, Server{Name: "home", Plex: newFakePlex(lib)})
+	f.now = t0
+	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
+	jobs := NewJobs(f.r)
+	t.Cleanup(jobs.Close)
+	if _, err := jobs.RunNow(nil, false); err != nil {
+		t.Fatal(err)
+	}
+	jobs.wg.Wait()
+	if run := f.onlyRun(); run.FullReads != 0 || run.IncrementalReads != 1 {
+		t.Errorf("run reads = %d full, %d incremental; want 0 and 1", run.FullReads, run.IncrementalReads)
 	}
 }
 

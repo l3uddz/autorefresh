@@ -15,7 +15,7 @@ import { ClockIcon } from '@heroicons/react/24/outline';
 import { useQuery } from '@tanstack/react-query';
 import { api, useRuns, useServers, useStatus, type Health, type ItemPage, type RunProgress, type RunRecord, type ServerInfo, type ServerStatus } from './api';
 import { useNow } from './clock';
-import { dateTime, fixedBy, label, nextRunText, plural, relative, runDuration } from './format';
+import { dateTime, fixedBy, fullReadText, label, nextRunText, plural, relative, runDuration, runKind } from './format';
 import { Poster } from './media';
 import { cancelBulkQueue, isQueueActive, queueProgress, useBulkQueue } from './queue';
 import { itemHash, routeHash } from './route';
@@ -121,6 +121,7 @@ function ServerCard({ server, info, isMulti, isBusy }: { server: ServerStatus; i
         {server.health === 'unauthorized' && <Banner status="error" title="Plex rejected the token" description="Check the token of this server in the configuration." />}
         {server.health === 'unreachable' && <Banner status="warning" title="Plex is unreachable" description="Autorefresh tries again on the next run." />}
         {run ? <RunLive run={run} /> : <LastRun last={last} />}
+        <NextFullRead value={info?.nextFullRead} />
         <HStack gap={3} vAlign="center" wrap="wrap">
           <StackItem size="fill">
             <ServerCounts counts={counts.data} error={counts.error} isScanned={info?.scanned ?? true} srv={isMulti ? server.srv : undefined} />
@@ -135,7 +136,7 @@ function ServerCard({ server, info, isMulti, isBusy }: { server: ServerStatus; i
               isLoading={runNow.isPending}
               isDisabled={isBusy}
               tooltip={isBusy ? 'A run is busy. One run works at a time.' : undefined}
-              onClick={() => runNow.mutate(server.srv)}
+              onClick={() => runNow.mutate({ srv: server.srv, full: false })}
             />
           )}
         </HStack>
@@ -173,6 +174,18 @@ function RunLive({ run }: { run: RunProgress }) {
         ].filter(Boolean).join(' · ')}
       </Text>
     </VStack>
+  );
+}
+
+/** When the next full cache refresh of the server is due. */
+function NextFullRead({ value }: { value?: string }) {
+  const now = useNow();
+  const text = fullReadText(value, now);
+  if (!text) return null;
+  return (
+    <Text type="supporting" color="secondary">
+      Full cache refresh {text}
+    </Text>
   );
 }
 
@@ -293,7 +306,9 @@ export function NextRun() {
 }
 
 export function RunRow({ run, isMulti, isDetailed = false }: { run: RunRecord; isMulti: boolean; isDetailed?: boolean }) {
-  const kind = run.kind === 'bulk-refresh' ? 'Bulk refresh' : run.source === 'manual' ? 'Manual run' : 'Scheduled run';
+  // The Runs page names how the run read; the Status page keeps it short.
+  const source = run.kind === 'bulk-refresh' ? 'Bulk refresh' : run.source === 'manual' ? 'Manual run' : 'Scheduled run';
+  const kind = isDetailed && run.kind !== 'bulk-refresh' ? `${run.source === 'manual' ? 'Manual' : 'Scheduled'} · ${runKind(run)}` : source;
   const duration = run.finishedAt ? runDuration(run.startedAt, run.finishedAt) : 'not ended';
   const counts = isDetailed
     ? [`${run.readItems} read`, `${run.refreshed} refreshed`, `${run.matched} matched`, `${run.failed} failed`, `${run.fixed} fixed`, `${run.due} due`, duration].join(' · ')

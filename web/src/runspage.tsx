@@ -15,7 +15,7 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { api, useStatus, type RunRecord } from './api';
 import { useNow } from './clock';
-import { dateTime, label, relative, runDuration } from './format';
+import { dateTime, label, relative, runDuration, runKind } from './format';
 import { NextRun, RunRow, statusDots } from './status';
 
 const tableQuery = `(min-width: ${DEFAULT_WIDTH_BREAKPOINTS.lg}px)`;
@@ -128,7 +128,7 @@ function RunTable({ runs, isMulti }: { runs: RunRecord[]; isMulti: boolean }) {
     },
     ...(isMulti ? [{ key: 'server', header: 'Server', width: proportional(1, { minWidth: 120 }), renderCell: ({ run }: Row) => <Text>{run.server}</Text> }] : []),
     { key: 'source', header: 'Source', width: pixel(104), renderCell: ({ run }) => <Text>{run.source === 'manual' ? 'Manual' : 'Schedule'}</Text> },
-    { key: 'kind', header: 'Kind', width: pixel(120), renderCell: ({ run }) => <Text>{run.kind === 'bulk-refresh' ? 'Bulk refresh' : 'Run'}</Text> },
+    { key: 'kind', header: 'Kind', width: pixel(184), renderCell: ({ run }) => <Text>{runKind(run)}</Text> },
     {
       key: 'status',
       header: 'Status',

@@ -5,13 +5,20 @@ import { cancelQueueOfJob } from './queue';
 
 /** Starts a manual run of the server srv, or of every server for null. A
  * busy run answers 409, which the toast explains. */
+/** A manual run of the server srv, or of every server for null. With full,
+ * the run reads every library fully before it refreshes the due items. */
+export interface RunRequest {
+  srv: number | null;
+  full: boolean;
+}
+
 export function useRunNow() {
   const showToast = useToast();
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (srv: number | null) => post<{ ids: number[] }>('runs', { srv }),
-    onSuccess: () => {
-      showToast({ body: 'Run started', uniqueID: 'run-now' });
+    mutationFn: ({ srv, full }: RunRequest) => post<{ ids: number[] }>('runs', { srv, full }),
+    onSuccess: (_, { full }) => {
+      showToast({ body: full ? 'Full cache refresh started' : 'Run started', uniqueID: 'run-now' });
       void client.invalidateQueries({ queryKey: ['status'] });
     },
     onError: error => showToast({ body: runError(error), type: 'error', uniqueID: 'run-now' }),

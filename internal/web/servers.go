@@ -28,8 +28,12 @@ type serverJSON struct {
 	Name              string `json:"name"`
 	MachineIdentifier string `json:"machineIdentifier,omitempty"`
 	// Scanned is false until the first scan of the server ended.
-	Scanned   bool          `json:"scanned"`
-	Libraries []libraryJSON `json:"libraries"`
+	Scanned bool `json:"scanned"`
+	// NextFullRead is when the next full read of a library of the server
+	// is due: the first run at or after it reads that library fully. It is
+	// absent without libraries or a cache refresh schedule.
+	NextFullRead time.Time     `json:"nextFullRead,omitzero"`
+	Libraries    []libraryJSON `json:"libraries"`
 }
 
 type libraryJSON struct {
@@ -73,6 +77,9 @@ func (s *Server) serverInfo(ctx context.Context, srv int, name string) (serverJS
 		if !l.LastRead.IsZero() {
 			info.Scanned = true
 		}
+		if due := s.fullReadDue(l.LastFullRead); info.NextFullRead.IsZero() || due.Before(info.NextFullRead) {
+			info.NextFullRead = due
+		}
 	}
 	if len(libs) > 0 {
 		return info, nil
@@ -84,6 +91,20 @@ func (s *Server) serverInfo(ctx context.Context, srv int, name string) (serverJS
 	}
 	info.Scanned = len(runs) > 0
 	return info, nil
+}
+
+// fullReadDue returns when a library whose last full read was at is due
+// for a full read: now for a library without one, or zero without a cache
+// refresh schedule.
+func (s *Server) fullReadDue(at time.Time) time.Time {
+	switch {
+	case s.cacheRefresh == nil:
+		return time.Time{}
+	case at.IsZero():
+		return s.now()
+	default:
+		return s.cacheRefresh.Next(at)
+	}
 }
 
 // machineIdentifiers returns the machine identifier of each server, "" for
