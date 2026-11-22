@@ -357,9 +357,13 @@ type Progress interface {
 	LibraryRead(server, library string) // the library title, after its read was applied
 	Batch(server string, selected, due int)
 	ItemStarted(server, ratingKey, title string)
-	ItemDone(server, ratingKey, outcome string)
+	// ItemDone reports a finished item with the request counts of the run so far.
+	ItemDone(server, ratingKey, outcome string, counts Counts)
 	RunFinished(server string, res store.RunResult, err error)
 }
+// Counts are the request counts of a run so far, with the meaning of the
+// same fields of store.RunResult.
+type Counts struct{ Refreshed, Matched, Failed int }
 const (
 	OutcomeGone   = "gone"    // Plex answered 404
 	OutcomeDryRun = "dry-run" // a dry run sent nothing
@@ -381,6 +385,7 @@ Rules:
   - `itemFailed`, after `RecordGone` succeeds, or on the dry-run 404 path: `OutcomeGone`.
   - `countFailure`, after its `RecordRequest` succeeds (in a dry run, after `failures++`) and before it returns `ctx.Err()`: `store.Request{Action: action}.Outcome()`. This also covers a request that was sent and then canceled, and a failure that stops the server.
   - No call when `RecordRequest` or `RecordGone` fails, for `errCache`, or for a context error before a request was sent (the check before sending, or an interrupted match search).
+- Each `ItemDone` call passes the request counts of the run so far, through one helper, `(*Refresher).itemDone(run, ratingKey, outcome)`, which takes them from `(*serverRun).counts()`: `run.refreshes`, `run.matches`, and `run.failures`, the fields that `result()` stores as `Refreshed`, `Matched`, and `Failed`. So the live counts equal the stored counts: a sent request counts also when it fails or Plex answers 404, and a TMDB lookup failure that the fix match handles counts in `Failed` and shows at the next `ItemDone`.
 
 - [ ] **Step 1: Write the failing tests** (a recording fake with a mutex; set `f.r.opts.Progress` after building the fixture)
 
@@ -521,7 +526,7 @@ Rules:
 
 - Health: `ServerChecked(nil)` gives ok, an error wrapping `plex.ErrUnauthorized` gives unauthorized, any other error gives unreachable. `RunFinished` with an error wrapping `plex.ErrUnauthorized` gives unauthorized, with `plex.ErrUnavailable` unreachable, with no error and status `finished` ok; anything else keeps the health. `RunFinished` sets `Run` to nil.
 - TMDB: `"off"` when `tmdb` is false, `"unknown"` until `TMDBChecked`; nil gives ok, `tmdb.ErrUnauthorized` unauthorized, any other error unreachable.
-- `ItemDone`: `Done++`, `Current = ""`; outcome `refresh` adds to `Refreshed`, `match` and `tmdb-match` to `Matched`, a `-failed` suffix to `Failed`. Unknown server names are ignored.
+- `ItemDone`: `Done++`, `Current = ""`; it copies `Refreshed`, `Matched`, and `Failed` from the `refresher.Counts` of the call and does not derive them from the outcome, so they mean the same as the fields of the stored run. Unknown server names are ignored.
 - Each change notifies every subscriber with a non-blocking send on its own channel with a buffer of 1. `Snapshot` builds a deep copy under the mutex: a new slice, and a new `RunProgress` value for each running server, so JSON encoding never reads shared state.
 - `GET /api/events`: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`. With `rc := http.NewResponseController(w)`, each write (the snapshot or a keepalive) sets `rc.SetWriteDeadline(time.Now().Add(writeTimeout))` (10 s, a `Server` field that tests shorten), writes, calls `rc.Flush()`, and then clears the deadline with `rc.SetWriteDeadline(time.Time{})`, so no deadline is armed while the stream is idle. The server-wide `WriteTimeout` no longer applies to the stream, and a stalled client cannot hold a write past its own deadline. Return at once when the SSE context has already ended. Subscribe first, then send the snapshot as `event: status\ndata: <json>\n\n`. `New` uses `NewStatus(nil, false)` when `Options.Status` is nil, so tests without a status cannot panic. Then loop: return when the SSE context (owned by `Server`, canceled first by `Stop`) or the request ends; send the snapshot on each notification; send `: keepalive\n\n` every 25 s (a `Server` field that tests shorten). Return on any write, deadline, or flush error, including an error from clearing the deadline.
 
