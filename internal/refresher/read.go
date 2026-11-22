@@ -375,15 +375,18 @@ func (r *Refresher) logRead(rd store.Read, lib plex.Library, took time.Duration)
 }
 
 // storeItem returns the row of a listed item. It keeps only the Plex image
-// paths of the item itself. Only movie listings have files, so only a movie
-// gets the folder of its first file as its path.
+// paths of the item itself. Only a movie gets the folder of its first file
+// as its path: a series folder comes only from a Plex Location.
 func storeItem(server string, lib plex.Library, it plex.Item, reasons store.Reasons) store.Item {
-	return store.Item{
+	row := store.Item{
 		Server: server, Section: lib.ID, RatingKey: it.RatingKey, Type: lib.Type,
 		Title: it.Title, Year: it.Year, AddedAt: it.AddedAt, Reasons: reasons,
 		Thumb: plex.ItemImagePath(it.RatingKey, it.Thumb), Art: plex.ItemImagePath(it.RatingKey, it.Art),
-		Path: folderOf(it.Files),
 	}
+	if lib.Type == plex.MovieLibrary {
+		row.Path = folderOf(it.Files)
+	}
+	return row
 }
 
 // folderOf returns the folder of the first file: the file up to its last

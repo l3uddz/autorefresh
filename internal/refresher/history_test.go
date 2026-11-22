@@ -261,6 +261,33 @@ func TestReadDropsForeignImagePaths(t *testing.T) {
 
 // The fake answers ItemPaths with locations, so the movie shows that only a
 // series saves its folder.
+// A show listing that carries a media file keeps the cached series
+// folder: only a movie takes its path from its files.
+func TestShowListingKeepsSeriesFolder(t *testing.T) {
+	fp := newFakePlex(showsLib)
+	fp.lists["2?type=2"] = []plex.Item{incompleteItem("201")}
+	f := newFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.opts.DryRun = false
+	f.run(t0)
+	if err := f.store.SetPath(testServer, "201", "/tv/Show (2020)"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The next full read lists the series with a media file.
+	series := incompleteItem("201")
+	series.Files = []string{"/tv/Show (2020)/Season 01/Show S01E01.mkv"}
+	fp.lists["2?type=2"] = []plex.Item{series}
+	fp.calls = nil
+	f.run(sunday0300)
+
+	if !containsCall(fp.calls, "List 2?type=2") {
+		t.Fatalf("calls = %v, want a full read of the show library", fp.calls)
+	}
+	if row, _ := f.row(testServer, "2", "201"); row.Path != "/tv/Show (2020)" {
+		t.Errorf("series path = %q, want /tv/Show (2020)", row.Path)
+	}
+}
+
 func TestSeriesPathSavedAfterItemPaths(t *testing.T) {
 	for _, dryRun := range []bool{false, true} {
 		t.Run(map[bool]string{false: "live run", true: "dry run"}[dryRun], func(t *testing.T) {
