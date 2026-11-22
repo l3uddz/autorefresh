@@ -541,7 +541,7 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 		"RecordRequest": func() error {
 			return s.RecordRequest(Request{Server: srv, RatingKey: "101", At: base, Source: SourceAuto, Action: ActionRefresh})
 		},
-		"RecordGone": func() error { return s.RecordGone(srv, "101", base, SourceAuto) },
+		"RecordGone": func() error { return s.RecordGone(srv, "101", base, SourceAuto, 0) },
 		"RecordMatchDecision": func() error {
 			return s.RecordMatchDecision(MatchDecision{Server: srv, RatingKey: "101", At: base, Source: SourceAuto, Outcome: DecisionNoIDs})
 		},

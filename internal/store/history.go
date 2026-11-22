@@ -47,6 +47,7 @@ type Request struct {
 	Accepted          bool
 	Error             string
 	Match             *MatchTarget // match requests, accepted or failed
+	RunID             int64        // the run that sent it; 0: none
 }
 
 // MatchCandidate is one candidate that a Plex search returned.
@@ -87,12 +88,13 @@ type Event struct {
 	Links                            []string // nil when none
 	FixedAction, FixedMatch          Action
 	FixedMatchEventID                int64 // 0: none
+	RunID                            int64 // the run that wrote it; 0: none
 	Searches                         []MatchSearch
 }
 
 const eventColumns = `id, server, section, rating_key, at, kind, source, title, year, type, thumb, art, path,
 	action, accepted, outcome, error, match_guid, match_title, match_year, conflict, path_year, tmdb_year,
-	episode_count, links, fixed_action, fixed_match, fixed_match_event_id`
+	episode_count, links, fixed_action, fixed_match, fixed_match_event_id, run_id`
 
 // Outcome is the outcome of the request: the action, with "-failed" when
 // Plex did not accept it, or "search-failed" without an action.
@@ -169,6 +171,7 @@ func writeRequestOutcome(tx *sql.Tx, r Request, snap Item) error {
 func requestEvent(r Request, snap Item, outcome string) Event {
 	e := snapshotEvent(snap, r.At, EventRequest, r.Source)
 	e.Action, e.Accepted, e.Outcome, e.Error = r.Action, r.Accepted, outcome, r.Error
+	e.RunID = r.RunID
 	if m := r.Match; m != nil {
 		e.MatchGUID, e.MatchTitle, e.MatchYear = m.GUID, m.Title, m.Year
 		e.Links, e.PathYear, e.TMDBYear, e.EpisodeCount = m.Links, m.PathYear, m.TMDBYear, m.EpisodeCount
@@ -196,6 +199,7 @@ type MatchDecision struct {
 	Conflict, Error                  string
 	PathYear, TMDBYear, EpisodeCount int
 	Searches                         []MatchSearch
+	RunID                            int64 // the run that searched; 0: none
 }
 
 // RecordMatchDecision writes a match decision event with its searches and
@@ -215,6 +219,7 @@ func (s *Store) RecordMatchDecision(d MatchDecision) error {
 	e := snapshotEvent(snap, d.At, EventMatchDecision, d.Source)
 	e.Outcome, e.Conflict, e.Error = string(d.Outcome), d.Conflict, d.Error
 	e.PathYear, e.TMDBYear, e.EpisodeCount = d.PathYear, d.TMDBYear, d.EpisodeCount
+	e.RunID = d.RunID
 	eventID, err := insertEvent(tx, e)
 	if err != nil {
 		return err
@@ -264,9 +269,10 @@ func snapshotEvent(row Item, at time.Time, kind EventKind, source Source) Event 
 	}
 }
 
-// RecordGone writes a gone event with a snapshot of the row and deletes the
-// row, in one transaction. It writes nothing for a missing row.
-func (s *Store) RecordGone(server, ratingKey string, at time.Time, source Source) error {
+// RecordGone writes a gone event of the run runID (0: none) with a snapshot
+// of the row and deletes the row, in one transaction. It writes nothing for
+// a missing row.
+func (s *Store) RecordGone(server, ratingKey string, at time.Time, source Source, runID int64) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin gone: %w", err)
@@ -277,7 +283,9 @@ func (s *Store) RecordGone(server, ratingKey string, at time.Time, source Source
 	if err != nil || !found {
 		return err
 	}
-	if _, err := insertEvent(tx, snapshotEvent(snap, at, EventGone, source)); err != nil {
+	e := snapshotEvent(snap, at, EventGone, source)
+	e.RunID = runID
+	if _, err := insertEvent(tx, e); err != nil {
 		return err
 	}
 	if err := deleteItem(tx, server, ratingKey); err != nil {
@@ -296,7 +304,9 @@ func writeGone(tx *sql.Tx, r Read, key string) error {
 	if err != nil || !found {
 		return err
 	}
-	_, err = insertEvent(tx, snapshotEvent(snap, r.At, EventGone, SourceAuto))
+	e := snapshotEvent(snap, r.At, EventGone, SourceAuto)
+	e.RunID = r.RunID
+	_, err = insertEvent(tx, e)
 	return err
 }
 
@@ -314,6 +324,7 @@ func writeCompleted(tx *sql.Tx, r Read, prev Item, in readKey) error {
 	snap.Path = cmp.Or(in.meta.Path, r.Folders[prev.RatingKey], prev.Path)
 	e := snapshotEvent(snap, r.At, EventCompleted, SourceAuto)
 	e.FixedAction, e.FixedMatch, e.FixedMatchEventID = prev.LastAction, prev.LastMatch, prev.LastMatchEventID
+	e.RunID = r.RunID
 	_, err := insertEvent(tx, e)
 	return err
 }
@@ -334,11 +345,13 @@ func readItem(tx *sql.Tx, server, ratingKey string) (it Item, found bool, err er
 func insertEvent(tx *sql.Tx, e Event) (int64, error) {
 	res, err := tx.Exec(`INSERT INTO event (server, section, rating_key, at, kind, source, title, year, type, thumb, art, path,
 		action, accepted, outcome, error, match_guid, match_title, match_year, conflict, path_year, tmdb_year,
-		episode_count, links, fixed_action, fixed_match, fixed_match_event_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT id FROM event WHERE id = ?))`,
+		episode_count, links, fixed_action, fixed_match, fixed_match_event_id, run_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT id FROM event WHERE id = ?),
+		(SELECT id FROM run WHERE id = ?))`,
 		e.Server, e.Section, e.RatingKey, e.At.Unix(), e.Kind, e.Source, e.Title, e.Year, e.Type, e.Thumb, e.Art, e.Path,
 		e.Action, e.Accepted, e.Outcome, e.Error, e.MatchGUID, e.MatchTitle, e.MatchYear, e.Conflict,
-		e.PathYear, e.TMDBYear, e.EpisodeCount, strings.Join(e.Links, "\n"), e.FixedAction, e.FixedMatch, e.FixedMatchEventID)
+		e.PathYear, e.TMDBYear, e.EpisodeCount, strings.Join(e.Links, "\n"), e.FixedAction, e.FixedMatch, e.FixedMatchEventID,
+		e.RunID)
 	if err != nil {
 		return 0, fmt.Errorf("write event: %w", err)
 	}
@@ -482,16 +495,17 @@ func scanEvent(row scanner) (Event, error) {
 		at      int64
 		links   string
 		fixedID sql.NullInt64
+		runID   sql.NullInt64
 	)
 	err := row.Scan(&e.ID, &e.Server, &e.Section, &e.RatingKey, &at, &e.Kind, &e.Source, &e.Title, &e.Year, &e.Type,
 		&e.Thumb, &e.Art, &e.Path, &e.Action, &e.Accepted, &e.Outcome, &e.Error, &e.MatchGUID, &e.MatchTitle,
 		&e.MatchYear, &e.Conflict, &e.PathYear, &e.TMDBYear, &e.EpisodeCount, &links, &e.FixedAction, &e.FixedMatch,
-		&fixedID)
+		&fixedID, &runID)
 	if err != nil {
 		return Event{}, err
 	}
 	e.At = time.Unix(at, 0)
-	e.FixedMatchEventID = fixedID.Int64
+	e.FixedMatchEventID, e.RunID = fixedID.Int64, runID.Int64
 	if links != "" {
 		e.Links = strings.Split(links, "\n")
 	}

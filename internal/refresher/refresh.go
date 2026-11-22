@@ -182,7 +182,7 @@ func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Ite
 	notFound := ctx.Err() == nil && errors.Is(err, plex.ErrNotFound)
 	switch {
 	case notFound && !r.opts.DryRun:
-		if err := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto); err != nil {
+		if err := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, run.id); err != nil {
 			return err
 		}
 		r.itemDone(run, it.RatingKey, OutcomeGone)
@@ -226,7 +226,7 @@ func (r *Refresher) countFailure(ctx context.Context, run *serverRun, it store.I
 func (r *Refresher) request(run *serverRun, it store.Item, action store.Action, fm *fixMatch) store.Request {
 	return store.Request{
 		Server: run.server.Name, RatingKey: it.RatingKey, At: r.now(), Source: run.source,
-		Action: action, Match: target(fm),
+		Action: action, Match: target(fm), RunID: run.id,
 	}
 }
 
