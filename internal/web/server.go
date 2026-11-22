@@ -4,6 +4,7 @@ package web
 import (
 	"context"
 	"errors"
+	stdlog "log"
 	"net"
 	"net/http"
 	"sync"
@@ -91,8 +92,9 @@ type Server struct {
 
 	// idMu guards identities, the cached machine identifier of each server
 	// ("": not read yet).
-	idMu       sync.Mutex
-	identities []string
+	idMu          sync.Mutex
+	identities    []string
+	identityTried []time.Time
 
 	// sseCtx ends the event streams. Stop cancels it first, so that
 	// Shutdown does not wait for open streams.
@@ -132,25 +134,26 @@ func New(opts Options) *Server {
 		srvIndex[ps.Name] = i
 	}
 	s := &Server{
-		mux:          http.NewServeMux(),
-		jobs:         opts.Jobs,
-		actions:      opts.Actions,
-		status:       status,
-		servers:      opts.Servers,
-		srvIndex:     srvIndex,
-		store:        opts.Store,
-		rules:        opts.Rules,
-		now:          time.Now,
-		secrets:      opts.Secrets,
-		credentials:  opts.Credentials,
-		liveTimeout:  defaultLiveTimeout,
-		identities:   make([]string, len(opts.Servers)),
-		sseCtx:       sseCtx,
-		cancelSSE:    cancelSSE,
-		writeTimeout: defaultWriteTimeout,
-		keepalive:    defaultKeepalive,
-		cancelBase:   cancelBase,
-		forceWait:    defaultForceWait,
+		mux:           http.NewServeMux(),
+		jobs:          opts.Jobs,
+		actions:       opts.Actions,
+		status:        status,
+		servers:       opts.Servers,
+		srvIndex:      srvIndex,
+		store:         opts.Store,
+		rules:         opts.Rules,
+		now:           time.Now,
+		secrets:       opts.Secrets,
+		credentials:   opts.Credentials,
+		liveTimeout:   defaultLiveTimeout,
+		identities:    make([]string, len(opts.Servers)),
+		identityTried: make([]time.Time, len(opts.Servers)),
+		sseCtx:        sseCtx,
+		cancelSSE:     cancelSSE,
+		writeTimeout:  defaultWriteTimeout,
+		keepalive:     defaultKeepalive,
+		cancelBase:    cancelBase,
+		forceWait:     defaultForceWait,
 	}
 	s.mux.HandleFunc("GET /{$}", servePlaceholder)
 	s.api("GET /api/status", s.serveStatus)
@@ -185,6 +188,7 @@ func New(opts Options) *Server {
 	s.handler = securityHeaders(s.admit(crossOriginProtection(basicAuth(opts.Username, opts.Password, s.mux))))
 	s.srv = &http.Server{
 		Handler:           s.handler,
+		ErrorLog:          stdlog.New(serverErrorWriter{s}, "", 0),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      time.Minute,

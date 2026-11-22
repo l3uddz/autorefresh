@@ -251,8 +251,8 @@ func TestRefusesCrossOriginRedirect(t *testing.T) {
 	})
 
 	err := c.Check(context.Background())
-	if err == nil {
-		t.Fatal("Check succeeded, want redirect error")
+	if err == nil || !strings.Contains(err.Error(), "redirect refused") {
+		t.Fatalf("Check error = %v, want redirect refused", err)
 	}
 	if other.Load() != 0 {
 		t.Errorf("other origin received %d requests, want 0", other.Load())
