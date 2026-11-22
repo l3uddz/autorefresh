@@ -29,12 +29,13 @@ export function relative(value: string | undefined, now: number): string {
 }
 
 /** Returns when the next scheduled run starts, as "in 45m · 23:00", or
- * "starting" once that time has come. A scheduled start that waits for a
- * busy run stays "starting" until the status changes. */
+ * "starting" once that time has come. The status moves to the following
+ * start as soon as the scheduler takes this one, also when a busy run makes
+ * it skip the start. */
 export function nextRunText(value: string | undefined, now: number): string | undefined {
   if (!value) return undefined;
   const diff = (Date.parse(value) - now) / 1000;
-  if (diff <= 0) return 'starting';
+  if (Math.round(diff) <= 0) return 'starting';
   return `in ${duration(diff)} · ${new Date(value).toLocaleTimeString(undefined, { timeStyle: 'short' })}`;
 }
 

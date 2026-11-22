@@ -65,6 +65,8 @@ describe('type names', () => {
     const time = new Date(at(45 * 60)).toLocaleTimeString(undefined, { timeStyle: 'short' });
     expect(nextRunText(at(45 * 60), now)).toBe(`in 45m · ${time}`);
     expect(nextRunText(at(12), now)).toMatch(/^in 12s · /);
+    // Less than half a second left rounds to no time left.
+    expect(nextRunText(at(0.3), now)).toBe('starting');
   });
 
   it('tells a full run from an incremental run', () => {
