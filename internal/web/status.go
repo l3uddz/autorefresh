@@ -2,7 +2,6 @@ package web
 
 import (
 	"errors"
-	"strings"
 	"sync"
 	"time"
 
@@ -40,7 +39,9 @@ type ServerStatus struct {
 	Run    *RunProgress `json:"run"` // nil while idle
 }
 
-// RunProgress is the progress of the run of one server.
+// RunProgress is the progress of the run of one server. Refreshed, Matched,
+// and Failed are the request counts of the run as of the last finished
+// item, with the meaning of the same fields of the stored run.
 type RunProgress struct {
 	StartedAt     time.Time `json:"startedAt"`
 	LibrariesRead int       `json:"librariesRead"`
@@ -151,21 +152,15 @@ func (s *Status) ItemStarted(server, _, title string) {
 	})
 }
 
-// ItemDone counts a finished item of the run of server by its outcome.
-func (s *Status) ItemDone(server, _, outcome string) {
+// ItemDone counts a finished item of the run of server and takes the
+// request counts of the run so far from the refresher.
+func (s *Status) ItemDone(server, _, _ string, counts refresher.Counts) {
 	s.updateRun(server, func(run *RunProgress) {
 		run.Done++
 		run.Current = ""
-		switch store.Action(outcome) {
-		case store.ActionRefresh:
-			run.Refreshed++
-		case store.ActionMatch, store.ActionTMDBMatch:
-			run.Matched++
-		default:
-			if strings.HasSuffix(outcome, "-failed") {
-				run.Failed++
-			}
-		}
+		run.Refreshed = counts.Refreshed
+		run.Matched = counts.Matched
+		run.Failed = counts.Failed
 	})
 }
 

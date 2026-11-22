@@ -82,7 +82,7 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	}
 	if r.opts.DryRun {
 		requestEvent(log.Info(), run.server.Name, lib, it, action, fm).Msg("Dry run")
-		r.progress().ItemDone(run.server.Name, it.RatingKey, OutcomeDryRun)
+		r.itemDone(run, it.RatingKey, OutcomeDryRun)
 		return nil
 	}
 
@@ -106,7 +106,7 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	if err := r.store.RecordRequest(req); err != nil {
 		return err
 	}
-	r.progress().ItemDone(run.server.Name, it.RatingKey, req.Outcome())
+	r.itemDone(run, it.RatingKey, req.Outcome())
 	requestEvent(log.Info(), run.server.Name, lib, it, action, fm).Msg("Sent request")
 	r.warnAtLongestWait(run.server.Name, lib, it)
 	return nil
@@ -140,10 +140,10 @@ func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Ite
 		if err := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto); err != nil {
 			return err
 		}
-		r.progress().ItemDone(run.server.Name, it.RatingKey, OutcomeGone)
+		r.itemDone(run, it.RatingKey, OutcomeGone)
 		return nil
 	case notFound:
-		r.progress().ItemDone(run.server.Name, it.RatingKey, OutcomeGone)
+		r.itemDone(run, it.RatingKey, OutcomeGone)
 	default:
 		if err := r.countFailure(ctx, run, it, action, fm, err); err != nil {
 			return err
@@ -172,7 +172,7 @@ func (r *Refresher) countFailure(ctx context.Context, run *serverRun, it store.I
 			return err
 		}
 	}
-	r.progress().ItemDone(run.server.Name, it.RatingKey, store.Request{Action: action}.Outcome())
+	r.itemDone(run, it.RatingKey, store.Request{Action: action}.Outcome())
 	return ctx.Err()
 }
 

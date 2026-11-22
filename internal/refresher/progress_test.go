@@ -16,11 +16,12 @@ import (
 )
 
 // recordingProgress records each progress call as a line, for example
-// "ItemDone home 101 refresh". It keeps the result and the error of each
-// RunFinished call apart.
+// "ItemDone home 101 refresh". It keeps the counts of each ItemDone call and
+// the result and the error of each RunFinished call apart.
 type recordingProgress struct {
 	mu      sync.Mutex
 	calls   []string
+	counts  []Counts
 	results []store.RunResult
 	errs    []error
 }
@@ -47,7 +48,10 @@ func (p *recordingProgress) ItemStarted(server, ratingKey, title string) {
 	p.add("ItemStarted", server, ratingKey, title)
 }
 
-func (p *recordingProgress) ItemDone(server, ratingKey, outcome string) {
+func (p *recordingProgress) ItemDone(server, ratingKey, outcome string, counts Counts) {
+	p.mu.Lock()
+	p.counts = append(p.counts, counts)
+	p.mu.Unlock()
 	p.add("ItemDone", server, ratingKey, outcome)
 }
 
@@ -90,6 +94,23 @@ func (p *recordingProgress) itemCalls() []string {
 	return out
 }
 
+// wantStoredCounts checks that the counts of the last ItemDone call are want
+// and equal the counts of the only stored run.
+func (p *recordingProgress) wantStoredCounts(t *testing.T, f *fixture, want Counts) {
+	t.Helper()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.counts) == 0 {
+		t.Fatalf("no ItemDone call (calls %q)", p.calls)
+	}
+	got := p.counts[len(p.counts)-1]
+	run := f.onlyRun()
+	stored := Counts{Refreshed: run.Refreshed, Matched: run.Matched, Failed: run.Failed}
+	if got != want || got != stored {
+		t.Errorf("last ItemDone counts = %+v, want %+v, stored run %+v", got, want, stored)
+	}
+}
+
 func wantProgress(t *testing.T, got []string, want ...string) {
 	t.Helper()
 	if !reflect.DeepEqual(got, want) {
@@ -99,9 +120,10 @@ func wantProgress(t *testing.T, got []string, want ...string) {
 
 func TestProgressReportsRunSteps(t *testing.T) {
 	fp := newFakePlex(moviesLib)
-	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102")}
+	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102"), incompleteItem("103")}
 	fp.refreshErrs["102"] = errServer
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.opts.MaxRefreshesPerRun = 2
 	p := withProgress(f)
 
 	f.run(t0)
@@ -110,7 +132,7 @@ func TestProgressReportsRunSteps(t *testing.T) {
 	wantProgress(t, p.calls,
 		"RunStarted home "+at,
 		"LibraryRead home Movies",
-		"Batch home 2 2",
+		"Batch home 2 3",
 		"ItemStarted home 101 Title 101",
 		"ItemDone home 101 refresh",
 		"ItemStarted home 102 Title 102",
@@ -121,9 +143,59 @@ func TestProgressReportsRunSteps(t *testing.T) {
 	if err != nil {
 		t.Errorf("RunFinished error = %v, want nil", err)
 	}
-	if res.Refreshed != 2 || res.Failed != 1 || res.Due != 2 || res.Selected != 2 {
-		t.Errorf("RunFinished result = %+v, want 2 refreshed, 1 failed, 2 due, 2 selected", res)
+	if res.Refreshed != 2 || res.Failed != 1 || res.Due != 3 || res.Selected != 2 {
+		t.Errorf("RunFinished result = %+v, want 2 refreshed, 1 failed, 3 due, 2 selected", res)
 	}
+	if want := []Counts{{Refreshed: 1}, {Refreshed: 2, Failed: 1}}; !reflect.DeepEqual(p.counts, want) {
+		t.Errorf("ItemDone counts = %+v, want %+v", p.counts, want)
+	}
+}
+
+// The counts of each ItemDone call are the counts that the run row stores:
+// a sent request counts also when it fails or Plex answers 404, and a
+// handled TMDB failure counts at the next ItemDone.
+func TestProgressCountsEqualStoredRun(t *testing.T) {
+	t.Run("failed refresh", func(t *testing.T) {
+		fp := newFakePlex(moviesLib)
+		fp.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
+		fp.refreshErrs["101"] = errServer
+		f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+		p := withProgress(f)
+
+		f.run(t0)
+
+		p.wantStoredCounts(t, f, Counts{Refreshed: 1, Failed: 1})
+	})
+	t.Run("refresh not found", func(t *testing.T) {
+		fp := newFakePlex(moviesLib)
+		fp.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
+		fp.refreshErrs["101"] = errNotFound
+		f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+		p := withProgress(f)
+
+		f.run(t0)
+
+		p.wantStoredCounts(t, f, Counts{Refreshed: 1})
+	})
+	t.Run("TMDB failure", func(t *testing.T) {
+		fp := newFakePlex(showsLib)
+		ft := &fakeTMDB{errs: map[string]error{"tvdb 5 true": errors.New("GET /3/find/5: 500 Internal Server Error")}}
+		f := newTMDBFixture(t, fp, ft, "tvdb-5")
+		p := withProgress(f)
+
+		f.run(t0)
+
+		wantProgress(t, p.itemCalls(), "ItemStarted home 201 Title 201", "ItemDone home 201 refresh")
+		p.wantStoredCounts(t, f, Counts{Refreshed: 1, Failed: 1})
+	})
+	t.Run("match", func(t *testing.T) {
+		f, _ := matchFixture(t)
+		p := withProgress(f)
+
+		f.run(t0)
+
+		p.wantStoredCounts(t, f, Counts{Matched: 1})
+	})
 }
 
 func TestProgressReportsEmptyBatch(t *testing.T) {

@@ -32,15 +32,16 @@ func TestStatusTracksRun(t *testing.T) {
 	st.Batch("two", 8, 12)
 	st.ItemStarted("two", "1", "Alien")
 	inWork := st.Snapshot()
-	st.ItemDone("two", "1", "refresh")
-	st.ItemDone("two", "2", "match")
-	st.ItemDone("two", "3", "tmdb-match")
-	st.ItemDone("two", "4", "refresh-failed")
-	st.ItemDone("two", "5", "search-failed")
-	st.ItemDone("two", "6", refresher.OutcomeGone)
-	st.ItemStarted("two", "7", "Brazil")
-	st.ItemDone("two", "7", refresher.OutcomeDryRun)
-	st.ItemDone("unknown", "8", "refresh")
+	// The counts come from the refresher and are not derived from the
+	// outcome: a failed refresh and a 404 answer count as sent refreshes.
+	st.ItemDone("two", "1", "refresh", refresher.Counts{Refreshed: 1})
+	st.ItemDone("two", "2", "match", refresher.Counts{Refreshed: 1, Matched: 1})
+	st.ItemDone("two", "3", "refresh-failed", refresher.Counts{Refreshed: 2, Matched: 1, Failed: 1})
+	st.ItemDone("two", "4", "search-failed", refresher.Counts{Refreshed: 2, Matched: 1, Failed: 2})
+	st.ItemDone("two", "5", refresher.OutcomeGone, refresher.Counts{Refreshed: 3, Matched: 1, Failed: 2})
+	st.ItemStarted("two", "6", "Brazil")
+	st.ItemDone("two", "6", refresher.OutcomeDryRun, refresher.Counts{Refreshed: 3, Matched: 1, Failed: 2})
+	st.ItemDone("unknown", "7", "refresh", refresher.Counts{Refreshed: 9})
 
 	got := st.Snapshot()
 	want := RunProgress{
@@ -49,9 +50,9 @@ func TestStatusTracksRun(t *testing.T) {
 		Library:       "Shows",
 		Selected:      8,
 		Due:           12,
-		Done:          7,
-		Refreshed:     1,
-		Matched:       2,
+		Done:          6,
+		Refreshed:     3,
+		Matched:       1,
 		Failed:        2,
 	}
 	if got.Servers[0].Run != nil {
@@ -156,7 +157,7 @@ func TestStatusNotifyNeverBlocks(t *testing.T) {
 	go func() {
 		defer close(done)
 		for range 10000 {
-			st.ItemDone("a", "1", "refresh")
+			st.ItemDone("a", "1", "refresh", refresher.Counts{Refreshed: 1})
 		}
 	}()
 	select {

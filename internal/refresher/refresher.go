@@ -332,6 +332,11 @@ func (r *Refresher) finishRun(ctx context.Context, run *serverRun, id int64, err
 	return fmt.Errorf("server %s: %w", run.server.Name, err)
 }
 
+// counts returns the request counts of the run so far.
+func (run *serverRun) counts() Counts {
+	return Counts{Refreshed: run.refreshes, Matched: run.matches, Failed: run.failures}
+}
+
 // result returns the end of the run at finishedAt: canceled, failed with
 // err, or else finished.
 func (run *serverRun) result(finishedAt time.Time, canceled bool, err error) store.RunResult {
