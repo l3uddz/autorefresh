@@ -638,7 +638,7 @@ The image declares port `7380`. Nothing listens on it until you set
 
 | Path | Content |
 | --- | --- |
-| `api/status` | The live status: the health of each server and TMDB, and the progress of each run |
+| `api/status` | The live status: the health of each server and TMDB, and the progress of each run. `boot` names the process and `seq` counts its changes, so a client can order snapshots |
 | `api/events` | A stream of server-sent events with the live status after each change |
 | `api/servers` | The configured servers, their libraries, and the ignored reasons |
 | `api/items` | One page of the items of a tab, `attention`, `fixed`, or `stopped`, with the count of each tab |
