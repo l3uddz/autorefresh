@@ -12,30 +12,43 @@ import (
 	"github.com/l3uddz/autorefresh/internal/tmdb"
 )
 
+// healthRecorder receives the result of each start check.
+type healthRecorder interface {
+	ServerChecked(server string, err error)
+	TMDBChecked(err error)
+}
+
 // checkTokens checks each Plex server and, if set, TMDB at the same time,
 // so a wrong token or URL shows at the start and a slow Plex server does not
 // delay the TMDB check. It only logs, because a service can still be starting.
-func checkTokens(ctx context.Context, servers []refresher.Server, tmdbClient interface{ Check(context.Context) error }) {
+// If rec is not nil, it also gets each result. A check that ends because ctx
+// ended shows nothing, so it is neither logged nor recorded.
+func checkTokens(ctx context.Context, servers []refresher.Server, tmdbClient interface{ Check(context.Context) error }, rec healthRecorder) {
 	if ctx.Err() != nil {
 		return
 	}
 	var wg sync.WaitGroup
 	for _, srv := range servers {
-		wg.Go(func() { checkServer(ctx, srv) })
+		wg.Go(func() { checkServer(ctx, srv, rec) })
 	}
 	if tmdbClient != nil {
-		wg.Go(func() { checkTMDB(ctx, tmdbClient) })
+		wg.Go(func() { checkTMDB(ctx, tmdbClient, rec) })
 	}
 	wg.Wait()
 }
 
-func checkServer(ctx context.Context, srv refresher.Server) {
+func checkServer(ctx context.Context, srv refresher.Server, rec healthRecorder) {
 	if ctx.Err() != nil {
 		return
 	}
 	libraries, err := srv.Plex.Libraries(ctx)
+	if ctx.Err() != nil {
+		return
+	}
+	if rec != nil {
+		rec.ServerChecked(srv.Name, err)
+	}
 	switch {
-	case ctx.Err() != nil:
 	case err == nil:
 		log.Info().Str("server", srv.Name).Int("libraries", len(libraries)).Msg("Plex server accepted the token")
 	case errors.Is(err, plex.ErrUnauthorized):
@@ -47,13 +60,18 @@ func checkServer(ctx context.Context, srv refresher.Server) {
 
 // checkTMDB checks the TMDB token once, so a wrong token shows at the start.
 // It only logs, because TMDB can be down for a short time.
-func checkTMDB(ctx context.Context, client interface{ Check(context.Context) error }) {
+func checkTMDB(ctx context.Context, client interface{ Check(context.Context) error }, rec healthRecorder) {
 	if ctx.Err() != nil {
 		return
 	}
 	err := client.Check(ctx)
+	if ctx.Err() != nil {
+		return
+	}
+	if rec != nil {
+		rec.TMDBChecked(err)
+	}
 	switch {
-	case ctx.Err() != nil:
 	case err == nil:
 		log.Info().Msg("TMDB accepted the token")
 	case errors.Is(err, tmdb.ErrUnauthorized):

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -77,7 +78,7 @@ func TestCheckServersLogsEachResult(t *testing.T) {
 		checkTarget(t, "bad-token", http.StatusUnauthorized),
 		checkTarget(t, "down", http.StatusServiceUnavailable),
 		closed,
-	}, nil)
+	}, nil, nil)
 
 	want := map[string]bool{
 		"info Plex server accepted the token ok":         true,
@@ -95,7 +96,7 @@ func TestCheckServersLogsNothingWhenCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	checkTokens(ctx, []refresher.Server{checkTarget(t, "ok", http.StatusOK)}, nil)
+	checkTokens(ctx, []refresher.Server{checkTarget(t, "ok", http.StatusOK)}, nil, nil)
 
 	if got := logEvents(t, buf); len(got) != 0 {
 		t.Errorf("logged %v, want nothing", got)
@@ -123,7 +124,7 @@ func TestCheckTokensRunsTMDBInParallel(t *testing.T) {
 	checkTokens(context.Background(), []refresher.Server{target}, checkerFunc(func(context.Context) error {
 		close(tmdbDone)
 		return nil
-	}))
+	}), nil)
 }
 
 // checkerFunc is a TMDB token check.
@@ -144,7 +145,7 @@ func TestCheckTMDBLogsResult(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.msg, func(t *testing.T) {
 			buf := captureLog(t)
-			checkTMDB(context.Background(), checkerFunc(func(context.Context) error { return tt.err }))
+			checkTMDB(context.Background(), checkerFunc(func(context.Context) error { return tt.err }), nil)
 
 			var ev map[string]any
 			if err := json.Unmarshal(buf.Bytes(), &ev); err != nil {
@@ -166,12 +167,85 @@ func TestCheckTMDBLogsNothingWhenCanceled(t *testing.T) {
 	checkTokens(ctx, nil, checkerFunc(func(ctx context.Context) error {
 		called = true
 		return ctx.Err()
-	}))
+	}), nil)
 
 	if called {
 		t.Error("TMDB checker was invoked after context cancellation")
 	}
 	if buf.Len() != 0 {
 		t.Errorf("logged %s, want nothing", buf)
+	}
+}
+
+// healthLog records the health checks that checkTokens reports.
+type healthLog struct {
+	mu      sync.Mutex
+	servers map[string]error
+	tmdb    []error
+}
+
+func newHealthLog() *healthLog { return &healthLog{servers: map[string]error{}} }
+
+func (h *healthLog) ServerChecked(server string, err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.servers[server] = err
+}
+
+func (h *healthLog) TMDBChecked(err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.tmdb = append(h.tmdb, err)
+}
+
+func TestCheckTokensRecordsHealth(t *testing.T) {
+	captureLog(t)
+	rec := newHealthLog()
+	tmdbErr := errors.New("GET /3/authentication: 503 Service Unavailable")
+
+	checkTokens(context.Background(), []refresher.Server{
+		checkTarget(t, "ok", http.StatusOK),
+		checkTarget(t, "bad-token", http.StatusUnauthorized),
+		checkTarget(t, "down", http.StatusServiceUnavailable),
+	}, checkerFunc(func(context.Context) error { return tmdbErr }), rec)
+
+	if len(rec.servers) != 3 {
+		t.Fatalf("recorded servers %v, want 3", rec.servers)
+	}
+	if err := rec.servers["ok"]; err != nil {
+		t.Errorf("ok = %v, want nil", err)
+	}
+	if err := rec.servers["bad-token"]; !errors.Is(err, plex.ErrUnauthorized) {
+		t.Errorf("bad-token = %v, want ErrUnauthorized", err)
+	}
+	if err := rec.servers["down"]; err == nil || errors.Is(err, plex.ErrUnauthorized) {
+		t.Errorf("down = %v, want an unavailable error", err)
+	}
+	if len(rec.tmdb) != 1 || rec.tmdb[0] != tmdbErr {
+		t.Errorf("TMDB = %v, want [%v]", rec.tmdb, tmdbErr)
+	}
+}
+
+// A check that ends because ctx ended shows nothing about the health.
+func TestCheckTokensRecordsNothingWhenCanceled(t *testing.T) {
+	captureLog(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		cancel()
+		w.Write([]byte(sectionsBody))
+	}))
+	t.Cleanup(srv.Close)
+	rec := newHealthLog()
+
+	checkTokens(ctx, []refresher.Server{
+		{Name: "canceled", Plex: plex.New("canceled", mustURL(t, srv.URL), "token", time.Second)},
+	}, checkerFunc(func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}), rec)
+
+	if len(rec.servers) != 0 || len(rec.tmdb) != 0 {
+		t.Errorf("recorded servers %v and TMDB %v, want nothing", rec.servers, rec.tmdb)
 	}
 }
