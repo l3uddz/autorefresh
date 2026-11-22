@@ -233,4 +233,9 @@ func TestStatusNextRun(t *testing.T) {
 	if again := st.Snapshot(); again.Seq != after.Seq {
 		t.Fatalf("seq after the same next run = %d, want %d", again.Seq, after.Seq)
 	}
+	// A late callback of an earlier tick never moves the time back.
+	st.SetNextRun(next.Add(-time.Hour))
+	if late := st.Snapshot(); !late.NextRun.Equal(next) || late.Seq != after.Seq {
+		t.Fatalf("after an older time: next %v seq %d, want %v and %d", late.NextRun, late.Seq, next, after.Seq)
+	}
 }

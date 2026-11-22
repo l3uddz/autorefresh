@@ -110,12 +110,14 @@ func NewStatus(servers []string, tmdb bool) *Status {
 
 // SetNextRun records the next time of the run scheduler. The scheduler
 // calls it when it starts and at each of its times, also when a busy run
-// skips that time, so the next run on screen never stays in the past. A new
-// time is a change of the status.
+// skips that time, so the next run on screen never stays in the past. The
+// callbacks of two ticks can arrive out of order, and the time of a
+// scheduler only moves forward, so a time that is not after the recorded
+// one is ignored. A new time is a change of the status.
 func (s *Status) SetNextRun(next time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if next.Equal(s.nextRun) {
+	if !next.After(s.nextRun) {
 		return
 	}
 	s.nextRun = next
