@@ -274,8 +274,8 @@ that TMDB translated, for example `tvdb-81189`.
 
 ### History
 
-Autorefresh keeps a history in the database, for a dashboard that will show
-it. The dashboard does not exist yet. The history has these records:
+Autorefresh keeps a history in the database. The API of the
+[dashboard](#dashboard) shows it. The history has these records:
 
 - An event for each refresh or match request, with the time, the action, and
   the result. A failed request is an event too, with its error. Each event keeps the title, year, path, and images of the item, so it stays
@@ -328,6 +328,11 @@ ignore-reasons: []            # reasons that never cause a refresh, for example 
 tmdb-token: ""                # optional; the TMDB API Read Access Token for the fix match fallback
 history-retention: 720h       # how long the dashboard history is kept
 
+ui:                           # optional; the dashboard, see "Dashboard"
+  listen: ":7380"             # host:port; empty or omitted for no dashboard
+  username: ""                # optional; set both for HTTP Basic auth
+  password: ""
+
 plex:
   - name: main                    # label for logs and the database
     url: https://plex.example.com
@@ -351,6 +356,9 @@ plex:
 | `ignore-reasons` | no | none |
 | `tmdb-token` | no | none |
 | `history-retention` | no | `720h` |
+| `ui.listen` | no | none, so no dashboard |
+| `ui.username` | no | none |
+| `ui.password` | no | none |
 | `plex` | yes, at least one server | none |
 
 `schedule` and `cache-refresh` are cron expressions with 5 fields, or
@@ -365,6 +373,9 @@ Durations use Go units such as `h`, `m`, and `s`, so write 7 days as
 `max-refreshes-per-run` must be 0 or more, and 0 means no limit.
 `history-retention` must be positive. An unknown
 name in `ignore-reasons` is an error. These keys apply to all servers.
+
+The `ui` keys configure the dashboard. [Dashboard](#dashboard) gives their
+rules.
 
 Each entry in `plex` is one Plex server:
 
@@ -431,6 +442,10 @@ If autorefresh gets SIGINT or SIGTERM, it stops the schedule and cancels the
 busy run. The run stops before its next request to Plex. Autorefresh then
 closes the database and exits.
 
+If the dashboard runs, autorefresh stops it first, and then the schedule.
+The dashboard can take up to 10 seconds to stop, and the busy run goes on
+during that time. A second SIGINT or SIGTERM ends autorefresh at once.
+
 Without `--once`, autorefresh lists the libraries of each Plex server once
 at the start, before the first run. A wrong token or URL then
 shows at once:
@@ -480,6 +495,107 @@ for it. Run `--dry-run` only to check what a run will do.
 ```sh
 autorefresh --once --dry-run
 ```
+
+## Dashboard
+
+Autorefresh can serve a dashboard over HTTP from the same process. The
+dashboard has a JSON API under `api/`. The API serves the live status of
+each run, the incomplete items, the fixed items, and the history of each
+item and each run.
+
+The dashboard page is a placeholder for now. The frontend comes in a later
+release. The API already works.
+
+### Dashboard configuration
+
+```yaml
+ui:
+  listen: ":7380"
+  username: admin
+  password: change-me
+```
+
+- `listen` is the address of the dashboard, as `host:port`. If `listen`
+  is empty or the `ui` section is missing, autorefresh starts no dashboard.
+  There is no default port. This README uses `7380`. `:7380` listens on
+  each network interface. `127.0.0.1:7380` listens only on the local
+  machine. Use it on a host without Docker, behind a reverse proxy on the
+  same machine.
+- `username` and `password` turn on HTTP Basic auth for each request: the
+  page, the API, the event stream, and the images. Set both, or set neither. The username must not
+  contain `:` or a control character. The password must not contain a
+  control character.
+
+If autorefresh cannot listen on the address, for example because another
+program uses the port, it stops at the start with a `Failed starting UI
+listener` error. It sends no request to Plex before that.
+
+With `--once` or `--dry-run`, autorefresh starts no dashboard and logs `UI
+is off with --once or --dry-run`. A dry run can then run beside the
+service without a conflict on the port.
+
+### Access and security
+
+Without a username and password, the dashboard has no authentication.
+Autorefresh then logs a warning at the start. Let only an authenticating
+reverse proxy or a trusted network reach the port.
+
+Basic auth sends the password in each request. Over plain HTTP, it crosses
+the network in clear text. If the connection leaves a trusted network, put
+a reverse proxy with HTTPS in front of the dashboard.
+
+The dashboard rejects a change request from another site. The API has no
+change request yet. If a reverse proxy serves the dashboard over plain
+HTTP, the proxy must pass the original `Host` header. Otherwise a change
+request from the dashboard looks like a request from another site, and the
+dashboard rejects it.
+
+Each link of the dashboard is relative, so a reverse proxy can serve the
+dashboard at a sub-path, such as `/autorefresh/`.
+
+The dashboard never sends the Plex token to the browser. It loads posters
+and art from Plex for the browser. In stored error texts, it replaces each
+Plex token, Plex address, Plex URL path, the TMDB token, and the dashboard
+password with `<redacted>`.
+
+### Dashboard in Docker
+
+Set `listen: ":7380"` in `config.yml`, and publish the port:
+
+```sh
+docker run -d --name autorefresh \
+  --user 1000:1000 \
+  -e TZ=Europe/London \
+  -p 7380:7380 \
+  -v /opt/autorefresh:/config \
+  l3uddz/autorefresh:main
+```
+
+In compose, add the port to the service:
+
+```yaml
+    ports:
+      - 7380:7380
+```
+
+The image declares port `7380`. Nothing listens on it until you set
+`ui.listen`.
+
+### API
+
+| Path | Content |
+| --- | --- |
+| `api/status` | The live status: the health of each server and TMDB, and the progress of each run |
+| `api/events` | A stream of server-sent events with the live status after each change |
+| `api/servers` | The configured servers, their libraries, and the ignored reasons |
+| `api/items` | One page of the items of a tab, `attention`, `fixed`, or `stopped`, with the count of each tab |
+| `api/item` | One item and its history, newest event first |
+| `api/item/live` | What Plex tells about one item now |
+| `api/items/thumb`, `api/items/art` | The poster and the background art of one item |
+| `api/runs` | One page of the runs, newest first |
+
+The API names a server by its position in the `plex` list, from 0, in the
+`srv` query parameter.
 
 ## Logging
 
