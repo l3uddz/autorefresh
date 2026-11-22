@@ -45,6 +45,7 @@ type PlexServer struct {
 
 // Options configures a Server.
 type Options struct {
+	Actions            Actions
 	Username, Password string // both empty: no auth
 	// Status is the live status that /api/status and /api/events show.
 	// Without one, the server shows an empty status.
@@ -68,6 +69,7 @@ type Options struct {
 
 // Server is the HTTP server of the dashboard.
 type Server struct {
+	actions Actions
 	mux     *http.ServeMux
 	handler http.Handler
 	srv     *http.Server
@@ -128,6 +130,7 @@ func New(opts Options) *Server {
 	}
 	s := &Server{
 		mux:          http.NewServeMux(),
+		actions:      opts.Actions,
 		status:       status,
 		servers:      opts.Servers,
 		srvIndex:     srvIndex,
@@ -146,19 +149,27 @@ func New(opts Options) *Server {
 		forceWait:    defaultForceWait,
 	}
 	s.mux.HandleFunc("GET /{$}", servePlaceholder)
-	s.mux.HandleFunc("GET /api/status", s.serveStatus)
-	s.mux.HandleFunc("GET /api/events", s.serveEvents)
-	s.mux.HandleFunc("HEAD /api/events", serveEventsHead)
-	s.mux.HandleFunc("GET /api/servers", s.serveServers)
-	s.mux.HandleFunc("GET /api/items", s.serveItems)
-	s.mux.HandleFunc("GET /api/item", s.serveItem)
-	s.mux.HandleFunc("GET /api/item/live", s.serveItemLive)
-	s.mux.HandleFunc("GET /api/items/thumb", s.serveThumb)
-	s.mux.HandleFunc("GET /api/items/art", s.serveArt)
-	s.mux.HandleFunc("GET /api/runs", s.serveRuns)
-	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
+	s.api("GET /api/status", s.serveStatus)
+	s.api("GET /api/events", s.serveEvents)
+	s.api("HEAD /api/events", serveEventsHead)
+	s.api("GET /api/servers", s.serveServers)
+	s.api("GET /api/items", s.serveItems)
+	s.api("GET /api/item", s.serveItem)
+	s.api("GET /api/item/live", s.serveItemLive)
+	s.api("GET /api/items/thumb", s.serveThumb)
+	s.api("GET /api/items/art", s.serveArt)
+	s.api("GET /api/runs", s.serveRuns)
+	s.api("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})
+
+	s.api("POST /api/item/refresh", s.serveRefresh)
+	s.api("POST /api/item/match", s.serveMatch)
+	s.api("POST /api/item/check", s.serveCheck)
+	s.api("POST /api/item/stop", s.serveStop)
+	s.api("POST /api/item/resume", s.serveResume)
+	s.api("GET /api/item/matches", s.serveMatches)
+	s.api("POST /api/item/episode-check", s.serveEpisodeCheck)
 
 	s.handler = securityHeaders(s.admit(crossOriginProtection(basicAuth(opts.Username, opts.Password, s.mux))))
 	s.srv = &http.Server{

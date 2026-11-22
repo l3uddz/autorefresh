@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"github.com/rs/zerolog/log"
 	"net/http"
 	"net/url"
 	"time"
@@ -131,6 +132,10 @@ func (s *Server) serveItem(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.writeItemDetail(w, r, srv, it)
+}
+
+func (s *Server) writeItemDetail(w http.ResponseWriter, r *http.Request, srv int, it store.ListItem) {
 	events, err := s.store.TimelineContext(r.Context(), it.Server, it.RatingKey)
 	if err != nil {
 		writeStoreError(w, r, err)
@@ -202,7 +207,7 @@ func (s *Server) serveItemLive(w http.ResponseWriter, r *http.Request) {
 	d, err := s.servers[srv].Plex.ItemDetails(ctx, it.RatingKey)
 	cancel()
 	if err != nil {
-		writePlexError(w, err)
+		s.writePlexError(w, r, err)
 		return
 	}
 	path, err := s.livePath(r.Context(), it, d.Paths)
@@ -242,7 +247,12 @@ func (s *Server) livePath(ctx context.Context, it store.ListItem, paths plex.Pat
 
 // writePlexError answers a failed Plex request with a fixed message, so no
 // Plex text reaches the browser.
-func writePlexError(w http.ResponseWriter, err error) {
+func (s *Server) writePlexError(w http.ResponseWriter, r *http.Request, err error) {
+	if r.Context().Err() != nil {
+		log.Debug().Str("error", s.redact(err.Error())).Str("path", r.URL.Path).Msg("Plex request failed")
+		return
+	}
+	log.Warn().Str("error", s.redact(err.Error())).Str("path", r.URL.Path).Msg("Plex request failed")
 	switch {
 	case errors.Is(err, plex.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not found in Plex")
