@@ -551,9 +551,10 @@ address keeps the choice, so a link or a reload shows the same server.
   count on a server card opens the items of that server. The header shows
   when the next scheduled run starts, for example "Next run in 33m ·
   23:00". The Runs page shows the same line. Each server card shows when
-  the next full cache refresh is due, from `cache-refresh` and the last
-  full read of its libraries. The first run at or after that time reads
-  the libraries in full.
+  the next full cache refresh of one of its libraries is due. Each library
+  has its own due time, the next `cache-refresh` time after its last full
+  read, and the card shows the earliest one. The first run at or after a
+  due time reads that library in full.
 - **Items** lists the items in three tabs: **Attention** (items that
   autorefresh still tries to fix), **Fixed**, and **Stopped**. You can
   search by title or path and filter by library and type. Attention and
@@ -590,10 +591,11 @@ address keeps the choice, so a link or a reload shows the same server.
   first: the start, the duration, the server, the source (schedule or
   manual), the kind, the status, and the items read,
   refreshed, matched, failed, fixed, and due, with the error of a failed
-  run. The kind is **Full run** when the run read every library in full,
-  **Incremental run** when it read only the changes since the last read,
-  **Full and incremental run** when it did both, and **Bulk refresh** for
-  a bulk refresh. Older runs, recorded before autorefresh counted its full
+  run. The kind counts the library reads that the run completed: **Full
+  run** when each was a full read, **Incremental run** when each read only
+  the changes since the last read, **Full and incremental run** when it
+  did both, and **Bulk refresh** for a bulk refresh. A run that failed or
+  was canceled counts only the reads that it completed. Older runs, recorded before autorefresh counted its full
   and incremental reads, show **Run**. A run that
   has not ended shows no duration. **Load more** reads the
   next page. The list updates when a run starts or ends. On a narrow
