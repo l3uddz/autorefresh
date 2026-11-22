@@ -551,8 +551,11 @@ func TestEventsFlushFailureEnds(t *testing.T)
 func TestEventsKeepaliveAfterLongIdle(t *testing.T)
 // writeTimeout 20 ms, keepalive 100 ms, over a real httptest server, with a 2 s overall
 // test deadline -> the first keepalive arrives, so an expired deadline from the first write
-// did not break the stream; the fake
-// writer test also checks that the deadline was cleared after each flush.
+// did not break the stream.
+func TestEventsClearsDeadlineAfterFlush(t *testing.T)
+// a fake writer whose Write, SetWriteDeadline, and FlushError succeed and record their calls;
+// cancel the request context after the first snapshot -> the calls are SetWriteDeadline(non-zero),
+// Write, FlushError, SetWriteDeadline(time.Time{}), in that order.
 ```
 
 - [ ] **Step 2: Run** `go test ./internal/web -run 'Status|Events|Stop' -v` — Expected: build failure.
