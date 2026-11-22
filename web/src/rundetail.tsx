@@ -49,14 +49,17 @@ function RunDetails({ id, isMulti, srv, onClose }: Props & { id: number }) {
     queryKey: ['runs', 'detail', id],
     queryFn: ({ signal }) => api<RunDetail>(`runs/detail?${new URLSearchParams({ id: String(id) })}`, { signal }),
     retry: (count, error) => !(error instanceof ApiError && error.status === 404) && count < 1,
-    refetchInterval: query => (query.state.data?.run.status === 'running' ? runningInterval : false),
+    refetchInterval: query => (query.state.status === 'success' && query.state.data?.run.status === 'running' ? runningInterval : false),
   });
   const isGone = detail.error instanceof ApiError && detail.error.status === 404;
+  // A run that retention removed while the drawer was open is gone: its
+  // last details are not shown.
+  const data = isGone ? undefined : detail.data;
   return (
     <VStack gap={6} padding={6}>
       <HStack gap={3} vAlign="start">
         <StackItem size="fill">
-          {detail.data ? <RunHead run={detail.data.run} isMulti={isMulti} /> : <Heading level={2} accessibilityLevel={2}>Run</Heading>}
+          {data ? <RunHead run={data.run} isMulti={isMulti} /> : <Heading level={2} accessibilityLevel={2}>Run</Heading>}
         </StackItem>
         <IconButton label="Close details" icon={<Icon icon={XMarkIcon} size="sm" />} variant="secondary" onClick={onClose} />
       </HStack>
@@ -76,7 +79,7 @@ function RunDetails({ id, isMulti, srv, onClose }: Props & { id: number }) {
           endContent={<Button label="Try again" onClick={() => void detail.refetch()} />}
         />
       )}
-      {detail.data && <RunBody detail={detail.data} srv={srv} />}
+      {data && <RunBody detail={data} srv={srv} />}
     </VStack>
   );
 }
