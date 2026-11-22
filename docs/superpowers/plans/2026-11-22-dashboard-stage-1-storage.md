@@ -144,7 +144,7 @@ func TestSafeRemoteImage(t *testing.T)
 //    "https://h/x.jpg?X-Plex-Token=abc"; "https://h/x.jpg?apitoken=abc"; "https://h/x.jpg?a=%zz";
 //    "https://h/x.jpg#f"; "https://h/x.jpg#"; "/relative.jpg"; ""
 // TestItemPathsReadsLocationsAndFiles keeps its cases, asserting All(), and also asserts Locations and Files:
-//   item_show.json -> Locations [folder], Files empty; a movie fixture -> Locations empty, Files [file]
+//   item_show.json -> Locations == want, Files empty; item_movie.json -> Locations empty, Files == want (all three parts, in order)
 ```
 
 Update `TestSearchMatchesDecodesCandidates` to expect `Candidate{GUID: "plex://movie/000000000000000000000001", Name: "Fixture Movie One", Year: 2020, Type: "movie", Summary: "A neutral summary.", Thumb: "https://metadata.example.invalid/thumb.jpg", Score: 98}`.
@@ -168,6 +168,7 @@ Update `TestSearchMatchesDecodesCandidates` to expect `Candidate{GUID: "plex://m
 - Produces: `type LibraryInfo struct{ Section, Title, Type, Agent, Language string }`; `func (s *Store) SaveLibraries(server string, libs []LibraryInfo) error` — upserts the four metadata columns, inserting missing rows with null read times and never changing read times.
 - Produces: `func (s *Store) SetPath(server, ratingKey, path string) error` — sets `item.path` of an existing row; a missing row is not an error.
 - `ApplyRead`: inserts and present-row updates write `thumb` and `art` from the read; `path` only when the read's value is not empty (`path = CASE WHEN ? = '' THEN path ELSE ? END`). A read never writes `stopped_at` or any `last_*` column.
+- Produces: `Read.Folders map[string]string` (rating key -> series folder, staged by a full read's unseen-row check, Task 10). After the rows are written, `ApplyRead` runs `UPDATE item SET path = ? WHERE server = ? AND rating_key = ?` for each non-empty value in the same transaction, so it is saved only when the read commits, and a row the read deleted gets nothing.
 - `Due` and `CountIncomplete` add `AND stopped_at IS NULL`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -181,6 +182,7 @@ func TestDueAndCountSkipStoppedItems(t *testing.T)            // two due rows, o
 func TestMigratedRowIsStillDue(t *testing.T)                  // openAtVersion(t, 5) row (Task 2) -> Due returns it with Thumb "", StoppedAt zero, LastOutcome ""
 func TestSaveLibrariesUpsertsMetadataKeepsReadTimes(t *testing.T) // ApplyRead sets read times; SaveLibraries twice with a new title -> new title, agent, language; read times unchanged
 func TestSetPathIgnoresMissingRow(t *testing.T)
+func TestApplyReadWritesStagedFolders(t *testing.T)           // row kept by the read + Folders entry -> path set; Folders entry for a gone key -> no row, no error
 ```
 
 - [ ] **Step 2: Run** `go test ./internal/store -v` — Expected: new tests FAIL.
@@ -480,17 +482,18 @@ func TestDryRunPrunesNothing(t *testing.T)
 **Files:**
 - Modify: `internal/refresher/refresher.go` (`Store` interface: add `RecordRequest`, `RecordGone`, `SaveLibraries`, `SetPath`; remove `RecordAttempt`, `Delete`)
 - Modify: `internal/refresher/refresh.go` (`refreshItem`, `itemFailed`, `countFailure`; `itemPaths` becomes a `*Refresher` method)
-- Modify: `internal/refresher/read.go` (`readLibraries`, `storeItem`)
+- Modify: `internal/refresher/read.go` (`readLibraries`, `storeItem`, `readLibrary`, `goneKeys`)
 - Modify: `internal/store/item.go` (delete `RecordAttempt` and `Delete`)
 - Port every remaining caller. The list below is a start, not the check: before deleting, `grep -rn 'RecordAttempt\|\.Delete(' internal cmd` must show only the definitions. Known callers: `internal/store/item_test.go` (`refresh` helper; every `TestDue*` test that calls `RecordAttempt`; `TestRecordAttempt*`, converted to `RecordRequest` as the one set of attempt-counting tests; `TestDelete`, converted to `RecordGone`; `TestApplyReadReturnsActionsOfFixedRows`; and the `Due` doc comment), `internal/store/store_test.go` (`TestMethodsReportDatabaseFailure` entries), `internal/store/tmdb_test.go` (`TestTMDBIDGoesWithItem`: use `RecordGone`), `internal/refresher/refresh_test.go` (`fixture.seed`), `internal/refresher/read_test.go` (`f.refreshed`, `TestCompleteItemLogsFixed`). Keep their assertions; timeline assertions in new tests account for events the seed writes.
-- Test: `internal/refresher/history_test.go`
+- Test: `internal/refresher/history_test.go` (also `TestFullReadSavesFolderOfUnseenSeries`: an unseen series row answers with a Location -> path saved; the same with a later read failure -> path unchanged)
 
 **Interfaces:**
 - `refreshItem` → on success `RecordRequest{Action: action, Accepted: true, Source: store.SourceAuto, Match: target(fm)}`. `target(fm *fixMatch) *store.MatchTarget` copies `cand.GUID`, `cand.Name`, `cand.Year`, `links`, `pathYear`, `tmdbYear`, `episodeCount`; nil when `fm` is nil.
 - `itemFailed(ctx, run, it, action, fm, err)`: a 404 calls `RecordGone` (not in dry run); other failures call `countFailure(ctx, run, it, action, fm, err)`, which records `RecordRequest{Action: action, Accepted: false, Source: store.SourceAuto, Error: err.Error(), Match: target(fm)}`. Every refresher call of `RecordRequest` sets `Source: store.SourceAuto`; `RecordRequest` returns an error for an empty `Source` (Task 5), so a missed one fails a test instead of storing an empty source. The attempt counting, stop rules, and log lines stay as today.
 - `storeItem` sets `Thumb: plex.ItemImagePath(it.RatingKey, it.Thumb)`, `Art: plex.ItemImagePath(it.RatingKey, it.Art)`, and for movies `Path: folderOf(it.Files)`. `folderOf(files []string) string` returns the first file up to its last `/` or `\`, or `""`.
-- `(r *Refresher) itemPaths(ctx, run, it)` keeps returning `[]string` (`p.All()`). After a successful `ItemPaths` of a series (`it.Type == plex.ShowLibrary`), when `len(p.Locations) > 0 && p.Locations[0] != ""` and not a dry run, it calls `SetPath` with `p.Locations[0]` (never a file from `p.Files`); a `SetPath` error returns wrapped with `errCache` so `itemFailed` treats it as a store error.
+- `(r *Refresher) itemPaths(ctx, run, it)` keeps returning `[]string` (`p.All()`). After a successful `ItemPaths` of a series (`it.Type == plex.ShowLibrary`), when `len(p.Locations) > 0 && p.Locations[0] != ""`, it calls `SetPath` with `p.Locations[0]` (never a file from `p.Files`; dry runs too, because the path is cache metadata like `SaveLibraries`); a `SetPath` error returns wrapped with `errCache` so `itemFailed` treats it as a store error.
 - `readLibraries` calls `SaveLibraries` with the selected libraries after `selectLibraries` (dry runs too: it is cache metadata, not history).
+- `goneKeys(...) (gone []string, folders map[string]string, err error)`: for an unseen row that `ItemPaths` answers, it stages `p.Locations[0]` when not empty; `readLibrary` puts it in `rd.Folders`, so `ApplyRead` saves it with the read (Task 4) and a failed read saves nothing.
 
 - [ ] **Step 1: Write the failing tests**
 
