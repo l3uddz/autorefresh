@@ -29,8 +29,15 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, errorJSON{Error: msg})
 }
 
-// writeStoreError logs a failed store read of r and answers 500.
+// writeStoreError logs a failed store read of r and answers 500. When the
+// context of r is done, the client left or the server stops: the read
+// failed for that reason and not in the store, so it logs at debug and
+// answers nothing.
 func writeStoreError(w http.ResponseWriter, r *http.Request, err error) {
+	if r.Context().Err() != nil {
+		log.Debug().Err(err).Str("path", r.URL.Path).Msg("API request failed")
+		return
+	}
 	log.Error().Err(err).Str("path", r.URL.Path).Msg("API request failed")
 	writeError(w, http.StatusInternalServerError, "internal error")
 }
