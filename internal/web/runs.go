@@ -155,3 +155,61 @@ func (s *Server) toRunJSON(run store.Run) runJSON {
 		Skipped:  run.Skipped,
 	}
 }
+
+// runDetailJSON is a run with its events and, for a bulk job, its items.
+type runDetailJSON struct {
+	Run    runJSON        `json:"run"`
+	Events []runEventJSON `json:"events"`
+	Items  []runItemJSON  `json:"items"`
+}
+
+// runEventJSON is an event of a run with the item that it names.
+type runEventJSON struct {
+	eventJSON
+	Key   string `json:"key"`
+	Title string `json:"title,omitempty"`
+	Year  int    `json:"year,omitempty"`
+	Type  string `json:"type,omitempty"`
+	Thumb string `json:"thumb,omitempty"`
+}
+
+// serveRunDetail answers GET /api/runs/detail with one run of a configured
+// server, its events, and its bulk items. It reads everything before it
+// writes the answer.
+func (s *Server) serveRunDetail(w http.ResponseWriter, r *http.Request) {
+	id, ok := runID(w, r)
+	if !ok {
+		return
+	}
+	run, found, err := s.store.Run(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, r, err)
+		return
+	}
+	srv, configured := s.srvIndex[run.Server]
+	if !found || !configured {
+		writeError(w, http.StatusNotFound, "no such run")
+		return
+	}
+	events, err := s.store.RunEvents(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, r, err)
+		return
+	}
+	items, err := s.store.RunItems(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, r, err)
+		return
+	}
+	out := runDetailJSON{Run: s.toRunJSON(run), Events: make([]runEventJSON, 0, len(events)), Items: make([]runItemJSON, 0, len(items))}
+	for _, e := range events {
+		out.Events = append(out.Events, runEventJSON{
+			eventJSON: s.toEventJSON(e), Key: e.RatingKey, Title: e.Title, Year: e.Year, Type: e.Type,
+			Thumb: imageURL("thumb", srv, e.RatingKey, e.Thumb),
+		})
+	}
+	for _, item := range items {
+		out.Items = append(out.Items, s.toRunItemJSON(item))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
