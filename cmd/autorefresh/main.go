@@ -135,6 +135,7 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 	var rec healthRecorder
 	if uiOn {
 		status = web.NewStatus(names, cfg.TMDBToken != "")
+		status.SetSchedule(cfg.RunSchedule.Next)
 		progress = status
 		rec = status
 		if lookup != nil {

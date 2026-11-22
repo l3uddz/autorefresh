@@ -213,3 +213,21 @@ func TestFinishedStatusRetainsRunIdentity(t *testing.T) {
 		t.Fatalf("finished status = %+v, last = %+v", got, got.Last)
 	}
 }
+
+func TestStatusNextRun(t *testing.T) {
+	at := time.Date(2026, 11, 22, 22, 14, 0, 0, time.UTC)
+	st := NewStatus([]string{"a"}, false)
+	st.now = func() time.Time { return at }
+	if snap := st.Snapshot(); !snap.NextRun.IsZero() {
+		t.Fatalf("next run without a schedule = %v", snap.NextRun)
+	}
+	raw, err := json.Marshal(st.Snapshot())
+	if err != nil || strings.Contains(string(raw), "nextRun") {
+		t.Fatalf("status JSON without a schedule = %s, %v", raw, err)
+	}
+
+	st.SetSchedule(func(t time.Time) time.Time { return t.Truncate(time.Hour).Add(time.Hour) })
+	if snap, want := st.Snapshot(), time.Date(2026, 11, 22, 23, 0, 0, 0, time.UTC); !snap.NextRun.Equal(want) {
+		t.Fatalf("next run = %v, want %v", snap.NextRun, want)
+	}
+}

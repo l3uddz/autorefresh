@@ -187,6 +187,8 @@ export interface Status {
   seq: number;
   servers: ServerStatus[];
   tmdb: 'off' | Health;
+  /** The next start of the run schedule, absent without a schedule. */
+  nextRun?: string;
 }
 
 export interface RunRecord {

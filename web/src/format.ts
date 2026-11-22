@@ -28,6 +28,16 @@ export function relative(value: string | undefined, now: number): string {
   return diff > 0 ? `in ${duration(diff)}` : `${duration(-diff)} ago`;
 }
 
+/** Returns when the next scheduled run starts, as "in 45m · 23:00", or
+ * "starting" once that time has come. A scheduled start that waits for a
+ * busy run stays "starting" until the status changes. */
+export function nextRunText(value: string | undefined, now: number): string | undefined {
+  if (!value) return undefined;
+  const diff = (Date.parse(value) - now) / 1000;
+  if (diff <= 0) return 'starting';
+  return `in ${duration(diff)} · ${new Date(value).toLocaleTimeString(undefined, { timeStyle: 'short' })}`;
+}
+
 /** Returns the time of value as a short local date and time. */
 export function dateTime(value?: string): string {
   if (!value) return '—';

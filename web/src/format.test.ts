@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { duration, fixedBy, lastAction, plural, queueState, relative, runDuration, typeName } from './format';
+import { duration, fixedBy, lastAction, nextRunText, plural, queueState, relative, runDuration, typeName } from './format';
 
 const now = Date.parse('2026-11-22T12:00:00Z');
 const at = (seconds: number) => new Date(now + seconds * 1000).toISOString();
@@ -56,5 +56,14 @@ describe('type names', () => {
     expect(typeName('show')).toBe('Series');
     expect(typeName('movie')).toBe('Movie');
     expect(typeName(undefined)).toBe('—');
+  });
+
+  it('describes the next scheduled run', () => {
+    expect(nextRunText(undefined, now)).toBeUndefined();
+    expect(nextRunText(at(-5), now)).toBe('starting');
+    expect(nextRunText(at(0), now)).toBe('starting');
+    const time = new Date(at(45 * 60)).toLocaleTimeString(undefined, { timeStyle: 'short' });
+    expect(nextRunText(at(45 * 60), now)).toBe(`in 45m · ${time}`);
+    expect(nextRunText(at(12), now)).toMatch(/^in 12s · /);
   });
 });

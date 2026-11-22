@@ -546,7 +546,9 @@ address keeps the choice, so a link or a reload shows the same server.
   items that were fixed recently and the recent runs. **Run now** starts a
   run. With several servers, it can start a run of one server or of all
   servers. A manual run or bulk refresh has a **Cancel** button. The item
-  count on a server card opens the items of that server.
+  count on a server card opens the items of that server. The header shows
+  when the next scheduled run starts, for example "Next run in 33m ·
+  23:00". The Runs page shows the same line.
 - **Items** lists the items in three tabs: **Attention** (items that
   autorefresh still tries to fix), **Fixed**, and **Stopped**. You can
   search by title or path and filter by library and type. Attention and
