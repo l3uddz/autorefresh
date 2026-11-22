@@ -125,3 +125,10 @@ func (s *Server) containsCredential(raw string) bool {
 	}
 	return false
 }
+
+type serverErrorWriter struct{ server *Server }
+
+func (w serverErrorWriter) Write(p []byte) (int, error) {
+	log.Warn().Str("error", w.server.redact(strings.TrimSpace(string(p)))).Msg("UI server error")
+	return len(p), nil
+}

@@ -106,7 +106,7 @@ func (f *fixture) startedRun(at time.Time) {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	if err := f.store.FinishRun(id, start, store.RunResult{FinishedAt: at, Status: store.RunFinished}); err != nil {
+	if _, err := f.store.FinishRun(id, start, store.RunResult{FinishedAt: at, Status: store.RunFinished}); err != nil {
 		f.t.Fatal(err)
 	}
 }
@@ -174,10 +174,10 @@ func (s *runStore) StartRun(r store.RunStart) (int64, error) {
 	return id, err
 }
 
-func (s *runStore) FinishRun(id int64, start store.RunStart, r store.RunResult) error {
+func (s *runStore) FinishRun(id int64, start store.RunStart, r store.RunResult) (bool, error) {
 	s.finishes++
 	if s.failFinish {
-		return errRun
+		return false, errRun
 	}
 	return s.Store.FinishRun(id, start, r)
 }

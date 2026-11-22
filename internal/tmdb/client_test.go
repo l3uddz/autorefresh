@@ -251,8 +251,8 @@ func TestRefusesCrossOriginRedirect(t *testing.T) {
 	})
 
 	err := c.Check(context.Background())
-	if err == nil {
-		t.Fatal("Check succeeded, want redirect error")
+	if err == nil || !strings.Contains(err.Error(), "redirect refused") {
+		t.Fatalf("Check error = %v, want redirect refused", err)
 	}
 	if other.Load() != 0 {
 		t.Errorf("other origin received %d requests, want 0", other.Load())
@@ -459,5 +459,23 @@ func TestYearErrors(t *testing.T) {
 			_, _, err := c.Year(context.Background(), "75367", tt.show)
 			checkError(t, err, tt.unauthorized)
 		})
+	}
+}
+
+func TestClientTimeoutPreservesDeadlineWithoutTransportDetails(t *testing.T) {
+	c := serve(t, func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})
+	c.http.Timeout = 50 * time.Millisecond
+	ctx := t.Context()
+	err := c.Check(ctx)
+	if ctx.Err() != nil {
+		t.Fatalf("caller context ended: %v", ctx.Err())
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context.DeadlineExceeded", err)
+	}
+	if strings.Contains(err.Error(), c.base.Host) || strings.Contains(err.Error(), token) {
+		t.Fatalf("timeout exposed transport details: %v", err)
 	}
 }

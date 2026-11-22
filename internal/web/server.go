@@ -4,6 +4,7 @@ package web
 import (
 	"context"
 	"errors"
+	stdlog "log"
 	"net"
 	"net/http"
 	"sync"
@@ -28,6 +29,7 @@ type Plex interface {
 
 // Store is the part of store.Store that the web server uses.
 type Store interface {
+	RunItems(context.Context, int64) ([]store.RunItem, error)
 	ListItems(ctx context.Context, q store.ListQuery) ([]store.ListItem, *store.Cursor, error)
 	CountItems(ctx context.Context, q store.ListQuery) (store.ListCounts, error)
 	Libraries(ctx context.Context, server string) ([]store.LibraryEntry, error)
@@ -45,6 +47,8 @@ type PlexServer struct {
 
 // Options configures a Server.
 type Options struct {
+	Jobs               Jobs
+	Actions            Actions
 	Username, Password string // both empty: no auth
 	// Status is the live status that /api/status and /api/events show.
 	// Without one, the server shows an empty status.
@@ -68,6 +72,8 @@ type Options struct {
 
 // Server is the HTTP server of the dashboard.
 type Server struct {
+	jobs    Jobs
+	actions Actions
 	mux     *http.ServeMux
 	handler http.Handler
 	srv     *http.Server
@@ -82,12 +88,14 @@ type Server struct {
 	// credentials are the values that no candidate poster URL may hold.
 	credentials []string
 	// liveTimeout bounds the Plex request of GET /api/item/live.
-	liveTimeout time.Duration
+	liveTimeout   time.Duration
+	actionTimeout time.Duration
 
 	// idMu guards identities, the cached machine identifier of each server
 	// ("": not read yet).
-	idMu       sync.Mutex
-	identities []string
+	idMu          sync.Mutex
+	identities    []string
+	identityTried []time.Time
 
 	// sseCtx ends the event streams. Stop cancels it first, so that
 	// Shutdown does not wait for open streams.
@@ -127,42 +135,62 @@ func New(opts Options) *Server {
 		srvIndex[ps.Name] = i
 	}
 	s := &Server{
-		mux:          http.NewServeMux(),
-		status:       status,
-		servers:      opts.Servers,
-		srvIndex:     srvIndex,
-		store:        opts.Store,
-		rules:        opts.Rules,
-		now:          time.Now,
-		secrets:      opts.Secrets,
-		credentials:  opts.Credentials,
-		liveTimeout:  defaultLiveTimeout,
-		identities:   make([]string, len(opts.Servers)),
-		sseCtx:       sseCtx,
-		cancelSSE:    cancelSSE,
-		writeTimeout: defaultWriteTimeout,
-		keepalive:    defaultKeepalive,
-		cancelBase:   cancelBase,
-		forceWait:    defaultForceWait,
+		mux:           http.NewServeMux(),
+		jobs:          opts.Jobs,
+		actions:       opts.Actions,
+		status:        status,
+		servers:       opts.Servers,
+		srvIndex:      srvIndex,
+		store:         opts.Store,
+		rules:         opts.Rules,
+		now:           time.Now,
+		secrets:       opts.Secrets,
+		credentials:   opts.Credentials,
+		liveTimeout:   defaultLiveTimeout,
+		actionTimeout: defaultActionTimeout,
+		identities:    make([]string, len(opts.Servers)),
+		identityTried: make([]time.Time, len(opts.Servers)),
+		sseCtx:        sseCtx,
+		cancelSSE:     cancelSSE,
+		writeTimeout:  defaultWriteTimeout,
+		keepalive:     defaultKeepalive,
+		cancelBase:    cancelBase,
+		forceWait:     defaultForceWait,
 	}
 	s.mux.HandleFunc("GET /{$}", servePlaceholder)
-	s.mux.HandleFunc("GET /api/status", s.serveStatus)
-	s.mux.HandleFunc("GET /api/events", s.serveEvents)
-	s.mux.HandleFunc("HEAD /api/events", serveEventsHead)
-	s.mux.HandleFunc("GET /api/servers", s.serveServers)
-	s.mux.HandleFunc("GET /api/items", s.serveItems)
-	s.mux.HandleFunc("GET /api/item", s.serveItem)
-	s.mux.HandleFunc("GET /api/item/live", s.serveItemLive)
-	s.mux.HandleFunc("GET /api/items/thumb", s.serveThumb)
-	s.mux.HandleFunc("GET /api/items/art", s.serveArt)
-	s.mux.HandleFunc("GET /api/runs", s.serveRuns)
-	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
+	s.api("GET /api/status", s.serveStatus)
+	s.api("GET /api/events", s.serveEvents)
+	s.api("HEAD /api/events", serveEventsHead)
+	s.api("GET /api/servers", s.serveServers)
+	s.api("GET /api/items", s.serveItems)
+	s.api("GET /api/item", s.serveItem)
+	s.api("GET /api/item/live", s.serveItemLive)
+	s.api("GET /api/items/thumb", s.serveThumb)
+	s.api("GET /api/items/art", s.serveArt)
+	s.api("GET /api/runs", s.serveRuns)
+	s.api("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})
+
+	s.api("POST /api/item/refresh", s.serveRefresh)
+	s.api("POST /api/item/match", s.serveMatch)
+	s.api("POST /api/item/check", s.serveCheck)
+	s.api("POST /api/item/stop", s.serveStop)
+	s.api("POST /api/item/resume", s.serveResume)
+	s.api("GET /api/item/matches", s.serveMatches)
+	s.api("POST /api/item/episode-check", s.serveEpisodeCheck)
+
+	s.api("POST /api/runs", s.serveRunNow)
+	s.api("POST /api/runs/cancel", s.serveCancelRun)
+	s.api("GET /api/runs/items", s.serveRunItems)
+	s.api("POST /api/items/refresh", s.serveBulkRefresh)
+	s.api("POST /api/items/stop", s.serveBulkStop)
+	s.api("POST /api/items/resume", s.serveBulkResume)
 
 	s.handler = securityHeaders(s.admit(crossOriginProtection(basicAuth(opts.Username, opts.Password, s.mux))))
 	s.srv = &http.Server{
 		Handler:           s.handler,
+		ErrorLog:          stdlog.New(serverErrorWriter{s}, "", 0),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      time.Minute,

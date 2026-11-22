@@ -34,7 +34,7 @@ func (c *Client) Refresh(ctx context.Context, ratingKey string) error {
 }
 
 // SearchMatches asks Plex for the matches of one item.
-func (c *Client) SearchMatches(ctx context.Context, ratingKey, title, agent, language string) ([]Candidate, error) {
+func (c *Client) SearchMatches(ctx context.Context, ratingKey, title, agent, language string, year int) ([]Candidate, error) {
 	endpoint, err := c.metadataEndpoint(ratingKey, "matches")
 	if err != nil {
 		return nil, err
@@ -45,6 +45,10 @@ func (c *Client) SearchMatches(ctx context.Context, ratingKey, title, agent, lan
 		"title":    {title},
 		"agent":    {agent},
 		"language": {language},
+	}
+
+	if year > 0 {
+		query.Set("year", strconv.Itoa(year))
 	}
 
 	var resp struct {

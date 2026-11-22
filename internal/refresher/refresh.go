@@ -35,19 +35,64 @@ func (r *Refresher) refreshDue(ctx context.Context, run *serverRun) error {
 	}
 	run.due, run.remaining, run.selected = total, total, len(due)
 	r.progress().Batch(run.server.Name, len(due), total)
-	for i, it := range due {
-		if i > 0 && !r.opts.DryRun {
-			if err := r.sleep(ctx, r.opts.RefreshDelay); err != nil {
-				return err
-			}
+	return r.refreshBatch(ctx, run, due)
+}
+
+func (r *Refresher) refreshBatch(ctx context.Context, run *serverRun, items []store.Item) error {
+	for i, it := range items {
+		if err := r.pace(ctx, i); err != nil {
+			return err
 		}
-		run.remaining-- // the item is reached, also if it stops the server
-		r.progress().ItemStarted(run.server.Name, it.RatingKey, it.Title)
-		if err := r.refreshItem(ctx, run, it); err != nil {
+		if err := r.runItem(ctx, run, it); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (r *Refresher) pace(ctx context.Context, i int) error {
+	if i == 0 || r.opts.DryRun {
+		return nil
+	}
+	return r.sleep(ctx, r.opts.RefreshDelay)
+}
+
+func (r *Refresher) runItem(ctx context.Context, run *serverRun, batch store.Item) error {
+	run.remaining--
+	server := run.server.Name
+	r.progress().ItemStarted(server, batch.RatingKey, batch.Title)
+	unlock, err := r.locks.lock(ctx, server, batch.RatingKey)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	row, skip, err := r.recheck(run, batch)
+	if err != nil {
+		return err
+	}
+	if skip != "" {
+		run.skipped++
+		log.Debug().Str("server", server).Str("title", batch.Title).Str("reason", skip).Msg("Skipped item")
+		r.itemDone(run, batch.RatingKey, OutcomeSkipped)
+		return nil
+	}
+	return r.refreshItem(ctx, run, row)
+}
+
+func (r *Refresher) recheck(run *serverRun, batch store.Item) (store.Item, string, error) {
+	row, cached, _, err := r.store.KnownItem(run.server.Name, batch.RatingKey)
+	switch {
+	case err != nil:
+		return store.Item{}, "", err
+	case !cached:
+		return store.Item{}, "gone", nil
+	case !row.StoppedAt.IsZero():
+		return row, "stopped", nil
+	case row.Attempts != batch.Attempts || row.Reasons&^r.opts.IgnoreReasons == 0:
+		return row, "changed", nil
+	default:
+		return row, "", nil
+	}
 }
 
 // logSummary logs the summary line of the server.
@@ -180,7 +225,7 @@ func (r *Refresher) countFailure(ctx context.Context, run *serverRun, it store.I
 // is not accepted and has no error.
 func (r *Refresher) request(run *serverRun, it store.Item, action store.Action, fm *fixMatch) store.Request {
 	return store.Request{
-		Server: run.server.Name, RatingKey: it.RatingKey, At: r.now(), Source: store.SourceAuto,
+		Server: run.server.Name, RatingKey: it.RatingKey, At: r.now(), Source: run.source,
 		Action: action, Match: target(fm),
 	}
 }
@@ -348,7 +393,7 @@ func seriesFolder(itemType string, paths plex.Paths) string {
 func searchIDs(ctx context.Context, srv Server, lib plex.Library, it store.Item, ids []pathID, d *decisionLog) ([]searchResult, error) {
 	var results []searchResult
 	for _, id := range ids {
-		candidates, err := srv.Plex.SearchMatches(ctx, it.RatingKey, id.title(), lib.Agent, lib.Language)
+		candidates, err := srv.Plex.SearchMatches(ctx, it.RatingKey, id.title(), lib.Agent, lib.Language, 0)
 		d.add(id, searchPath, "", candidates, err != nil)
 		if err != nil {
 			if !searchFailureIsEmpty(ctx, id, err) {
@@ -381,7 +426,7 @@ func foundLinks(results []searchResult, show bool) []string {
 // without a TMDB client.
 func (r *Refresher) tmdbFallback(ctx context.Context, run *serverRun, lib plex.Library, it store.Item, ids []pathID, d *decisionLog) ([]searchResult, error) {
 	results, err := r.tmdbResults(ctx, run.server, lib, it, ids, d)
-	if !errors.Is(err, errTMDB) || ctx.Err() != nil {
+	if !errors.Is(err, ErrTMDB) || ctx.Err() != nil {
 		return results, err
 	}
 	r.recordTMDBFailure(run, lib, it, d, err)

@@ -17,6 +17,8 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+
+	"github.com/l3uddz/autorefresh/internal/neterr"
 )
 
 // ErrUnauthorized marks a 401 status, which means that TMDB rejected the token.
@@ -88,10 +90,10 @@ func (t traceTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 // Authorization across subdomains).
 func sameOrigin(req *http.Request, via []*http.Request) error {
 	if len(via) >= 10 {
-		return errors.New("too many redirects")
+		return fmt.Errorf("too many redirects: %w", neterr.ErrRedirectRefused)
 	}
 	if req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host {
-		return errors.New("redirect to another origin refused")
+		return fmt.Errorf("redirect to another origin: %w", neterr.ErrRedirectRefused)
 	}
 	return nil
 }
@@ -274,11 +276,14 @@ func (c *Client) get(ctx context.Context, segments []string, query url.Values, o
 
 	res, err := c.http.Do(req)
 	if err != nil {
-		var urlErr *url.Error
-		if errors.As(err, &urlErr) {
-			err = urlErr.Err
+		reason := neterr.Reason(err)
+		if ctx.Err() != nil {
+			return fmt.Errorf("GET %s: %s: %w", path, reason, ctx.Err())
 		}
-		return fmt.Errorf("GET %s: %w", path, err)
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("GET %s: %s: %w", path, reason, context.DeadlineExceeded)
+		}
+		return fmt.Errorf("GET %s: %s", path, reason)
 	}
 	defer func() {
 		// Draining the body lets the connection get reused.

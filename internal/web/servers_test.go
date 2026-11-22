@@ -133,7 +133,7 @@ func recordRun(t *testing.T, st *store.Store, server string, status store.RunSta
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.FinishRun(id, start, store.RunResult{FinishedAt: testNow, Status: status}); err != nil {
+	if _, err := st.FinishRun(id, start, store.RunResult{FinishedAt: testNow, Status: status}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -212,8 +212,14 @@ func TestServersEndpoint(t *testing.T) {
 	if n := home.identityCalls(); n != 1 {
 		t.Errorf("Identity calls of srv 0 = %d, want 1 (cached)", n)
 	}
+	if n := away.identityCalls(); n != 1 {
+		t.Errorf("Identity calls of srv 1 = %d, want 1 during cooldown", n)
+	}
+	now := s.now()
+	s.now = func() time.Time { return now.Add(61 * time.Second) }
+	getJSON(t, s, "/api/servers", &got)
 	if n := away.identityCalls(); n != 2 {
-		t.Errorf("Identity calls of srv 1 = %d, want 2 (retried)", n)
+		t.Errorf("Identity calls after cooldown = %d, want 2", n)
 	}
 	if got.Servers[0].MachineIdentifier == nil || *got.Servers[0].MachineIdentifier != "home-id" {
 		t.Errorf("cached machineIdentifier = %v", got.Servers[0].MachineIdentifier)

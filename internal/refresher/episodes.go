@@ -2,6 +2,8 @@ package refresher
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"maps"
 	"slices"
 
@@ -11,26 +13,47 @@ import (
 // confirmEpisodeNumbers requires every locally represented regular season to
 // match TMDB in full. A season that the local library lacks supplies no evidence.
 func (r *Refresher) confirmEpisodeNumbers(ctx context.Context, run *serverRun, mc matchContext, tmdbID string) (int, error) {
-	local, err := run.server.Plex.EpisodeNumbers(ctx, mc.it.RatingKey)
+	result, err := compareEpisodes(ctx, run.server.Plex, r.opts.TMDB, mc.it.RatingKey, tmdbID)
+	if errors.Is(err, ErrTMDB) {
+		if ctx.Err() != nil {
+			return 0, ctx.Err()
+		}
+		r.recordTMDBFailure(run, mc.lib, mc.it, mc.d, err)
+		return 0, nil
+	}
 	if err != nil {
 		return 0, err
 	}
+	if result.mismatch {
+		itemEvent(log.Debug(), run.server.Name, mc.lib, mc.it).Int("season", result.season).
+			Int("local_episode_count", result.localCount).Int("tmdb_episode_count", result.tmdbCount).Msg("Episode numbers differ")
+	}
+	return result.count, nil
+}
+
+type episodeComparison struct {
+	count, season, localCount, tmdbCount int
+	mismatch                             bool
+}
+
+func compareEpisodes(ctx context.Context, p Plex, t TMDB, key, id string) (episodeComparison, error) {
+	local, err := p.EpisodeNumbers(ctx, key)
+	if err != nil {
+		return episodeComparison{}, err
+	}
 	count := 0
 	for _, season := range slices.Sorted(maps.Keys(local)) {
-		catalog, err := r.opts.TMDB.SeasonEpisodes(ctx, tmdbID, season)
+		catalog, err := t.SeasonEpisodes(ctx, id, season)
 		if err != nil {
-			return 0, r.confirmationLookupFailed(ctx, run, mc, tmdbID, err)
+			return episodeComparison{}, fmt.Errorf("%w: tmdb-%s: %w", ErrTMDB, id, err)
 		}
 		numbers := local[season]
 		if !sameEpisodeNumbers(numbers, catalog) {
-			itemEvent(log.Debug(), run.server.Name, mc.lib, mc.it).
-				Int("season", season).Int("local_episode_count", len(numbers)).
-				Int("tmdb_episode_count", len(catalog)).Msg("Episode numbers differ")
-			return 0, nil
+			return episodeComparison{season: season, localCount: len(numbers), tmdbCount: len(catalog), mismatch: true}, nil
 		}
 		count += len(catalog)
 	}
-	return count, nil
+	return episodeComparison{count: count}, nil
 }
 
 func sameEpisodeNumbers(local, catalog []int) bool {

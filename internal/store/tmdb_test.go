@@ -59,9 +59,12 @@ func TestTMDBIDGoesWithItem(t *testing.T) {
 	}
 }
 
-func TestSaveTMDBIDNeedsItem(t *testing.T) {
+func TestSaveTMDBIDSkipsMissingItem(t *testing.T) {
 	s := openTest(t)
-	if err := s.SaveTMDBID(srv, "missing", "tvdb", "5", "77"); err == nil {
-		t.Fatal("SaveTMDBID for a missing item succeeded")
+	if err := s.SaveTMDBID(srv, "missing", "tvdb", "5", "77"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := s.TMDBID(srv, "missing", "tvdb", "5"); err != nil || ok {
+		t.Fatalf("TMDBID found = %v, error = %v", ok, err)
 	}
 }

@@ -91,3 +91,17 @@ func (s *Store) Libraries(ctx context.Context, server string) ([]LibraryEntry, e
 	}
 	return libs, nil
 }
+
+// LibraryInfo reads the Plex metadata of one cached library.
+func (s *Store) LibraryInfo(server, section string) (LibraryInfo, bool, error) {
+	info := LibraryInfo{Section: section}
+	err := s.db.QueryRow(`SELECT title, type, agent, language FROM library WHERE server = ? AND section = ?`,
+		server, section).Scan(&info.Title, &info.Type, &info.Agent, &info.Language)
+	if errors.Is(err, sql.ErrNoRows) {
+		return LibraryInfo{}, false, nil
+	}
+	if err != nil {
+		return LibraryInfo{}, false, fmt.Errorf("read library info: %w", err)
+	}
+	return info, true, nil
+}

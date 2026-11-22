@@ -4,8 +4,6 @@ package plex
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,11 +13,12 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+
+	"github.com/l3uddz/autorefresh/internal/neterr"
 )
 
 var (
@@ -80,18 +79,15 @@ func (c *Client) metadataEndpoint(ratingKey string, segments ...string) (*url.UR
 	return c.endpoint(append([]string{"library", "metadata", ratingKey}, segments...)...), nil
 }
 
-// errRedirectRefused marks a redirect that sameOrigin refuses.
-var errRedirectRefused = errors.New("redirect refused")
-
 // sameOrigin refuses a redirect to another origin. Go forwards the
 // X-Plex-Token header to the target of a redirect, so a cross-origin redirect
 // would leak the token.
 func sameOrigin(req *http.Request, via []*http.Request) error {
 	if len(via) >= 10 {
-		return fmt.Errorf("too many redirects: %w", errRedirectRefused)
+		return fmt.Errorf("too many redirects: %w", neterr.ErrRedirectRefused)
 	}
 	if req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host {
-		return fmt.Errorf("redirect to another origin: %w", errRedirectRefused)
+		return fmt.Errorf("redirect to another origin: %w", neterr.ErrRedirectRefused)
 	}
 	return nil
 }
@@ -207,7 +203,7 @@ func (c *Client) trace(req *http.Request, start time.Time) *zerolog.Event {
 // transportError traces a failed request and returns a fixed error. It keeps
 // no text of err, because that text can hold the server address.
 func (c *Client) transportError(ctx context.Context, req *http.Request, start time.Time, err error) error {
-	reason := transportReason(err)
+	reason := neterr.Reason(err)
 
 	c.trace(req, start).Str("error", reason).Msg("Plex request")
 
@@ -215,32 +211,4 @@ func (c *Client) transportError(ctx context.Context, req *http.Request, start ti
 		return fmt.Errorf("%s %s: %s: %w: %w", req.Method, req.URL.Path, reason, ErrUnavailable, ctxErr)
 	}
 	return fmt.Errorf("%s %s: %s: %w", req.Method, req.URL.Path, reason, ErrUnavailable)
-}
-
-// transportReason returns a fixed text for the cause of a transport error.
-// The text holds no address, host name, or resolver.
-func transportReason(err error) string {
-	var (
-		netErr       net.Error
-		dnsErr       *net.DNSError
-		verifyErr    *tls.CertificateVerificationError
-		authorityErr x509.UnknownAuthorityError
-		hostnameErr  x509.HostnameError
-		invalidErr   x509.CertificateInvalidError
-	)
-	switch {
-	case errors.As(err, &netErr) && netErr.Timeout():
-		return "request timed out"
-	case errors.As(err, &dnsErr):
-		return "host lookup failed"
-	case errors.Is(err, syscall.ECONNREFUSED):
-		return "connection refused"
-	case errors.As(err, &verifyErr), errors.As(err, &authorityErr),
-		errors.As(err, &hostnameErr), errors.As(err, &invalidErr):
-		return "certificate verification failed"
-	case errors.Is(err, errRedirectRefused):
-		return "redirect refused"
-	default:
-		return "request failed"
-	}
 }

@@ -290,6 +290,15 @@ func (m metadata) paths() Paths {
 	return Paths{Locations: locations, Files: m.files()}
 }
 
+// Item reads the metadata for one item. Only a 404 gives ErrNotFound.
+func (c *Client) Item(ctx context.Context, ratingKey string) (Item, error) {
+	m, err := c.itemMetadata(ctx, ratingKey, "item")
+	if err != nil {
+		return Item{}, err
+	}
+	return m.item(), nil
+}
+
 // ItemPaths returns Location[].path and Media[].Part[].file of an item. Only
 // a 404 status gives ErrNotFound. A response without an item gives a plain
 // error.

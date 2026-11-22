@@ -23,12 +23,19 @@ type Plex interface {
 	ItemPaths(ctx context.Context, ratingKey string) (plex.Paths, error)
 	EpisodeNumbers(ctx context.Context, ratingKey string) (map[int][]int, error)
 	Refresh(ctx context.Context, ratingKey string) error
-	SearchMatches(ctx context.Context, ratingKey, title, agent, language string) ([]plex.Candidate, error)
+	Item(ctx context.Context, ratingKey string) (plex.Item, error)
+	SearchMatches(ctx context.Context, ratingKey, title, agent, language string, year int) ([]plex.Candidate, error)
 	Match(ctx context.Context, ratingKey string, cand plex.Candidate) error
 }
 
 // Store is the part of store.Store that the refresher uses.
 type Store interface {
+	FinishJob(int64, store.RunStart, store.RunResult, []store.RunItem) (bool, error)
+	SetStopped(context.Context, string, string, time.Time, bool) (bool, error)
+	ApplyCheck(string, store.Item, time.Time) (bool, error)
+	LibraryInfo(string, string) (store.LibraryInfo, bool, error)
+	RecordManual(store.ManualRecord) error
+	KnownItem(server, ratingKey string) (store.Item, bool, bool, error)
 	Library(server, section string) (store.Library, error)
 	ApplyRead(r store.Read) (fixed []store.Item, err error)
 	Unseen(server, section string, seen []string) ([]store.Item, error)
@@ -44,7 +51,7 @@ type Store interface {
 	PruneServers(servers []string) ([]store.Pruned, error)
 	PruneSections(server string, sections []string) ([]store.Pruned, error)
 	StartRun(r store.RunStart) (int64, error)
-	FinishRun(id int64, start store.RunStart, r store.RunResult) error
+	FinishRun(id int64, start store.RunStart, r store.RunResult) (bool, error)
 	PruneHistory(before time.Time) (events, runs int, err error)
 }
 
@@ -73,6 +80,10 @@ type Options struct {
 
 // Refresher checks the libraries of each server.
 type Refresher struct {
+	gateMu  sync.Mutex
+	closed  bool
+	actions sync.WaitGroup
+	locks   itemLocks
 	servers []Server
 	store   Store
 	opts    Options
@@ -108,6 +119,9 @@ func sleep(ctx context.Context, d time.Duration) error {
 
 // serverRun is the state of one server in one run.
 type serverRun struct {
+	id                   int64
+	startInfo            store.RunStart
+	source               store.Source
 	server               Server
 	began                time.Time
 	libraries            []plex.Library      // the selected libraries
@@ -118,8 +132,9 @@ type serverRun struct {
 	fixed                int                 // completed rows that had a request that Plex accepted
 	fixedAfterMatch      int                 // completed rows that had a match request that Plex accepted
 	due                  int
-	refreshes            int  // refresh requests sent, also failed ones
-	matches              int  // match requests sent, also failed ones
+	refreshes            int // refresh requests sent, also failed ones
+	matches              int // match requests sent, also failed ones
+	skipped              int
 	failures             int  // failed requests and match searches, without 404 answers
 	selected             int  // due items that this run handles, after the limit
 	incomplete           int  // incomplete items that the summary counted; 0 without a summary
@@ -209,18 +224,58 @@ func (r *Refresher) Run(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return nil
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	if err := r.pruneBeforeRun(r.now()); err != nil {
+	runs, err := r.begin(r.servers, store.RunSourceSchedule)
+	if err != nil {
 		return err
 	}
+	return r.execute(ctx, runs)
+}
 
-	errs := make([]error, len(r.servers))
+type startedRun struct {
+	srv   Server
+	id    int64
+	start store.RunStart
+}
+
+func (r *Refresher) begin(servers []Server, source store.RunSource) ([]startedRun, error) {
+	if err := r.pruneBeforeRun(r.now()); err != nil {
+		return nil, err
+	}
+	runs := make([]startedRun, 0, len(servers))
+	for _, srv := range servers {
+		start := store.RunStart{Server: srv.Name, Kind: store.RunKindRun, Source: source, StartedAt: r.now()}
+		run := startedRun{srv: srv, start: start}
+		if !r.opts.DryRun {
+			id, err := r.store.StartRun(start)
+			if err != nil {
+				return nil, errors.Join(fmt.Errorf("server %s: %w", srv.Name, err), r.cancelStarted(runs))
+			}
+			run.id = id
+		}
+		runs = append(runs, run)
+	}
+	return runs, nil
+}
+
+func (r *Refresher) cancelStarted(runs []startedRun) error {
+	var errs []error
+	for _, run := range runs {
+		_, err := r.store.FinishRun(run.id, run.start, store.RunResult{FinishedAt: r.now(), Status: store.RunCanceled})
+		if err != nil {
+			errs = append(errs, fmt.Errorf("server %s: %w", run.srv.Name, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (r *Refresher) execute(ctx context.Context, runs []startedRun) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errs := make([]error, len(runs))
 	var wg sync.WaitGroup
-	for i, srv := range r.servers {
+	for i, run := range runs {
 		wg.Go(func() {
-			err := r.runServer(ctx, srv)
+			err := r.runServer(ctx, run)
 			errs[i] = err
 			if err != nil && !errors.Is(err, plex.ErrUnavailable) {
 				cancel()
@@ -231,25 +286,15 @@ func (r *Refresher) Run(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// runServer checks one server and records the run, unless it is a dry run.
-// It returns a store error, or the error of an unavailable server after it
-// logged that error.
-func (r *Refresher) runServer(ctx context.Context, srv Server) error {
-	if ctx.Err() != nil {
-		log.Debug().Str("server", srv.Name).Msg("Run canceled")
-		return nil
+func (r *Refresher) runServer(ctx context.Context, started startedRun) error {
+	run := &serverRun{server: started.srv, began: started.start.StartedAt, id: started.id,
+		startInfo: started.start, source: store.SourceAuto, files: map[string][]string{}}
+	r.progress().RunStarted(run.id, run.startInfo)
+	if err := ctx.Err(); err != nil {
+		log.Debug().Str("server", run.server.Name).Msg("Run canceled")
+		return r.finishRun(ctx, run, err)
 	}
-	run := &serverRun{server: srv, began: r.now(), files: map[string][]string{}}
-	var id int64
-	if !r.opts.DryRun {
-		var err error
-		id, err = r.store.StartRun(run.start())
-		if err != nil {
-			return fmt.Errorf("server %s: %w", srv.Name, err)
-		}
-	}
-	r.progress().RunStarted(srv.Name, run.began)
-	return r.finishRun(ctx, run, id, r.checkServer(ctx, run))
+	return r.finishRun(ctx, run, r.checkServer(ctx, run))
 }
 
 // stopped reports whether the end of ctx stopped a run that ended with err.
@@ -292,40 +337,34 @@ func (r *Refresher) checkServer(ctx context.Context, run *serverRun) error {
 // recordFinish stores res as the end of the run id and returns the error of
 // the run. A failed FinishRun becomes that error only if the run has none;
 // otherwise it is logged, so it is not lost.
-func (r *Refresher) recordFinish(run *serverRun, id int64, res store.RunResult, err error) error {
-	finishErr := r.store.FinishRun(id, run.start(), res)
+func (r *Refresher) recordFinish(run *serverRun, res store.RunResult, err error) (error, bool) {
+	written, finishErr := r.store.FinishRun(run.id, run.startInfo, res)
 	switch {
 	case finishErr == nil:
-		return err
+		return err, written
 	case err == nil:
-		return finishErr
+		return finishErr, false
 	}
 	log.Error().Str("server", run.server.Name).Err(finishErr).Msg("Recording run failed")
-	return err
-}
-
-// start returns how the run started, as StartRun and FinishRun store it.
-func (run *serverRun) start() store.RunStart {
-	return store.RunStart{
-		Server: run.server.Name, Kind: store.RunKindRun, Source: store.RunSourceSchedule, StartedAt: run.began,
-	}
+	return err, false
 }
 
 // finishRun records the end of the run id, unless it is a dry run, reports
 // it to the progress, and returns the result of runServer. The end of ctx is
 // a clean exit, so a canceled run returns only a failed FinishRun. Otherwise
 // a failed FinishRun is the error of the run only if the run has no error.
-func (r *Refresher) finishRun(ctx context.Context, run *serverRun, id int64, err error) error {
+func (r *Refresher) finishRun(ctx context.Context, run *serverRun, err error) error {
 	canceled := stopped(ctx, err)
 	if canceled {
 		err = nil
 	}
 	res := run.result(r.now(), canceled, err)
 	runErr := err // the progress gets the error of res, also if FinishRun fails
-	if !r.opts.DryRun {
-		err = r.recordFinish(run, id, res, err)
+	var recorded bool
+	if run.id != 0 {
+		err, recorded = r.recordFinish(run, res, err)
 	}
-	r.progress().RunFinished(run.server.Name, res, runErr)
+	r.progress().RunFinished(run.server.Name, res, runErr, recorded)
 	if err == nil {
 		return nil
 	}
@@ -334,7 +373,7 @@ func (r *Refresher) finishRun(ctx context.Context, run *serverRun, id int64, err
 
 // counts returns the request counts of the run so far.
 func (run *serverRun) counts() Counts {
-	return Counts{Refreshed: run.refreshes, Matched: run.matches, Failed: run.failures}
+	return Counts{Refreshed: run.refreshes, Matched: run.matches, Failed: run.failures, Skipped: run.skipped}
 }
 
 // result returns the end of the run at finishedAt: canceled, failed with
@@ -344,7 +383,7 @@ func (run *serverRun) result(finishedAt time.Time, canceled bool, err error) sto
 		FinishedAt: finishedAt, Status: store.RunFinished,
 		ReadItems: run.fullReadItems + run.incrementalReadItems, Refreshed: run.refreshes,
 		Matched: run.matches, Failed: run.failures, Completed: len(run.completed), Fixed: run.fixed,
-		Incomplete: run.incomplete, Due: run.due, Selected: run.selected,
+		Incomplete: run.incomplete, Due: run.due, Selected: run.selected, Skipped: run.skipped,
 	}
 	switch {
 	case canceled:

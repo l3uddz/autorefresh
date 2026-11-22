@@ -24,7 +24,7 @@ func TestStartAndFinishRun(t *testing.T) {
 	}
 
 	end := base.Add(time.Minute)
-	err = s.FinishRun(id, start, RunResult{
+	_, err = s.FinishRun(id, start, RunResult{
 		FinishedAt: end, Status: RunFailed, Error: "boom",
 		ReadItems: 1, Refreshed: 2, Matched: 3, Failed: 4, Completed: 5, Fixed: 6, Incomplete: 7, Due: 8, Selected: 9,
 	})
@@ -79,7 +79,7 @@ func TestInterruptRunsMarksOnlyRunning(t *testing.T) {
 	s := openTest(t)
 	done := startRun(t, s, srv, base)
 	end := base.Add(time.Minute)
-	if err := s.FinishRun(done, runStart(srv, base), RunResult{FinishedAt: end, Status: RunFinished}); err != nil {
+	if _, err := s.FinishRun(done, runStart(srv, base), RunResult{FinishedAt: end, Status: RunFinished}); err != nil {
 		t.Fatal(err)
 	}
 	open := startRun(t, s, srv, base.Add(time.Hour))
@@ -126,7 +126,7 @@ func TestPruneHistoryKeepsRunningRuns(t *testing.T) {
 	if runs != 0 {
 		t.Fatalf("pruned runs = %d, want 0", runs)
 	}
-	if err := s.FinishRun(id, RunStart{Server: srv, Kind: RunKindRun, Source: RunSourceSchedule, StartedAt: base}, RunResult{FinishedAt: base.Add(2 * time.Hour), Status: RunFinished, Refreshed: 3}); err != nil {
+	if _, err := s.FinishRun(id, RunStart{Server: srv, Kind: RunKindRun, Source: RunSourceSchedule, StartedAt: base}, RunResult{FinishedAt: base.Add(2 * time.Hour), Status: RunFinished, Refreshed: 3}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Runs(context.Background(), RunQuery{})
@@ -157,7 +157,7 @@ func TestPruneHistoryKeepsRecentlyInterruptedRuns(t *testing.T) {
 	if _, runs, err := s.PruneHistory(restart.Add(-720 * time.Hour)); err != nil || runs != 0 {
 		t.Fatalf("prune = %d runs, %v; want 0, nil", runs, err)
 	}
-	if err := s.FinishRun(id, runStart(srv, base), RunResult{FinishedAt: restart.Add(time.Hour), Status: RunFinished, Refreshed: 2}); err != nil {
+	if _, err := s.FinishRun(id, runStart(srv, base), RunResult{FinishedAt: restart.Add(time.Hour), Status: RunFinished, Refreshed: 2}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Runs(context.Background(), RunQuery{})
@@ -185,7 +185,7 @@ func TestFinishRunRestoresRemovedRow(t *testing.T) {
 	}
 
 	end := base.Add(5 * time.Minute)
-	if err := s.FinishRun(id, start, RunResult{FinishedAt: end, Status: RunFinished, Refreshed: 4}); err != nil {
+	if _, err := s.FinishRun(id, start, RunResult{FinishedAt: end, Status: RunFinished, Refreshed: 4}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Runs(context.Background(), RunQuery{})
@@ -214,7 +214,7 @@ func TestFinishRunKeepsRemovedServerRemoved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := s.FinishRun(id, start, RunResult{FinishedAt: base.Add(time.Minute), Status: RunFinished}); err != nil {
+	if _, err := s.FinishRun(id, start, RunResult{FinishedAt: base.Add(time.Minute), Status: RunFinished}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.Runs(context.Background(), RunQuery{}); err != nil || len(got) != 0 {
@@ -234,7 +234,7 @@ func TestPruneHistoryDeletesOldRowsWithChildren(t *testing.T) {
 	fresh := base.Add(48 * time.Hour)
 	accept(t, s, "a", fresh, ActionRefresh)
 	oldRun := startRun(t, s, srv, old)
-	if err := s.FinishRun(oldRun, runStart(srv, old), RunResult{FinishedAt: old, Status: RunFinished}); err != nil {
+	if _, err := s.FinishRun(oldRun, runStart(srv, old), RunResult{FinishedAt: old, Status: RunFinished}); err != nil {
 		t.Fatal(err)
 	}
 	newRun := startRun(t, s, srv, fresh)
@@ -311,7 +311,7 @@ func TestRunsFiltersAndPages(t *testing.T) {
 	// r3 starts at the same time as r2, so the id splits the pair.
 	r3 := startRun(t, s, srv, base.Add(time.Hour))
 	r4 := startRun(t, s, "srv2", base.Add(2*time.Hour))
-	if err := s.FinishRun(r1, runStart(srv, base), RunResult{FinishedAt: base.Add(time.Minute), Status: RunFinished}); err != nil {
+	if _, err := s.FinishRun(r1, runStart(srv, base), RunResult{FinishedAt: base.Add(time.Minute), Status: RunFinished}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -336,5 +336,62 @@ func TestRunsFiltersAndPages(t *testing.T) {
 		if got := runIDs(runs); !reflect.DeepEqual(got, tt.want) {
 			t.Errorf("%s: runs = %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestFinishJobResultsAreAtomic(t *testing.T) {
+	s := openTest(t)
+	start := runStart(srv, base)
+	start.Kind = RunKindBulkRefresh
+	id, err := s.StartRun(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := RunResult{FinishedAt: base, Status: RunFinished, Skipped: 1}
+	first := RunItem{Position: 0, RatingKey: "a", Outcome: ItemStopped}
+	second := RunItem{Position: 1, RatingKey: "b", Outcome: ItemAccepted}
+	if _, err := s.FinishJob(id, start, result, []RunItem{first, first}); err == nil {
+		t.Fatal("duplicate positions succeeded")
+	}
+	rows, err := s.Runs(t.Context(), RunQuery{})
+	if err != nil || len(rows) != 1 || rows[0].Status != RunRunning {
+		t.Fatalf("runs = %+v, %v", rows, err)
+	}
+	items, err := s.RunItems(t.Context(), id)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("items = %+v, %v", items, err)
+	}
+	if written, err := s.FinishJob(id, start, result, []RunItem{second, first}); err != nil || !written {
+		t.Fatalf("finish = %v, %v", written, err)
+	}
+	items, err = s.RunItems(t.Context(), id)
+	if err != nil || len(items) != 2 || items[0] != first || items[1] != second {
+		t.Fatalf("items = %+v, %v", items, err)
+	}
+	rows, err = s.Runs(t.Context(), RunQuery{})
+	if err != nil || len(rows) != 1 || rows[0].Status != RunFinished || rows[0].Skipped != 1 {
+		t.Fatalf("runs = %+v, %v", rows, err)
+	}
+}
+
+func TestFinishJobAfterServerPrune(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("1", NoSummary)}})
+	start := runStart(srv, base)
+	start.Kind = RunKindBulkRefresh
+	id, err := s.StartRun(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PruneServers([]string{"other"}); err != nil {
+		t.Fatal(err)
+	}
+	written, err := s.FinishJob(id, start, RunResult{FinishedAt: base, Status: RunFinished}, []RunItem{{RatingKey: "1", Outcome: ItemAccepted}})
+	if err != nil || written {
+		t.Fatalf("finish after prune = %v, %v", written, err)
+	}
+	items, err := s.RunItems(t.Context(), id)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("item results = %+v, %v", items, err)
 	}
 }

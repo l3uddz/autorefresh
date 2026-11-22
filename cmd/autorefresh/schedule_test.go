@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -11,74 +9,9 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-func TestRunnerSkipsOverlappingStart(t *testing.T) {
-	buf := captureLog(t)
+type fakeStarter func(context.Context)
 
-	var calls atomic.Int32
-	started := make(chan struct{})
-	release := make(chan struct{})
-	r := &runner{run: func(context.Context) error {
-		calls.Add(1)
-		close(started)
-		<-release
-		return nil
-	}}
-
-	first := make(chan struct{})
-	go func() {
-		r.start(context.Background())
-		close(first)
-	}()
-	<-started
-
-	// The first run blocks, so this start must return at once.
-	r.start(context.Background())
-	close(release)
-	<-first
-
-	if got := calls.Load(); got != 1 {
-		t.Fatalf("expected 1 call of run, got %d", got)
-	}
-	if got := buf.String(); !strings.Contains(got, `"level":"warn"`) {
-		t.Fatalf("expected a warning for the skipped start, got %q", got)
-	}
-}
-
-func TestRunnerLogsRunError(t *testing.T) {
-	buf := captureLog(t)
-
-	r := &runner{run: func(context.Context) error {
-		return errors.New("database is locked")
-	}}
-	r.start(context.Background())
-
-	got := buf.String()
-	if !strings.Contains(got, `"level":"error"`) || !strings.Contains(got, `"error":"database is locked"`) {
-		t.Fatalf("expected an error line with the run error, got %q", got)
-	}
-}
-
-func TestRunnerUnlocksAfterPanic(t *testing.T) {
-	captureLog(t)
-
-	var calls atomic.Int32
-	r := &runner{run: func(context.Context) error {
-		if calls.Add(1) == 1 {
-			panic("run failed")
-		}
-		return nil
-	}}
-
-	func() {
-		defer func() { _ = recover() }()
-		r.start(context.Background())
-	}()
-	r.start(context.Background())
-
-	if got := calls.Load(); got != 2 {
-		t.Fatalf("expected 2 calls of run after a panic, got %d", got)
-	}
-}
+func (f fakeStarter) Scheduled(ctx context.Context) { f(ctx) }
 
 // serve starts the first run at once, without waiting for the schedule.
 func TestServeStartsFirstRunAtOnce(t *testing.T) {
@@ -86,11 +19,10 @@ func TestServeStartsFirstRunAtOnce(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var calls atomic.Int32
-	r := &runner{run: func(context.Context) error {
+	r := fakeStarter(func(context.Context) {
 		calls.Add(1)
 		cancel()
-		return nil
-	}}
+	})
 
 	done := make(chan struct{})
 	go func() {
@@ -114,16 +46,68 @@ func TestServeWaitsForFirstRun(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var finished atomic.Bool
-	r := &runner{run: func(ctx context.Context) error {
+	r := fakeStarter(func(ctx context.Context) {
 		cancel()
 		<-ctx.Done()
 		time.Sleep(50 * time.Millisecond)
 		finished.Store(true)
-		return nil
-	}}
+	})
 
 	serve(ctx, r, cron.Every(24*time.Hour))
 	if !finished.Load() {
 		t.Fatal("serve returned before the first run returned")
+	}
+}
+
+type shutdownJobs struct {
+	started chan struct{}
+	order   chan string
+}
+
+func (j shutdownJobs) Scheduled(ctx context.Context) {
+	close(j.started)
+	<-ctx.Done()
+	j.order <- "scheduled-return"
+}
+
+func (j shutdownJobs) Close() { j.order <- "jobs-close" }
+
+type stopFunc func(context.Context) error
+
+func (stop stopFunc) Stop(ctx context.Context) error { return stop(ctx) }
+
+func TestServeUntilStoppedDrainsInOrder(t *testing.T) {
+	jobs := shutdownJobs{started: make(chan struct{}), order: make(chan string, 3)}
+	ui := stopFunc(func(context.Context) error {
+		jobs.order <- "ui-stop"
+		return nil
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		serveUntilStopped(ctx, ui, jobs, cron.Every(24*time.Hour))
+	}()
+	select {
+	case <-jobs.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("schedule did not start")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not finish")
+	}
+	for _, want := range []string{"ui-stop", "scheduled-return", "jobs-close"} {
+		select {
+		case got := <-jobs.order:
+			if got != want {
+				t.Fatalf("shutdown step = %q, want %q", got, want)
+			}
+		default:
+			t.Fatalf("missing %q", want)
+		}
 	}
 }

@@ -13,7 +13,10 @@ import (
 )
 
 // identityTimeout bounds each Plex identity request.
-const identityTimeout = 3 * time.Second
+const (
+	identityTimeout = 3 * time.Second
+	identityRetry   = time.Minute
+)
 
 type serversJSON struct {
 	Servers       []serverJSON `json:"servers"`
@@ -75,7 +78,7 @@ func (s *Server) serverInfo(ctx context.Context, srv int, name string) (serverJS
 		return info, nil
 	}
 	// A scan that found no library leaves no library row, only its run.
-	runs, err := s.store.Runs(ctx, store.RunQuery{Servers: []string{name}, Status: store.RunFinished, Limit: 1})
+	runs, err := s.store.Runs(ctx, store.RunQuery{Servers: []string{name}, Kind: store.RunKindRun, Status: store.RunFinished, Limit: 1})
 	if err != nil {
 		return serverJSON{}, err
 	}
@@ -102,14 +105,23 @@ func (s *Server) machineIdentifiers(ctx context.Context) []string {
 }
 
 // readIdentity asks the server srv for its machine identifier and caches it.
-// A failure gives "", so that the next request asks again.
+// A failed lookup can retry after identityRetry.
 func (s *Server) readIdentity(ctx context.Context, srv int) string {
+	s.idMu.Lock()
+	id := s.identities[srv]
+	now := s.now()
+	if id != "" || (!s.identityTried[srv].IsZero() && now.Sub(s.identityTried[srv]) < identityRetry) {
+		s.idMu.Unlock()
+		return id
+	}
+	s.identityTried[srv] = now
+	s.idMu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, identityTimeout)
 	defer cancel()
 	ps := s.servers[srv]
 	id, err := ps.Plex.Identity(ctx)
 	if err != nil {
-		log.Debug().Str("server", ps.Name).Err(err).Msg("Reading Plex identity failed")
+		log.Debug().Str("server", ps.Name).Str("error", s.redact(err.Error())).Msg("Reading Plex identity failed")
 		return ""
 	}
 	s.idMu.Lock()

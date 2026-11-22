@@ -1,0 +1,316 @@
+package refresher
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"slices"
+	"sync"
+
+	"github.com/rs/zerolog/log"
+
+	"github.com/l3uddz/autorefresh/internal/plex"
+	"github.com/l3uddz/autorefresh/internal/store"
+)
+
+var (
+	ErrBusy  = errors.New("a run is busy")
+	ErrNoJob = errors.New("no such job")
+)
+
+// Jobs coordinates scheduled runs and dashboard jobs.
+type Jobs struct {
+	r      *Refresher
+	run    func(context.Context) error
+	ctx    context.Context
+	stop   context.CancelFunc
+	mu     sync.Mutex
+	curMu  sync.Mutex
+	cur    *job
+	closed bool
+	wg     sync.WaitGroup
+}
+
+type job struct {
+	ids    []int64
+	cancel context.CancelFunc
+}
+
+// NewJobs creates the process-wide run coordinator.
+func NewJobs(r *Refresher) *Jobs {
+	ctx, stop := context.WithCancel(context.Background())
+	return &Jobs{r: r, run: r.Run, ctx: ctx, stop: stop}
+}
+
+// Scheduled starts a scheduled run if the coordinator is idle.
+func (j *Jobs) Scheduled(ctx context.Context) {
+	if !j.mu.TryLock() {
+		log.Warn().Msg("Skipped scheduled start, a run is busy")
+		return
+	}
+	defer j.mu.Unlock()
+	if err := j.run(ctx); err != nil {
+		log.Error().Err(err).Msg("Run failed")
+	}
+}
+
+func (j *Jobs) admit() error {
+	j.curMu.Lock()
+	defer j.curMu.Unlock()
+	if j.closed {
+		return ErrClosed
+	}
+	if !j.mu.TryLock() {
+		return ErrBusy
+	}
+	j.wg.Add(1)
+	return nil
+}
+
+func (j *Jobs) release() {
+	j.mu.Unlock()
+	j.wg.Done()
+}
+
+func (j *Jobs) launch(ids []int64, work func(context.Context)) {
+	ctx, cancel := context.WithCancel(j.ctx)
+	j.curMu.Lock()
+	j.cur = &job{ids: slices.Clone(ids), cancel: cancel}
+	j.curMu.Unlock()
+	go func() {
+		defer j.release()
+		defer cancel()
+		defer func() {
+			j.curMu.Lock()
+			j.cur = nil
+			j.curMu.Unlock()
+		}()
+		work(ctx)
+	}()
+}
+
+// RunNow admits a manual scan of the selected servers. Nil selects all servers.
+func (j *Jobs) RunNow(names []string) ([]int64, error) {
+	if err := j.admit(); err != nil {
+		return nil, err
+	}
+	servers, err := j.selectServers(names)
+	if err != nil {
+		j.release()
+		return nil, err
+	}
+	runs, err := j.r.begin(servers, store.RunSourceManual)
+	if err != nil {
+		j.release()
+		return nil, fmt.Errorf("%w: %w", ErrStore, err)
+	}
+	ids := make([]int64, len(runs))
+	for i, run := range runs {
+		ids[i] = run.id
+	}
+	j.launch(ids, func(ctx context.Context) {
+		if err := j.r.execute(ctx, runs); err != nil {
+			log.Error().Err(err).Msg("Run failed")
+		}
+	})
+	return ids, nil
+}
+
+func (j *Jobs) selectServers(names []string) ([]Server, error) {
+	if names == nil {
+		return j.r.servers, nil
+	}
+	servers := make([]Server, 0, len(names))
+	for _, name := range names {
+		srv, err := j.r.serverNamed(name)
+		if err != nil {
+			return nil, err
+		}
+		servers = append(servers, srv)
+	}
+	return servers, nil
+}
+
+// Cancel requests cancellation of the manual job owning id.
+func (j *Jobs) Cancel(id int64) error {
+	j.curMu.Lock()
+	defer j.curMu.Unlock()
+	if j.closed {
+		return ErrClosed
+	}
+	if j.cur == nil || !slices.Contains(j.cur.ids, id) {
+		return ErrNoJob
+	}
+	j.cur.cancel()
+	return nil
+}
+
+// Close drains manual jobs and item actions after closing admission.
+func (j *Jobs) Close() {
+	j.curMu.Lock()
+	j.closed = true
+	j.stop()
+	j.curMu.Unlock()
+	j.wg.Wait()
+	j.r.Close()
+}
+
+type bulkAdmission struct {
+	item     store.RunItem
+	attempts int
+	cached   bool
+}
+
+// BulkRefresh admits the selected keys to a background refresh job.
+func (j *Jobs) BulkRefresh(server string, keys []string) (int64, error) {
+	if err := j.admit(); err != nil {
+		return 0, err
+	}
+	run, items, err := j.prepareBulk(server, keys)
+	if err != nil {
+		j.release()
+		return 0, err
+	}
+	j.launch([]int64{run.id}, func(ctx context.Context) { j.r.executeBulk(ctx, run, items) })
+	return run.id, nil
+}
+
+func (j *Jobs) prepareBulk(server string, keys []string) (*serverRun, []bulkAdmission, error) {
+	srv, err := j.r.serverNamed(server)
+	if err != nil {
+		return nil, nil, err
+	}
+	items := make([]bulkAdmission, len(keys))
+	for i, key := range keys {
+		row, cached, _, err := j.r.store.KnownItem(server, key)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: %w", ErrStore, err)
+		}
+		items[i] = bulkAdmission{item: store.RunItem{Position: i, RatingKey: key, Title: row.Title, Outcome: store.ItemNotReached},
+			attempts: row.Attempts, cached: cached}
+	}
+	start := store.RunStart{Server: server, Kind: store.RunKindBulkRefresh, Source: store.RunSourceManual, StartedAt: j.r.now()}
+	id, err := j.r.store.StartRun(start)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %w", ErrStore, err)
+	}
+	return &serverRun{server: srv, id: id, startInfo: start, began: start.StartedAt, selected: len(items), due: len(items), source: store.SourceManual}, items, nil
+}
+
+func (r *Refresher) executeBulk(ctx context.Context, run *serverRun, admitted []bulkAdmission) {
+	p := r.progress()
+	p.RunStarted(run.id, run.startInfo)
+	p.Batch(run.server.Name, len(admitted), len(admitted))
+	items := make([]store.RunItem, len(admitted))
+	for i, a := range admitted {
+		items[i] = a.item
+	}
+	err := r.bulkBatch(ctx, run, admitted, items)
+	r.finishBulk(ctx, run, items, err)
+}
+
+func (r *Refresher) bulkBatch(ctx context.Context, run *serverRun, admitted []bulkAdmission, items []store.RunItem) error {
+	needPace := false
+	for i, a := range admitted {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if a.cached && needPace {
+			if err := r.pace(ctx, 1); err != nil {
+				return err
+			}
+			needPace = false
+		}
+		item := &items[i]
+		r.progress().ItemStarted(run.server.Name, item.RatingKey, item.Title)
+		sent, err := r.bulkItem(ctx, run.server, a, item)
+		if sent {
+			run.refreshes++
+			needPace = true
+		}
+		switch item.Outcome {
+		case store.ItemNotReached:
+			return err
+		case store.ItemFailed:
+			run.failures++
+		case store.ItemStopped, store.ItemChanged, store.ItemNotCached:
+			run.skipped++
+		}
+		r.itemDone(run, item.RatingKey, item.Outcome)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Refresher) bulkItem(ctx context.Context, srv Server, a bulkAdmission, item *store.RunItem) (bool, error) {
+	if !a.cached {
+		item.Outcome = store.ItemNotCached
+		return false, nil
+	}
+	unlock, err := r.locks.lock(ctx, srv.Name, item.RatingKey)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	row, cached, _, err := r.store.KnownItem(srv.Name, item.RatingKey)
+	switch {
+	case err != nil:
+		return false, fmt.Errorf("%w: %w", ErrStore, err)
+	case !cached:
+		item.Outcome = store.ItemNotCached
+	case !row.StoppedAt.IsZero():
+		item.Outcome = store.ItemStopped
+	case row.Attempts != a.attempts:
+		item.Outcome = store.ItemChanged
+	default:
+		sent, err := r.sendManual(ctx, srv, row, true, store.ActionRefresh, nil)
+		return sent, bulkPlexOutcome(ctx, item, sent, err)
+	}
+	return false, nil
+}
+
+func bulkPlexOutcome(ctx context.Context, item *store.RunItem, sent bool, err error) error {
+	switch {
+	case !sent:
+		return err
+	case errors.Is(err, ErrStore):
+		item.Outcome, item.Error = store.ItemFailed, "recording failed"
+		return err
+	case err == nil:
+		item.Outcome = store.ItemAccepted
+	case errors.Is(err, plex.ErrNotFound):
+		item.Outcome = store.ItemGone
+	default:
+		item.Outcome, item.Error = store.ItemFailed, err.Error()
+		if ctx.Err() != nil || errors.Is(err, plex.ErrUnavailable) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Refresher) finishBulk(ctx context.Context, run *serverRun, items []store.RunItem, err error) {
+	var reason string
+	canceled := ctx.Err() != nil && !errors.Is(err, ErrStore)
+	switch {
+	case canceled:
+		err = nil
+	case errors.Is(err, ErrStore):
+		reason = "store"
+	case errors.Is(err, plex.ErrUnavailable):
+		reason = "plex unavailable"
+	}
+	res := run.result(r.now(), canceled, err)
+	recorded, saveErr := r.store.FinishJob(run.id, run.startInfo, res, items)
+	r.progress().RunFinished(run.server.Name, res, err, recorded && saveErr == nil)
+	if saveErr != nil || !recorded {
+		reason = "result not recorded"
+	}
+	if reason != "" {
+		log.Error().Str("server", run.server.Name).Int64("run", run.id).Str("reason", reason).Msg("Bulk refresh failed")
+	}
+	log.Info().Str("server", run.server.Name).Int("selected", run.selected).Int("refresh_requests", run.refreshes).
+		Int("failed_requests", run.failures).Int("skipped_items", run.skipped).Dur("duration", r.now().Sub(run.began)).Msg("Bulk refresh summary")
+}

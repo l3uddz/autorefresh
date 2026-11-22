@@ -442,7 +442,9 @@ If autorefresh gets SIGINT or SIGTERM, it stops the schedule and cancels the
 busy run. The run stops before its next request to Plex. Autorefresh then
 closes the database and exits.
 
-If the dashboard runs, autorefresh stops it first, and then the schedule.
+If the dashboard runs, autorefresh stops it first. It then stops the
+schedule, cancels manual jobs, and waits for pending actions before closing
+the database.
 The dashboard can take up to 10 seconds to stop, and the busy run goes on
 during that time. A second SIGINT or SIGTERM ends autorefresh at once.
 
@@ -501,7 +503,14 @@ autorefresh --once --dry-run
 Autorefresh can serve a dashboard over HTTP from the same process. The
 dashboard has a JSON API under `api/`. The API serves the live status of
 each run, the incomplete items, the fixed items, and the history of each
-item and each run.
+item and each run. It can refresh an item, apply a Plex match, check its
+metadata, and stop or resume automatic work on it.
+
+The API can also start a manual scan or refresh selected items in bulk.
+Bulk refresh sends requests to individual items and uses `refresh-delay`
+between requests. While a run is busy, the API refuses a new manual scan
+or bulk refresh.
+If a bulk stop or resume fails partway through, earlier changes stay saved.
 
 The dashboard page is a placeholder for now. The frontend comes in a later
 release. The API already works.
@@ -544,8 +553,8 @@ Basic auth sends the password in each request. Over plain HTTP, it crosses
 the network in clear text. If the connection leaves a trusted network, put
 a reverse proxy with HTTPS in front of the dashboard.
 
-The dashboard rejects a change request from another site. The API has no
-change request yet. If a reverse proxy serves the dashboard over plain
+The dashboard rejects change requests from other sites. If a reverse
+proxy serves the dashboard over plain
 HTTP, the proxy must pass the original `Host` header. Otherwise a change
 request from the dashboard looks like a request from another site, and the
 dashboard rejects it.

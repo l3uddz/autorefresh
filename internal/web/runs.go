@@ -52,6 +52,7 @@ type runJSON struct {
 	Incomplete int       `json:"incomplete"`
 	Due        int       `json:"due"`
 	Selected   int       `json:"selected"`
+	Skipped    int       `json:"skipped"`
 }
 
 // serveRuns answers GET /api/runs with one page of the runs of the
@@ -151,5 +152,6 @@ func (s *Server) toRunJSON(run store.Run) runJSON {
 		ReadItems: run.ReadItems, Refreshed: run.Refreshed, Matched: run.Matched, Failed: run.Failed,
 		Completed: run.Completed, Fixed: run.Fixed, Incomplete: run.Incomplete, Due: run.Due,
 		Selected: run.Selected,
+		Skipped:  run.Skipped,
 	}
 }

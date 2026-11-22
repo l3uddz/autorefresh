@@ -40,13 +40,15 @@ func uiEnabled(cfg config.Config, opts options) bool {
 // newUIServer returns the dashboard server of cfg with the queue rules.
 // clients holds the Plex client of each server in cfg.Plex, in the same
 // order.
-func newUIServer(cfg config.Config, rules store.DueRules, st *store.Store, status *web.Status, clients []*plex.Client) *web.Server {
+func newUIServer(cfg config.Config, rules store.DueRules, st *store.Store, status *web.Status, clients []*plex.Client, actions web.Actions, jobs web.Jobs) *web.Server {
 	servers := make([]web.PlexServer, len(clients))
 	for i, client := range clients {
 		servers[i] = web.PlexServer{Name: cfg.Plex[i].Name, Plex: client}
 	}
 	credentials := uiCredentials(cfg)
 	return web.New(web.Options{
+		Actions:     actions,
+		Jobs:        jobs,
 		Username:    cfg.UI.Username,
 		Password:    cfg.UI.Password,
 		Status:      status,
@@ -96,7 +98,7 @@ func startUI(cfg config.UI, ui *web.Server) error {
 }
 
 // stopUI stops ui, if there is one. It logs a failed graceful stop.
-func stopUI(ui *web.Server) {
+func stopUI(ui uiStopper) {
 	if ui == nil {
 		return
 	}
@@ -107,12 +109,19 @@ func stopUI(ui *web.Server) {
 	}
 }
 
+type uiStopper interface{ Stop(context.Context) error }
+
+type scheduledJobs interface {
+	scheduledStarter
+	Close()
+}
+
 // serveUntilStopped runs the schedule until ctx ends. If ctx already ended,
 // for example during the token checks, the schedule never starts. Then it
 // stops in this order: the UI, so that no request still reads the store,
 // then the schedule and the busy run. The schedule has its own context, so
 // a busy run goes on while the UI stops. ui can be nil.
-func serveUntilStopped(ctx context.Context, ui *web.Server, r *runner, sched cron.Schedule) {
+func serveUntilStopped(ctx context.Context, ui uiStopper, r scheduledJobs, sched cron.Schedule) {
 	schedCtx, cancelSched := context.WithCancel(context.Background())
 	defer cancelSched()
 	var served sync.WaitGroup
@@ -123,4 +132,5 @@ func serveUntilStopped(ctx context.Context, ui *web.Server, r *runner, sched cro
 	stopUI(ui)
 	cancelSched()
 	served.Wait()
+	r.Close()
 }

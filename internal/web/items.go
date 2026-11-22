@@ -138,28 +138,23 @@ func (s *Server) itemsQuery(r *http.Request) (store.ListQuery, string, error) {
 	if err != nil {
 		return store.ListQuery{}, "", err
 	}
-	var q store.ListQuery
-	if q.Tab, err = tabParam(v.Get("tab")); err != nil {
+	tab, err := tabParam(v.Get("tab"))
+	if err != nil {
 		return store.ListQuery{}, "", err
 	}
 	srv, err := s.srvParam(v)
 	if err != nil {
 		return store.ListQuery{}, "", err
 	}
-	q.Servers = s.serverNames(srv)
-	if err := filterParams(&q, v, srv); err != nil {
+	q, err := s.filterQuery(v, tab, srv)
+	if err != nil {
 		return store.ListQuery{}, "", err
 	}
 	sort, err := sortParam(&q, v.Get("sort"))
 	if err != nil {
 		return store.ListQuery{}, "", err
 	}
-	all, err := allParam(v.Get("all"))
-	if err != nil {
-		return store.ListQuery{}, "", err
-	}
-	q.WithIgnored = all && q.Tab == store.TabAttention
-	q.WithUnrequested = all && q.Tab == store.TabFixed
+	all := v.Get("all") == "1"
 	if q.Limit, err = limitParam(v.Get("limit"), defaultItemLimit); err != nil {
 		return store.ListQuery{}, "", err
 	}
@@ -168,6 +163,20 @@ func (s *Server) itemsQuery(r *http.Request) (store.ListQuery, string, error) {
 		return store.ListQuery{}, "", err
 	}
 	return q, scope, nil
+}
+
+func (s *Server) filterQuery(v url.Values, tab store.Tab, srv int) (store.ListQuery, error) {
+	q := store.ListQuery{Tab: tab, Servers: s.serverNames(srv)}
+	if err := filterParams(&q, v, srv); err != nil {
+		return q, err
+	}
+	all, err := allParam(v.Get("all"))
+	if err != nil {
+		return q, err
+	}
+	q.WithIgnored = all && tab == store.TabAttention
+	q.WithUnrequested = all && tab == store.TabFixed
+	return q, nil
 }
 
 // tabParam returns the tab of raw, TabAttention when raw is empty.

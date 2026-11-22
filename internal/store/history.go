@@ -25,6 +25,8 @@ const (
 	EventMatchDecision EventKind = "match-decision"
 	EventCompleted     EventKind = "completed"
 	EventGone          EventKind = "gone"
+	EventStopped       EventKind = "stopped"
+	EventResumed       EventKind = "resumed"
 )
 
 // MatchTarget is the candidate of a match request and how it was confirmed.
@@ -122,6 +124,16 @@ func (s *Store) RecordRequest(r Request) error {
 	if err != nil || !found {
 		return err
 	}
+	if err := recordRequest(tx, r, snap); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit request: %w", err)
+	}
+	return nil
+}
+
+func recordRequest(tx *sql.Tx, r Request, snap Item) error {
 	var accepted Action
 	if r.Accepted {
 		accepted = r.Action
@@ -129,13 +141,7 @@ func (s *Store) RecordRequest(r Request) error {
 	if err := updateAttempt(tx, r.Server, r.RatingKey, r.At, accepted); err != nil {
 		return fmt.Errorf("record attempt: %w", err)
 	}
-	if err := writeRequestOutcome(tx, r, snap); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit request: %w", err)
-	}
-	return nil
+	return writeRequestOutcome(tx, r, snap)
 }
 
 // writeRequestOutcome sets the last outcome of the row and writes the event
