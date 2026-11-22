@@ -256,6 +256,17 @@ func TestItemTimelineDropsCandidateThumbsWithCredentials(t *testing.T) {
 	assertThumbs(t, thumbs, got, "clean", "encoded-clean")
 }
 
+// A receiving host that decodes only percent escapes keeps a '+' of a
+// query, so a credential with a '+' is found without the form rules too.
+func TestItemTimelineDropsCandidateThumbsWithPlusCredential(t *testing.T) {
+	thumbs := map[string]string{
+		"escaped": "https://img.example/p.jpg?sig=a+b%2Fc",
+		"clean":   "https://img.example/p.jpg?sig=a+b",
+	}
+	got, _ := candidateThumbs(t, Options{Credentials: []string{"a+b/c"}}, thumbs)
+	assertThumbs(t, thumbs, got, "clean")
+}
+
 // A redacted value that is not a credential, such as a short Plex host or
 // a path prefix, does not drop a candidate thumb.
 func TestItemTimelineKeepsCandidateThumbsWithRedactedHosts(t *testing.T) {
