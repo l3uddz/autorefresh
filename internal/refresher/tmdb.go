@@ -23,8 +23,8 @@ var (
 	// errTMDB marks a failed TMDB request.
 	errTMDB = errors.New("tmdb lookup")
 	// errCache marks a store error of a fix match: a failed read or write of
-	// the TMDB ID cache or of the item path.
-	errCache = errors.New("tmdb cache")
+	// the TMDB ID cache or of the series path.
+	errCache = errors.New("cache")
 )
 
 // useTMDB reports whether a fix match asks TMDB for the TMDB IDs of the path
