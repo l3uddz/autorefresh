@@ -143,10 +143,11 @@ function RunNow({ servers }: { servers: ServerStatus[] }) {
   const runNow = useRunNow();
   const busy = servers.some(server => server.run);
   const reason = busy ? 'A run is busy' : undefined;
-  // One request at a time: a menu that was open before the request left
-  // or a run started does nothing.
+  // One request at a time. An open menu disables its items when a run
+  // starts or a request leaves, and a late choice does nothing.
+  const isBlocked = busy || runNow.isPending;
   const start = (srv: number | null, full: boolean) => {
-    if (!runNow.isPending && !busy) runNow.mutate({ srv, full });
+    if (!isBlocked) runNow.mutate({ srv, full });
   };
   if (servers.length <= 1) {
     const isDisabled = busy || !servers.length;
@@ -158,22 +159,22 @@ function RunNow({ servers }: { servers: ServerStatus[] }) {
           hasChevron={false}
           alignment="end"
         >
-          <DropdownMenuItem label="Full cache refresh, then run" description={fullDescription} onClick={() => start(null, true)} />
+          <DropdownMenuItem label="Full cache refresh, then run" description={fullDescription} isDisabled={isBlocked} onClick={() => start(null, true)} />
         </DropdownMenu>
       </ButtonGroup>
     );
   }
   return (
     <DropdownMenu button={{ label: 'Run now', variant: 'primary', isLoading: runNow.isPending, isDisabled: busy, tooltip: reason }} alignment="end">
-      <DropdownMenuItem label="All servers" onClick={() => start(null, false)} />
+      <DropdownMenuItem label="All servers" isDisabled={isBlocked} onClick={() => start(null, false)} />
       {servers.map(server => (
-        <DropdownMenuItem key={server.srv} label={server.name} onClick={() => start(server.srv, false)} />
+        <DropdownMenuItem key={server.srv} label={server.name} isDisabled={isBlocked} onClick={() => start(server.srv, false)} />
       ))}
       <DropdownMenuDivider />
-      <DropdownMenuSubMenu label="Full cache refresh, then run" description={fullDescription}>
-        <DropdownMenuItem label="All servers" onClick={() => start(null, true)} />
+      <DropdownMenuSubMenu label="Full cache refresh, then run" description={fullDescription} isDisabled={isBlocked}>
+        <DropdownMenuItem label="All servers" isDisabled={isBlocked} onClick={() => start(null, true)} />
         {servers.map(server => (
-          <DropdownMenuItem key={server.srv} label={server.name} onClick={() => start(server.srv, true)} />
+          <DropdownMenuItem key={server.srv} label={server.name} isDisabled={isBlocked} onClick={() => start(server.srv, true)} />
         ))}
       </DropdownMenuSubMenu>
     </DropdownMenu>
