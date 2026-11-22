@@ -1,0 +1,32 @@
+{
+  "name": "autorefresh-web",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.6.0",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "lint": "tsc --noEmit && eslint src",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@astryxdesign/core": "0.7.17",
+    "@astryxdesign/theme-neutral": "0.7.17",
+    "@heroicons/react": "2.2.0",
+    "@tanstack/react-query": "5.90.21",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@astryxdesign/cli": "0.7.17",
+    "@stylexjs/stylex": "0.19.2",
+    "@stylexjs/unplugin": "0.19.2",
+    "@types/node": "22.15.30",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "eslint": "9.39.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.48.1",
+    "vite": "7.2.4",
+    "vitest": "4.0.15"
+  }
+}
