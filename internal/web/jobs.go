@@ -124,7 +124,7 @@ func (s *Server) serveBulkRefresh(w http.ResponseWriter, r *http.Request) {
 	if !s.jobsAvailable(w) {
 		return
 	}
-	srv, keys, ok := s.bulkItems(w, r, store.TabAttention)
+	srv, keys, ok := s.bulkItems(w, r, r.Context(), store.TabAttention)
 	if !ok {
 		return
 	}
@@ -149,7 +149,7 @@ type bulkSelection struct {
 	Matching bool     `json:"matching"`
 }
 
-func (s *Server) bulkItems(w http.ResponseWriter, r *http.Request, tab store.Tab) (int, []string, bool) {
+func (s *Server) bulkItems(w http.ResponseWriter, r *http.Request, ctx context.Context, tab store.Tab) (int, []string, bool) {
 	srv, q, err := s.bulkQuery(r, tab)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -159,7 +159,7 @@ func (s *Server) bulkItems(w http.ResponseWriter, r *http.Request, tab store.Tab
 	if !decodeBody(w, r, &selection) {
 		return 0, nil, false
 	}
-	keys, err := s.bulkKeys(r.Context(), q, selection)
+	keys, err := s.bulkKeys(ctx, q, selection)
 	switch {
 	case errors.Is(err, refresher.ErrStore):
 		s.writeActionError(w, r, err)
@@ -265,9 +265,9 @@ func (s *Server) serveBulkStopped(w http.ResponseWriter, r *http.Request, tab st
 		writeError(w, http.StatusServiceUnavailable, "actions unavailable")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), actionTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), s.actionTimeout)
 	defer cancel()
-	srv, keys, ok := s.bulkItems(w, r.WithContext(ctx), tab)
+	srv, keys, ok := s.bulkItems(w, r, ctx, tab)
 	if !ok {
 		return
 	}

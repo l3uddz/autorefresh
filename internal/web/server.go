@@ -88,7 +88,8 @@ type Server struct {
 	// credentials are the values that no candidate poster URL may hold.
 	credentials []string
 	// liveTimeout bounds the Plex request of GET /api/item/live.
-	liveTimeout time.Duration
+	liveTimeout   time.Duration
+	actionTimeout time.Duration
 
 	// idMu guards identities, the cached machine identifier of each server
 	// ("": not read yet).
@@ -146,6 +147,7 @@ func New(opts Options) *Server {
 		secrets:       opts.Secrets,
 		credentials:   opts.Credentials,
 		liveTimeout:   defaultLiveTimeout,
+		actionTimeout: defaultActionTimeout,
 		identities:    make([]string, len(opts.Servers)),
 		identityTried: make([]time.Time, len(opts.Servers)),
 		sseCtx:        sseCtx,

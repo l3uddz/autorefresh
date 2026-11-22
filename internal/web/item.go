@@ -4,10 +4,11 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"github.com/rs/zerolog/log"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"

@@ -110,7 +110,7 @@ func (j *Jobs) RunNow(names []string) ([]int64, error) {
 	}
 	j.launch(ids, func(ctx context.Context) {
 		if err := j.r.execute(ctx, runs); err != nil {
-			log.Error().Msg("Run failed")
+			log.Error().Err(err).Msg("Run failed")
 		}
 	})
 	return ids, nil
@@ -229,6 +229,8 @@ func (r *Refresher) bulkBatch(ctx context.Context, run *serverRun, admitted []bu
 			needPace = true
 		}
 		switch item.Outcome {
+		case store.ItemNotReached:
+			return err
 		case store.ItemFailed:
 			run.failures++
 		case store.ItemStopped, store.ItemChanged, store.ItemNotCached:

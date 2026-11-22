@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	actionTimeout = 30 * time.Second
-	searchTimeout = 45 * time.Second
-	maxBodyBytes  = 1 << 20
+	defaultActionTimeout = 30 * time.Second
+	searchTimeout        = 45 * time.Second
+	maxBodyBytes         = 1 << 20
 )
 
 // Actions is the set of synchronous dashboard actions.
@@ -119,7 +119,7 @@ func (s *Server) serveRefresh(w http.ResponseWriter, r *http.Request) {
 	if !ok || !noBody(w, r) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), actionTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), s.actionTimeout)
 	defer cancel()
 	s.accepted(w, r, s.actions.RefreshItem(ctx, a.server, a.key))
 }
@@ -150,7 +150,7 @@ func (s *Server) serveMatch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid match")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), actionTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), s.actionTimeout)
 	defer cancel()
 	s.accepted(w, r, s.actions.ApplyMatch(ctx, a.server, a.key, plex.Candidate{GUID: body.GUID, Name: body.Name, Year: body.Year}))
 }
@@ -164,7 +164,7 @@ func (s *Server) serveCheck(w http.ResponseWriter, r *http.Request) {
 	if !ok || !noBody(w, r) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), actionTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), s.actionTimeout)
 	defer cancel()
 	if err := s.actions.CheckItem(ctx, a.server, a.key); err != nil {
 		s.writeActionError(w, r, err)
@@ -183,7 +183,7 @@ func (s *Server) serveStopped(w http.ResponseWriter, r *http.Request, stop bool)
 	if !ok || !noBody(w, r) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), actionTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), s.actionTimeout)
 	defer cancel()
 	changed, err := s.actions.SetStopped(ctx, a.server, a.key, stop)
 	if err != nil {
@@ -272,9 +272,11 @@ func (s *Server) serveEpisodeCheck(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) writeActionError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case r.Context().Err() != nil:
-		writeStoreError(w, r, errors.New(s.redact(err.Error())))
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		if r.Context().Err() != nil {
+			writeStoreError(w, r, errors.New(s.redact(err.Error())))
+			return
+		}
 		writeError(w, http.StatusGatewayTimeout, "timed out")
 	case errors.Is(err, refresher.ErrClosed):
 		writeError(w, http.StatusServiceUnavailable, "shutting down")
@@ -284,16 +286,17 @@ func (s *Server) writeActionError(w http.ResponseWriter, r *http.Request, err er
 		writeError(w, http.StatusNotFound, "not found")
 	case errors.Is(err, refresher.ErrNotCached):
 		writeError(w, http.StatusConflict, "item not cached")
-	case errors.Is(err, refresher.ErrNotShow), errors.Is(err, refresher.ErrTMDBOff):
-		if errors.Is(err, refresher.ErrNotShow) {
-			writeError(w, http.StatusBadRequest, "not a show")
-		} else {
-			writeError(w, http.StatusBadRequest, "tmdb is off")
-		}
+	case errors.Is(err, refresher.ErrNotShow):
+		writeError(w, http.StatusBadRequest, "not a show")
+	case errors.Is(err, refresher.ErrTMDBOff):
+		writeError(w, http.StatusBadRequest, "tmdb is off")
 	case errors.Is(err, refresher.ErrUnknownServer):
 		writeError(w, http.StatusBadRequest, "invalid srv")
 	case errors.Is(err, refresher.ErrStore):
-		writeStoreError(w, r, errors.New(s.redact(err.Error())))
+		log.Error().Str("error", s.redact(err.Error())).Str("path", r.URL.Path).Msg("API request failed")
+		if r.Context().Err() == nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+		}
 	case errors.Is(err, refresher.ErrTMDB):
 		s.writeTMDBError(w, r, err)
 	default:
