@@ -251,7 +251,8 @@ New and changed tables (one migration each, numbered after `5_actions.sql`):
 Retention: at the start of each run, delete `event` and `run` rows older than
 `history-retention`. The cascade removes their searches and candidates. The
 `library` cascade removes the history of a pruned library. Dry runs skip
-retention and record nothing.
+retention, record nothing, and prune no library or server, so a dry run
+with another configuration cannot delete the daemon's cache or history.
 
 #### Completion
 
