@@ -510,6 +510,7 @@ The API can also start a manual scan or refresh selected items in bulk.
 Bulk refresh sends requests to individual items and uses `refresh-delay`
 between requests. While a run is busy, the API refuses a new manual scan
 or bulk refresh.
+If a bulk stop or resume fails partway through, earlier changes stay saved.
 
 The dashboard page is a placeholder for now. The frontend comes in a later
 release. The API already works.
