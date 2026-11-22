@@ -21,9 +21,10 @@
 - Each task that adds a public store method adds it to `TestMethodsReportDatabaseFailure` (`internal/store/store_test.go`).
 - Build URLs with `net/url`. Every URL the server emits (image URLs in JSON, links in the placeholder page) is relative with no leading slash (`api/items/thumb?...`), so the UI works behind a proxy at any sub-path.
 - The Plex token never reaches the browser. No Plex header or body is passed to a response, and a handler answers a failed Plex request with a fixed message.
-- The stored diagnostic texts `event.error` and `run.error` are shown, because explaining failures is a goal of the dashboard and the operator reads the same texts in the log. The `plex` package already keeps addresses and tokens out of its error texts. As a second guard, the API replaces every occurrence of a configured Plex token, Plex URL host, Plex URL path prefix (`plex.Client.PathPrefix()`, the prefix exactly as the client's `JoinPath` puts it in each request path, for example `/gateway/sentinel-path` for a configured `/gateway//sentinel-path/`; a reverse proxy can put a credential there, and `plex` error texts include the request path), TMDB token, and UI password in these texts with `<redacted>` before it sends them (`web.Options.Secrets []string`, filled by `cmd`; empty values are skipped). Secrets can overlap (`/gateway` and `/gateway/sentinel-path`), so `redact` finds every match of every secret in the original text (`strings.Index` from each position), merges overlapping or touching spans, and replaces each merged span once; it never replaces one secret after another. The method, the rest of the path, and the status stay, for example `GET <redacted>/library/sections: 500 Internal Server Error`.
+- The stored diagnostic texts `event.error` and `run.error` are shown, because explaining failures is a goal of the dashboard and the operator reads the same texts in the log. The `plex` package already keeps addresses and tokens out of its error texts. As a second guard, the API replaces every occurrence of a configured Plex token, Plex URL host, Plex URL path prefix (`plex.Client.PathPrefix()`, the prefix exactly as the client's `JoinPath` puts it in each request path, for example `/gateway/sentinel-path` for a configured `/gateway//sentinel-path/`; a reverse proxy can put a credential there, and `plex` error texts include the request path), TMDB token, and UI password in these texts with `<redacted>` before it sends them (`web.Options.Secrets []string`, filled by `cmd`; empty values are skipped). Secrets can overlap (`/gateway` and `/gateway/sentinel-path`), so `redact` finds every match of every secret in the original text (`strings.Index`, advancing one byte after each hit, so self-overlapping matches such as `aa` in `aaa` are all found), merges overlapping or touching spans, and replaces each merged span once; it never replaces one secret after another. The method, the rest of the path, and the status stay, for example `GET <redacted>/library/sections: 500 Internal Server Error`.
 - Cursors are opaque to the client but not secret. The server rejects a cursor that does not decode, lacks a required field, has another version, or belongs to another tab, sort, or filter (400 `invalid cursor`). The required fields are listed with each cursor; an item cursor needs only the value field of its sort type. A well-formed cursor with an edited position is only a position, and the API is authenticated, so cursors are not signed.
 - A server is identified by `srv`, its 0-based position in the configured list, as a query parameter. No server name is ever a path segment.
+- List fields that are always present (`servers`, `libraries`, `ignoreReasons`, `items`, `timeline`, `runs`, `searches`, `candidates`, `locations`, `files`) encode as `[]` when empty, never `null`: make each slice with `make` or check for nil before encoding. `Reasons(0)` gives no names: `reasonNames(r store.Reasons) []string` returns an empty slice for 0 (never `[""]` from splitting `""`); `itemJSON.reasons` is left out when empty, and `ignoreReasons` is `[]`.
 - JSON keys are camelCase. Times are RFC 3339 (`time.Time`); a zero time is left out with `omitzero`. Every error response is `{"error": "<fixed message>"}` with `Content-Type: application/json`. A store error is logged (`log.Error().Err(err).Str("path", r.URL.Path).Msg("API request failed")`) and answered `500 {"error":"internal error"}`.
 - Accepted limit: the Fixed tab and "recently fixed" count a completion as fixed when its `fixed_action` is not empty. Rows from before migration 5 that had refreshes but no recorded action complete with an empty `fixed_action`, so they show only with the `all=1` filter. The run summary's `completed_after_request` (which uses `Refreshes > 0`) can count them; the difference ends once those legacy rows are gone.
 - Before each commit: `mise run vendor && mise run test && mise run lint` pass. Commit subjects use Conventional Commits with a scope (`config`, `store`, `plex`, `refresher`, `web`, `cli`, `docker`, `readme`, `agents`), at most 72 characters, and the body ends with `Refs #94` and the `Co-Authored-By` line.
@@ -144,7 +145,7 @@ Rules:
 - Attention: `stopped_at IS NULL`, plus `reasons & ~ignored != 0` unless `WithIgnored`. Stopped: `stopped_at IS NOT NULL`. Filters: `server IN (...)`, `section = ?`, `type = ?`, `reasons & ? != 0`, and Search as `(title LIKE ? ESCAPE '\' OR path LIKE ? ESCAPE '\')` with `%`, `_`, and `\` escaped in the term. Library title from `LEFT JOIN library`.
 - Sort expressions (all non-null): title `item.title COLLATE NOCASE` (Cursor.Text), year, added `added_at`, due (next due ms), tries `attempts`, last-attempt `COALESCE(last_attempt, 0)`, stopped `COALESCE(stopped_at, 0)`. Defaults: Attention `due` ascending, Stopped `stopped` descending. `completed` and any unknown key on these tabs, `Limit <= 0`, or an unknown tab give an error wrapping `ErrInvalidQuery`. Until Task 3, `TabFixed` gives `ErrInvalidQuery` too.
 - Keyset paging: `ORDER BY <sort> <dir>, item.server <dir>, item.rating_key <dir>` and, with `After`, `(<sort>, item.server, item.rating_key) > (?, ?, ?)` (`<` when descending). Read `Limit+1` rows, return `Limit`, and set `next` from the last returned row only when more exist.
-- `NextDue` is set only for `waiting` and `too-new` rows (`time.UnixMilli`).
+- `NextDue` is set only for `waiting` and `too-new` rows (`time.UnixMilli`). The cursor value always comes from the selected sort expression, never from `ListItem` fields: for `due` it is the SQL next-due value, also for `due` rows whose `NextDue` is zero.
 
 - [ ] **Step 1: Write the failing tests** (set `stopped_at` with SQL; stage 3 adds the API)
 
@@ -168,7 +169,8 @@ func TestListFilters(t *testing.T)
 // Servers, Section, Type, Reason, Search on title, Search on path; Search "100%" matches
 // "100% Pure" and not "1000 Pure"; Search "a_b" matches "a_b" and not "axb"; library title joined.
 func TestListPagesWithoutGapsOrRepeats(t *testing.T)
-// 7 rows with duplicate titles and years; Limit 3; for title asc, title desc, due asc:
+// 7 rows with duplicate titles and years, "Beta" and "beta" among them, and several due rows;
+// Limit 3; for title asc, title desc, due asc, last-attempt asc (never-tried rows give 0):
 // the pages joined equal one Limit-100 call, and the last page has next == nil.
 func TestListStopsWaitingWhenCanceled(t *testing.T)
 // a transaction begun on s.db holds the only connection; ListItems with a 50 ms context
@@ -189,7 +191,7 @@ func TestListRejectsInvalidQuery(t *testing.T)
 ### Task 3: Fixed list, counts, item detail, libraries, and run pages
 
 **Files:**
-- Modify: `internal/store/list.go`, `internal/store/library.go`, `internal/store/run.go`, their tests, `internal/store/store_test.go`, and the `Runs` call sites in `internal/store/run_test.go`, `internal/refresher/run_test.go`, and `cmd/autorefresh/main_test.go` (two calls)
+- Modify: `internal/store/list.go`, `internal/store/library.go`, `internal/store/run.go`, `internal/store/history.go` (`TimelineContext`: `queryEvents`, `attachSearches`, and `attachCandidates` take `ctx` and use `tx.QueryContext`), their tests, `internal/store/store_test.go`, and the `Runs` call sites in `internal/store/run_test.go`, `internal/refresher/run_test.go`, and `cmd/autorefresh/main_test.go` (two calls)
 
 **Interfaces:**
 - Consumes: Task 2's `ListQuery`, `ListItem`, `Cursor`, `DueRules`.
@@ -230,7 +232,7 @@ func (s *Store) FillPath(ctx context.Context, server, ratingKey, path string) er
 
 Rules:
 
-- `TabFixed` rows come from `event`: for each `(server, rating_key)`, first select only its newest `completed` event (`id = (SELECT MAX(id) FROM event WHERE kind = 'completed' AND server = e.server AND rating_key = e.rating_key)`), and only then apply `fixed_action != ''` unless `WithUnrequested`, so an item whose newest completion had no accepted request is hidden even if an older one had. Fields: the snapshot columns, `CompletedAt` (`at`), `FixedAction`, `FixedMatch`, the joined library title, and `Cached` (`EXISTS` an item row). Sorts: `title`, `year`, `completed` (default, descending). Search uses the event's title and path. `Reason` is not used.
+- `TabFixed` rows come from `event`: for each `(server, rating_key)`, first select only its newest `completed` event, newest as `Timeline` orders it (`e.id = (SELECT id FROM event WHERE kind = 'completed' AND server = e.server AND rating_key = e.rating_key ORDER BY at DESC, id DESC LIMIT 1)`), and only then apply `fixed_action != ''` unless `WithUnrequested`, so an item whose newest completion had no accepted request is hidden even if an older one had. Fields: the snapshot columns, `CompletedAt` (`at`), `FixedAction`, `FixedMatch`, the joined library title, and `Cached` (`EXISTS` an item row). Sorts: `title`, `year`, `completed` (default, descending). Search uses the event's title and path. `Reason` is not used.
 - Keyset paging works as in Task 2, with `event.server, event.rating_key` as the tiebreakers.
 
 - [ ] **Step 1: Write the failing tests**
@@ -393,7 +395,9 @@ func TestProgressReportsUnauthorizedStop(t *testing.T)
 func TestProgressReportsCanceledAfterSend(t *testing.T)
 // the fake cancels ctx inside Refresh and returns its error -> the attempt is recorded and
 // ItemDone(k1, "refresh-failed") is reported; RunFinished with status canceled.
-func TestProgressSkipsCanceledBeforeSend(t *testing.T) // ctx canceled during the sleep before k2 -> no ItemStarted/ItemDone for k2
+func TestProgressSkipsCanceledBeforeSend(t *testing.T)
+// ctx canceled during the sleep before k2 -> no ItemStarted/ItemDone for k2; and, for an
+// unmatched item due a fix match, ctx canceled inside ItemPaths -> ItemStarted but no ItemDone.
 func TestProgressSkipsStoreFailure(t *testing.T) // a store whose RecordRequest fails -> no ItemDone; RunFinished gets the store error
 ```
 
@@ -514,7 +518,7 @@ Rules:
 - TMDB: `"off"` when `tmdb` is false, `"unknown"` until `TMDBChecked`; nil gives ok, `tmdb.ErrUnauthorized` unauthorized, any other error unreachable.
 - `ItemDone`: `Done++`, `Current = ""`; outcome `refresh` adds to `Refreshed`, `match` and `tmdb-match` to `Matched`, a `-failed` suffix to `Failed`. Unknown server names are ignored.
 - Each change notifies every subscriber with a non-blocking send on its own channel with a buffer of 1. `Snapshot` builds a deep copy under the mutex: a new slice, and a new `RunProgress` value for each running server, so JSON encoding never reads shared state.
-- `GET /api/events`: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`. With `rc := http.NewResponseController(w)`, each write (the snapshot or a keepalive) sets `rc.SetWriteDeadline(time.Now().Add(writeTimeout))` (10 s, a `Server` field that tests shorten), writes, calls `rc.Flush()`, and then clears the deadline with `rc.SetWriteDeadline(time.Time{})`, so no deadline is armed while the stream is idle. The server-wide `WriteTimeout` no longer applies to the stream, and a stalled client cannot hold a write past its own deadline. Subscribe first, then send the snapshot as `event: status\ndata: <json>\n\n`. Then loop: return when the SSE context (owned by `Server`, canceled first by `Stop`) or the request ends; send the snapshot on each notification; send `: keepalive\n\n` every 25 s (a `Server` field that tests shorten). Return on any write, deadline, or flush error, including an error from clearing the deadline.
+- `GET /api/events`: `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`. With `rc := http.NewResponseController(w)`, each write (the snapshot or a keepalive) sets `rc.SetWriteDeadline(time.Now().Add(writeTimeout))` (10 s, a `Server` field that tests shorten), writes, calls `rc.Flush()`, and then clears the deadline with `rc.SetWriteDeadline(time.Time{})`, so no deadline is armed while the stream is idle. The server-wide `WriteTimeout` no longer applies to the stream, and a stalled client cannot hold a write past its own deadline. Return at once when the SSE context has already ended. Subscribe first, then send the snapshot as `event: status\ndata: <json>\n\n`. `New` uses `NewStatus(nil, false)` when `Options.Status` is nil, so tests without a status cannot panic. Then loop: return when the SSE context (owned by `Server`, canceled first by `Stop`) or the request ends; send the snapshot on each notification; send `: keepalive\n\n` every 25 s (a `Server` field that tests shorten). Return on any write, deadline, or flush error, including an error from clearing the deadline.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -535,7 +539,10 @@ func TestEventsStalledWriterEnds(t *testing.T)
 // call the handler with a fake ResponseWriter that implements SetWriteDeadline and Flush,
 // and whose Write blocks until the deadline it was given passes, then fails; writeTimeout
 // 50 ms -> the handler returns within 1 s, and it set a deadline before the write.
-func TestEventsFlushFailureEnds(t *testing.T) // a fake with FlushError() error (ResponseController uses it) whose Write succeeds and FlushError fails -> the handler returns
+func TestEventsFlushFailureEnds(t *testing.T)
+// a fake with SetWriteDeadline(time.Time) error (returns nil) and FlushError() error (ResponseController
+// uses both) whose Write succeeds and FlushError fails -> the handler returns, and the fake saw
+// both a Write and a FlushError call.
 func TestEventsKeepaliveAfterLongIdle(t *testing.T)
 // writeTimeout 20 ms, keepalive 100 ms, over a real httptest server, with a 2 s overall
 // test deadline -> the first keepalive arrives, so an expired deadline from the first write
@@ -600,13 +607,13 @@ type PlexServer struct {
 | `reason` | one reason name | any | `invalid reason` |
 | `type` | `movie`, `show` | any | `invalid type` |
 | `q` | trimmed, at most 200 bytes | none | `invalid q` |
-| `sort` | a store sort key, `-` prefix for descending | tab default | `invalid sort` |
-| `all` | `1` (`WithIgnored` or `WithUnrequested`) | off | `invalid all` |
+| `sort` | a sort key of the chosen tab (queue tabs: `title`, `year`, `added`, `due`, `tries`, `last-attempt`, `stopped`; fixed: `title`, `year`, `completed`), `-` prefix for descending; checked before the cursor and the store | tab default | `invalid sort` |
+| `all` | `1`: sets `WithIgnored` only for `tab=attention` and `WithUnrequested` only for `tab=fixed` (no effect on `stopped`), so the other tabs' counts do not change | off | `invalid all` |
 | `limit` | 1–500 | 100 | `invalid limit` |
 | `cursor` | opaque | first page | `invalid cursor` |
 
 - The store always gets `Servers`: the one chosen server, or all configured names, so rows of a removed server never show.
-- The cursor is `base64.RawURLEncoding` of JSON `{"v":1,"scope":"<scope>","n":<num>,"t":"<text>","s":"<server>","k":"<key>"}`. `scope` is the normalized request without `cursor` and `limit`: `url.Values{tab, srv, library, reason, type, q, sort, all}` with the defaults filled in, `.Encode()`d. Required fields: `v`, `scope`, `s`, `k`, and the value field of the sort's type (`t` for `title`, `n` otherwise); the other value field may be absent. Decode into pointer fields to detect absence. A decode error, another version, a missing required field, or a scope that differs from the request gives `invalid cursor`.
+- The cursor is `base64.RawURLEncoding` of JSON `{"v":1,"scope":"<scope>","n":<num>,"t":"<text>","s":"<server>","k":"<key>"}`. `scope` is the normalized request without `cursor` and `limit`: `url.Values{tab, srv, library, reason, type, q, sort, all}` with the defaults filled in, `.Encode()`d. Required fields: `v`, `scope`, `s`, `k`, and the value field of the sort's type (`t` for `title`, `n` otherwise); the other value field may be absent. Encode and decode with one struct whose value fields are `*int64` and `*string` with `omitempty`, setting only the active one, so `n: 0` and `t: ""` stay in the cursor and absence is detected. A decode error, another version, a missing required field, or a scope that differs from the request gives `invalid cursor`.
 - The answer is `{"items":[...],"next":"<cursor>","counts":{"attention":0,"fixed":0,"stopped":0}}`; `next` is left out on the last page. Counts use the same filters.
 - `itemJSON` fields: `srv`, `server`, `section`, `library`, `key`, `type`, `title`, `year`, `path`, `thumb`, `art`, `cached`, `reasons` (names), `state`, `nextDue`, `addedAt`, `lastAttempt`, `stoppedAt`, `attempts`, `refreshes`, `lastAction`, `lastOutcome`, `lastMatchOutcome`, `completedAt`, `fixedAction`, `fixedMatch`. Empty strings, zero numbers, and zero times are left out, except `srv`, `cached`, `attempts`, and `refreshes`.
 - `thumb` and `art` are `api/items/thumb?key=<key>&srv=<srv>&v=<digits after the last "/">` (and `api/items/art?...`), built with `url.URL{Path: ..., RawQuery: url.Values{...}.Encode()}`, and only when `plex.ItemImagePath(key, path)` accepts the stored path.
@@ -624,10 +631,12 @@ func TestServersScanned(t *testing.T)
 func TestItemsAttention(t *testing.T)
 // srv, reason names, state, counts; thumb == "api/items/thumb?key=101&srv=0&v=1700000000".
 func TestItemsPages(t *testing.T) // limit 2, follow next, no repeats, no next on the last page
-func TestItemsFixedTab(t *testing.T) // completedAt and fixedAction; all=1 adds the unrequested completion
+func TestItemsFixedTab(t *testing.T) // completedAt and fixedAction, no "reasons" key; all=1 adds the unrequested completion
+func TestItemsEmptyListsAreArrays(t *testing.T) // an empty store -> "items":[] and, from /api/servers, "libraries":[] and "ignoreReasons":[]
 func TestItemsHidesRemovedServers(t *testing.T) // rows of a server that is not configured are not listed or counted
 func TestItemsRejectsInvalidParams(t *testing.T)
-// each invalid row of the table above, plus srv -1, srv 9, srv "a", and cursors that are
+// each invalid row of the table above, plus tab=attention&sort=completed, tab=fixed&sort=due,
+// srv -1, srv 9, srv "a", and cursors that are
 // truncated, of version 2, without "k", from another sort, from another srv, and from
 // another q -> 400 with the JSON error.
 func TestItemsLastPageExactlyLimit(t *testing.T) // 4 rows, limit 2 -> the second page has 2 items and no next
@@ -775,7 +784,7 @@ func checkTokens(ctx context.Context, servers []refresher.Server, tmdbClient int
 Behaviour:
 
 - The UI runs only when `cfg.UI.Listen != ""` and neither `--once` nor `--dry-run` is set. With `ui.listen` set in those modes, log `log.Info().Msg("UI is off with --once or --dry-run")` once and bind nothing.
-- Build `web.NewStatus` before the refresher, and pass it as `Options.Progress` only when the UI runs.
+- Build `web.NewStatus` before the refresher, and pass it as `Options.Progress` only when the UI runs. Use interface variables (`var progress refresher.Progress; var rec healthRecorder`) set only when the UI runs, as `main.go` does for TMDB, so a nil `*web.Status` never becomes a non-nil interface.
 - Keep each server's `*plex.Client` beside its `refresher.Server`, and pass it as `web.PlexServer.Plex`. `web.Options` gets the store, the status, `cfg.UI.Username` and `cfg.UI.Password`, `Rules: store.DueRules{MinimumAge, RefreshInterval, MaxRefreshInterval, Ignored: cfg.Ignored}`, and `Secrets` from `uiSecrets(cfg config.Config, clients []*plex.Client) []string` in `ui.go`: each server's token, `BaseURL.Host`, and `client.PathPrefix()`, `cfg.TMDBToken`, and `cfg.UI.Password`.
 - After the `--once` branch and before `checkTokens`, bind with `listenFunc("tcp", cfg.UI.Listen)`. On error, close the store and `return fatal(err, "Failed starting UI listener")`. No Plex request is sent before the bind.
 - Start the server, then log `log.Info().Str("listen", ln.Addr().String()).Bool("auth", cfg.UI.Username != "").Msg("UI listening")`. Without auth, also log `log.Warn().Msg("UI has no authentication, so allow access only through an authenticating reverse proxy or a trusted network")`.
@@ -811,8 +820,8 @@ func TestRunDryRunIgnoresUI(t *testing.T) // occupied port, scheduled dry run, c
 func TestRunServesUIAndStops(t *testing.T)
 // listenFunc wraps net.Listen("tcp", "127.0.0.1:0") and records the listener; run in a
 // goroutine; poll GET http://<addr>/api/status until 200 with server "test" health "ok";
-// the log has "UI listening" and the no-auth warning; cancel -> run returns nil within 10 s;
-// the database opens.
+// cancel -> run returns nil within 10 s; only then read the captured log (it is not safe
+// under -race while run logs): it has "UI listening" and the no-auth warning; the database opens.
 func TestRunStopsUIWhenCanceledDuringTokenChecks(t *testing.T)
 // listenFunc records the listener; the Plex target cancels ctx inside its first request
 // (the token check) -> run returns nil, the listener is closed, serve never ran (no
