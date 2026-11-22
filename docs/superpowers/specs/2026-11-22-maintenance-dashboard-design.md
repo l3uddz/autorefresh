@@ -186,10 +186,10 @@ New and changed tables (one migration each, numbered after `5_actions.sql`):
     `failed`). A fix match that finds nothing is followed by a plain
     refresh, so both are needed for "Last action" ("refresh · no match").
     The table shows and sorts them without reading events.
-  - `last_match_at INTEGER` (null: unknown): the time of the last match
-    request that Plex accepted for this row. `RecordAttempt` sets it with
-    `last_match`. Rows from before this migration keep null, so their
-    completion shows the match kind without a date or candidate.
+  - `last_match_event_id INTEGER` (null: none): the ID of the request
+    event of the last match that Plex accepted for this row. Rows from
+    before this migration keep null, so their completion shows the match
+    kind without a date or candidate.
   - `thumb TEXT NOT NULL DEFAULT ''` and `art TEXT NOT NULL DEFAULT ''`: the
     Plex image paths from the listing (`/library/metadata/<key>/thumb/<ts>`).
     Reads already receive them.
@@ -269,10 +269,12 @@ own transaction, for each row it deletes because the item became complete:
 - The attribution is saved at completion from the row, which belongs to the
   current occurrence of the item: `fixed_action` (the row's `last_action`,
   shown as "the last accepted request before completion"), `fixed_match`
-  (`last_match`), and `fixed_match_event_id`, the accepted match `request`
-  event of this rating key at `last_match_at`. An earlier occurrence of the
-  same rating key can therefore never be credited. Legacy rows without
-  `last_match_at` leave the event ID empty.
+  (`last_match`), and `fixed_match_event_id`, the ID of the accepted match
+  `request` event, which `RecordRequest` saved on the row as
+  `last_match_event_id`. Event IDs are never reused (`AUTOINCREMENT`), so an
+  earlier occurrence of the same rating key can never be credited. If that
+  event has expired, the ID is stored as null and the match kind stays.
+  Legacy rows have no event ID.
 
 That also covers "matched by autorefresh on 12 Nov" in the detail view.
 

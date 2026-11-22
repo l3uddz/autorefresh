@@ -20,7 +20,7 @@
 - Every store write method that touches more than one row or table runs in one transaction.
 - The store has one connection. Never run a query while another query's `*sql.Rows` is open: read all parent rows and close them before reading children.
 - Event and run IDs are `INTEGER PRIMARY KEY AUTOINCREMENT`, so a deleted ID is never reused.
-- Dry runs (`Options.DryRun`) write no event, no decision, and no run row, run no retention, and prune nothing (they log what they would prune). Dry runs still update the item cache as today.
+- Dry runs (`Options.DryRun`) write no event, no decision, and no run row, run no retention, and prune nothing (they log one `Dry run keeps cache of removed libraries` line per server, Task 9). Dry runs still update the item cache as today.
 - `event.source` is `auto` or `manual`. `run.source` is `schedule` or `manual`. They are different Go types.
 - Times are stored as Unix seconds (`nullTime`, `timeFrom`). Lists of events and runs are ordered newest first by time, then by ID (`at DESC, id DESC`).
 - `history-retention` defaults to `720h` and must be positive.
@@ -81,8 +81,9 @@ Schema (text columns `TEXT NOT NULL DEFAULT ''` and integer columns `INTEGER NOT
 - [ ] **Step 1: Write the failing tests** (SQL only; no new Go types yet)
 
 ```go
-// openAtVersion applies migrations 1..v with parseMigrations and applyMigration
-// to a new file and returns its path. It replaces nothing; openVersion1 stays.
+// openAtVersion creates schema_migration, applies migrations 1..v with
+// parseMigrations and applyMigration to a new file, and returns its path.
+// openVersion1 stays as it is.
 func openAtVersion(t *testing.T, v int) string
 
 func TestMigrateAddsDashboardSchema(t *testing.T)
@@ -102,7 +103,7 @@ func TestDeletingLibraryCascadesHistory(t *testing.T)
 
 func TestDeletingEventClearsFixedMatchReference(t *testing.T)
 // event A, event B with fixed_match_event_id = A; DELETE A -> B.fixed_match_event_id IS NULL;
-// a new event gets an id greater than A's (AUTOINCREMENT does not reuse it).
+// then DELETE B (the highest ID) and insert C -> C.id > B.id (AUTOINCREMENT does not reuse it).
 ```
 
 - [ ] **Step 2: Run** `go test ./internal/store -run 'Migrate|Cascades|FixedMatchReference' -v` — Expected: FAIL.
@@ -122,7 +123,7 @@ func TestDeletingEventClearsFixedMatchReference(t *testing.T)
 
 **Interfaces:**
 - Produces: `func ItemImagePath(ratingKey, p string) string` — returns `p` only if `ratingKey` matches `idPattern` (`client.go`) and `p` is exactly `/library/metadata/<ratingKey>/thumb/<digits>` or `/library/metadata/<ratingKey>/art/<digits>` (no query, fragment, or escape); else `""`.
-- Produces: `func SafeRemoteImage(raw string) string` — returns `raw` only if `url.Parse` succeeds, the scheme is `https`, `Hostname()` is not empty, there is no user info and no fragment, `url.ParseQuery(RawQuery)` succeeds, and no query key contains `token` (case-insensitive, so `X-Plex-Token` too); else `""`.
+- Produces: `func SafeRemoteImage(raw string) string` — returns `raw` only if `raw` contains no `#` (a bare trailing `#` leaves `URL.Fragment` empty, as `config.go` already handles), `url.Parse` succeeds, the scheme is `https`, `Hostname()` is not empty, there is no user info, `url.ParseQuery(RawQuery)` succeeds, and no query key contains `token` (case-insensitive, so `X-Plex-Token` too); else `""`.
 - Produces: `Candidate{GUID, Name string; Year int; Type, Summary, Thumb string; Score int}`. `SearchMatches` sets `Thumb` through `SafeRemoteImage`. `Match` keeps sending only `guid`, `name`, `year`.
 
 - [ ] **Step 1: Write the failing tests** (table tests)
@@ -138,7 +139,7 @@ func TestSafeRemoteImage(t *testing.T)
 // "https://metadata.example.invalid/thumb.jpg" -> same
 // -> "" for: "http://h/x.jpg"; "https://user:pw@h/x.jpg"; "https://:443/x.jpg";
 //    "https://h/x.jpg?X-Plex-Token=abc"; "https://h/x.jpg?apitoken=abc"; "https://h/x.jpg?a=%zz";
-//    "https://h/x.jpg#f"; "/relative.jpg"; ""
+//    "https://h/x.jpg#f"; "https://h/x.jpg#"; "/relative.jpg"; ""
 ```
 
 Update `TestSearchMatchesDecodesCandidates` to expect `Candidate{GUID: "plex://movie/000000000000000000000001", Name: "Fixture Movie One", Year: 2020, Type: "movie", Summary: "A neutral summary.", Thumb: "https://metadata.example.invalid/thumb.jpg", Score: 98}`.
@@ -178,7 +179,7 @@ func TestSetPathIgnoresMissingRow(t *testing.T)
 ```
 
 - [ ] **Step 2: Run** `go test ./internal/store -v` — Expected: new tests FAIL.
-- [ ] **Step 3: Implement.** Add `SaveLibraries` and `SetPath` to `TestMethodsReportDatabaseFailure`.
+- [ ] **Step 3: Implement.** Add `SaveLibraries` (with one `LibraryInfo`, so it cannot short-circuit) and `SetPath` to `TestMethodsReportDatabaseFailure`.
 - [ ] **Step 4: Run** the store package — Expected: PASS, existing tests unchanged.
 - [ ] **Step 5: Commit** — `feat(store): keep item images, paths, and library metadata`
 
@@ -270,7 +271,7 @@ func (s *Store) Timeline(server, ratingKey string) ([]Event, error)
 - `RecordGone`: a `gone` event with the snapshot, then the row delete, in one transaction. A missing row writes nothing.
 - `Timeline` decodes `links` with `strings.Split` only when the text is not empty.
 
-- [ ] **Step 1: Write the failing tests** — copy the assertions of `TestRecordAttempt` and `TestRecordAttemptKeepsActions` into `RecordRequest` tests, and add:
+- [ ] **Step 1: Write the failing tests** — only the history-specific ones. The attempt-counting assertions stay in `TestRecordAttempt*` until Task 10 converts those tests to `RecordRequest`, so there is one set of them.
 
 ```go
 func TestRecordRequestWritesEventAndOutcome(t *testing.T)      // accepted refresh -> one event: request, auto, refresh, accepted, Title from row; LastOutcome "refresh"
@@ -294,12 +295,13 @@ func TestTimelineOrdersSameSecondByID(t *testing.T)           // two events at t
 **Files:**
 - Modify: `internal/store/item.go` (`Read`, `ApplyRead`, `applyOldRows`, `writeExisting`, `deleteGone`)
 - Modify: `internal/store/history.go` (`writeCompleted`, `writeGone`)
-- Test: `internal/store/history_test.go`
+- Modify: `internal/refresher/read.go` (`readLibrary` sets `rd.DryRun = r.opts.DryRun`)
+- Test: `internal/store/history_test.go`, `internal/refresher/history_test.go`
 
 **Interfaces:**
 - Produces: `Read.DryRun bool` — when true, `ApplyRead` writes no event (the cache update is unchanged).
 - When not `DryRun`, `ApplyRead` writes in its transaction:
-  - one `completed` event (source `auto`, `section = r.Section`) for each row it deletes because its final reasons are 0. Snapshot: title, year, thumb, art from the read when the read lists the key (`readKey.present`) and the value is not empty, else from the row; path from the row. Attribution: `fixed_action = last_action`, `fixed_match = last_match`, `fixed_match_event_id = last_match_event_id` (null when 0).
+  - one `completed` event (source `auto`, `section = r.Section`) for each row it deletes because its final reasons are 0. Snapshot: title, year, thumb, art, and path from the read when the read lists the key (`readKey.present`) and the value is not empty, else from the row. Attribution: `fixed_action = last_action`, `fixed_match = last_match`, and `fixed_match_event_id = (SELECT id FROM event WHERE id = ?)` with the row's `last_match_event_id`, so an expired or deleted request (or 0) gives null instead of a foreign-key failure.
   - one `gone` event for each `r.Gone` row that exists, before it is deleted.
 - `applyOldRows` collects the completed `(prev, readKey)` pairs; `writeCompleted(tx, r, prev, in)` writes one event.
 
@@ -314,11 +316,20 @@ func TestCompletedAfterPlainRefreshHasNoMatch(t *testing.T)     // occurrence 2 
 func TestCompletedEventPrefersReadMetadata(t *testing.T)        // row Title "Old", Thumb ""; read Title "New", Thumb set -> event Title "New", Thumb set; Path from row
 func TestMovedRowCompletesInNewSection(t *testing.T)            // as TestApplyReadMovedCompleteRowIsFixed -> event Section is the read's section
 func TestLegacyRowCompletesWithoutMatchEvent(t *testing.T)      // openAtVersion(t, 5) row with last_match 'match' completes -> FixedMatch match, FixedMatchEventID 0
+func TestCompletesAfterMatchEventExpired(t *testing.T)          // accepted match, its request event deleted by SQL, then the row completes -> ApplyRead succeeds, FixedMatch match, FixedMatchEventID 0
 func TestApplyReadWritesGoneEvents(t *testing.T)
 func TestDryRunReadWritesNoEvents(t *testing.T)                 // Read.DryRun with a completed and a gone row -> rows change as today, Timeline empty
 ```
 
-- [ ] **Step 2: Run** `go test ./internal/store -run 'Completed|Completes|GoneEvents|DryRunRead' -v` — Expected: FAIL.
+In `internal/refresher/history_test.go`:
+
+```go
+func TestReadRecordsCompletionOnlyWhenNotDryRun(t *testing.T)
+// the same seeded row completed by the same listing, once with DryRun false and once with DryRun true
+// -> one completed event in the first store, none in the second
+```
+
+- [ ] **Step 2: Run** `go test ./internal/store ./internal/refresher -run 'Completed|Completes|GoneEvents|DryRunRead|RecordsCompletion' -v` — Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the store package — Expected: PASS, including all existing `ApplyRead` tests.
 - [ ] **Step 5: Commit** — `feat(store): record completions with the request that fixed them`
@@ -350,7 +361,7 @@ func (s *Store) RecordMatchDecision(d MatchDecision) error
 ```
 
 - One transaction, on an existing row (a missing row writes nothing): a `match-decision` event (snapshot from the row, `outcome`, `conflict`, `error`, the three confirmation values), its searches and candidates with `position` in slice order, and `item.last_match_outcome = Outcome`.
-- `Timeline` reads all event rows and closes them, then reads the searches and candidates of the decision events (one query per table with `WHERE event_id IN (...)` / `search_id IN (...)`, ordered by `position`) and attaches them.
+- `Timeline` runs in one read-only transaction (as `Due` does). It reads all event rows and closes them, then reads the item's searches with one join (`match_search JOIN event ON event.id = match_search.event_id WHERE event.server = ? AND event.rating_key = ?`, ordered by `event_id, position`), closes them, then its candidates the same way, and attaches them. No dynamic `IN (...)` list.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -416,6 +427,7 @@ func (s *Store) PruneHistory(before time.Time) (events, runs int, err error) // 
 func (s *Store) Runs(limit int) ([]Run, error)                        // started_at DESC, id DESC; limit <= 0: no limit
 ```
 
+- `PruneHistory`, in one transaction, first clears `item.last_match_event_id` where it points to an event it deletes, then deletes the old events and runs.
 - `PruneServers` also runs, in its transaction, `DELETE FROM run WHERE server NOT IN (...)` (every row when `servers` is empty). `PruneSections` does not touch `run`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -425,6 +437,7 @@ func TestStartAndFinishRun(t *testing.T)                    // round trip of eve
 func TestRunsOrderAndLimit(t *testing.T)                    // same started_at -> higher ID first; limit 1; limit 0 returns all
 func TestInterruptRunsMarksOnlyRunning(t *testing.T)
 func TestPruneHistoryDeletesOldRowsWithChildren(t *testing.T) // an old decision with a search and a candidate, a new event, an old and a new run -> old rows and children gone, counts (1, 1)
+func TestCompleteAfterPruneHistory(t *testing.T)            // accepted match, PruneHistory removes its request, the row completes -> LastMatchEventID was cleared, ApplyRead succeeds, FixedMatchEventID 0
 func TestPruneServersDeletesRunsOfRemovedServers(t *testing.T) // removed server with run rows and no library row -> its runs gone; kept server's runs stay; PruneServers(nil) deletes every run
 ```
 
@@ -441,16 +454,12 @@ func TestPruneServersDeletesRunsOfRemovedServers(t *testing.T) // removed server
 
 **Interfaces:**
 - In a dry run, `Run` does not call `PruneServers`, and `pruneSections` does not call `PruneSections`. `pruneSections` logs `Dry run keeps cache of removed libraries` at info level with field `server`, once per server and run, instead. No store method is added to list what would be pruned.
-- `readLibrary` sets `rd.DryRun = r.opts.DryRun`.
-
-- [ ] **Step 1: Update the existing prune tests** that assert removal to use a non-dry fixture (`f.r.opts.DryRun = false`), and add:
+- [ ] **Step 1: Set `f.r.opts.DryRun = false` in all four existing tests of `internal/refresher/prune_test.go`** (also `TestRunCanceledBeforeStartDoesNotPrune`, which would otherwise pass vacuously), and add:
 
 ```go
 func TestDryRunPrunesNothing(t *testing.T)
 // seed a library of a removed server and an unselected library with history events;
 // dry Run -> both libraries, their items, and their events remain; one "Dry run keeps cache of removed libraries" line per server
-func TestDryRunReadWritesNoHistory(t *testing.T)
-// dry Run where a read completes a row and a full read finds a gone row -> Timeline empty for both
 ```
 
 - [ ] **Step 2: Run** `go test ./internal/refresher -run 'Prune|DryRun' -v` — Expected: new tests FAIL.
@@ -467,7 +476,7 @@ func TestDryRunReadWritesNoHistory(t *testing.T)
 - Modify: `internal/refresher/refresh.go` (`refreshItem`, `itemFailed`, `countFailure`; `itemPaths` becomes a `*Refresher` method)
 - Modify: `internal/refresher/read.go` (`readLibraries`, `storeItem`)
 - Modify: `internal/store/item.go` (delete `RecordAttempt` and `Delete`)
-- Port every remaining caller: `internal/store/item_test.go` (`refresh` helper, `TestRecordAttempt*`, `TestDelete`, `TestApplyReadReturnsActionsOfFixedRows`), `internal/store/store_test.go` (`TestMethodsReportDatabaseFailure` entries), `internal/store/tmdb_test.go` (`TestTMDBIDGoesWithItem`: use `RecordGone`), `internal/refresher/refresh_test.go` (`fixture.seed`), `internal/refresher/read_test.go` (`f.refreshed`, `TestCompleteItemLogsFixed`). Keep their assertions; timeline assertions in new tests account for events the seed writes.
+- Port every remaining caller. The list below is a start, not the check: before deleting, `grep -rn 'RecordAttempt\|\.Delete(' internal cmd` must show only the definitions. Known callers: `internal/store/item_test.go` (`refresh` helper; every `TestDue*` test that calls `RecordAttempt`; `TestRecordAttempt*`, converted to `RecordRequest` as the one set of attempt-counting tests; `TestDelete`, converted to `RecordGone`; `TestApplyReadReturnsActionsOfFixedRows`; and the `Due` doc comment), `internal/store/store_test.go` (`TestMethodsReportDatabaseFailure` entries), `internal/store/tmdb_test.go` (`TestTMDBIDGoesWithItem`: use `RecordGone`), `internal/refresher/refresh_test.go` (`fixture.seed`), `internal/refresher/read_test.go` (`f.refreshed`, `TestCompleteItemLogsFixed`). Keep their assertions; timeline assertions in new tests account for events the seed writes.
 - Test: `internal/refresher/history_test.go`
 
 **Interfaces:**
@@ -521,19 +530,20 @@ func (d *decisionLog) fail(err error)                                           
 ```
 
 - `findMatch` creates the `decisionLog` right after its guard (unmatched, not ignored, refreshed before), before `itemPaths`, and passes it down: `searchIDs` (source `path`), `tmdbResults` (source `tmdb`, `fromID` = the path ID's `title()`), and `tieTMDBCandidate` (source `tie`). Every `SearchMatches` call adds its result before any return, with `failed: true` for any error (also one that `searchFailureIsEmpty` accepts). First-pass searches stay in the log when the TMDB pass replaces `results`.
+- `searchResult` gains `pos int`, the index of its search in the `decisionLog`, so `resolveMatch` sets verdicts on the logged copy of exactly the results it evaluated.
 - Handled failures: `recordTMDBFailure` and `confirmationLookupFailed` (and the episode lookup failure path) call `d.fail(err)` and keep returning exactly what they return today, so the item still gets its plain refresh.
-- `findMatch` records one decision on its way out, with `Source: store.SourceAuto`, never in a dry run, and not at all when the returned error is `errCache`, `ctx.Err() != nil`, or `plex.ErrNotFound` (a `gone` event follows instead):
-  - `len(ids) == 0` → `no-ids`, returned before `useTMDB`;
-  - a returned error, or `d.err != nil` → `failed` with `Error` and the searches so far, verdicts left empty;
-  - a match → `matched`; otherwise → `no-match` with the conflict (`""` when no search found a candidate);
-  - `PathYear`, `TMDBYear`, `EpisodeCount` from the `yearResolution` for both `matched` and `no-match`.
-- Verdicts (for `matched` and `no-match` only), set per search in `resolveMatch` where the rules decide:
-  - a search with more than one candidate → each `several candidates`;
-  - a candidate with an empty GUID → `candidate without guid`;
-  - `matched`: GUID equal to the picked GUID → `picked`, else `different candidate`;
-  - `no-match` with `different candidates` → each single candidate `different candidates`;
-  - `no-match` with `year differs` → `year differs` for every candidate of that GUID;
-  - a `tie` search: the candidate whose GUID equals the evaluated candidate → `confirms`, others `different candidate`.
+- `findMatch` records one decision on its way out, with `Source: store.SourceAuto`, never in a dry run. The classification, in this order:
+  1. skip (record nothing) when the returned error is `errCache`, when `ctx.Err() != nil`, or when it is `plex.ErrNotFound` (a `gone` event follows);
+  2. a returned error (for example a non-404 `ItemPaths` failure) or `d.err != nil` → `failed` with `Error` and the searches so far, all verdicts empty;
+  3. `len(ids) == 0` after a successful path lookup and parse → `no-ids`, returned before `useTMDB`;
+  4. a match → `matched`; otherwise → `no-match` with the conflict (`""` when no search found a candidate).
+- `yearResolution` and `fixMatch` do not change, so the `Sent request` line keeps its fields. The decision takes `PathYear` (non-zero only when the path year confirmed the match), `TMDBYear` (when TMDB answered, for both `matched` and `no-match`), and `EpisodeCount` from it.
+- Verdicts are set in `resolveMatch` only when `d.err == nil`, per logged candidate, by the first rule that applies:
+  1. its search has more than one candidate → `several candidates` (any source, also `tie`);
+  2. its GUID is empty → `candidate without guid` (any source);
+  3. a `tie` search → `confirms` if its GUID equals the evaluated GUID, else `different candidate`. The evaluated GUID is the picked candidate's, or, on `year differs`, the one `chooseCandidate(mc.results)` returns (`chooseMatch` returns an empty candidate then);
+  4. other searches, `matched` → `picked` if its GUID equals the picked GUID, else `different candidate`;
+  5. other searches, `no-match`: `different candidates` → `different candidates`; `year differs` → `year differs`; `several candidates` or `candidate without guid` caused by another search → `not compared`.
 - A `RecordMatchDecision` error returns wrapped with `errCache`.
 
 - [ ] **Step 1: Write the failing tests** (reuse the scenarios in `refresh_test.go` and `tmdb_test.go`; assert on `Timeline()`)
@@ -553,6 +563,9 @@ func TestDecisionKeepsFirstPassWithTMDB(t *testing.T)      // searches: path (em
 func TestSwallowedTMDBFailureRecordsFailedAndRefreshes(t *testing.T) // path search ok, TMDB lookup fails -> decision failed with the path search; the plain refresh is still sent
 func TestAcceptedEmptySearchFailureIsMarkedFailed(t *testing.T) // tvdb search error accepted as empty -> Failed true
 func TestCanceledOrCacheErrorRecordsNoDecision(t *testing.T)
+func TestPathLookupErrorRecordsFailed(t *testing.T)       // non-404 ItemPaths error -> failed, not no-ids, no searches
+func TestMixedResultsVerdicts(t *testing.T)               // one search with two candidates, another with one valid -> "several candidates" x2 and "not compared"
+func TestTMDBFallbackKeepsPositions(t *testing.T)         // verdicts land on the tmdb searches, the empty first-pass search keeps none
 ```
 
 - [ ] **Step 2: Run** `go test ./internal/refresher -run 'Decision|Swallowed|AcceptedEmpty|CacheError' -v` — Expected: FAIL.
@@ -578,7 +591,8 @@ func TestCanceledOrCacheErrorRecordsNoDecision(t *testing.T)
   - `FinishRun` on every later return, with `ReadItems = fullReadItems + incrementalReadItems`, `Refreshed = refreshes`, `Matched = matches`, `Failed = failures`, `Completed = len(completed)`, `Fixed = fixed`, `Incomplete` (from the summary; 0 without one), `Due = due`, `Selected = selected`.
   - Status: `canceled` under the existing condition (`ctx.Err() != nil && (err == nil || errors.Is(err, ctxErr))`); otherwise `failed` with `Error = err.Error()` when `err != nil`; otherwise `finished`.
   - A `FinishRun` error is returned only when there is no earlier error; the canceled path still returns nil as today.
-- `cmd/autorefresh`: `func interruptRuns(st *store.Store, now time.Time) error` calls `InterruptRuns` and logs `Marked interrupted runs` at info level with field `runs` when above 0. `run` calls it right after the store opens, only when neither `--once` nor `--dry-run` is set; on error it closes the store and returns the error, keeping `run` under the complexity limit.
+- `cmd/autorefresh`: `func interruptRuns(st *store.Store, opts options, now time.Time) error` returns nil at once when `opts.Once || opts.DryRun`; otherwise it calls `InterruptRuns` and logs `Marked interrupted runs` at info level with field `runs` when above 0. `run` calls it right after the store opens with one unnested `if`; on error it closes the store and returns the error.
+- Keep `Refresher.Run` and `runServer` under the complexity limit with named helpers: `pruneBeforeRun(now)` (server prune and retention) and `finishRun(ctx, run, id, err) error` (status, counters, and the error precedence above).
 
 - [ ] **Step 1: Write the failing tests**
 
