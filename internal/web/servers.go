@@ -75,7 +75,7 @@ func (s *Server) serverInfo(ctx context.Context, srv int, name string) (serverJS
 		return info, nil
 	}
 	// A scan that found no library leaves no library row, only its run.
-	runs, err := s.store.Runs(ctx, store.RunQuery{Servers: []string{name}, Status: store.RunFinished, Limit: 1})
+	runs, err := s.store.Runs(ctx, store.RunQuery{Servers: []string{name}, Kind: store.RunKindRun, Status: store.RunFinished, Limit: 1})
 	if err != nil {
 		return serverJSON{}, err
 	}

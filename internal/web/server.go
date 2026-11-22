@@ -28,6 +28,7 @@ type Plex interface {
 
 // Store is the part of store.Store that the web server uses.
 type Store interface {
+	RunItems(context.Context, int64) ([]store.RunItem, error)
 	ListItems(ctx context.Context, q store.ListQuery) ([]store.ListItem, *store.Cursor, error)
 	CountItems(ctx context.Context, q store.ListQuery) (store.ListCounts, error)
 	Libraries(ctx context.Context, server string) ([]store.LibraryEntry, error)
@@ -45,6 +46,7 @@ type PlexServer struct {
 
 // Options configures a Server.
 type Options struct {
+	Jobs               Jobs
 	Actions            Actions
 	Username, Password string // both empty: no auth
 	// Status is the live status that /api/status and /api/events show.
@@ -69,6 +71,7 @@ type Options struct {
 
 // Server is the HTTP server of the dashboard.
 type Server struct {
+	jobs    Jobs
 	actions Actions
 	mux     *http.ServeMux
 	handler http.Handler
@@ -130,6 +133,7 @@ func New(opts Options) *Server {
 	}
 	s := &Server{
 		mux:          http.NewServeMux(),
+		jobs:         opts.Jobs,
 		actions:      opts.Actions,
 		status:       status,
 		servers:      opts.Servers,
@@ -170,6 +174,13 @@ func New(opts Options) *Server {
 	s.api("POST /api/item/resume", s.serveResume)
 	s.api("GET /api/item/matches", s.serveMatches)
 	s.api("POST /api/item/episode-check", s.serveEpisodeCheck)
+
+	s.api("POST /api/runs", s.serveRunNow)
+	s.api("POST /api/runs/cancel", s.serveCancelRun)
+	s.api("GET /api/runs/items", s.serveRunItems)
+	s.api("POST /api/items/refresh", s.serveBulkRefresh)
+	s.api("POST /api/items/stop", s.serveBulkStop)
+	s.api("POST /api/items/resume", s.serveBulkResume)
 
 	s.handler = securityHeaders(s.admit(crossOriginProtection(basicAuth(opts.Username, opts.Password, s.mux))))
 	s.srv = &http.Server{

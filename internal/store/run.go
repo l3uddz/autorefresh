@@ -240,6 +240,7 @@ type RunCursor struct {
 
 // RunQuery selects runs.
 type RunQuery struct {
+	Kind    RunKind    // empty: any
 	Servers []string   // empty: every server
 	Status  RunStatus  // "": any
 	Before  *RunCursor // only the runs that follow this one in the order of Runs
@@ -255,6 +256,10 @@ func runsQuery(q RunQuery) (string, []any) {
 	if len(q.Servers) > 0 {
 		conds = append(conds, `server IN (`+placeholders(len(q.Servers))+`)`)
 		args = append(args, stringArgs(q.Servers)...)
+	}
+	if q.Kind != "" {
+		conds = append(conds, `kind = ?`)
+		args = append(args, q.Kind)
 	}
 	if q.Status != "" {
 		conds = append(conds, `status = ?`)
