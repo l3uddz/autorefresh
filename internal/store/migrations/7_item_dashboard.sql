@@ -1,6 +1,6 @@
 -- What the dashboard shows of an item. stopped_at is null while the item is
--- not stopped. last_match_event_id is the last match decision event of the
--- item. It has no foreign key, because the event table is created later and
+-- not stopped. last_match_event_id is the id of the request event of the
+-- last accepted match of the item. It has no foreign key, because the event table is created later and
 -- SQLite cannot add a foreign key to a table. Older rows keep '' and null.
 ALTER TABLE item ADD COLUMN stopped_at INTEGER;
 ALTER TABLE item ADD COLUMN thumb TEXT NOT NULL DEFAULT '';

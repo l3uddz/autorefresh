@@ -31,7 +31,7 @@ type Item struct {
 	// LastOutcome and LastMatchOutcome are the outcomes of the last request
 	// and of the last match request. "": none, or from before they were recorded.
 	LastOutcome, LastMatchOutcome string
-	LastMatchEventID              int64 // the last match decision event; 0: none
+	LastMatchEventID              int64 // the request event of the last accepted match; 0: none
 }
 
 // Action is a request that Plex accepted for an item. The empty Action
@@ -153,12 +153,15 @@ func (s *Store) Library(server, section string) (Library, error) {
 // lists and the old bits of r.EpisodeSkipped (or else the old episode bits).
 // It deletes the r.Gone rows, inserts rows for new items with final reasons
 // that are not 0, deletes the other rows whose final reasons are 0 and
-// returns them as fixed, writes the thumb and art of each listed row and its
-// path unless the read has none, saves the r.Folders paths, and sets the read times. LastFullRead changes only
-// if r.Full. The caller must set AddedAt on every item, because a zero time
-// is stored as a negative number, and must not put a key in both r.Items and
-// r.Gone. A row of the same rating key in another section moves to r.Section
-// and keeps its history and its reasons that the read does not replace.
+// returns them as fixed, sorted by rating key, writes the thumb and art of
+// each listed row and its path unless the read has none, saves the r.Folders
+// paths, and sets the read times. Unless r.DryRun, it also writes a completed
+// event for each fixed row and a gone event for each r.Gone row that exists;
+// a dry run writes no event. LastFullRead changes only if r.Full. The caller
+// must set AddedAt on every item, because a zero time is stored as a negative
+// number, and must not put a key in both r.Items and r.Gone. A row of the
+// same rating key in another section moves to r.Section and keeps its history
+// and its reasons that the read does not replace.
 func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -599,10 +602,10 @@ func (s *Store) PruneSections(server string, sections []string) ([]Pruned, error
 }
 
 // prune removes each library for which remove is true, in one transaction.
-// The foreign key of item removes the item rows of the library. It reads only the libraries of server,
-// or of all servers if server is "". It returns the removed libraries,
-// ordered by server and section. If also is not nil, it runs in the same
-// transaction after the libraries are removed.
+// The foreign key of item removes the item rows of the library. It reads only
+// the libraries of server, or of all servers if server is "". It returns the
+// removed libraries, ordered by server and section. If also is not nil, it
+// runs in the same transaction after the libraries are removed.
 func (s *Store) prune(server string, remove func(server, section string) bool, also func(tx *sql.Tx) error) ([]Pruned, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
