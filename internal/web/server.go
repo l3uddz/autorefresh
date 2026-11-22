@@ -10,11 +10,32 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
+
+	"github.com/l3uddz/autorefresh/internal/store"
 )
 
 // defaultForceWait is how long Stop waits for the active handlers after a
 // failed Shutdown.
 const defaultForceWait = 5 * time.Second
+
+// Plex is the part of plex.Client that the web server uses.
+type Plex interface {
+	Identity(ctx context.Context) (string, error)
+}
+
+// Store is the part of store.Store that the web server uses.
+type Store interface {
+	ListItems(ctx context.Context, q store.ListQuery) ([]store.ListItem, *store.Cursor, error)
+	CountItems(ctx context.Context, q store.ListQuery) (store.ListCounts, error)
+	Libraries(ctx context.Context, server string) ([]store.LibraryEntry, error)
+	Runs(ctx context.Context, q store.RunQuery) ([]store.Run, error)
+}
+
+// PlexServer is one configured Plex server.
+type PlexServer struct {
+	Name string
+	Plex Plex
+}
 
 // Options configures a Server.
 type Options struct {
@@ -22,6 +43,13 @@ type Options struct {
 	// Status is the live status that /api/status and /api/events show.
 	// Without one, the server shows an empty status.
 	Status *Status
+	// Servers are the configured Plex servers. The API names each by its
+	// index, srv.
+	Servers []PlexServer
+	Store   Store
+	// Rules decide the queue state of the listed items. The server sets
+	// Now for each request.
+	Rules store.DueRules
 }
 
 // Server is the HTTP server of the dashboard.
@@ -30,6 +58,17 @@ type Server struct {
 	handler http.Handler
 	srv     *http.Server
 	status  *Status
+
+	servers  []PlexServer
+	srvIndex map[string]int // the srv of each server name
+	store    Store
+	rules    store.DueRules
+	now      func() time.Time
+
+	// idMu guards identities, the cached machine identifier of each server
+	// ("": not read yet).
+	idMu       sync.Mutex
+	identities []string
 
 	// sseCtx ends the event streams. Stop cancels it first, so that
 	// Shutdown does not wait for open streams.
@@ -64,9 +103,19 @@ func New(opts Options) *Server {
 	}
 	baseCtx, cancelBase := context.WithCancel(context.Background())
 	sseCtx, cancelSSE := context.WithCancel(context.Background())
+	srvIndex := make(map[string]int, len(opts.Servers))
+	for i, ps := range opts.Servers {
+		srvIndex[ps.Name] = i
+	}
 	s := &Server{
 		mux:          http.NewServeMux(),
 		status:       status,
+		servers:      opts.Servers,
+		srvIndex:     srvIndex,
+		store:        opts.Store,
+		rules:        opts.Rules,
+		now:          time.Now,
+		identities:   make([]string, len(opts.Servers)),
 		sseCtx:       sseCtx,
 		cancelSSE:    cancelSSE,
 		writeTimeout: defaultWriteTimeout,
@@ -77,6 +126,8 @@ func New(opts Options) *Server {
 	s.mux.HandleFunc("GET /{$}", servePlaceholder)
 	s.mux.HandleFunc("GET /api/status", s.serveStatus)
 	s.mux.HandleFunc("GET /api/events", s.serveEvents)
+	s.mux.HandleFunc("GET /api/servers", s.serveServers)
+	s.mux.HandleFunc("GET /api/items", s.serveItems)
 	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})
