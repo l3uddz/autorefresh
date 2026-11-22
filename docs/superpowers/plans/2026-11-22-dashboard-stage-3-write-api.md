@@ -283,6 +283,7 @@ func (s *Store) RecordManual(m ManualRecord) error
 // non-empty path of it, keeps its other reasons, and deletes it with a completed event
 // when no reason remains. Never touches library read times. Missing row: ErrNoItem.
 func (s *Store) ApplyCheck(server string, it Item, at time.Time) (completed bool, err error)
+// ApplyCheck preserves the existing item type when the input type is empty.
 ```
 
 **`RecordManual` rules.** `RecordRequest` and `RecordGone` stay unchanged for the automatic path. `RecordManual` reuses their helpers (`updateAttempt`, `writeRequestOutcome`, `requestEvent`, `snapshotEvent`, `insertEvent`, `deleteItem`). It takes the mode from admission, not from the row's state when it records.
@@ -525,7 +526,7 @@ func (r *Refresher) execute(ctx context.Context, runs []startedRun) error
 - **`Progress.RunFinished`** becomes `RunFinished(server string, res store.RunResult, err error, recorded bool)`. `recorded` is true only when the run has a row (`id != 0`; a dry run has none) and its final write committed. `err` is the outcome error that decides health, exactly as today: `finishRun` already passes nil for a canceled run, and the bulk `finishJob` (Task 7) does the same, so a cancellation never marks a server unreachable, and a failed final write never changes health. `Status.RunFinished` sets `Last.Recorded = recorded` and keeps `runHealth(srv.Health, res, err)`. Update `noProgress` and every fake.
 - **`written`** from `store.FinishRun` (Task 3) now reaches the progress.
 - **`recordFinish`** becomes `recordFinish(run *serverRun, id int64, res store.RunResult, err error) (error, bool)`: the returned error keeps today's rules, and the bool is `written` (false on a `FinishRun` error). `finishRun` passes `id != 0 && written` (dry run: false) as `recorded`.
-- **`ServerStatus`** gets `Last *RunProgress` (`last`). `RunFinished` copies the run into `Last` with the final `Refreshed`, `Matched`, `Failed`, `Skipped`, `Selected`, `Due`, `Status`, `FinishedAt`, and `Error` of `res`, then sets `Run` to nil. `Snapshot` deep-copies `Last`.
+- **`ServerStatus`** gets `Last *RunProgress` (`last`). `RunFinished` copies the run into `Last` only when `Run != nil`, clears the copied `Current`, and fills it with the final `Refreshed`, `Matched`, `Failed`, `Skipped`, `Selected`, `Due`, `Status`, `FinishedAt`, and `Error` of `res`, then sets `Run` to nil. `Snapshot` deep-copies `Last`.
 - **Redaction:** `func (s *Server) redactStatus(v StatusView) StatusView` redacts `Last.Error`. `serveStatus` and the event stream both use it.
 
 - [ ] **Step 1: Write the failing tests**
@@ -630,7 +631,7 @@ store.ManualRecord{
 - The store applies the table of Task 2.
 - A stopped item stays stopped.
 
-**`CheckItem`** builds the row with `storeItem(server, plex.Library{ID: row.Section, Type: row.Type}, item, itemReasons(item))` and calls `ApplyCheck`. A 404 calls `RecordManual(store.ManualRecord{Request: store.Request{Server: server, RatingKey: key, At: r.now(), Source: store.SourceManual}, Snapshot: row, Cached: true, Gone: true})`, where `row` is the admission row; no action, so the store writes only the gone event (from the row if it still exists, else from `Snapshot`). `ErrNoItem` from the store (the row went away in between) is returned as `ErrNotCached`.
+**`CheckItem`** builds the row with `storeItem(server, plex.Library{ID: row.Section, Type: row.Type}, item, itemReasons(item))` and calls `ApplyCheck`. A 404 calls `RecordManual(store.ManualRecord{Request: store.Request{Server: server, RatingKey: key, At: r.now(), Source: store.SourceManual}, Snapshot: row, Cached: true, Gone: true})`, where `row` is the admission row; no action, so the store writes only the gone event (from the row if it still exists, else from `Snapshot`). On successful recording, CheckItem returns nil and the endpoint returns updated detail with HTTP 200. Assert both results in tests. `ErrNoItem` from the store (the row went away in between) is returned as `ErrNotCached`.
 
 **`SetStopped`** maps `ErrNoItem` to `ErrNotCached`, and returns a context error as it is.
 
@@ -690,10 +691,10 @@ func TestSendManualReportsSent(t *testing.T)
 **Files:**
 - Create: `internal/refresher/jobs.go`, `internal/refresher/jobs_test.go`
 - Modify: `cmd/autorefresh/schedule.go`, `cmd/autorefresh/ui.go` (`serveUntilStopped`), `cmd/autorefresh/main.go`, `cmd/autorefresh/schedule_test.go`, `cmd/autorefresh/ui_test.go`
-- Move: `TestRunnerSkipsOverlappingStart` and `TestRunnerLogsRunError` become `TestJobsSkipOverlappingScheduledStart` and `TestJobsLogScheduledRunError`, with the same assertions.
+- Move: `TestRunnerSkipsOverlappingStart` and `TestRunnerLogsRunError` become `TestJobsSkipOverlappingScheduledStart` and `TestJobsLogScheduledRunError`, with the same assertions. Also move `TestRunnerUnlocksAfterPanic` as `TestJobsScheduledUnlocksAfterPanic`.
 
 **Interfaces:**
-- Consumes: `begin` and `execute` (Task 5); `lock`, `recheck`, and `pace` (Task 4); `sendManual`, `serverNamed`, and `Close` (Task 6); `FinishJob` and the outcomes (Task 3).
+- Consumes: `begin` and `execute` (Task 5); `lock` and `pace` (Task 4); `sendManual`, `serverNamed`, and `Close` (Task 6); `FinishJob` and the outcomes (Task 3).
 - Produces:
 
 ```go
@@ -737,13 +738,15 @@ func (j *Jobs) Close()
    A failure here unlocks the run lock and returns the error wrapped with `ErrStore`, or `ErrUnknownServer`.
 4. **Start the job.** Set `cur` under `curMu`, with the IDs and the cancel of a child context of `j.ctx`. Start the goroutine. Its `defer` clears `cur`, unlocks `mu`, and calls `wg.Done()`, so a panic cannot leave the lock held. Return the IDs.
 
+Log a non-nil background `execute` error from RunNow with the same `Run failed` message as Scheduled.
+
 **`Scheduled`** keeps the behaviour of `runner.start`: `TryLock`, or else log the warning; run `j.run(ctx)`; log `Run failed` on an error. It does not register in `wg`. The schedule's own wait covers it.
 
 **The bulk job** is a `serverRun` with `id`, `startInfo`, `source: SourceManual`, and `selected = len(keys)`.
-- **Its loop** uses `pace` between the items it sends. For each admitted item, in order:
+- **Its loop** paces outside the item lock. After a send, mark a delay pending. Before locking the next cached admission, consume that delay once with `pace(ctx, 1)`. Skips do not add another delay. For each admitted item, in order:
   1. `lock(ctx)`. A context error ends the loop, and the remaining items are not reached.
   2. Re-read the row: `KnownItem`.
-  3. Classify the item with the same rules as `recheck`:
+  3. Classify the item using these bulk rules. Ignore `IgnoreReasons` here and test a refresh of an explicitly selected ignored item:
      - no row at admission or now: `not-cached`
      - stopped: `stopped`
      - `Attempts` differ: `changed`
@@ -765,7 +768,7 @@ func (j *Jobs) Close()
   - The bulk job has its own `finishJob` next to `finishRun`. Its status rule, first match wins: a store error (recording or other) -> failed with that error; `ctx` ended -> canceled; `plex.ErrUnavailable` -> failed with that error; else finished. A store failure therefore wins over a cancellation that arrived during the same item.
   - A `FinishJob` failure is returned as the job's error also when the job was canceled. It is never dropped. The row then stays `running` until `InterruptRuns` at the next start.
   - The job goroutine logs a job error with `log.Error().Str("server").Int64("run", id).Str("reason", reason).Msg("Bulk refresh failed")`, where `reason` is a fixed text: `store`, `result not recorded` (FinishJob failed), or `plex unavailable`. No error text is logged; the diagnostic text stays in the stored results and run error, which the API redacts.
-- **Progress** gets `RunStarted`, `Batch(server, n, n)`, `ItemStarted` and `ItemDone` for each item, and `RunFinished`. `RunFinished` is called after `FinishJob` returned. On success it gets the committed `res`, so when an event stream client sees `Last.ID` with a final status, the results are committed and `GET /api/runs/items?id=` returns them. That is how the stream delivers the item results (Task 10). `finishJob` passes to `RunFinished` the same `err` its status rule used, with nil for a canceled job (so the dual-wrapped transport error of a canceled call never reaches `runHealth`), and `recorded` = whether `FinishJob` committed. When `FinishJob` failed or wrote nothing, `RunFinished` still gets the job's real `res` and `err` (so health follows the job's outcome, never the recording), with `recorded` false. `Last` then shows the real outcome with `Last.Recorded == false`, which tells a stream consumer that the database has no terminal result for it; the job error is logged with reason `result not recorded`.
+- **Progress** gets `RunStarted` even if the job was canceled before execution, so the terminal progress retains the job identity. This also applies to admitted Run now rows. Bulk progress gets, `Batch(server, n, n)`, `ItemStarted` and `ItemDone` for each item, and `RunFinished`. `RunFinished` is called after `FinishJob` returned. On success it gets the committed `res`, so when an event stream client sees `Last.ID` with a final status, the results are committed and `GET /api/runs/items?id=` returns them. That is how the stream delivers the item results (Task 10). `finishJob` passes to `RunFinished` the same `err` its status rule used, with nil for a canceled job (so the dual-wrapped transport error of a canceled call never reaches `runHealth`), and `recorded` = whether `FinishJob` committed. When `FinishJob` failed or wrote nothing, `RunFinished` still gets the job's real `res` and `err` (so health follows the job's outcome, never the recording), with `recorded` false. `Last` then shows the real outcome with `Last.Recorded == false`, which tells a stream consumer that the database has no terminal result for it; the job error is logged with reason `result not recorded`.
 - **New log line,** at info: `log.Info().Str("server").Int("selected").Int("refresh_requests").Int("failed_requests").Int("skipped_items").Dur("duration").Msg("Bulk refresh summary")`. The bulk job logs no `Run summary`.
 
 **CLI:**
@@ -875,8 +878,8 @@ func (r *Refresher) SearchMatches(ctx context.Context, server, ratingKey string,
 func (r *Refresher) EpisodeCheck(ctx context.Context, server, ratingKey, tmdbID string) (EpisodeResult, error)
 // compareEpisodes compares local regular episode numbers with TMDB; a TMDB failure wraps
 // ErrTMDB, a Plex failure is returned as is. confirmEpisodeNumbers wraps it and keeps
-// its logging and run handling unchanged.
-func compareEpisodes(ctx context.Context, p Plex, t TMDB, ratingKey, tmdbID string) (count int, ok bool, err error)
+// its logging and run handling unchanged. Return count, match, and the mismatched season and episode counts in episodeComparison. An empty local set is not a match. Use the details for the existing mismatch log and preserve the original error wrapping in the scheduled path.
+func compareEpisodes(ctx context.Context, p Plex, t TMDB, ratingKey, tmdbID string) (episodeComparison, error)
 func parseID(text string) (pathID, bool) // the rules of parseGroup, for a typed "tvdb-31207"
 ```
 
@@ -894,7 +897,7 @@ func parseID(text string) (pathID, bool) // the rules of parseGroup, for a typed
 4. **Failures:**
    - A failed search with `stopError(ctx, err) == nil` that is not a 404 is marked `Failed`, and the searches go on.
    - A 404, a stop error, or an `ItemPaths` failure returns the error.
-   - `ErrTMDB` sets `TMDBFailed` and ends the TMDB step.
+   - `ErrTMDB` sets `TMDBFailed` and ends the TMDB step only if `ctx.Err() == nil`. Otherwise propagate the context error.
    - `errCache` and other store errors are wrapped with `ErrStore`.
 
 `EpisodeCheck` passes the gate. Its guards, in order:
@@ -1013,10 +1016,10 @@ type folderIDJSON struct {
 | `ErrNotShow` | 400 `not a show` |
 | `ErrTMDBOff` | 400 `tmdb is off` |
 | `ErrUnknownServer` | 400 `invalid srv` |
+| a context error | `writeStoreError`'s canceled-request rule (debug, no answer) when `r.Context()` is done; else 504 `timed out` |
 | `ErrStore` | `writeStoreError` |
 | `ErrTMDB` wrapping `tmdb.ErrUnauthorized` | 502 `TMDB rejected the token` |
 | other `ErrTMDB` | 502 `TMDB unavailable` |
-| a context error | `writeStoreError`'s canceled-request rule (debug, no answer) when `r.Context()` is done; else 504 `timed out` |
 | anything else | `s.writePlexError` |
 
 Both TMDB answers log `log.Warn().Str("error", s.redact(err.Error())).Str("path", …).Msg("TMDB request failed")`.
@@ -1065,7 +1068,8 @@ type Jobs interface {
 	BulkRefresh(server string, keys []string) (int64, error)
 	Cancel(id int64) error
 }
-// Options.Jobs; nil: the run and bulk POST routes answer 503 actions unavailable.
+// Options.Jobs; nil: Run now, Cancel, and Bulk refresh answer 503 actions unavailable.
+// Bulk stop and resume check Options.Actions instead.
 const maxBulkItems = 5000
 func (s *Server) bulkItems(w http.ResponseWriter, r *http.Request, tab store.Tab) (srv int, keys []string, ok bool)
 ```
@@ -1086,21 +1090,23 @@ func (s *Server) bulkItems(w http.ResponseWriter, r *http.Request, tab store.Tab
   - `ErrItemBusy` gives the skip reason `busy`.
   - `ErrNotCached` gives `not-cached`.
   - `changed == false` gives `unchanged`.
-  - Each call gets the deadline context. A call that returns a context error, which means its transaction rolled back and nothing changed, gives `timeout` for that key.
+  - Each call gets the deadline context. If the request context ended, stop and use writeActionError. A deadline from the action context while the request is live gives `timeout` for that key.
   - Every key after it gets `timeout` without a call.
   - Any other error stops the loop and answers with `writeActionError`. The changes made so far stay.
 - `ErrClosed` from any job call answers 503.
 
+Add an optional Kind filter to store.RunQuery and use RunKindRun in serverInfo so a completed bulk job never counts as a scan. Test this with a server that has only bulk history.
+
 **`bulkItems` rules:**
 - **`srv` is required.** Otherwise: 400 `invalid srv`.
 - **A `tab` parameter answers 400 `invalid tab`.**
-- **The filter parameters** are parsed by the same code as `GET /api/items`. Extract `func (s *Server) filterQuery(v url.Values, tab store.Tab, srv int) (store.ListQuery, error)` and use it from `itemsQuery` too. `all=1` is valid only on the Attention tab.
+- **The filter parameters** are parsed by the same code as `GET /api/items`. Extract `func (s *Server) filterQuery(v url.Values, tab store.Tab, srv int) (store.ListQuery, error)` and use it from `itemsQuery` too. On GET, preserve `WithIgnored` on Attention and `WithUnrequested` on Fixed. Keep the existing GET behavior for Stopped. For bulk selection, reject `all=1` outside Attention.
 - **The body** is `{"keys":[…]}` or `{"matching":true}`. Both, or neither, answer 400 `invalid body`.
 - **`keys`:**
   - must not be empty
   - each key must pass `plex.ValidRatingKey`, or else 400 `invalid key`
   - duplicates are removed, keeping the first order
-- **`matching`** pages through `ListItems` (`Limit: maxPageLimit`, following `next`) with `Rules` as in `serveItems`, and collects the rating keys. It stops with 400 `too many items` as soon as more than `maxBulkItems` are collected.
+- **`matching`** pages through `ListItems` (`Limit: maxPageLimit`, following `next`) with `Rules` as in `serveItems`, and collects distinct rating keys in first-seen order, including when concurrent updates move an item to a later page. It stops with 400 `too many items` as soon as more than `maxBulkItems` are collected.
 - **No items** answers 400 `no items`.
 - **More than `maxBulkItems`** after duplicates are removed answers 400 `too many items`.
 
@@ -1140,7 +1146,7 @@ func TestBulkResumeUsesStoppedTab(t *testing.T)
 - Test: `internal/tmdb/client_test.go`, `internal/web/servers_test.go`, `internal/web/server_test.go`
 
 **Interfaces:**
-- **`package neterr`:** `func Reason(err error) string`. It is the body of `plex.transportReason`, moved unchanged with its tests. `plex` calls it.
+- **`package neterr`:** `func Reason(err error) string`. Move the classification from `plex.transportReason` and its tests. Export `neterr.ErrRedirectRefused` and use that sentinel in both clients’ redirect checks and in `Reason`. Update the Plex redirect tests and add TMDB redirect coverage.
 - **TMDB transport errors.** A transport failure in `tmdb.Client.get` returns `fmt.Errorf("GET %s: %s", path, neterr.Reason(err))`. When `ctx` ended, it wraps the context error: `fmt.Errorf("GET %s: %s: %w", path, reason, ctx.Err())`. No text of the underlying error stays. Status, decode, and validation errors stay as they are.
 - **Identity retry.** `serveServers` asks Plex for an unread identity at most once per `identityRetry = time.Minute` for each server. It keeps `identityTried []time.Time` under `idMu`, and between tries it answers without an identity at once.
 - **`ErrorLog`.** `http.Server` gets `ErrorLog: stdlog.New(serverErrorWriter{s}, "", 0)`. `Write` logs `log.Warn().Str("error", s.redact(strings.TrimSpace(string(p)))).Msg("UI server error")` and returns `len(p), nil`.
@@ -1179,7 +1185,7 @@ type tmdbHealth struct {
 	tmdb refresher.TMDB
 	rec  interface{ TMDBChecked(error) }
 }
-// Find, Year, SeasonEpisodes: call the client, then rec.TMDBChecked(err), and return.
+// Find, Year, SeasonEpisodes: call the client, report rec.TMDBChecked(err) only when ctx.Err() == nil, and return. Test cancellation leaving health unchanged.
 type uiStopper interface{ Stop(context.Context) error }
 // serveUntilStopped(ctx, ui uiStopper, jobs scheduledJobs, sched) — ui is a nil interface when the UI is off
 // (never a typed nil *web.Server).
