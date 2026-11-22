@@ -252,7 +252,8 @@ func itemPaths(ctx context.Context, run *serverRun, it store.Item) ([]string, er
 			return paths, nil
 		}
 	}
-	return run.server.Plex.ItemPaths(ctx, it.RatingKey)
+	paths, err := run.server.Plex.ItemPaths(ctx, it.RatingKey)
+	return paths.All(), err
 }
 
 // searchIDs searches Plex once for each path ID of the item. A failed

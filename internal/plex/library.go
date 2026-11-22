@@ -222,32 +222,44 @@ func listQuery(itemType int, filters []Filter) url.Values {
 	return query
 }
 
-// ItemPaths returns Location[].path of a series, or Media[].Part[].file of a
-// movie. Only a 404 status gives ErrNotFound. A response without an item
-// gives a plain error.
-func (c *Client) ItemPaths(ctx context.Context, ratingKey string) ([]string, error) {
+// Paths holds the paths that Plex gives for one item.
+type Paths struct {
+	Locations []string // Location[].path
+	Files     []string // Media[].Part[].file
+}
+
+// All returns the Locations, or else the Files. It is the set of paths that
+// match evaluation uses.
+func (p Paths) All() []string {
+	if len(p.Locations) > 0 {
+		return p.Locations
+	}
+	return p.Files
+}
+
+// ItemPaths returns Location[].path and Media[].Part[].file of an item. Only
+// a 404 status gives ErrNotFound. A response without an item gives a plain
+// error.
+func (c *Client) ItemPaths(ctx context.Context, ratingKey string) (Paths, error) {
 	endpoint, err := c.metadataEndpoint(ratingKey)
 	if err != nil {
-		return nil, err
+		return Paths{}, err
 	}
 
 	var resp metadataResponse
 	if err := c.send(ctx, http.MethodGet, endpoint, nil, &resp); err != nil {
-		return nil, fmt.Errorf("item paths: %w", err)
+		return Paths{}, fmt.Errorf("item paths: %w", err)
 	}
 	if len(resp.MediaContainer.Metadata) == 0 {
-		return nil, errors.New("item paths: response has no item")
+		return Paths{}, errors.New("item paths: response has no item")
 	}
 
 	m := resp.MediaContainer.Metadata[0]
-	if len(m.Location) == 0 {
-		return m.files(), nil
-	}
-	paths := make([]string, 0, len(m.Location))
+	var locations []string
 	for _, l := range m.Location {
-		paths = append(paths, l.Path)
+		locations = append(locations, l.Path)
 	}
-	return paths, nil
+	return Paths{Locations: locations, Files: m.files()}, nil
 }
 
 // EpisodeNumbers returns the file-backed episode numbers in each regular
