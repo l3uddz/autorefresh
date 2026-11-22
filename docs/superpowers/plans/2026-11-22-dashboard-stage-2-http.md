@@ -303,7 +303,7 @@ Rules:
 - `do(ctx, method, endpoint, query, accept)` sends the request through the existing `http.Client` (its same-origin redirect policy stays), with the token header, traces it, and checks `statusError`. On a status error it drains and closes the body itself before it returns. On success it returns the response with its body open, and the caller (`send` or `Photo`) drains and closes it as `send` does today. `send` becomes `do` plus JSON decoding.
 - `Identity`: the identifier must match `^[A-Za-z0-9-]{1,128}$`, else an error (`identity: invalid machine identifier`). Errors are prefixed `identity:`.
 - `ItemPaths` and `ItemDetails` share one unexported metadata read. `ItemPaths` keeps its error texts (`item paths: ...`). `ItemDetails` uses `item details: ...`.
-- `Photo`: `Accept: image/*`; query `url`, `width`, `height`, `minSize=1`, `upscale=1`; endpoint segments `photo`, `:`, `transcode`. It reads at most `MaxPhotoBytes+1` bytes; more is an error (`photo: larger than 10 MB`). A body read error wraps `ErrUnavailable` without its text, as `bodyError` does.
+- `Photo`: `Accept: image/*`; query `url`, `width`, `height`, `minSize=1`, `upscale=1`; endpoint segments `photo`, `:`, `transcode`. It reads at most `MaxPhotoBytes+1` bytes; more is an error (`photo: larger than 10 MB`), and then it closes the body at once without draining it, so a server that stalls after the limit cannot delay the error. A body read error wraps `ErrUnavailable` without its text, as `bodyError` does.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -317,6 +317,9 @@ func TestPhotoUsesTranscoder(t *testing.T)
 // token header; returns the served bytes. With a base URL path "/plex" the path is "/plex/photo/:/transcode".
 func TestPhotoRejectsForeignPath(t *testing.T) // path of key 999 with key 1004 -> error, no request recorded
 func TestPhotoLimitsSize(t *testing.T) // MaxPhotoBytes+1 bytes -> error; MaxPhotoBytes bytes -> ok
+func TestPhotoTooLargeDoesNotWaitForStalledBody(t *testing.T)
+// the handler writes MaxPhotoBytes+1 bytes, flushes, and then blocks until the test ends;
+// Photo with a 5 s context returns the size error within 1 s.
 func TestPhotoNotFound(t *testing.T) // 404 -> errors.Is(err, ErrNotFound)
 func TestPathPrefix(t *testing.T)
 // base "http://h" and "http://h/" -> ""; "http://h/plex/" -> "/plex"; "http://h/gateway//sentinel-path/"
@@ -429,7 +432,7 @@ func (s *Server) Stop(ctx context.Context) error
 
 Rules:
 
-- Middleware, outermost first: handler admission. A mutex guards a `closed` flag and a `sync.WaitGroup`: a request locks it, answers `503 {"error":"shutting down"}` when closed, else calls `Add(1)` before it unlocks and `Done` when it returns. `Stop` sets `closed` under the same mutex before it waits, so no `Add` races a `Wait`. Then security headers (`X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` on every response), then `http.NewCrossOriginProtection()` (no trusted origins, no bypass) with `SetDenyHandler` answering `403 {"error":"cross-origin request rejected"}`, then Basic auth, then the mux. The cross-origin check wraps the whole mux, so a cross-site POST gets 403 before routing.
+- Middleware, outermost first: security headers (below), then handler admission. A mutex guards a `closed` flag and a `sync.WaitGroup`: a request locks it, answers `503 {"error":"shutting down"}` when closed, else calls `Add(1)` before it unlocks and `Done` when it returns. `Stop` sets `closed` under the same mutex before it waits, so no `Add` races a `Wait`. The security headers are `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and `X-Frame-Options: DENY` on every response, also the 503. After admission comes `http.NewCrossOriginProtection()` (no trusted origins, no bypass) with `SetDenyHandler` answering `403 {"error":"cross-origin request rejected"}`, then Basic auth, then the mux. The cross-origin check wraps the whole mux, so a cross-site POST gets 403 before routing.
 - Task 6 has no SSE context; Task 7 adds it.
 - Basic auth (when `Username` is set): compare `sha256.Sum256` of the given and the configured username and password with `subtle.ConstantTimeCompare`; compute both comparisons before deciding. A missing or wrong value answers 401 with `WWW-Authenticate: Basic realm="autorefresh", charset="UTF-8"` and `{"error":"unauthorized"}`.
 - `http.Server`: `ReadHeaderTimeout: 10 * time.Second`, `ReadTimeout: 30 * time.Second`, `WriteTimeout: time.Minute`, `IdleTimeout: 2 * time.Minute`.
@@ -440,7 +443,7 @@ Rules:
 ```go
 func TestPlaceholderPage(t *testing.T) // GET / -> 200, text/html, body has "not built" and href="api/status", no href="/
 func TestUnknownAPIPathIsJSON404(t *testing.T)
-func TestSecurityHeaders(t *testing.T) // on GET /, a 404, a 401, and a cross-origin 403
+func TestSecurityHeaders(t *testing.T) // on GET /, a 404, a 401, a cross-origin 403, and the 503 after admission closed
 func TestBasicAuth(t *testing.T)
 // table on "/" and "/api/x": no header, wrong password, wrong username -> 401 with
 // WWW-Authenticate; right values -> not 401.
