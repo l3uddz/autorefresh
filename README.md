@@ -553,8 +553,9 @@ address keeps the choice, so a link or a reload shows the same server.
   23:00". The Runs page shows the same line. Each server card shows when
   the next full cache refresh of one of its libraries is due. Each library
   has its own due time, the next `cache-refresh` time after its last full
-  read, and the card shows the earliest one. The first run at or after a
-  due time reads that library in full.
+  read, and the card shows the earliest one. A new library, or a
+  `cache-refresh` schedule without a next time, is due at once. The first
+  run at or after a due time reads that library in full.
 - **Items** lists the items in three tabs: **Attention** (items that
   autorefresh still tries to fix), **Fixed**, and **Stopped**. You can
   search by title or path and filter by library and type. Attention and
