@@ -117,6 +117,18 @@ func TestShuttingDownIsJSON503(t *testing.T) {
 	assertJSONError(t, rec, http.StatusServiceUnavailable, "shutting down")
 }
 
+func TestStopClosesAdmission(t *testing.T) {
+	s := New(Options{})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := s.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	rec := serve(s, httptest.NewRequest(http.MethodGet, "/", nil))
+	assertJSONError(t, rec, http.StatusServiceUnavailable, "shutting down")
+}
+
 func TestCrossOriginPostIsRejected(t *testing.T) {
 	crossSite := httptest.NewRequest(http.MethodPost, "/", nil)
 	crossSite.Header.Set("Sec-Fetch-Site", "cross-site")

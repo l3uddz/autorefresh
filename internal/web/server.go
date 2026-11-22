@@ -181,12 +181,14 @@ func (s *Server) Start(ln net.Listener) {
 	}()
 }
 
-// Stop ends the event streams and calls Shutdown(ctx). If Shutdown fails, it closes handler admission,
+// Stop closes handler admission, so that every later request gets a 503,
+// ends the event streams, and calls Shutdown(ctx). If Shutdown fails, it
 // cancels the base context of every request, calls Close, and waits for the
 // active handlers for at most forceWait. It always waits for Serve to return.
 // It returns the Shutdown error. The budget is the deadline of ctx plus
 // forceWait.
 func (s *Server) Stop(ctx context.Context) error {
+	s.closeAdmission()
 	s.cancelSSE()
 	err := s.srv.Shutdown(ctx)
 	if err != nil {
@@ -198,9 +200,9 @@ func (s *Server) Stop(ctx context.Context) error {
 	return err
 }
 
-// force ends the requests that Shutdown did not end in time.
+// force ends the requests that Shutdown did not end in time. Stop closed
+// admission before, so no new handler starts.
 func (s *Server) force() {
-	s.closeAdmission()
 	s.cancelBase()
 	// Close only reports the error of closing the listeners, which Shutdown
 	// already closed.
