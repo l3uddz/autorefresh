@@ -185,6 +185,62 @@ func TestItemTimelineDropsUnsafeCandidateThumbs(t *testing.T) {
 	}
 }
 
+func TestItemTimelineDropsCandidateThumbsWithSecrets(t *testing.T) {
+	const secret = "sentinel-secret"
+	thumbs := map[string]string{
+		"query":          "https://img.example/p.jpg?sig=" + secret,
+		"path":           "https://img.example/" + secret + "/p.jpg",
+		"encoded-path":   "https://img.example/%73entinel-secret/p.jpg",
+		"encoded-query":  "https://img.example/p.jpg?sig=%73entinel%2Dsecret",
+		"clean":          "https://img.example/p.jpg?w=300",
+		"encoded-clean":  "https://img.example/a%20b.jpg",
+		"secret-in-host": "https://" + secret + ".example/p.jpg",
+	}
+	var candidates []store.MatchCandidate
+	for name, thumb := range thumbs {
+		candidates = append(candidates, store.MatchCandidate{GUID: "plex://movie/" + name, Thumb: thumb})
+	}
+	st := openStore(t)
+	readLibrary(t, st, "Home", "1", testNow, movie("101", "Alien", store.Unmatched, time.Time{}))
+	err := st.RecordMatchDecision(store.MatchDecision{
+		Server: "Home", RatingKey: "101", At: testNow, Source: store.SourceAuto, Outcome: store.DecisionNoMatch,
+		Searches: []store.MatchSearch{{Query: "tmdb-348", Source: "path", Candidates: candidates}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(Options{
+		Servers: []PlexServer{{Name: "Home", Plex: &fakePlex{}}},
+		Store:   st,
+		Secrets: []string{"", secret},
+	})
+
+	got, body := getItem(t, s, "srv=0&key=101")
+	if strings.Contains(body, secret) || strings.Contains(body, "entinel") {
+		t.Errorf("body holds the secret: %s", body)
+	}
+	if len(got.Timeline) != 1 {
+		t.Fatalf("timeline = %v", got.Timeline)
+	}
+	searches, _ := got.Timeline[0]["searches"].([]any)
+	if len(searches) != 1 {
+		t.Fatalf("searches = %v", got.Timeline[0]["searches"])
+	}
+	search, _ := searches[0].(map[string]any)
+	gotThumbs := map[string]any{}
+	for _, c := range search["candidates"].([]any) {
+		c, _ := c.(map[string]any)
+		name, _ := strings.CutPrefix(c["guid"].(string), "plex://movie/")
+		gotThumbs[name] = c["thumb"]
+	}
+	want := map[string]any{"clean": thumbs["clean"], "encoded-clean": thumbs["encoded-clean"]}
+	for name := range thumbs {
+		if gotThumbs[name] != want[name] {
+			t.Errorf("thumb of %s = %v, want %v", name, gotThumbs[name], want[name])
+		}
+	}
+}
+
 func TestItemTimelineEmptyIsArray(t *testing.T) {
 	st := openStore(t)
 	readLibrary(t, st, "Home", "1", testNow, movie("101", "Alien", store.NoSummary, time.Time{}))

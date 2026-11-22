@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -96,4 +97,27 @@ func secretSpans(text string, secrets []string) []span {
 		}
 	}
 	return spans
+}
+
+// containsSecret reports whether the URL raw holds a non-empty configured
+// secret: as it is, or percent-decoded in its path or query. A URL that
+// does not parse or decode counts as one that holds a secret.
+func (s *Server) containsSecret(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return true
+	}
+	query, err := url.QueryUnescape(u.RawQuery)
+	if err != nil {
+		return true
+	}
+	for _, secret := range s.secrets {
+		if secret == "" {
+			continue
+		}
+		if strings.Contains(raw, secret) || strings.Contains(u.Path, secret) || strings.Contains(query, secret) {
+			return true
+		}
+	}
+	return false
 }

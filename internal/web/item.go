@@ -155,28 +155,33 @@ func (s *Server) toEventJSON(e store.Event) eventJSON {
 		out.Match = &matchJSON{GUID: e.MatchGUID, Title: e.MatchTitle, Year: e.MatchYear}
 	}
 	for _, m := range e.Searches {
-		out.Searches = append(out.Searches, toSearchJSON(m))
+		out.Searches = append(out.Searches, s.toSearchJSON(m))
 	}
 	return out
 }
 
-func toSearchJSON(m store.MatchSearch) searchJSON {
+func (s *Server) toSearchJSON(m store.MatchSearch) searchJSON {
 	out := searchJSON{
 		Query: m.Query, Source: m.Source, FromID: m.FromID, Failed: m.Failed,
 		Candidates: make([]candidateJSON, 0, len(m.Candidates)),
 	}
 	for _, c := range m.Candidates {
-		out.Candidates = append(out.Candidates, toCandidateJSON(c))
+		out.Candidates = append(out.Candidates, s.toCandidateJSON(c))
 	}
 	return out
 }
 
 // toCandidateJSON returns c. It checks the stored thumb again, so only a
-// safe remote image URL reaches the browser.
-func toCandidateJSON(c store.MatchCandidate) candidateJSON {
+// safe remote image URL without a configured secret reaches the browser,
+// which loads it from a third-party host.
+func (s *Server) toCandidateJSON(c store.MatchCandidate) candidateJSON {
+	thumb := plex.SafeRemoteImage(c.Thumb)
+	if s.containsSecret(thumb) {
+		thumb = ""
+	}
 	return candidateJSON{
 		GUID: c.GUID, Name: c.Name, Year: c.Year, Type: c.Type, Summary: c.Summary,
-		Thumb: plex.SafeRemoteImage(c.Thumb), Score: c.Score, Verdict: c.Verdict,
+		Thumb: thumb, Score: c.Score, Verdict: c.Verdict,
 	}
 }
 
