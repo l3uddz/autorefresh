@@ -336,6 +336,37 @@ func TestCompletesAfterMatchEventExpired(t *testing.T) {
 	}
 }
 
+// An item whose accepted match was in a library that was later pruned
+// still completes: the pruned library takes its match event with it, and
+// the completion stores no event ID instead of failing the read.
+func TestMovedItemCompletesAfterOldLibraryPruned(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	accept(t, s, "a", base.Add(time.Minute), ActionMatch)
+
+	moved := item("a", NoArt)
+	moved.Section = "2"
+	apply(t, s, Read{Section: "2", Items: []Item{moved}})
+	if _, err := s.PruneSections(srv, []string{"2"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, s, `SELECT COUNT(*) FROM event WHERE kind = 'request'`); n != 0 {
+		t.Fatalf("request events = %d, want 0 after the prune", n)
+	}
+	if n := count(t, s, `SELECT COUNT(*) FROM item WHERE rating_key = 'a' AND last_match_event_id IS NOT NULL`); n != 1 {
+		t.Fatalf("rows with a stale match event ID = %d, want 1", n)
+	}
+
+	done := item("a", 0)
+	done.Section = "2"
+	apply(t, s, Read{Section: "2", Items: []Item{done}})
+
+	got := completedEvent(t, s, "a")
+	if got.Section != "2" || got.FixedMatch != ActionMatch || got.FixedMatchEventID != 0 {
+		t.Fatalf("event = %+v", got)
+	}
+}
+
 func TestApplyReadWritesGoneEvents(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("a", NoArt), item("b", NoArt)}})
