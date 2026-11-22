@@ -33,6 +33,7 @@ import { fixedBy, label, plural, queueState, relative } from './format';
 import { Poster, Reasons } from './media';
 import { NothingMatched, startBulkRefresh, useIsRefreshBusy } from './queue';
 import { itemHash, navigate, tabNames, type ItemKey, type TabName } from './route';
+import { useRowOpen } from './rowopen';
 import { stableRows, tableRow, type TableRow } from './table';
 
 const tabTitles: Record<TabName, string> = { attention: 'Attention', fixed: 'Fixed', stopped: 'Stopped' };
@@ -471,41 +472,6 @@ interface TableProps extends ListProps {
 
 /** The Space, Enter, or click on a control inside a row, such as the
  * selection checkbox, belongs to that control, not to the row. */
-function isRowItself(event: { target: EventTarget | null; currentTarget: EventTarget | null }): boolean {
-  const control = (event.target as HTMLElement | null)?.closest('button, input, a, label, [role="checkbox"], [role="button"]');
-  const row = event.currentTarget as HTMLElement;
-  return !control || control === row || !row.contains(control);
-}
-
-/** Opens the detail of a row on click, Enter, or Space, as the Astryx
- * table-inbox template does. A table row cannot hold a link here: a cell
- * renderer stops the windowing. The plugin keeps the flat row model, which
- * windowing requires. */
-function useRowOpen(onOpen: (row: TableRow) => void, openID?: string): TablePlugin<TableRow> {
-  return useMemo(
-    () => ({
-      rowModel: 'flat',
-      transformBodyRow: (props, row) => ({
-        ...props,
-        htmlProps: {
-          ...props.htmlProps,
-          tabIndex: 0,
-          'aria-current': row.id === openID ? true : undefined,
-          onClick: event => {
-            if (isRowItself(event)) onOpen(row);
-          },
-          onKeyDown: event => {
-            if ((event.key !== 'Enter' && event.key !== ' ') || !isRowItself(event)) return;
-            event.preventDefault();
-            onOpen(row);
-          },
-        },
-      }),
-    }),
-    [onOpen, openID],
-  );
-}
-
 function ItemTable({ tab, rows, isMulti, ignored, sort, onSort, selection, onSelect, openItem, srv }: TableProps) {
   const now = useNow();
   const built = useMemo(() => rows.map(item => tableRow(item, now, isMulti, ignored)), [rows, now, isMulti, ignored]);
