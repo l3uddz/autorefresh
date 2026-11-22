@@ -1,8 +1,9 @@
-# Run details and list sort design
+# Run details, list sort, match check, and next run design
 
 Date: 2026-11-22
 Status: approved by the maintainer on 2026-11-22
-Issues: #104 (run details), #105 (list sort)
+Issues: #104 (run details), #105 (list sort), #106 (check after a manual
+match), #107 (next scheduled run)
 
 ## Intent
 
@@ -14,6 +15,10 @@ find the items that need a person. Two gaps get in the way:
 2. On the Items page, only Table mode can sort. List mode, the default, has
    no sort control. That makes it hard to find, for example, the items with
    the most tries.
+3. After a manual Fix match that Plex accepts, Plex shows the item as fixed,
+   but the cached row keeps its old reasons. The item stays in Attention,
+   waiting for days, until its next refresh or a Check now.
+4. The dashboard does not say when the next scheduled run starts.
 
 The new parts must look like the rest of the dashboard and be pleasant to
 use: Astryx components and tokens only, as `web/AGENTS.md` requires.
@@ -25,6 +30,8 @@ use: Astryx components and tokens only, as `web/AGENTS.md` requires.
 - The drawer lists the items of the run, grouped by outcome, and each item
   links to its item detail.
 - List mode can sort by the same keys as Table mode, per tab.
+- An item that a manual match fixed moves to Fixed at once.
+- The Status and Runs pages show the next scheduled run.
 
 ## Non-goals
 
@@ -33,6 +40,8 @@ use: Astryx components and tokens only, as `web/AGENTS.md` requires.
 - No new item filters. The Reason filter already has Unmatched.
 - No backfill for runs from before the upgrade.
 - No change to the favicon or to the Open in Plex link.
+- No second Plex refresh after a manual match: the match already makes Plex
+  refresh the item.
 
 ## Approaches
 
@@ -69,11 +78,12 @@ Storage:
 
 API:
 
-- `GET /api/runs/events?id=<run>` returns the events of the run, in the
-  shape that the item timeline uses, with the item key, server index, title,
-  year, type, and thumb, so a row can show a poster and link to the item.
-  Error texts are redacted like the other routes. Bulk jobs keep
-  `GET /api/runs/items`.
+- `GET /api/runs/detail?id=<run>` returns the run (as in `GET /api/runs`),
+  its events, and, for a bulk job, its `run_item` rows. Each event has the
+  shape of the item timeline, plus the item key, title, year, type, and
+  thumb URL, so a row can show a poster and link to the item. The drawer
+  then needs one request, also when it opens from a link to a run that the
+  loaded pages do not hold. Error texts are redacted like the other routes.
 - A run of a server that is no longer configured is not found, as in
   `GET /api/runs`.
 
@@ -107,6 +117,30 @@ Frontend:
   - Fixed: item, completed
 - An empty sort is the tab default, as today. Both modes use the per-tab
   sort state, so switching modes keeps the order.
+
+### Check after a manual match (#106)
+
+- When Plex accepts a manual match (`Refresher.ApplyMatch`), the refresher
+  checks the item while it still holds the item lock, as `CheckItem` does:
+  it reads the item from Plex and applies the result to the cached row.
+- Plex fetches the new metadata in the background, so the check waits
+  1 s, 2 s, and 4 s before its three tries, and stops at the first try that
+  completes the item. Each try that leaves reasons updates the row too.
+- An item that the check completes gets a completed event credited to the
+  match, so it shows on the Fixed tab as fixed by match.
+- A failed check is logged and does not fail the match request: Plex
+  accepted the match, and the next run reads the item again. An item that
+  Plex no longer has is recorded as gone, as `CheckItem` does.
+- The API action timeout (30 s) covers the match and the tries.
+
+### Next scheduled run (#107)
+
+- `web.NewStatus` takes the next-run function of the run schedule
+  (`cron.Schedule.Next`), or nil without a schedule. Each status snapshot
+  carries `nextRun`, the next start after the time of the snapshot.
+- The Status page shows "Next run in 46m · 23:00" in its header, beside the
+  TMDB state, and counts down with the page clock. The Runs page shows the
+  same line in its header. A time in the past shows as "starting".
 
 ## Left to the builder
 
