@@ -80,11 +80,10 @@ func main() {
 // opts.Once, it runs one check. Otherwise it starts the UI if ui.listen is
 // set, checks the tokens, starts the first run at once, then a run at each
 // schedule time, until ctx ends. It then stops the UI, the schedule, and the
-// database, in that order. stop
-// ends the signal handling after the first signal, so a second signal ends
-// the process at once. run logs each error that it returns. With opts.Once,
-// a failed check or a failed close of the database returns an error, which
-// gives exit code 1.
+// database, in that order. stop ends the signal handling after the first
+// signal, so a second signal ends the process at once. run logs each error
+// that it returns. With opts.Once, a failed check or a failed close of the
+// database returns an error, which gives exit code 1.
 func run(ctx context.Context, stop context.CancelFunc, opts options, version string) error {
 	// A setup error ends the process, so it logs at fatal level.
 	fatal := func(err error, msg string) error {
