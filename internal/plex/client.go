@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"syscall"
 	"time"
 
@@ -99,40 +100,66 @@ func sameOrigin(req *http.Request, via []*http.Request) error {
 // reuse connections without letting a misbehaving server stall a request.
 const maxDrainBytes = 64 << 10
 
-// send sends a request to endpoint with the query. If out is not nil, it
-// decodes the JSON response body into out.
-func (c *Client) send(ctx context.Context, method string, endpoint *url.URL, query url.Values, out any) error {
+// ValidRatingKey reports whether key is a rating key, by the rule that every
+// request of this package applies.
+func ValidRatingKey(key string) bool { return idPattern.MatchString(key) }
+
+// PathPrefix returns the path that every request path starts with, without a
+// trailing "/". It is "" when the server URL has no path. It cleans the path
+// as endpoint does.
+func (c *Client) PathPrefix() string {
+	return strings.TrimSuffix(c.endpoint().Path, "/")
+}
+
+// do sends a request to endpoint with the query. It checks the status. On a
+// status error it drains and closes the body. Otherwise the caller reads the
+// body, then drains and closes it.
+func (c *Client) do(ctx context.Context, method string, endpoint *url.URL, query url.Values, accept string) (*http.Response, error) {
 	u := *endpoint
 	u.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), nil)
 	if err != nil {
-		return errors.New("creating request: invalid server URL")
+		return nil, errors.New("creating request: invalid server URL")
 	}
 	req.Header.Set("X-Plex-Token", c.token)
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", accept)
 
 	start := time.Now()
 	res, err := c.http.Do(req)
 	if err != nil {
-		return c.transportError(ctx, req, start, err)
+		return nil, c.transportError(ctx, req, start, err)
 	}
-	defer func() {
-		// Draining the body lets the connection get reused.
-		io.Copy(io.Discard, io.LimitReader(res.Body, maxDrainBytes))
-		res.Body.Close()
-	}()
 
 	c.trace(req, start).Int("status", res.StatusCode).Msg("Plex request")
 
 	if err := statusError(res); err != nil {
-		return fmt.Errorf("%s %s: %w", method, req.URL.Path, err)
+		drainAndClose(res)
+		return nil, fmt.Errorf("%s %s: %w", method, req.URL.Path, err)
 	}
+	return res, nil
+}
+
+// drainAndClose reads a bounded rest of the body, which lets the connection
+// get reused, and closes it.
+func drainAndClose(res *http.Response) {
+	io.Copy(io.Discard, io.LimitReader(res.Body, maxDrainBytes))
+	res.Body.Close()
+}
+
+// send sends a request to endpoint with the query. If out is not nil, it
+// decodes the JSON response body into out.
+func (c *Client) send(ctx context.Context, method string, endpoint *url.URL, query url.Values, out any) error {
+	res, err := c.do(ctx, method, endpoint, query, "application/json")
+	if err != nil {
+		return err
+	}
+	defer drainAndClose(res)
 
 	if out == nil {
 		return nil
 	}
 	if err := json.NewDecoder(res.Body).Decode(out); err != nil {
-		return bodyError(method, req.URL.Path, err)
+		return bodyError(method, res.Request.URL.Path, err)
 	}
 	return nil
 }

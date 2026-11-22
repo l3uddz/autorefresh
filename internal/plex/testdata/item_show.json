@@ -7,6 +7,8 @@
         "key": "/library/metadata/1004/children",
         "guid": "local://1004",
         "type": "show",
+        "childCount": 2,
+        "leafCount": 12,
         "title": "Fixture Series One",
         "summary": "",
         "addedAt": 1700000300,

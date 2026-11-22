@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -53,17 +54,19 @@ type Item struct {
 type Filter struct{ Key, Value string }
 
 type metadata struct {
-	RatingKey string `json:"ratingKey"`
-	Index     int    `json:"index"`
-	Season    *int   `json:"parentIndex"`
-	GUID      string `json:"guid"`
-	Title     string `json:"title"`
-	Year      int    `json:"year"`
-	Summary   string `json:"summary"`
-	Thumb     string `json:"thumb"`
-	Art       string `json:"art"`
-	AddedAt   int64  `json:"addedAt"`
-	Media     []struct {
+	RatingKey  string `json:"ratingKey"`
+	Index      int    `json:"index"`
+	Season     *int   `json:"parentIndex"`
+	GUID       string `json:"guid"`
+	Title      string `json:"title"`
+	Year       int    `json:"year"`
+	Summary    string `json:"summary"`
+	Thumb      string `json:"thumb"`
+	Art        string `json:"art"`
+	AddedAt    int64  `json:"addedAt"`
+	ChildCount int    `json:"childCount"`
+	LeafCount  int    `json:"leafCount"`
+	Media      []struct {
 		Part []struct {
 			File string `json:"file"`
 		} `json:"Part"`
@@ -105,6 +108,25 @@ func (m metadata) item() Item {
 		AddedAt:   time.Unix(m.AddedAt, 0),
 		Files:     m.files(),
 	}
+}
+
+var identityPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,128}$`)
+
+// Identity returns the machine identifier of the server.
+func (c *Client) Identity(ctx context.Context) (string, error) {
+	var resp struct {
+		MediaContainer struct {
+			MachineIdentifier string `json:"machineIdentifier"`
+		} `json:"MediaContainer"`
+	}
+	if err := c.send(ctx, http.MethodGet, c.endpoint(), nil, &resp); err != nil {
+		return "", fmt.Errorf("identity: %w", err)
+	}
+	id := resp.MediaContainer.MachineIdentifier
+	if !identityPattern.MatchString(id) {
+		return "", errors.New("identity: invalid machine identifier")
+	}
+	return id, nil
 }
 
 // Libraries lists the library sections of the server.
@@ -237,29 +259,62 @@ func (p Paths) All() []string {
 	return p.Files
 }
 
-// ItemPaths returns Location[].path and Media[].Part[].file of an item. Only
-// a 404 status gives ErrNotFound. A response without an item gives a plain
-// error.
-func (c *Client) ItemPaths(ctx context.Context, ratingKey string) (Paths, error) {
+// itemMetadata reads the first metadata entry of an item. Only a 404 status
+// gives ErrNotFound. A response without an item gives a plain error. The
+// errors have the prefix op.
+func (c *Client) itemMetadata(ctx context.Context, ratingKey, op string) (metadata, error) {
 	endpoint, err := c.metadataEndpoint(ratingKey)
 	if err != nil {
-		return Paths{}, err
+		return metadata{}, err
 	}
 
 	var resp metadataResponse
 	if err := c.send(ctx, http.MethodGet, endpoint, nil, &resp); err != nil {
-		return Paths{}, fmt.Errorf("item paths: %w", err)
+		return metadata{}, fmt.Errorf("%s: %w", op, err)
 	}
 	if len(resp.MediaContainer.Metadata) == 0 {
-		return Paths{}, errors.New("item paths: response has no item")
+		return metadata{}, fmt.Errorf("%s: response has no item", op)
 	}
+	return resp.MediaContainer.Metadata[0], nil
+}
 
-	m := resp.MediaContainer.Metadata[0]
+func (m metadata) paths() Paths {
 	var locations []string
 	for _, l := range m.Location {
 		locations = append(locations, l.Path)
 	}
-	return Paths{Locations: locations, Files: m.files()}, nil
+	return Paths{Locations: locations, Files: m.files()}
+}
+
+// ItemPaths returns Location[].path and Media[].Part[].file of an item. Only
+// a 404 status gives ErrNotFound. A response without an item gives a plain
+// error.
+func (c *Client) ItemPaths(ctx context.Context, ratingKey string) (Paths, error) {
+	m, err := c.itemMetadata(ctx, ratingKey, "item paths")
+	if err != nil {
+		return Paths{}, err
+	}
+	return m.paths(), nil
+}
+
+// Details holds the fields of one item that the dashboard shows.
+type Details struct {
+	GUID, Summary         string
+	ChildCount, LeafCount int // seasons and episodes of a show; 0 otherwise
+	Paths                 Paths
+}
+
+// ItemDetails reads the details of an item. Errors follow ItemPaths.
+func (c *Client) ItemDetails(ctx context.Context, ratingKey string) (Details, error) {
+	m, err := c.itemMetadata(ctx, ratingKey, "item details")
+	if err != nil {
+		return Details{}, err
+	}
+	return Details{
+		GUID: m.GUID, Summary: m.Summary,
+		ChildCount: m.ChildCount, LeafCount: m.LeafCount,
+		Paths: m.paths(),
+	}, nil
 }
 
 // EpisodeNumbers returns the file-backed episode numbers in each regular
