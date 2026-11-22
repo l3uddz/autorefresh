@@ -50,6 +50,12 @@ describe('routes', () => {
     for (const hash of ['#/runs/12', '#/runs/12?srv=1']) expect(routeHash(parseRoute(hash))).toBe(hash);
     expect(runHash(12)).toBe('#/runs/12');
     expect(runHash(12, 1)).toBe('#/runs/12?srv=1');
+    // A run ID is a positive safe integer, as the API takes it.
+    expect(parseRoute('#/runs/0')).toEqual({ page: 'status' });
+    expect(parseRoute('#/runs/012')).toEqual({ page: 'status' });
+    expect(parseRoute('#/runs/99999999999999999999')).toEqual({ page: 'status' });
+    // Every server keeps the run open.
+    expect(withScope({ page: 'runs', run: 12, srv: 0 }, undefined)).toEqual({ page: 'runs', run: 12 });
     // A new scope closes the run, which may belong to another server.
     expect(withScope({ page: 'runs', run: 12, srv: 0 }, 1)).toEqual({ page: 'runs', srv: 1 });
     expect(withScope({ page: 'runs', run: 12, srv: 1 }, 1)).toEqual({ page: 'runs', run: 12, srv: 1 });

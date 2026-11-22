@@ -26,7 +26,7 @@ export type Route = ({ page: 'status' } | { page: 'runs'; run?: number } | { pag
   srv?: number;
 };
 
-const runsPattern = /^#\/runs(?:\/(\d+))?\/?$/;
+const runsPattern = /^#\/runs(?:\/([1-9]\d*))?\/?$/;
 const itemsPattern = /^#\/items(?:\/(attention|fixed|stopped))?(?:\/(\d+)\/(\d+))?\/?$/;
 
 function scopeParam(query: string): number | undefined {
@@ -40,7 +40,9 @@ export function parseRoute(hash: string): Route {
   const srv = scopeParam(query);
   const scope = srv === undefined ? {} : { srv };
   const runs = runsPattern.exec(path);
-  if (runs) return runs[1] === undefined ? { page: 'runs', ...scope } : { page: 'runs', run: Number(runs[1]), ...scope };
+  if (runs && runs[1] === undefined) return { page: 'runs', ...scope };
+  // A run ID is a positive safe integer, as the API takes it.
+  if (runs && Number.isSafeInteger(Number(runs[1]))) return { page: 'runs', run: Number(runs[1]), ...scope };
   const match = itemsPattern.exec(path);
   if (!match) return { page: 'status', ...scope };
   const tab = (match[1] as TabName | undefined) ?? 'attention';
@@ -77,13 +79,13 @@ export function routeScope(route: Route, serverCount: number | undefined): numbe
 }
 
 /** Returns route in the scope srv. It drops an open item of another
- * server, and an open run when the scope changes: the route does not know
- * the server of the run. */
+ * server, and an open run when the scope changes to another server: the
+ * route does not know the server of the run. */
 export function withScope(route: Route, srv: number | undefined): Route {
   if (route.page === 'items' && route.item && srv !== undefined && route.item.srv !== srv) {
     return { page: 'items', tab: route.tab, srv };
   }
-  if (route.page === 'runs' && route.run !== undefined && srv !== route.srv) return { page: 'runs', srv };
+  if (route.page === 'runs' && route.run !== undefined && srv !== undefined && srv !== route.srv) return { page: 'runs', srv };
   return { ...route, srv };
 }
 
