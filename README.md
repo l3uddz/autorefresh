@@ -604,10 +604,11 @@ a search by one TMDB ID found as its only candidate can compare the
 episode numbers of the item with that TMDB series. This needs a
 `tmdb-token`. The comparison changes nothing. **Match** asks before it
 applies the candidate. After Plex accepts the match, autorefresh also
-requests a refresh of the item. Then it checks the item, as **Check now**
-does, up to three times over about 7 seconds while Plex loads the new
-metadata. An item that the check finds complete moves to the Fixed tab at
-once. Otherwise the next run reads it again.
+requests a refresh of the item. The refresh counts as one more attempt of
+the item, like any refresh. Then, for an item in the cache, autorefresh
+checks the item as **Check now** does, after waits of 1, 2, and 4 seconds,
+while Plex loads the new metadata. An item that a check finds complete
+moves to the Fixed tab at once. Otherwise the next run reads it again.
 Beside the candidates, the dialog explains the last automatic fix match:
 its searches, their candidates, and why it picked one or none. Searches in
 the dialog call Plex but record nothing. An applied match is recorded in
