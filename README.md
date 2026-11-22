@@ -556,7 +556,9 @@ dashboard at a sub-path, such as `/autorefresh/`.
 The dashboard never sends the Plex token to the browser. It loads posters
 and art from Plex for the browser. In stored error texts, it replaces each
 Plex token, Plex address, Plex URL path, the TMDB token, and the dashboard
-password with `<redacted>`.
+password with `<redacted>`. It leaves out the poster of a match candidate
+when the poster URL holds one of these values, because the browser loads
+that poster from another site.
 
 ### Dashboard in Docker
 
@@ -595,7 +597,8 @@ The image declares port `7380`. Nothing listens on it until you set
 | `api/runs` | One page of the runs, newest first |
 
 The API names a server by its position in the `plex` list, from 0, in the
-`srv` query parameter.
+`srv` query parameter. A query string that does not decode, for example
+one with a bad percent escape, gets a 400 answer.
 
 ## Logging
 
