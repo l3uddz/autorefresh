@@ -39,12 +39,17 @@ func (s *Server) serveArt(w http.ResponseWriter, r *http.Request) {
 // is requested, and only an image type is passed on, so the browser gets no
 // Plex header and no foreign content.
 func (s *Server) serveImage(w http.ResponseWriter, r *http.Request, sizes map[string]imageSize, field func(store.ListItem) string) {
-	size, ok := sizeParam(r.URL.Query(), sizes)
+	v, err := queryParams(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	size, ok := sizeParam(v, sizes)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid size")
 		return
 	}
-	srv, it, ok := s.knownItem(w, r)
+	srv, it, ok := s.knownItem(w, r, v)
 	if !ok {
 		return
 	}

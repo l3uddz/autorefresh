@@ -95,11 +95,11 @@ func (s *Server) itemParams(v url.Values) (int, string, error) {
 	return srv, key, nil
 }
 
-// knownItem reads the item of the request r: its row, or the snapshot of
-// its newest event. It answers r and returns false when the parameters are
-// invalid, the item is unknown, or the store fails.
-func (s *Server) knownItem(w http.ResponseWriter, r *http.Request) (int, store.ListItem, bool) {
-	srv, key, err := s.itemParams(r.URL.Query())
+// knownItem reads the item that the query v of the request r names: its
+// row, or the snapshot of its newest event. It answers r and returns false
+// when the parameters are invalid, the item is unknown, or the store fails.
+func (s *Server) knownItem(w http.ResponseWriter, r *http.Request, v url.Values) (int, store.ListItem, bool) {
+	srv, key, err := s.itemParams(v)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return 0, store.ListItem{}, false
@@ -121,7 +121,12 @@ func (s *Server) knownItem(w http.ResponseWriter, r *http.Request) (int, store.L
 // serveItem answers GET /api/item with an item and its timeline, newest
 // event first.
 func (s *Server) serveItem(w http.ResponseWriter, r *http.Request) {
-	srv, it, ok := s.knownItem(w, r)
+	v, err := queryParams(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	srv, it, ok := s.knownItem(w, r, v)
 	if !ok {
 		return
 	}
@@ -178,7 +183,12 @@ func toCandidateJSON(c store.MatchCandidate) candidateJSON {
 // serveItemLive answers GET /api/item/live with what Plex tells about a
 // known item now.
 func (s *Server) serveItemLive(w http.ResponseWriter, r *http.Request) {
-	srv, it, ok := s.knownItem(w, r)
+	v, err := queryParams(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	srv, it, ok := s.knownItem(w, r, v)
 	if !ok {
 		return
 	}

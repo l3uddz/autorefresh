@@ -2,6 +2,7 @@ package web
 
 import (
 	"errors"
+	"net/http"
 	"net/url"
 	"strconv"
 
@@ -11,12 +12,24 @@ import (
 // noSrv is the srv of a request without a srv parameter.
 const noSrv = -1
 
-// The errors of the srv and key parameters. Their texts are the messages of
-// the 400 answers.
+// The errors of the query and of the srv and key parameters. Their texts
+// are the messages of the 400 answers.
 var (
-	errInvalidSrv = errors.New("invalid srv")
-	errInvalidKey = errors.New("invalid key")
+	errInvalidQuery = errors.New("invalid query")
+	errInvalidSrv   = errors.New("invalid srv")
+	errInvalidKey   = errors.New("invalid key")
 )
+
+// queryParams parses the query of r. A malformed pair, such as one with a
+// bad percent escape, makes the whole query invalid, so that no dropped
+// pair widens or resets a request.
+func queryParams(r *http.Request) (url.Values, error) {
+	v, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return nil, errInvalidQuery
+	}
+	return v, nil
+}
 
 // srvParam returns the srv parameter of the query v: the index of a
 // configured server, or noSrv when v has none (an empty value counts as

@@ -84,7 +84,10 @@ func (s *Server) serveRuns(w http.ResponseWriter, r *http.Request) {
 // returns the scope of its cursors. The query always names the servers, so
 // the runs of a server that is no longer configured stay hidden.
 func (s *Server) runsQuery(r *http.Request) (store.RunQuery, string, error) {
-	v := r.URL.Query()
+	v, err := queryParams(r)
+	if err != nil {
+		return store.RunQuery{}, "", err
+	}
 	srv, err := s.srvParam(v)
 	if err != nil {
 		return store.RunQuery{}, "", err

@@ -463,6 +463,29 @@ func TestItemsRejectsInvalidParams(t *testing.T) {
 	}
 }
 
+// TestAPIRejectsMalformedQuery checks that a query with a bad percent
+// escape is a 400, so a dropped pair never widens or resets a request.
+func TestAPIRejectsMalformedQuery(t *testing.T) {
+	st := openStore(t)
+	seedMovies(t, st, 3)
+	s := newAPIServer(st, 0, "Home", "Away")
+
+	for _, path := range []string{
+		"/api/items?cursor=%ZZ",
+		"/api/items?srv=%ZZ",
+		"/api/runs?cursor=%ZZ",
+		"/api/runs?srv=%ZZ",
+		"/api/item?srv=0&key=1&x=%ZZ",
+		"/api/item/live?srv=0&key=1&x=%ZZ",
+		"/api/items/thumb?srv=0&key=1&size=%ZZ",
+	} {
+		t.Run(path, func(t *testing.T) {
+			rec := serve(s, httptest.NewRequest(http.MethodGet, path, nil))
+			assertJSONError(t, rec, http.StatusBadRequest, "invalid query")
+		})
+	}
+}
+
 func TestAPIStoreFailureIs500(t *testing.T) {
 	st := openStore(t)
 	s := newAPIServer(st, 0, "Home")

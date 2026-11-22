@@ -128,9 +128,11 @@ func (s *Server) serveItems(w http.ResponseWriter, r *http.Request) {
 // itemsQuery parses the parameters of r into the query of the store, with
 // no Rules, and returns the scope of its cursors.
 func (s *Server) itemsQuery(r *http.Request) (store.ListQuery, string, error) {
-	v := r.URL.Query()
+	v, err := queryParams(r)
+	if err != nil {
+		return store.ListQuery{}, "", err
+	}
 	var q store.ListQuery
-	var err error
 	if q.Tab, err = tabParam(v.Get("tab")); err != nil {
 		return store.ListQuery{}, "", err
 	}
