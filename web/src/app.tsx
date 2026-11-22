@@ -143,38 +143,37 @@ function RunNow({ servers }: { servers: ServerStatus[] }) {
   const runNow = useRunNow();
   const busy = servers.some(server => server.run);
   const reason = busy ? 'A run is busy' : undefined;
+  // One request at a time: a menu that was open before the request left
+  // or a run started does nothing.
+  const start = (srv: number | null, full: boolean) => {
+    if (!runNow.isPending && !busy) runNow.mutate({ srv, full });
+  };
   if (servers.length <= 1) {
+    const isDisabled = busy || !servers.length;
     return (
       <ButtonGroup label="Run now">
-        <Button
-          label="Run now"
-          variant="primary"
-          isLoading={runNow.isPending}
-          isDisabled={busy || !servers.length}
-          tooltip={reason}
-          onClick={() => runNow.mutate({ srv: null, full: false })}
-        />
+        <Button label="Run now" variant="primary" isLoading={runNow.isPending} isDisabled={isDisabled} tooltip={reason} onClick={() => start(null, false)} />
         <DropdownMenu
-          button={{ label: 'More run options', variant: 'primary', isIconOnly: true, icon: <Icon icon={ChevronDownIcon} size="sm" />, isDisabled: busy || !servers.length, tooltip: reason }}
+          button={{ label: 'More run options', variant: 'primary', isIconOnly: true, icon: <Icon icon={ChevronDownIcon} size="sm" />, isDisabled: isDisabled || runNow.isPending, tooltip: reason }}
           hasChevron={false}
           alignment="end"
         >
-          <DropdownMenuItem label="Full cache refresh, then run" description={fullDescription} onClick={() => runNow.mutate({ srv: null, full: true })} />
+          <DropdownMenuItem label="Full cache refresh, then run" description={fullDescription} onClick={() => start(null, true)} />
         </DropdownMenu>
       </ButtonGroup>
     );
   }
   return (
     <DropdownMenu button={{ label: 'Run now', variant: 'primary', isLoading: runNow.isPending, isDisabled: busy, tooltip: reason }} alignment="end">
-      <DropdownMenuItem label="All servers" onClick={() => runNow.mutate({ srv: null, full: false })} />
+      <DropdownMenuItem label="All servers" onClick={() => start(null, false)} />
       {servers.map(server => (
-        <DropdownMenuItem key={server.srv} label={server.name} onClick={() => runNow.mutate({ srv: server.srv, full: false })} />
+        <DropdownMenuItem key={server.srv} label={server.name} onClick={() => start(server.srv, false)} />
       ))}
       <DropdownMenuDivider />
       <DropdownMenuSubMenu label="Full cache refresh, then run" description={fullDescription}>
-        <DropdownMenuItem label="All servers" onClick={() => runNow.mutate({ srv: null, full: true })} />
+        <DropdownMenuItem label="All servers" onClick={() => start(null, true)} />
         {servers.map(server => (
-          <DropdownMenuItem key={server.srv} label={server.name} onClick={() => runNow.mutate({ srv: server.srv, full: true })} />
+          <DropdownMenuItem key={server.srv} label={server.name} onClick={() => start(server.srv, true)} />
         ))}
       </DropdownMenuSubMenu>
     </DropdownMenu>
