@@ -219,6 +219,11 @@ func TestRunFinishRunError(t *testing.T) {
 		if err == nil || errors.Is(err, errRun) {
 			t.Errorf("error = %v, want the error of the run, not %v", err, errRun)
 		}
+		lines := f.logLines("error", "Recording run failed")
+		if len(lines) != 1 {
+			t.Fatalf("got %d recording failure lines, want 1", len(lines))
+		}
+		wantField(t, lines[0], "server", testServer)
 	})
 	t.Run("canceled run returns it", func(t *testing.T) {
 		f := newRefreshFixture(t, Server{Name: testServer, Plex: newFakePlex(moviesLib)})

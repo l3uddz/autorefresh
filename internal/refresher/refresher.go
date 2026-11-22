@@ -287,6 +287,21 @@ func (r *Refresher) checkServer(ctx context.Context, run *serverRun) error {
 	return err
 }
 
+// recordFinish stores res as the end of the run id and returns the error of
+// the run. A failed FinishRun becomes that error only if the run has none;
+// otherwise it is logged, so it is not lost.
+func (r *Refresher) recordFinish(run *serverRun, id int64, res store.RunResult, err error) error {
+	finishErr := r.store.FinishRun(id, run.start(), res)
+	switch {
+	case finishErr == nil:
+		return err
+	case err == nil:
+		return finishErr
+	}
+	log.Error().Str("server", run.server.Name).Err(finishErr).Msg("Recording run failed")
+	return err
+}
+
 // start returns how the run started, as StartRun and FinishRun store it.
 func (run *serverRun) start() store.RunStart {
 	return store.RunStart{
@@ -316,9 +331,7 @@ func (r *Refresher) finishRun(ctx context.Context, run *serverRun, id int64, err
 		case err != nil:
 			res.Status, res.Error = store.RunFailed, err.Error()
 		}
-		if finishErr := r.store.FinishRun(id, run.start(), res); err == nil {
-			err = finishErr
-		}
+		err = r.recordFinish(run, id, res, err)
 	}
 	if err == nil {
 		return nil
