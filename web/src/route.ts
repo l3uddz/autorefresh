@@ -57,8 +57,11 @@ export function itemHash(tab: TabName, item: ItemKey, srv?: number): string {
 }
 
 /** Returns the server scope of route: undefined (every server) when the
- * install has one server or route names a server that does not exist. */
-export function routeScope(route: Route, serverCount: number): number | undefined {
+ * install has one server or route names a server that does not exist. An
+ * unknown serverCount (the servers are not loaded yet) keeps the scope of
+ * route, so links keep a shared scope until the servers validate it. */
+export function routeScope(route: Route, serverCount: number | undefined): number | undefined {
+  if (serverCount === undefined) return route.srv;
   return serverCount > 1 && route.srv !== undefined && route.srv < serverCount ? route.srv : undefined;
 }
 

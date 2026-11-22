@@ -17,6 +17,7 @@ import { useNow } from './clock';
 import { dateTime, fixedBy, label, lastAction, plural, queueState, relative, typeName } from './format';
 import { askThen } from './confirm';
 import { Backdrop, Poster, Reasons } from './media';
+import { checkResult, fixedEvent, goneEvent } from './timeline';
 import type { ItemKey } from './route';
 
 const styles = stylex.create({
@@ -56,7 +57,7 @@ export function ItemDetail({ target, server, ignored, onClose }: Props) {
             description={detail.error instanceof ApiError && detail.error.status === 404 ? 'Its history may have expired.' : detail.error.message}
           />
         )}
-        {item && detail.data && <DetailBody item={item} timeline={detail.data.timeline} server={server} ignored={ignored} params={params} />}
+        {item && detail.data && <DetailBody detail={detail.data} server={server} ignored={ignored} params={params} />}
       </VStack>
     </VStack>
   );
@@ -75,15 +76,17 @@ function DetailSkeleton() {
 }
 
 interface BodyProps {
-  item: ItemRecord;
-  timeline: TimelineEvent[];
+  detail: Detail;
   server?: ServerInfo;
   ignored: string[];
   params: string;
 }
 
-function DetailBody({ item, timeline, server, ignored, params }: BodyProps) {
+function DetailBody({ detail, server, ignored, params }: BodyProps) {
+  const { item, timeline } = detail;
   const now = useNow();
+  const fixed = fixedEvent(timeline);
+  const gone = goneEvent(detail);
   const live = useQuery({
     queryKey: ['item', 'live', params],
     queryFn: ({ signal }) => api<LiveItem>(`item/live?${params}`, { signal }),
@@ -129,7 +132,8 @@ function DetailBody({ item, timeline, server, ignored, params }: BodyProps) {
           <MetadataListItem label="Queue">{queueState(item.state, item.nextDue, now)}</MetadataListItem>
         )}
         {item.stoppedAt && <MetadataListItem label="Stopped">{`${relative(item.stoppedAt, now)} · ${dateTime(item.stoppedAt)}`}</MetadataListItem>}
-        {item.completedAt && <MetadataListItem label="Fixed">{`${fixedBy(item.fixedAction, item.fixedMatch)} · ${relative(item.completedAt, now)}`}</MetadataListItem>}
+        {fixed && <MetadataListItem label="Fixed">{`${fixedBy(fixed.fixedAction, fixed.fixedMatch)} · ${relative(fixed.at, now)}`}</MetadataListItem>}
+        {gone && <MetadataListItem label="Removed">{`Plex no longer had it · ${relative(gone.at, now)}`}</MetadataListItem>}
         {item.cached && (
           <MetadataListItem label="Attempts">{`${plural(item.attempts, 'attempt')} · ${plural(item.refreshes, 'refresh', 'refreshes')} accepted`}</MetadataListItem>
         )}
@@ -191,9 +195,13 @@ function DetailActions({ item, server, params }: { item: ItemRecord; server?: Se
     mutationFn: async (operation: Operation) => ({ operation, result: await post<unknown>(`item/${operation}?${params}`) }),
     onSuccess: ({ operation, result }) => {
       if (operation === 'check') {
-        const reasons = (result as Detail).item.reasons ?? [];
         client.setQueryData(['item', params], result);
-        showToast({ body: reasons.length ? `Checked: ${reasons.map(label).join(', ')} still missing` : `Checked: ${title} is complete` });
+        const check = checkResult(result as Detail);
+        if (check.kind === 'gone') {
+          showToast({ body: `Plex no longer has ${title}. Autorefresh removed it from the queue.` });
+        } else {
+          showToast({ body: check.kind === 'missing' ? `Checked: ${check.reasons.map(label).join(', ')} still missing` : `Checked: ${title} is complete` });
+        }
       } else {
         showToast({ body: successText(operation, title) });
       }

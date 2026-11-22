@@ -50,6 +50,10 @@ export interface TimelineEvent {
   outcome?: string;
   error?: string;
   match?: { guid: string; title?: string; year?: number };
+  /** The request that fixed the item, on a completed event. */
+  fixedAction?: string;
+  /** The match that fixed the item, on a completed event. */
+  fixedMatch?: string;
 }
 
 export interface ItemDetail {
@@ -159,6 +163,13 @@ export class ApiError extends Error {
   }
 }
 
+/** Reports whether error is the answer of a bulk request whose filters
+ * match no item of its server. That is no failure: the next server may
+ * still have items. */
+export function isNoItems(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 400 && error.message === 'no items';
+}
+
 // Every URL is relative to the page, so the UI works at any sub-path.
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`./api/${path}`, init);
@@ -223,7 +234,9 @@ export function invalidateLists(client: QueryClient) {
   }
 }
 
-export type Connection = 'connecting' | 'open' | 'reconnecting';
+/** The state of the event stream: unavailable means that it never opened
+ * and the last try failed. */
+export type Connection = 'connecting' | 'open' | 'reconnecting' | 'unavailable';
 
 const retryDelay = 3000;
 
@@ -257,7 +270,7 @@ export function useLiveStatus(): Connection {
         setConnection('open');
       };
       stream.onerror = () => {
-        setConnection(wasOpen ? 'reconnecting' : 'connecting');
+        setConnection(wasOpen ? 'reconnecting' : 'unavailable');
         // A stream that the browser gave up on (for example after a 503 or
         // a proxy error page) does not retry by itself.
         if (stream?.readyState === EventSource.CLOSED) {

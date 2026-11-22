@@ -10,7 +10,7 @@ import { Text } from '@astryxdesign/core/Text';
 import { useToast } from '@astryxdesign/core/Toast';
 import { TopNav, TopNavHeading, TopNavItem } from '@astryxdesign/core/TopNav';
 import { lazy, Suspense, useEffect } from 'react';
-import { useLiveStatus, useStatus, type ServerStatus } from './api';
+import { useLiveStatus, useStatus, type Connection, type ServerStatus } from './api';
 import { plural } from './format';
 import { onQueueDone, queueFailed, queueText } from './queue';
 import { navigate, routeHash, routeScope, useRoute, withScope, type Route } from './route';
@@ -24,18 +24,18 @@ export function App() {
   const showToast = useToast();
   useEffect(() => onQueueDone(queue => showToast({ body: queueText(queue), type: queueFailed(queue) ? 'error' : 'info', autoHideDuration: 10_000 })), [showToast]);
   const route = useRoute();
-  const serverCount = useStatus().data?.servers.length ?? 0;
-  const srv = routeScope(route, serverCount);
+  const status = useStatus();
+  const srv = routeScope(route, status.data?.servers.length);
+  // A scoped page waits for the servers, so its queries use a valid scope.
+  const isScopePending = status.isPending && route.srv !== undefined;
   return (
     <AppShell
       height="fill"
       topNav={<TopBar route={route} srv={srv} />}
-      banner={
-        connection === 'reconnecting' ? (
-          <Banner status="warning" container="section" collapsible={false} title="Reconnecting to autorefresh" description="Live status is paused until the connection returns." />
-        ) : undefined
-      }>
-      {route.page === 'items' ? (
+      banner={connectionBanner(connection)}>
+      {isScopePending ? (
+        <PageSkeleton />
+      ) : route.page === 'items' ? (
         <Suspense fallback={<PageSkeleton />}>
           <ItemsPage tab={route.tab} item={route.item} srv={srv} />
         </Suspense>
@@ -44,6 +44,18 @@ export function App() {
       )}
     </AppShell>
   );
+}
+
+/** Returns the banner of a stream that is down. AppShell keeps room for any
+ * banner node, so a stream that is up gets undefined. */
+function connectionBanner(connection: Connection) {
+  if (connection === 'reconnecting') {
+    return <Banner status="warning" container="section" collapsible={false} title="Reconnecting to autorefresh" description="Live status is paused until the connection returns." />;
+  }
+  if (connection === 'unavailable') {
+    return <Banner status="warning" container="section" collapsible={false} title="Cannot reach the live status" description="Autorefresh tries again every few seconds. Until then, the status does not update by itself." />;
+  }
+  return undefined;
 }
 
 function PageSkeleton() {

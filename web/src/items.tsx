@@ -24,14 +24,14 @@ import { InboxIcon } from '@heroicons/react/24/outline';
 import * as stylex from '@stylexjs/stylex';
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
-import { ApiError, api, invalidateLists, itemID, post, useServers, type ItemPage, type ItemRecord, type ServerInfo } from './api';
-import { bulkRequests, listParams, tabActions, type BulkAction, type BulkRequest, type Filters, type Selection } from './bulk';
+import { api, invalidateLists, itemID, useServers, type ItemPage, type ItemRecord, type ServerInfo } from './api';
+import { bulkError, bulkRequests, listParams, stopOrResume, tabActions, type BulkAction, type Filters, type Selection } from './bulk';
 import { useNow } from './clock';
 import { askThen } from './confirm';
 import { ItemDetail } from './detail';
 import { fixedBy, label, plural, queueState, relative } from './format';
 import { Poster, Reasons } from './media';
-import { isQueueActive, startBulkRefresh, useBulkQueue } from './queue';
+import { isQueueActive, NothingMatched, startBulkRefresh, useBulkQueue } from './queue';
 import { itemHash, navigate, tabNames, type ItemKey, type TabName } from './route';
 import { tableRow, type TableRow } from './table';
 
@@ -108,15 +108,26 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
   const isTwoPane = useMediaQuery(twoPaneQuery);
 
   const [mode, setMode] = useState<Mode>(storedMode);
-  const [filters, setFilters] = useState<Omit<Filters, 'srv' | 'library'>>({});
+  const [filters, setFilters] = useState<Pick<Filters, 'reason' | 'type'>>({});
   const [library, setLibrary] = useState<LibraryFilter>();
+  // "All" means another filter on each tab, so each tab keeps its own.
+  const [all, setAll] = useState<Partial<Record<TabName, boolean>>>({});
   const [search, setSearch] = useState('');
   const q = useDebounced(search, 250);
   const [sorts, setSorts] = useState<Partial<Record<TabName, string>>>({});
   const sort = sorts[tab] ?? '';
   // A single server is always the scope, so its libraries can be filtered.
   const scopeSrv = srv ?? (inventory.length === 1 ? 0 : undefined);
-  const scope: Filters = { ...filters, q, srv: scopeSrv, library: library && library.srv === scopeSrv ? library.section : undefined };
+  const scope: Filters = {
+    type: filters.type,
+    // The Fixed tab has no reason filter. The Attention filter stays for
+    // when the user returns.
+    reason: tab === 'fixed' ? undefined : filters.reason,
+    all: all[tab],
+    q,
+    srv: scopeSrv,
+    library: library && library.srv === scopeSrv ? library.section : undefined,
+  };
   const params = listParams(tab, scope, sort).toString();
   // A selection belongs to a tab and its filters. Sorting keeps it.
   const selectionScope = listParams(tab, scope, '').toString();
@@ -138,6 +149,12 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
   // The windowed table keeps its first visible row in place whenever its
   // data changes identity, so the rows change only with the pages.
   const rows = useMemo(() => page.data?.pages.flatMap(p => p.items) ?? [], [page.data]);
+  // The table key names the list whose rows it shows. Rows that stay on
+  // screen while a new sort loads keep the old key, so the table remounts
+  // once, when the new rows arrive.
+  const [shownParams, setShownParams] = useState(params);
+  if (!page.isPlaceholderData && shownParams !== params) setShownParams(params);
+  const tableKey = page.isPlaceholderData ? shownParams : params;
   const counts = page.data?.pages[0]?.counts;
   const server = (key: ItemKey) => inventory.find(entry => entry.srv === key.srv);
   const close = () => navigate({ page: 'items', tab, srv });
@@ -159,9 +176,11 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
       srv={srv}
       server={inventory.find(entry => entry.srv === scopeSrv)}
       filters={scope}
-      onFilters={({ library: section, ...change }) => {
-        setFilters(change);
-        setLibrary(section !== undefined && scopeSrv !== undefined ? { srv: scopeSrv, section } : undefined);
+      onFilters={change => {
+        const { library: section, all: value, ...rest } = change;
+        if ('library' in change) setLibrary(section !== undefined && scopeSrv !== undefined ? { srv: scopeSrv, section } : undefined);
+        if ('all' in change) setAll(previous => ({ ...previous, [tab]: value }));
+        setFilters(previous => ({ ...previous, ...rest }));
       }}
       search={search}
       onSearch={setSearch}
@@ -173,6 +192,7 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
             selection={selected}
             total={counts?.[tab] ?? 0}
             inventory={inventory}
+            isInventoryKnown={servers.data !== undefined}
             onClear={() => select(undefined)}
           />
         )
@@ -186,10 +206,9 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
     // Astryx can window its rows.
     <StackItem size="fill">
       <ItemTable
-        // A new filter or sort starts at the top. Rows that stay on screen
-        // for a new sort are another table, so the new rows do not scroll
-        // to where the old first row moved.
-        key={page.isPlaceholderData ? 'placeholder' : params}
+        // A new filter or sort starts at the top: the new rows are another
+        // table, so they do not scroll to where the old first row moved.
+        key={tableKey}
         tab={tab}
         rows={rows}
         isMulti={isMulti}
@@ -300,14 +319,15 @@ interface HeaderProps {
   /** The server in scope, whose libraries can be filtered. */
   server?: ServerInfo;
   filters: Filters;
-  onFilters: (filters: Filters) => void;
+  /** Gets only the filters that changed. */
+  onFilters: (change: Filters) => void;
   search: string;
   onSearch: (value: string) => void;
   bulk?: React.ReactNode;
 }
 
 function ItemsHeader({ tab, counts, mode, onMode, srv, server, filters, onFilters, search, onSearch, bulk }: HeaderProps) {
-  const set = (change: Filters) => onFilters({ ...filters, ...change });
+  const set = onFilters;
   const optional = (value: string | null) => value || undefined;
   return (
     <LayoutHeader padding={0} hasDivider={false}>
@@ -332,14 +352,16 @@ function ItemsHeader({ tab, counts, mode, onMode, srv, server, filters, onFilter
               onChange={value => set({ library: optional(value) })}
             />
           )}
-          <Selector
-            label="Reason"
-            isLabelHidden
-            variant="secondary"
-            value={filters.reason ?? ''}
-            options={[{ ...anyOption, label: 'Any reason' }, ...reasonOptions.map(value => ({ value, label: label(value) }))]}
-            onChange={value => set({ reason: optional(value) })}
-          />
+          {tab !== 'fixed' && (
+            <Selector
+              label="Reason"
+              isLabelHidden
+              variant="secondary"
+              value={filters.reason ?? ''}
+              options={[{ ...anyOption, label: 'Any reason' }, ...reasonOptions.map(value => ({ value, label: label(value) }))]}
+              onChange={value => set({ reason: optional(value) })}
+            />
+          )}
           <Selector
             label="Type"
             isLabelHidden
@@ -540,39 +562,14 @@ interface BulkProps {
   selection: Selection;
   total: number;
   inventory: ServerInfo[];
+  /** Whether the servers are loaded. A matching selection waits for them:
+   * it sends one request for each server, to a server that they validate. */
+  isInventoryKnown: boolean;
   onClear: () => void;
 }
 
-function bulkError(error: Error): string {
-  if (error instanceof ApiError && error.status === 409) return 'A run or another bulk job is busy. Try again when it ends.';
-  if (error instanceof ApiError && error.message === 'too many items') return 'Select at most 5,000 items of one server at a time.';
-  return error.message;
-}
-
-/** Sends a bulk stop or resume to each server and reports every server,
- * also when a later one fails. */
-async function stopOrResume(action: 'stop' | 'resume', requests: BulkRequest[], names: Record<number, string>): Promise<{ text: string; isError: boolean }> {
-  let changed = 0;
-  let skipped = 0;
-  const failures: string[] = [];
-  for (const request of requests) {
-    try {
-      const result = await post<{ changed: number; skipped: unknown[] }>(request.path, request.body);
-      changed += result.changed;
-      skipped += result.skipped.length;
-    } catch (error) {
-      failures.push(requests.length > 1 ? `${names[request.srv]}: ${bulkError(error as Error)}` : bulkError(error as Error));
-    }
-  }
-  const verb = action === 'stop' ? 'Stopped' : 'Resumed';
-  const done = `${verb} ${plural(changed, 'item')}${skipped ? ` · ${skipped.toLocaleString()} skipped` : ''}`;
-  // Nothing changed: an error keeps the selection, so the user can try again.
-  if (failures.length === requests.length) throw new Error(failures.join('; '));
-  return { text: failures.length ? `${done} · failed on ${failures.join('; ')}` : done, isError: failures.length > 0 };
-}
-
 /** The band that replaces the tabs while rows are selected. */
-function BulkBand({ tab, scope, selection, total, inventory, onClear }: BulkProps) {
+function BulkBand({ tab, scope, selection, total, inventory, isInventoryKnown, onClear }: BulkProps) {
   const client = useQueryClient();
   const showToast = useToast();
   const confirm = useImperativeAlertDialog();
@@ -583,9 +580,14 @@ function BulkBand({ tab, scope, selection, total, inventory, onClear }: BulkProp
   const run = useMutation({
     mutationFn: async (action: BulkAction) => {
       if (action !== 'refresh') return stopOrResume(action, requests(action), names);
-      const started = await startBulkRefresh(client, requests(action), names);
-      const [first, ...rest] = started.steps;
-      const next = rest.length ? ` on ${first.server}. Then ${rest.map(step => step.server).join(', ')}, one server at a time` : '';
+      const started = await startBulkRefresh(client, requests(action), names).catch((error: unknown) => {
+        if (error instanceof NothingMatched) return undefined;
+        throw error;
+      });
+      if (!started) return { text: 'No items match the filters.', isError: false };
+      const first = started.steps.find(step => step.state === 'running')!;
+      const rest = started.steps.filter(step => step.state === 'waiting');
+      const next = rest.length ? ` on ${first.server}. Then ${rest.map(step => step.server).join(', ')}, one server at a time` : started.steps.length > 1 ? ` on ${first.server}` : '';
       const text = `Bulk refresh started for ${plural(first.count ?? 0, 'item')}${next}. Progress shows on the Status page.`;
       return { text, isError: false };
     },
@@ -625,6 +627,12 @@ function BulkBand({ tab, scope, selection, total, inventory, onClear }: BulkProp
   };
 
   const isQueued = isQueueActive(queue);
+  const isWaiting = selection.kind === 'matching' && !isInventoryKnown;
+  const disabledReason = (action: BulkAction) => {
+    if (isWaiting) return 'Loading the servers';
+    if (action === 'refresh' && isQueued) return 'A bulk refresh is running. Wait until it ends.';
+    return undefined;
+  };
   return (
     <VStack paddingInline={3} paddingBlock={2}>
       <Section variant="muted" paddingInline={3} paddingBlock={2}>
@@ -639,8 +647,8 @@ function BulkBand({ tab, scope, selection, total, inventory, onClear }: BulkProp
               size="md"
               variant={action === 'stop' ? 'destructive' : 'secondary'}
               isLoading={run.isPending && run.variables === action}
-              isDisabled={count === 0 || (run.isPending && run.variables !== action) || (action === 'refresh' && isQueued)}
-              tooltip={action === 'refresh' && isQueued ? 'A bulk refresh is running. Wait until it ends.' : undefined}
+              isDisabled={count === 0 || (run.isPending && run.variables !== action) || disabledReason(action) !== undefined}
+              tooltip={disabledReason(action)}
               onClick={() => start(action)}
             />
           ))}

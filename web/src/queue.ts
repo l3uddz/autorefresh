@@ -1,6 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { useSyncExternalStore } from 'react';
-import { ApiError, api, invalidateLists, post, type RunItem, type RunProgress, type Status } from './api';
+import { ApiError, api, invalidateLists, isNoItems, post, type RunItem, type RunRecord, type Status } from './api';
 import type { BulkRequest } from './bulk';
 import { plural } from './format';
 
@@ -10,7 +10,7 @@ import { plural } from './format';
 // not in a component, so it keeps going when the bulk band closes or the
 // page changes. A page reload drops the servers that have not started.
 
-export type StepState = 'waiting' | 'running' | 'finished' | 'failed' | 'canceled' | 'not-started';
+export type StepState = 'waiting' | 'running' | 'finished' | 'failed' | 'canceled' | 'interrupted' | 'unknown' | 'empty' | 'not-started';
 
 export interface QueueStep {
   srv: number;
@@ -33,9 +33,20 @@ export interface BulkQueue {
   isDone: boolean;
 }
 
-/** Retry timing for a job that the previous job's lock still blocks: the
- * status reports the end of a job just before it releases the lock. */
-export const queueTiming = { retries: 10, retryDelay: 2000, pollInterval: 15_000 };
+/** The timing of the queue. retries and retryDelay apply to a job that the
+ * previous job's lock still blocks: the status reports the end of a job
+ * just before it releases the lock. pollInterval is the time between
+ * checks of a job that the event stream did not report as ended, and
+ * unknownAfter is the number of checks after which a job that neither the
+ * status nor the stored runs report as ended counts as unknown. */
+export const queueTiming = { retries: 10, retryDelay: 2000, pollInterval: 15_000, unknownAfter: 4 };
+
+/** The error of a bulk refresh whose filters match no item on any server. */
+export class NothingMatched extends Error {
+  constructor() {
+    super('No items match the filters.');
+  }
+}
 
 let current: BulkQueue | undefined;
 const listeners = new Set<() => void>();
@@ -75,25 +86,39 @@ export function onQueueDone(listener: (queue: BulkQueue) => void): () => void {
 
 export const isQueueActive = (queue = current) => Boolean(queue && !queue.isDone);
 
+type Job = { id: number; count: number };
+
 /** Starts the bulk refresh of requests, one server after another. It
- * returns once the first server admitted its job, and throws when it did
- * not, so nothing runs. names gives the name of each server. */
+ * returns once the first server with matching items admitted its job. A
+ * server without matching items is skipped. It throws NothingMatched when
+ * no server has matching items, and the error of the first server that
+ * refused its job otherwise, so nothing runs. names gives the name of each
+ * server. */
 export async function startBulkRefresh(client: QueryClient, requests: BulkRequest[], names: Record<number, string>): Promise<BulkQueue> {
   if (isQueueActive()) throw new Error('A bulk refresh is already running. Wait until it ends.');
-  if (!requests.length) throw new Error('Nothing to refresh');
-  const job = await post<{ id: number; count: number }>(requests[0].path, requests[0].body);
+  if (!requests.length) throw new Error('The servers are not loaded yet. Try again in a moment.');
+  let first: { index: number; job: Job } | undefined;
+  for (let i = 0; i < requests.length && !first; i++) {
+    try {
+      first = { index: i, job: await post<Job>(requests[i].path, requests[i].body) };
+    } catch (error) {
+      if (!isNoItems(error)) throw error;
+    }
+  }
+  if (!first) throw new NothingMatched();
+  const start = first;
   publish({
     isCanceled: false,
     isDone: false,
-    steps: requests.map((request, i) => ({
-      srv: request.srv,
-      server: names[request.srv] ?? `Server ${request.srv}`,
-      state: i === 0 ? 'running' : 'waiting',
-      ...(i === 0 ? { job: job.id, count: job.count } : {}),
-    })),
+    steps: requests.map((request, i): QueueStep => {
+      const step = { srv: request.srv, server: names[request.srv] ?? `Server ${request.srv}` };
+      if (i < start.index) return { ...step, state: 'empty' };
+      if (i > start.index) return { ...step, state: 'waiting' };
+      return { ...step, state: 'running', job: start.job.id, count: start.job.count };
+    }),
   });
   const queue = current!;
-  void drive(client, requests);
+  void drive(client, requests, start.index);
   return queue;
 }
 
@@ -106,6 +131,16 @@ export async function cancelBulkQueue() {
   if (running?.job !== undefined) await cancelJob(running.job);
 }
 
+/** Cancels the rest of the active queue when job id belongs to it, as when
+ * the user cancels that job on its server card. It reports whether it did.
+ * The caller sends the cancel of the job itself. The queue stops also when
+ * the job ended before the cancel reached it. */
+export function cancelQueueOfJob(id: number): boolean {
+  if (!current || current.isDone || !current.steps.some(step => step.job === id)) return false;
+  if (!current.isCanceled) publish({ ...current, isCanceled: true });
+  return true;
+}
+
 async function cancelJob(id: number) {
   // A job that already ended answers 404, which changes nothing here.
   await post(`runs/cancel?${new URLSearchParams({ id: String(id) })}`).catch(() => undefined);
@@ -113,7 +148,7 @@ async function cancelJob(id: number) {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-type Admission = { id: number; count: number } | { busy: true } | { error: string };
+type Admission = Job | { busy: true } | { empty: true } | { error: string };
 
 /** Starts the job of request. It retries while another job holds the run
  * lock, and gives up when the queue is canceled. */
@@ -121,8 +156,9 @@ async function admit(request: BulkRequest): Promise<Admission | undefined> {
   for (let attempt = 0; ; attempt++) {
     if (current?.isCanceled) return undefined;
     try {
-      return await post<{ id: number; count: number }>(request.path, request.body);
+      return await post<Job>(request.path, request.body);
     } catch (error) {
+      if (isNoItems(error)) return { empty: true };
       if (!(error instanceof ApiError) || error.status !== 409) return { error: (error as Error).message };
       if (attempt >= queueTiming.retries) return { busy: true };
     }
@@ -130,51 +166,129 @@ async function admit(request: BulkRequest): Promise<Admission | undefined> {
   }
 }
 
-/** Waits until the status reports the end of job id on the server srv. */
-function waitForJob(client: QueryClient, srv: number, id: number): Promise<RunProgress> {
+/** How a job ended: its run status, or unknown, and whether its item
+ * results are stored. */
+interface JobEnd {
+  status: string;
+  hasItems: boolean;
+}
+
+/** Returns the end of job id on the server srv as status reports it,
+ * 'running' while it runs, and undefined when status does not know the
+ * job: before it starts, after a restart, or after a later run replaced
+ * it as the last run. */
+function reportedEnd(status: Status | undefined, srv: number, id: number): JobEnd | 'running' | undefined {
+  const server = status?.servers.find(entry => entry.srv === srv);
+  if (server?.last?.id === id) return { status: server.last.status, hasItems: server.last.recorded };
+  return server?.run?.id === id ? 'running' : undefined;
+}
+
+/** Waits for the next status of the cache, or ms milliseconds. */
+function nextStatus(client: QueryClient, ms: number): Promise<'status' | 'timer'> {
   return new Promise(resolve => {
-    const ended = () => {
-      const last = client.getQueryData<Status>(['status'])?.servers.find(server => server.srv === srv)?.last;
-      return last?.id === id ? last : undefined;
-    };
-    const check = () => {
-      const last = ended();
-      if (!last) return;
+    const done = (why: 'status' | 'timer') => {
       unsubscribe();
-      clearInterval(poll);
-      resolve(last);
+      clearTimeout(timer);
+      resolve(why);
     };
     const unsubscribe = client.getQueryCache().subscribe(event => {
-      if (event.query.queryKey[0] === 'status') check();
+      if (event.type === 'updated' && event.query.queryKey[0] === 'status') done('status');
     });
-    // The event stream normally reports the end. The poll covers a stream
-    // that is down, and a job that ended before the watch began.
-    const poll = setInterval(() => void client.invalidateQueries({ queryKey: ['status'] }), queueTiming.pollInterval);
-    void client.invalidateQueries({ queryKey: ['status'] });
-    check();
+    const timer = setTimeout(() => done('timer'), ms);
   });
 }
 
-const endStates: Record<string, StepState> = { finished: 'finished', failed: 'failed', canceled: 'canceled', interrupted: 'canceled' };
+function fetchStatus(client: QueryClient): Promise<Status | undefined> {
+  return client.fetchQuery({ queryKey: ['status'], queryFn: ({ signal }) => api<Status>('status', { signal }), staleTime: 0 }).catch(() => undefined);
+}
 
-async function drive(client: QueryClient, requests: BulkRequest[]) {
-  for (let i = 0; i < requests.length; i++) {
-    const start = i === 0 ? 'running' : await startStep(i, requests[i]);
+/** Returns the stored run id of the server srv, undefined when the store
+ * has no such run (it was never recorded or was removed), or 'error' when
+ * the runs are unavailable. Runs come newest first, so the search stops at
+ * the first older run. */
+async function storedRun(srv: number, id: number): Promise<RunRecord | undefined | 'error'> {
+  let cursor = '';
+  for (;;) {
+    const params = new URLSearchParams({ srv: String(srv), limit: '100' });
+    if (cursor) params.set('cursor', cursor);
+    let page: { runs: RunRecord[]; next?: string };
+    try {
+      page = await api<{ runs: RunRecord[]; next?: string }>(`runs?${params}`);
+    } catch {
+      return 'error';
+    }
+    for (const run of page.runs) {
+      if (run.id === id) return run;
+      if (run.id < id) return undefined;
+    }
+    if (!page.next) return undefined;
+    cursor = page.next;
+  }
+}
+
+/** Waits until job id on the server srv ends. The event stream normally
+ * reports the end. Each poll covers a stream that is down. When the status
+ * no longer knows the job, the stored runs tell how it ended. A job that
+ * neither reports as ended within queueTiming.unknownAfter polls ends as
+ * unknown, so the queue never waits forever. */
+async function waitForJob(client: QueryClient, srv: number, id: number): Promise<JobEnd> {
+  let misses = 0;
+  let wake: 'status' | 'timer' = 'timer';
+  // Status updates of other runs wake the wait often. The poll keeps its
+  // own deadline, so they never put it off.
+  let deadline = 0;
+  for (;;) {
+    const seen = reportedEnd(client.getQueryData<Status>(['status']), srv, id);
+    if (seen && seen !== 'running') return seen;
+    if (wake === 'timer') {
+      const fresh = reportedEnd(await fetchStatus(client), srv, id);
+      if (fresh && fresh !== 'running') return fresh;
+      if (!fresh) {
+        const run = await storedRun(srv, id);
+        if (run !== 'error' && run?.status && run.status !== 'running') {
+          return { status: run.status, hasItems: run.status !== 'interrupted' };
+        }
+        if (run !== 'error' && ++misses >= queueTiming.unknownAfter) return { status: 'unknown', hasItems: false };
+      }
+      // The cache may have changed during the requests: check it again
+      // before waiting. The check and the wait start in the same tick.
+      deadline = Date.now() + queueTiming.pollInterval;
+      wake = 'status';
+      continue;
+    }
+    wake = await nextStatus(client, Math.max(0, deadline - Date.now()));
+  }
+}
+
+const endStates: Record<string, StepState> = { finished: 'finished', failed: 'failed', canceled: 'canceled', interrupted: 'interrupted' };
+
+/** Why the servers after a step that ended in state do not start, or
+ * undefined when the queue goes on. */
+const stopNotes: Partial<Record<StepState, string>> = {
+  canceled: 'canceled',
+  interrupted: 'the previous server was interrupted',
+  unknown: 'the result of the previous server is unknown',
+};
+
+async function drive(client: QueryClient, requests: BulkRequest[], first: number) {
+  for (let i = first; i < requests.length; i++) {
+    const start = i === first ? 'running' : await startStep(i, requests[i]);
     if (start === 'skip') continue;
     if (start === 'stop') break;
     const step = current!.steps[i];
-    const last = await waitForJob(client, step.srv, step.job!);
-    // Only a recorded job has stored results that match its status.
-    const items = last.recorded
-      ? await api<{ items: RunItem[] }>(`runs/items?${new URLSearchParams({ id: String(last.id) })}`).then(
+    const end = await waitForJob(client, step.srv, step.job!);
+    const items = end.hasItems
+      ? await api<{ items: RunItem[] }>(`runs/items?${new URLSearchParams({ id: String(step.job) })}`).then(
           body => body.items,
           () => undefined,
         )
       : undefined;
-    setStep(i, { state: endStates[last.status] ?? 'failed', items });
+    const state = endStates[end.status] ?? 'unknown';
+    setStep(i, { state, items });
     invalidateLists(client);
-    if (last.status === 'canceled' || current?.isCanceled) {
-      skipFrom(i + 1, 'canceled');
+    const note = current?.isCanceled ? 'canceled' : stopNotes[state];
+    if (note) {
+      skipFrom(i + 1, note);
       break;
     }
   }
@@ -183,13 +297,18 @@ async function drive(client: QueryClient, requests: BulkRequest[]) {
   for (const listener of doneListeners) listener(current);
 }
 
-/** Starts step index. A refused step is skipped: the next server may
- * still start. A cancel or a busy run lock stops the queue. */
+/** Starts step index. A refused step or one without matching items is
+ * skipped: the next server may still start. A cancel or a busy run lock
+ * stops the queue. */
 async function startStep(index: number, request: BulkRequest): Promise<'running' | 'skip' | 'stop'> {
   const admitted = await admit(request);
   if (!admitted || 'busy' in admitted) {
     skipFrom(index, admitted ? 'another run is busy' : 'canceled');
     return 'stop';
+  }
+  if ('empty' in admitted) {
+    setStep(index, { state: 'empty' });
+    return 'skip';
   }
   if ('error' in admitted) {
     setStep(index, { state: 'not-started', note: admitted.error });
@@ -217,14 +336,25 @@ const stateVerbs: Record<StepState, string> = {
   finished: 'finished',
   failed: 'failed',
   canceled: 'canceled',
+  interrupted: 'interrupted',
+  unknown: 'result unknown',
+  empty: 'no matching items',
   'not-started': 'not started',
 };
 
 function stepText(step: QueueStep): string {
   const verb = stateVerbs[step.state];
-  if (step.state === 'not-started') return step.note ? `${verb}: ${step.note}` : verb;
-  if (step.state === 'waiting' || step.state === 'running') return verb;
-  return step.items ? `${verb}: ${outcomeText(step.items)}` : `${verb}, results unavailable`;
+  switch (step.state) {
+    case 'not-started':
+      return step.note ? `${verb}: ${step.note}` : verb;
+    case 'waiting':
+    case 'running':
+    case 'unknown':
+    case 'empty':
+      return verb;
+    default:
+      return step.items ? `${verb}: ${outcomeText(step.items)}` : `${verb}, results unavailable`;
+  }
 }
 
 /** Returns the toast text of an ended queue. */
@@ -233,10 +363,13 @@ export function queueText(queue: BulkQueue): string {
   return `Bulk refresh of ${plural(queue.steps.length, 'server')}: ${queue.steps.map(step => `${step.server} ${stepText(step)}`).join('; ')}`;
 }
 
-/** Reports whether an ended queue needs an error toast: a job failed, or a
- * server did not start for a reason other than a cancel. */
+/** Reports whether an ended queue needs an error toast: a job failed, was
+ * interrupted, or ended unknown, or a server did not start for a reason
+ * other than a cancel. A server without matching items is no failure. */
 export function queueFailed(queue: BulkQueue): boolean {
-  return queue.steps.some(step => step.state === 'failed' || (step.state === 'not-started' && step.note !== 'canceled'));
+  return queue.steps.some(
+    step => step.state === 'failed' || step.state === 'interrupted' || step.state === 'unknown' || (step.state === 'not-started' && step.note !== 'canceled'),
+  );
 }
 
 /** Returns the line that describes a running queue, such as "Cabin

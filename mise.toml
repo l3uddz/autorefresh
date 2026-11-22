@@ -69,7 +69,7 @@ run = "pnpm lint"
 
 [tasks.test-webui]
 description = "Check that the webui build embeds the built frontend"
-depends = ["web-build"]
+depends = ["vendor", "web-build"]
 run = "go test -mod vendor -tags webui ./internal/web"
 
 [tasks.web-test]

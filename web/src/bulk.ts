@@ -1,3 +1,5 @@
+import { ApiError, isNoItems, post } from './api';
+import { plural } from './format';
 import type { ItemKey, TabName } from './route';
 
 // The list filters, and the requests that a bulk action sends for them.
@@ -9,7 +11,8 @@ export interface Filters {
   type?: string;
   q?: string;
   /** Attention: include items whose reasons are all ignored. Fixed: include
-   * items that Plex completed without a request. */
+   * items that Plex completed without a request. The Items page keeps one
+   * value for each tab. */
   all?: boolean;
 }
 
@@ -33,12 +36,13 @@ export interface BulkRequest {
 }
 
 /** Returns the filter parameters of a list or a bulk request. The bulk API
- * rejects tab and sort, so they are added by listParams only. */
+ * rejects tab and sort, so they are added by listParams only. The Fixed tab
+ * has no reason filter, and Stopped has no "all". */
 export function filterParams(filters: Filters, tab: TabName): URLSearchParams {
   const p = new URLSearchParams();
   if (filters.srv !== undefined) p.set('srv', String(filters.srv));
   if (filters.library && filters.srv !== undefined) p.set('library', filters.library);
-  if (filters.reason) p.set('reason', filters.reason);
+  if (filters.reason && tab !== 'fixed') p.set('reason', filters.reason);
   if (filters.type) p.set('type', filters.type);
   const q = filters.q?.trim();
   if (q) p.set('q', q);
@@ -69,4 +73,38 @@ export function bulkRequests(action: BulkAction, tab: TabName, filters: Filters,
   const keys = new Map<number, string[]>();
   for (const item of selection.items) keys.set(item.srv, [...keys.get(item.srv) ?? [], item.key]);
   return [...keys].map(([srv, list]) => ({ srv, path: `${path}?${new URLSearchParams({ srv: String(srv) })}`, body: { keys: list } }));
+}
+
+/** Returns the text of a failed bulk request for people. */
+export function bulkError(error: Error): string {
+  if (error instanceof ApiError && error.status === 409) return 'A run or another bulk job is busy. Try again when it ends.';
+  if (error instanceof ApiError && error.message === 'too many items') return 'Select at most 5,000 items of one server at a time.';
+  return error.message;
+}
+
+/** Sends a bulk stop or resume to each server and reports every server,
+ * also when a later one fails. A server without matching items is no
+ * failure. It throws when no server changed anything and one failed, so
+ * the selection stays for another try. */
+export async function stopOrResume(action: 'stop' | 'resume', requests: BulkRequest[], names: Record<number, string>): Promise<{ text: string; isError: boolean }> {
+  if (!requests.length) throw new Error('The servers are not loaded yet. Try again in a moment.');
+  let changed = 0;
+  let skipped = 0;
+  let empty = 0;
+  const failures: string[] = [];
+  for (const request of requests) {
+    try {
+      const result = await post<{ changed: number; skipped: unknown[] }>(request.path, request.body);
+      changed += result.changed;
+      skipped += result.skipped.length;
+    } catch (error) {
+      if (isNoItems(error)) empty++;
+      else failures.push(requests.length > 1 ? `${names[request.srv] ?? `Server ${request.srv}`}: ${bulkError(error as Error)}` : bulkError(error as Error));
+    }
+  }
+  if (failures.length && failures.length + empty === requests.length) throw new Error(failures.join('; '));
+  if (empty === requests.length) return { text: 'No items match the filters.', isError: false };
+  const verb = action === 'stop' ? 'Stopped' : 'Resumed';
+  const done = `${verb} ${plural(changed, 'item')}${skipped ? ` · ${skipped.toLocaleString()} skipped` : ''}`;
+  return { text: failures.length ? `${done} · failed on ${failures.join('; ')}` : done, isError: failures.length > 0 };
 }

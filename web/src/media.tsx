@@ -96,11 +96,12 @@ export function Poster({ src, title, year, type, size }: PosterProps) {
 /** Shows the art of an item behind the head of its detail, faded into the
  * surface. Without art it shows a muted band. */
 export function Backdrop({ src }: { src?: string }) {
-  const [failed, setFailed] = useState(false);
+  // The failure belongs to one URL: new art, as after a check, loads again.
+  const [failed, setFailed] = useState<string>();
   const url = imageSize(src, 'md');
   return (
     <VStack xstyle={styles.backdrop} aria-hidden="true">
-      {url && !failed ? <img src={url} alt="" onError={() => setFailed(true)} {...stylex.props(styles.backdropImage)} /> : null}
+      {url && failed !== url ? <img src={url} alt="" onError={() => setFailed(url)} {...stylex.props(styles.backdropImage)} /> : null}
       <VStack xstyle={styles.backdropFade} />
     </VStack>
   );

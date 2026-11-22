@@ -24,7 +24,7 @@ func serveDashboard(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if contentType := mime.TypeByExtension(path.Ext(name)); contentType != "" {
+	if contentType := dashboardType(name); contentType != "" {
 		w.Header().Set("Content-Type", contentType)
 	}
 	if name != "index.html" {
@@ -68,4 +68,14 @@ func encodingAllowed(parameters string) bool {
 		}
 	}
 	return true
+}
+
+// dashboardType returns the content type of the dashboard file name. The
+// built-in table of mime has no font types, and the container image has no
+// /etc/mime.types, so the fonts of the build are named here.
+func dashboardType(name string) string {
+	if path.Ext(name) == ".woff2" {
+		return "font/woff2"
+	}
+	return mime.TypeByExtension(path.Ext(name))
 }

@@ -39,6 +39,11 @@ describe('routes', () => {
     expect(routeScope({ page: 'status' }, 3)).toBeUndefined();
   });
 
+  it('keeps the scope of a deep link until the servers are known', () => {
+    expect(routeScope({ page: 'items', tab: 'fixed', srv: 1 }, undefined)).toBe(1);
+    expect(routeScope({ page: 'status' }, undefined)).toBeUndefined();
+  });
+
   it('keeps an open item of the new scope and drops one of another server', () => {
     const open = { page: 'items', tab: 'attention', item: { srv: 0, key: '5' } } as const;
     expect(withScope(open, 0)).toEqual({ ...open, srv: 0 });
