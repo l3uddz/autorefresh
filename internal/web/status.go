@@ -52,6 +52,7 @@ type RunProgress struct {
 	Refreshed     int       `json:"refreshed"`
 	Matched       int       `json:"matched"`
 	Failed        int       `json:"failed"`
+	Skipped       int       `json:"skipped"`
 	Current       string    `json:"current,omitempty"` // the title in work
 }
 
@@ -161,6 +162,7 @@ func (s *Status) ItemDone(server, _, _ string, counts refresher.Counts) {
 		run.Refreshed = counts.Refreshed
 		run.Matched = counts.Matched
 		run.Failed = counts.Failed
+		run.Skipped = counts.Skipped
 	})
 }
 

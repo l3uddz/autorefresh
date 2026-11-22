@@ -25,12 +25,13 @@ type Progress interface {
 // Failed counts the failed requests and match searches and each TMDB lookup
 // failure that the fix match handled. Such a TMDB failure shows in the
 // counts of the next ItemDone call.
-type Counts struct{ Refreshed, Matched, Failed int }
+type Counts struct{ Refreshed, Matched, Failed, Skipped int }
 
 // The item outcomes that are not the outcome of a store.Request.
 const (
-	OutcomeGone   = "gone"    // Plex answered 404
-	OutcomeDryRun = "dry-run" // a dry run sent nothing
+	OutcomeGone    = "gone" // Plex answered 404
+	OutcomeSkipped = "skipped"
+	OutcomeDryRun  = "dry-run" // a dry run sent nothing
 )
 
 // noProgress is the Progress of Options without one: it does nothing.

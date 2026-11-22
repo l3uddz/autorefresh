@@ -30,6 +30,7 @@ type Plex interface {
 
 // Store is the part of store.Store that the refresher uses.
 type Store interface {
+	KnownItem(server, ratingKey string) (store.Item, bool, bool, error)
 	Library(server, section string) (store.Library, error)
 	ApplyRead(r store.Read) (fixed []store.Item, err error)
 	Unseen(server, section string, seen []string) ([]store.Item, error)
@@ -74,6 +75,7 @@ type Options struct {
 
 // Refresher checks the libraries of each server.
 type Refresher struct {
+	locks   itemLocks
 	servers []Server
 	store   Store
 	opts    Options
@@ -119,8 +121,9 @@ type serverRun struct {
 	fixed                int                 // completed rows that had a request that Plex accepted
 	fixedAfterMatch      int                 // completed rows that had a match request that Plex accepted
 	due                  int
-	refreshes            int  // refresh requests sent, also failed ones
-	matches              int  // match requests sent, also failed ones
+	refreshes            int // refresh requests sent, also failed ones
+	matches              int // match requests sent, also failed ones
+	skipped              int
 	failures             int  // failed requests and match searches, without 404 answers
 	selected             int  // due items that this run handles, after the limit
 	incomplete           int  // incomplete items that the summary counted; 0 without a summary
@@ -335,7 +338,7 @@ func (r *Refresher) finishRun(ctx context.Context, run *serverRun, id int64, err
 
 // counts returns the request counts of the run so far.
 func (run *serverRun) counts() Counts {
-	return Counts{Refreshed: run.refreshes, Matched: run.matches, Failed: run.failures}
+	return Counts{Refreshed: run.refreshes, Matched: run.matches, Failed: run.failures, Skipped: run.skipped}
 }
 
 // result returns the end of the run at finishedAt: canceled, failed with
@@ -345,7 +348,7 @@ func (run *serverRun) result(finishedAt time.Time, canceled bool, err error) sto
 		FinishedAt: finishedAt, Status: store.RunFinished,
 		ReadItems: run.fullReadItems + run.incrementalReadItems, Refreshed: run.refreshes,
 		Matched: run.matches, Failed: run.failures, Completed: len(run.completed), Fixed: run.fixed,
-		Incomplete: run.incomplete, Due: run.due, Selected: run.selected,
+		Incomplete: run.incomplete, Due: run.due, Selected: run.selected, Skipped: run.skipped,
 	}
 	switch {
 	case canceled:

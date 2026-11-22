@@ -35,19 +35,64 @@ func (r *Refresher) refreshDue(ctx context.Context, run *serverRun) error {
 	}
 	run.due, run.remaining, run.selected = total, total, len(due)
 	r.progress().Batch(run.server.Name, len(due), total)
-	for i, it := range due {
-		if i > 0 && !r.opts.DryRun {
-			if err := r.sleep(ctx, r.opts.RefreshDelay); err != nil {
-				return err
-			}
+	return r.refreshBatch(ctx, run, due)
+}
+
+func (r *Refresher) refreshBatch(ctx context.Context, run *serverRun, items []store.Item) error {
+	for i, it := range items {
+		if err := r.pace(ctx, i); err != nil {
+			return err
 		}
-		run.remaining-- // the item is reached, also if it stops the server
-		r.progress().ItemStarted(run.server.Name, it.RatingKey, it.Title)
-		if err := r.refreshItem(ctx, run, it); err != nil {
+		if err := r.runItem(ctx, run, it); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (r *Refresher) pace(ctx context.Context, i int) error {
+	if i == 0 || r.opts.DryRun {
+		return nil
+	}
+	return r.sleep(ctx, r.opts.RefreshDelay)
+}
+
+func (r *Refresher) runItem(ctx context.Context, run *serverRun, batch store.Item) error {
+	run.remaining--
+	server := run.server.Name
+	r.progress().ItemStarted(server, batch.RatingKey, batch.Title)
+	unlock, err := r.locks.lock(ctx, server, batch.RatingKey)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	row, skip, err := r.recheck(run, batch)
+	if err != nil {
+		return err
+	}
+	if skip != "" {
+		run.skipped++
+		log.Debug().Str("server", server).Str("title", batch.Title).Str("reason", skip).Msg("Skipped item")
+		r.itemDone(run, batch.RatingKey, OutcomeSkipped)
+		return nil
+	}
+	return r.refreshItem(ctx, run, row)
+}
+
+func (r *Refresher) recheck(run *serverRun, batch store.Item) (store.Item, string, error) {
+	row, cached, _, err := r.store.KnownItem(run.server.Name, batch.RatingKey)
+	switch {
+	case err != nil:
+		return store.Item{}, "", err
+	case !cached:
+		return store.Item{}, "gone", nil
+	case !row.StoppedAt.IsZero():
+		return row, "stopped", nil
+	case row.Attempts != batch.Attempts || row.Reasons&^r.opts.IgnoreReasons == 0:
+		return row, "changed", nil
+	default:
+		return row, "", nil
+	}
 }
 
 // logSummary logs the summary line of the server.
