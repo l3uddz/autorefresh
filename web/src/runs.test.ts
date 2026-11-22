@@ -53,6 +53,32 @@ describe('run groups', () => {
     expect(groups).toEqual([['Not sent', [['1', 'Fix match: matched', 'The run ended before the request', 'attention']]]]);
   });
 
+  it('lists a failed fix match search with its error as failed', () => {
+    // A failed search sends no request and writes no request event.
+    const groups = shape(detail([event('1', 'match-decision', { outcome: 'failed', error: 'Plex answered 500' })]));
+    expect(groups).toEqual([['Failed', [['1', 'Fix match: search failed', 'Plex answered 500', 'attention']]]]);
+  });
+
+  it('keeps the error of a failed decision before a request', () => {
+    // A failed TMDB lookup ends in a plain refresh.
+    const groups = shape(detail([
+      event('1', 'match-decision', { outcome: 'failed', error: 'TMDB answered 503' }),
+      event('1', 'request', { action: 'refresh', accepted: true }),
+    ]));
+    expect(groups).toEqual([['Refreshed', [['1', 'Refresh accepted', 'Fix match: search failed · TMDB answered 503', 'attention']]]]);
+  });
+
+  it('keeps an earlier decision of an item when a later one replaces it', () => {
+    const groups = shape(detail([
+      event('1', 'match-decision', { outcome: 'matched' }),
+      event('1', 'match-decision', { outcome: 'no-ids' }),
+    ]));
+    expect(groups).toEqual([['Not sent', [
+      ['1', 'Fix match: matched', 'The run ended before the request', 'attention'],
+      ['1', 'Fix match: no folder IDs', 'The run ended before the request', 'attention'],
+    ]]]);
+  });
+
   it('joins a match decision to the removal of its item', () => {
     // Plex answered 404 to the match request, so the item is gone.
     const groups = shape(detail([event('1', 'match-decision', { outcome: 'matched' }), event('1', 'gone')]));
@@ -88,7 +114,7 @@ describe('run groups', () => {
       ['Removed', [['5', 'Plex no longer had it', undefined, 'attention']]],
       ['Skipped', [
         ['4', 'Changed after it was selected', undefined, 'attention'],
-        ['6', 'Stopped before its turn', undefined, 'attention'],
+        ['6', 'Stopped before its turn', undefined, 'stopped'],
         ['7', 'No longer in the cache', undefined, 'attention'],
       ]],
       ['Not reached', [['2', 'The job ended before this item', undefined, 'attention']]],

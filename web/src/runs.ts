@@ -4,7 +4,7 @@ import { ApiError, post, type RunDetail, type RunEvent, type RunItem, type RunRe
 import { fixedBy } from './format';
 import { cancelQueueOfJob } from './queue';
 import type { TabName } from './route';
-import { decisionView, eventView, type EventView, type Tone } from './timeline';
+import { decisionView, eventView, type EventView } from './timeline';
 
 /** A manual run of the server srv, or of every server for null. With full,
  * the run reads every library fully before it refreshes the due items. */
@@ -68,10 +68,11 @@ export interface RunEntry {
   year?: number;
   type?: string;
   thumb?: string;
+  /** The library of the item, absent for a bulk refresh. */
+  library?: string;
   /** What happened to the item, such as "Refresh accepted". */
   summary: string;
   detail?: string;
-  tone: Tone;
   at?: string;
   /** The Items tab that the item link opens. */
   tab: TabName;
@@ -102,14 +103,14 @@ const itemGroups: [id: string, title: string][] = [
 ];
 
 /** The group and text of each bulk item outcome. */
-const itemOutcomes: Record<string, { group: string; summary: string; tone: Tone }> = {
-  accepted: { group: 'refreshed', summary: 'Refresh accepted', tone: 'success' },
-  failed: { group: 'failed', summary: 'Refresh failed', tone: 'error' },
-  gone: { group: 'removed', summary: 'Plex no longer had it', tone: 'warning' },
-  changed: { group: 'skipped', summary: 'Changed after it was selected', tone: 'neutral' },
-  stopped: { group: 'skipped', summary: 'Stopped before its turn', tone: 'neutral' },
-  'not-cached': { group: 'skipped', summary: 'No longer in the cache', tone: 'neutral' },
-  'not-reached': { group: 'not-reached', summary: 'The job ended before this item', tone: 'neutral' },
+const itemOutcomes: Record<string, { group: string; summary: string; tab?: TabName }> = {
+  accepted: { group: 'refreshed', summary: 'Refresh accepted' },
+  failed: { group: 'failed', summary: 'Refresh failed' },
+  gone: { group: 'removed', summary: 'Plex no longer had it' },
+  changed: { group: 'skipped', summary: 'Changed after it was selected' },
+  stopped: { group: 'skipped', summary: 'Stopped before its turn', tab: 'stopped' },
+  'not-cached': { group: 'skipped', summary: 'No longer in the cache' },
+  'not-reached': { group: 'not-reached', summary: 'The job ended before this item' },
 };
 
 /** Returns the counts of a run, by name. The refreshes and matches are the
@@ -135,8 +136,8 @@ function grouped(order: [string, string][], entries: [group: string, entry: RunE
 }
 
 function itemEntry(item: RunItem, index: number): [string, RunEntry] {
-  const outcome = itemOutcomes[item.outcome] ?? { group: 'skipped', summary: item.outcome, tone: 'neutral' };
-  return [outcome.group, { id: `item-${index}`, key: item.key, title: item.title, summary: outcome.summary, detail: item.error, tone: outcome.tone, tab: 'attention' }];
+  const outcome = itemOutcomes[item.outcome] ?? { group: 'skipped', summary: item.outcome };
+  return [outcome.group, { id: `item-${index}`, key: item.key, title: item.title, summary: outcome.summary, detail: item.error, tab: outcome.tab ?? 'attention' }];
 }
 
 function eventEntries(events: RunEvent[]): [string, RunEntry][] {
@@ -145,6 +146,8 @@ function eventEntries(events: RunEvent[]): [string, RunEntry][] {
   const decisions = new Map<string, RunEvent>();
   for (const event of events) {
     if (event.kind === 'match-decision') {
+      const earlier = decisions.get(event.key);
+      if (earlier) entries.push(pendingEntry(earlier));
       decisions.set(event.key, event);
       continue;
     }
@@ -156,9 +159,16 @@ function eventEntries(events: RunEvent[]): [string, RunEntry][] {
     if (decision) decisions.delete(event.key);
     entries.push([group, eventEntry(event, decision)]);
   }
-  // The run ended before it sent the request of these decisions.
-  for (const decision of decisions.values()) entries.push(['not-sent', { ...eventEntry(decision), detail: 'The run ended before the request' }]);
+  for (const decision of decisions.values()) entries.push(pendingEntry(decision));
   return entries;
+}
+
+/** Returns the entry of a decision that no request or removal followed. A
+ * failed search sends no request. Otherwise the run ended before it sent
+ * the request. */
+function pendingEntry(decision: RunEvent): [string, RunEntry] {
+  if (decision.outcome === 'failed') return ['failed', eventEntry(decision)];
+  return ['not-sent', { ...eventEntry(decision), detail: 'The run ended before the request' }];
 }
 
 function eventGroup(event: RunEvent): string | undefined {
@@ -189,10 +199,12 @@ function entryView(event: RunEvent): EventView {
   }
 }
 
-/** Returns the entry of event. A request names the decision before it. */
+/** Returns the entry of event. A request or a removal names the decision
+ * before it, and the error of a failed decision. */
 function eventEntry(event: RunEvent, decision?: RunEvent): RunEntry {
   const view = entryView(event);
-  const detail = [decision && decisionView(decision).title, view.detail].filter(Boolean).join(' · ') || undefined;
+  const before = decision && [decisionView(decision).title, decision.outcome === 'failed' ? decision.error : undefined];
+  const detail = [...(before ?? []), view.detail].filter(Boolean).join(' · ') || undefined;
   return {
     id: `event-${event.id}`,
     key: event.key,
@@ -200,9 +212,9 @@ function eventEntry(event: RunEvent, decision?: RunEvent): RunEntry {
     year: event.year,
     type: event.type,
     thumb: event.thumb,
+    library: event.library,
     summary: view.title,
     detail,
-    tone: view.tone,
     at: event.at,
     tab: event.kind === 'completed' ? 'fixed' : 'attention',
   };

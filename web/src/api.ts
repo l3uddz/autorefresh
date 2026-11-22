@@ -234,6 +234,8 @@ export interface RunItem {
 export interface RunEvent extends TimelineEvent {
   key: string;
   title?: string;
+  /** The title of the library of the item. */
+  library?: string;
   year?: number;
   type?: string;
   thumb?: string;
