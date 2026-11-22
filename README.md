@@ -524,24 +524,35 @@ address keeps the choice, so a link or a reload shows the same server.
   count on a server card opens the items of that server.
 - **Items** lists the items in three tabs: **Attention** (items that
   autorefresh still tries to fix), **Fixed**, and **Stopped**. You can
-  search by title or path and filter by library, reason, and type.
+  search by title or path and filter by library and type. Attention and
+  Stopped also filter by reason. On Attention, a switch includes the items
+  whose reasons are all ignored. On Fixed, a separate switch includes the
+  items that Plex completed without a request.
   **List** mode shows the posters and the item details beside the list.
   **Table** mode shows the items as text rows. It renders only the rows on
   screen, so it stays fast with many items. It can sort the items and
   select several items, or every item that matches the filters, for a bulk
   refresh, stop, or resume. A row opens the item details on a click, or on
-  Enter or Space. A bulk refresh of items on several servers runs one
-  server after another, because only one run works at a time. The Status
-  page shows which servers wait, and **Cancel the rest** stops the running
-  server and skips the others. A reload of the page forgets the servers
-  that have not started. The item details show the poster, the art, the
-  summary, the path, the queue state, and the last action. From there you
-  can refresh the item, check its metadata again, stop or resume automatic
-  work on it, and open it in Plex.
+  Enter or Space. A bulk action on every matching item sends one request
+  for each server. A server without matching items is skipped, and the
+  other servers still run. A bulk refresh of items on several servers runs
+  one server after another, because only one run works at a time. The
+  Status page shows which servers wait, and **Cancel the rest** stops the
+  running server and skips the others. **Cancel** on the card of the
+  running server also skips the others. If the dashboard misses the end of
+  a server's job, for example after a restart of autorefresh, it reads the
+  result from the stored runs. An interrupted job, or a job whose result
+  it cannot find, stops the rest of the queue and shows an error. A reload
+  of the page forgets the servers that have not started. The item details
+  show the poster, the art, the summary, the path, the queue state, the
+  last action, and when and how the item was fixed. From there you can
+  refresh the item, check its metadata again, stop or resume automatic
+  work on it, and open it in Plex. If Plex no longer has the item, a check
+  says so and autorefresh removes the item from the queue.
 
 The dashboard asks before it stops work on an item or refreshes items in
-bulk. It updates live while the event stream is connected, and shows a
-banner while it reconnects. The fix match dialog and a page of all runs
+bulk. It updates live while the event stream is connected. It shows a
+banner while the stream is down, also when the first connection fails. The fix match dialog and a page of all runs
 come in a later release.
 
 ### Dashboard configuration
