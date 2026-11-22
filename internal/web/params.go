@@ -2,7 +2,7 @@ package web
 
 import (
 	"errors"
-	"net/http"
+	"net/url"
 	"strconv"
 )
 
@@ -13,10 +13,11 @@ const noSrv = -1
 // text is the message of the 400 answer.
 var errInvalidSrv = errors.New("invalid srv")
 
-// srvParam returns the srv parameter of r: the index of a configured server,
-// or noSrv when r has none (an empty value counts as none).
-func (s *Server) srvParam(r *http.Request) (int, error) {
-	raw := r.URL.Query().Get("srv")
+// srvParam returns the srv parameter of the query v: the index of a
+// configured server, or noSrv when v has none (an empty value counts as
+// none).
+func (s *Server) srvParam(v url.Values) (int, error) {
+	raw := v.Get("srv")
 	if raw == "" {
 		return noSrv, nil
 	}

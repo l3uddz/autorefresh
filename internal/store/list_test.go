@@ -353,6 +353,45 @@ func TestListRejectsInvalidQuery(t *testing.T) {
 	}
 }
 
+func TestDefaultSort(t *testing.T) {
+	tests := []struct {
+		tab  Tab
+		key  SortKey
+		desc bool
+	}{
+		{TabAttention, SortDue, false},
+		{TabStopped, SortStopped, true},
+		{TabFixed, SortCompleted, true},
+		{"x", "", false},
+	}
+	for _, tt := range tests {
+		key, desc := DefaultSort(tt.tab)
+		if key != tt.key || desc != tt.desc {
+			t.Errorf("DefaultSort(%q) = %q, %v, want %q, %v", tt.tab, key, desc, tt.key, tt.desc)
+		}
+		if tt.key != "" && !ValidSort(tt.tab, key) {
+			t.Errorf("default sort %q of %q is not valid", key, tt.tab)
+		}
+	}
+}
+
+func TestValidSort(t *testing.T) {
+	queue := []SortKey{SortTitle, SortYear, SortAdded, SortDue, SortTries, SortLastAttempt, SortStopped}
+	fixed := []SortKey{SortTitle, SortYear, SortCompleted}
+	every := append(append([]SortKey{}, queue...), SortCompleted, "bogus", "")
+	for tab, valid := range map[Tab][]SortKey{TabAttention: queue, TabStopped: queue, TabFixed: fixed, "x": nil} {
+		for _, key := range every {
+			want := false
+			for _, v := range valid {
+				want = want || v == key
+			}
+			if got := ValidSort(tab, key); got != want {
+				t.Errorf("ValidSort(%q, %q) = %v, want %v", tab, key, got, want)
+			}
+		}
+	}
+}
+
 // complete completes the row of key at at, with the metadata of it.
 func complete(t *testing.T, s *Store, it Item, at time.Time) {
 	t.Helper()

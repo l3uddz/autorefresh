@@ -167,28 +167,50 @@ var fixedSorts = map[SortKey]sortColumn{
 	SortCompleted: {sqlPart{sql: `e.at`}, false},
 }
 
+// tabSorts returns the sort columns of tab, or nil for an unknown tab.
+func tabSorts(tab Tab, r DueRules) map[SortKey]sortColumn {
+	switch tab {
+	case TabAttention, TabStopped:
+		return queueSorts(r)
+	case TabFixed:
+		return fixedSorts
+	default:
+		return nil
+	}
+}
+
+// tabDefaults are the default sort key and direction of each tab.
+var tabDefaults = map[Tab]struct {
+	key  SortKey
+	desc bool
+}{
+	TabAttention: {SortDue, false},
+	TabStopped:   {SortStopped, true},
+	TabFixed:     {SortCompleted, true},
+}
+
+// DefaultSort returns the sort key and the direction that a ListQuery of
+// tab with an empty Sort uses. It returns "" for an unknown tab.
+func DefaultSort(tab Tab) (key SortKey, desc bool) {
+	d := tabDefaults[tab]
+	return d.key, d.desc
+}
+
+// ValidSort reports whether ListItems can sort tab by key.
+func ValidSort(tab Tab, key SortKey) bool {
+	_, ok := tabSorts(tab, DueRules{})[key]
+	return ok
+}
+
 // listOrder returns the sort column and the direction of q.
 func listOrder(q ListQuery) (sortColumn, bool, error) {
-	key, desc := q.Sort, q.Desc
-	var sorts map[SortKey]sortColumn
-	switch q.Tab {
-	case TabAttention:
-		sorts = queueSorts(q.Rules)
-		if key == "" {
-			key, desc = SortDue, false
-		}
-	case TabStopped:
-		sorts = queueSorts(q.Rules)
-		if key == "" {
-			key, desc = SortStopped, true
-		}
-	case TabFixed:
-		sorts = fixedSorts
-		if key == "" {
-			key, desc = SortCompleted, true
-		}
-	default:
+	sorts := tabSorts(q.Tab, q.Rules)
+	if sorts == nil {
 		return sortColumn{}, false, fmt.Errorf("%w: tab %q", ErrInvalidQuery, q.Tab)
+	}
+	key, desc := q.Sort, q.Desc
+	if key == "" {
+		key, desc = DefaultSort(q.Tab)
 	}
 	s, ok := sorts[key]
 	if !ok {

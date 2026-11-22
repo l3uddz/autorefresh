@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -35,22 +34,6 @@ var (
 	errInvalidLimit    = errors.New("invalid limit")
 	errInvalidCursor   = errors.New("invalid cursor")
 )
-
-// queueSortKeys are the sort keys of the queue tabs.
-var queueSortKeys = []store.SortKey{
-	store.SortTitle, store.SortYear, store.SortAdded, store.SortDue, store.SortTries,
-	store.SortLastAttempt, store.SortStopped,
-}
-
-// tabSorts are the sort keys of each tab, and its default sort.
-var tabSorts = map[store.Tab]struct {
-	keys []store.SortKey
-	def  string
-}{
-	store.TabAttention: {queueSortKeys, string(store.SortDue)},
-	store.TabStopped:   {queueSortKeys, "-" + string(store.SortStopped)},
-	store.TabFixed:     {[]store.SortKey{store.SortTitle, store.SortYear, store.SortCompleted}, "-" + string(store.SortCompleted)},
-}
 
 // cursorVersion is the version of the item cursor.
 const cursorVersion = 1
@@ -149,7 +132,7 @@ func (s *Server) itemsQuery(r *http.Request) (store.ListQuery, string, error) {
 	if q.Tab, err = tabParam(v.Get("tab")); err != nil {
 		return store.ListQuery{}, "", err
 	}
-	srv, err := s.srvParam(r)
+	srv, err := s.srvParam(v)
 	if err != nil {
 		return store.ListQuery{}, "", err
 	}
@@ -219,17 +202,20 @@ func filterParams(q *store.ListQuery, v url.Values, srv int) error {
 // optional "-" for descending, or the tab default when raw is empty. It
 // returns the sort with the default filled in.
 func sortParam(q *store.ListQuery, raw string) (string, error) {
-	sorts := tabSorts[q.Tab]
-	if raw == "" {
-		raw = sorts.def
+	key, desc := store.DefaultSort(q.Tab)
+	if raw != "" {
+		var name string
+		name, desc = strings.CutPrefix(raw, "-")
+		key = store.SortKey(name)
 	}
-	name, desc := strings.CutPrefix(raw, "-")
-	key := store.SortKey(name)
-	if !slices.Contains(sorts.keys, key) {
+	if !store.ValidSort(q.Tab, key) {
 		return "", errInvalidSort
 	}
 	q.Sort, q.Desc = key, desc
-	return raw, nil
+	if desc {
+		return "-" + string(key), nil
+	}
+	return string(key), nil
 }
 
 // allParam reports whether raw is "1". Only "" and "1" are valid.
