@@ -557,8 +557,8 @@ The dashboard never sends the Plex token to the browser. It loads posters
 and art from Plex for the browser. In stored error texts, it replaces each
 Plex token, Plex address, Plex URL path, the TMDB token, and the dashboard
 password with `<redacted>`. It leaves out the poster of a match candidate
-when the poster URL holds one of these values, because the browser loads
-that poster from another site.
+when the poster URL holds a Plex token, the TMDB token, or the dashboard
+password, because the browser loads that poster from another site.
 
 ### Dashboard in Docker
 
