@@ -1,0 +1,189 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+body{margin:0}
+.wrap{display:flex;flex-direction:column;gap:28px}
+.label{display:flex;align-items:baseline;gap:10px;margin:0 0 8px}
+.label b{font-size:15px}
+.label span{color:var(--muted-foreground);font-size:12.5px}
+
+/* The app's own palette: soft dark, not black */
+.app{
+  --bg:#1d1f24; --surface:#25282e; --raised:#2c3037; --line:#363a42;
+  --text:#e8e9ec; --dim:#a1a5ae; --faint:#71757e;
+  --accent:#8b9cff; --accent-ink:#141625;
+  --red:#f2777a; --amber:#f0b45b; --blue:#6cb6f5; --green:#6fd39b; --violet:#c49bf2;
+  font-family:"Inter",var(--font-sans),system-ui,sans-serif;
+  background:var(--bg);color:var(--text);border:1px solid var(--line);
+  border-radius:14px;overflow:hidden;font-size:12px;letter-spacing:-.05px;
+}
+.mono{font-family:"JetBrains Mono",var(--font-mono),monospace;font-size:10.5px}
+.dim{color:var(--dim)} .faint{color:var(--faint)}
+.top{display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--line)}
+.logo{font-weight:700;font-size:13.5px;letter-spacing:-.3px}
+.logo i{font-style:normal;color:var(--accent)}
+.nav{display:flex;gap:4px}
+.nav a{padding:5px 10px;border-radius:8px;color:var(--dim);font-weight:500}
+.nav a.on{background:var(--raised);color:var(--text)}
+.sp{flex:1}
+.btn{border-radius:8px;padding:6px 11px;font-size:11.5px;font-weight:600;background:var(--raised);color:var(--text);border:1px solid var(--line);white-space:nowrap}
+.btn.p{background:var(--accent);color:var(--accent-ink);border-color:transparent}
+.btn.d{background:transparent;color:var(--red)}
+.btn.g{background:transparent}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px color-mix(in oklab,var(--green) 25%,transparent)}
+.chip{display:inline-flex;align-items:center;gap:4px;border-radius:6px;padding:2px 7px;font-size:10.5px;font-weight:600}
+.r{background:color-mix(in oklab,var(--red) 16%,transparent);color:var(--red)}
+.a{background:color-mix(in oklab,var(--amber) 16%,transparent);color:var(--amber)}
+.b{background:color-mix(in oklab,var(--blue) 16%,transparent);color:var(--blue)}
+.gr{background:color-mix(in oklab,var(--green) 16%,transparent);color:var(--green)}
+.v{background:color-mix(in oklab,var(--violet) 16%,transparent);color:var(--violet)}
+.n{background:var(--raised);color:var(--dim)}
+
+/* Posters: rounded, soft shadow, year badge */
+.poster{position:relative;aspect-ratio:2/3;border-radius:10px;overflow:hidden;box-shadow:0 8px 22px #0007,0 0 0 1px #ffffff12 inset;flex:none}
+.poster::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,#ffffff14,transparent 30%,transparent 60%,#0008)}
+.poster .yr{position:absolute;right:6px;bottom:6px;z-index:1;background:#000a;backdrop-filter:blur(4px);color:#fff;font-size:10px;font-weight:600;padding:2px 6px;border-radius:6px}
+.poster .ttl{position:absolute;left:8px;right:8px;top:10px;z-index:1;color:#fff;font-weight:700;font-size:12px;line-height:1.15;text-shadow:0 1px 3px #0009}
+.poster.sm{border-radius:6px;box-shadow:0 3px 8px #0006}
+.poster.sm .yr{font-size:8.5px;padding:1px 4px;right:3px;bottom:3px;border-radius:4px}
+.p1{background:radial-gradient(120% 80% at 30% 20%,#5d7bd8,#1f2a55 70%)}
+.p2{background:radial-gradient(120% 80% at 70% 15%,#3fb5a3,#11353a 70%)}
+.p3{background:radial-gradient(120% 80% at 40% 20%,#e08a5a,#4a1f1a 70%)}
+.p4{background:radial-gradient(120% 80% at 50% 10%,#b07ad8,#2d1b45 70%)}
+.p5{background:radial-gradient(120% 80% at 30% 30%,#d8c06a,#3d3416 70%)}
+.p6{background:radial-gradient(120% 80% at 60% 20%,#7a8796,#20252c 70%)}
+.px{background:repeating-linear-gradient(45deg,#2c3037 0 8px,#30343c 8px 16px)}
+
+/* Detail */
+.split{display:grid;grid-template-columns:240px 1fr}
+.list{border-right:1px solid var(--line);background:color-mix(in oklab,var(--bg) 70%,#000)}
+.li{display:flex;gap:10px;padding:9px 12px;align-items:center;border-bottom:1px solid #ffffff08}
+.li.on{background:var(--surface);box-shadow:inset 3px 0 0 var(--accent)}
+.li .poster{width:36px}
+.li b{font-weight:600;display:block;margin-bottom:3px}
+.hero{height:130px;position:relative;background:radial-gradient(80% 140% at 80% 0%,#3d5a9e,transparent 70%),radial-gradient(60% 120% at 10% 20%,#2a3a66,transparent 70%),var(--bg)}
+.hero::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 20%,var(--bg))}
+.dh{display:flex;gap:16px;padding:0 18px;margin-top:-84px;position:relative;z-index:1}
+.dh .poster{width:110px}
+.dh h3{margin:46px 0 4px;font-size:20px;font-weight:700;letter-spacing:-.5px}
+.db{padding:14px 18px 18px;display:flex;flex-direction:column;gap:12px}
+.kv{display:grid;grid-template-columns:90px 1fr;gap:5px 12px;margin:0}
+.kv dt{color:var(--faint)} .kv dd{margin:0}
+.actions{display:flex;gap:6px;flex-wrap:wrap}
+
+/* Fix match */
+.fm{display:grid;grid-template-columns:1fr 250px}
+.fm-main{padding:14px 16px;display:flex;flex-direction:column;gap:10px;border-right:1px solid var(--line)}
+.fm-side{padding:14px;display:flex;flex-direction:column;gap:10px;background:color-mix(in oklab,var(--bg) 70%,#000)}
+.fm-head{display:flex;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line)}
+.fm-head .poster{width:40px}
+.searchbar{display:flex;gap:6px}
+.input{flex:1;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 10px;color:var(--dim)}
+.input.y{flex:none;width:64px}
+.cand{display:grid;grid-template-columns:62px 1fr auto;gap:12px;padding:10px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.cand.best{border-color:color-mix(in oklab,var(--accent) 60%,transparent);box-shadow:0 0 0 3px color-mix(in oklab,var(--accent) 12%,transparent)}
+.cand .poster{width:62px}
+.cand h4{margin:0 0 2px;font-size:13px;font-weight:600}
+.cand p{margin:5px 0 7px;color:var(--dim);line-height:1.4;font-size:11px}
+.ev{display:flex;flex-wrap:wrap;gap:4px}
+.score{text-align:right}
+.score b{font-size:18px;font-weight:700;letter-spacing:-.5px}
+.sec{font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--faint);font-weight:600}
+.step{border-left:2px solid var(--line);padding:0 0 10px 12px;position:relative}
+.step::before{content:"";position:absolute;left:-5px;top:3px;width:8px;height:8px;border-radius:50%;background:var(--line)}
+.step.x::before{background:var(--red)}
+.step.ok::before{background:var(--green)}
+.step b{display:block;font-weight:600;margin-bottom:2px}
+.mini{display:flex;gap:7px;align-items:center;margin-top:5px;padding:6px;border-radius:8px;background:var(--surface)}
+.mini .poster{width:24px}
+</style></head><body><div class="wrap">
+
+<section>
+  <div class="label"><b>Look and feel</b><span>Soft dark palette, Inter, rounded posters with a year badge.</span></div>
+  <div class="app">
+    <div class="top">
+      <div class="logo">auto<i>refresh</i></div>
+      <div class="nav"><a>Status</a><a class="on">Items</a><a>Runs</a></div>
+      <div class="sp"></div>
+      <div class="dot"></div><span class="dim">Home · 42 / 100</span>
+      <div class="btn p">Run now ▾</div>
+    </div>
+    <div class="split">
+      <div class="list">
+        <div class="li"><div class="poster sm px"><span class="yr">2019</span></div><div><b>The Quiet Harbor</b><span class="chip r">unmatched</span></div></div>
+        <div class="li on"><div class="poster sm p1"><span class="yr">2016</span></div><div><b>Northern Lights</b><span class="chip v">ep summary</span></div></div>
+        <div class="li"><div class="poster sm p3"><span class="yr">2023</span></div><div><b>Glass Orchard</b><span class="chip a">no-art</span></div></div>
+        <div class="li"><div class="poster sm p5"><span class="yr">2021</span></div><div><b>Static Bloom</b><span class="chip b">no-summary</span></div></div>
+        <div class="li"><div class="poster sm p4"><span class="yr">2024</span></div><div><b>Ember Season</b><span class="chip v">ep unmatched</span></div></div>
+        <div class="li"><div class="poster sm p2"><span class="yr">2017</span></div><div><b>Paper Moons</b><span class="chip a">no-art</span></div></div>
+      </div>
+      <div>
+        <div class="hero"></div>
+        <div class="dh"><div class="poster p1"><span class="ttl">Northern Lights</span><span class="yr">2016</span></div>
+          <div><h3>Northern Lights</h3><div class="dim">Series · 3 seasons · 24 episodes · Home / TV</div><div style="margin-top:7px;display:flex;gap:4px"><span class="chip v">episode-no-summary · 4</span><span class="chip n">3 refreshes</span></div></div></div>
+        <div class="db">
+          <div class="dim" style="line-height:1.5">A lighthouse keeper's family is pulled into a decades-old disappearance on a remote northern island.</div>
+          <dl class="kv"><dt>Path</dt><dd class="mono">/data/tv/Northern Lights (2016) {tvdb-31207}</dd><dt>Match</dt><dd>tvdb-31207 · matched by autorefresh on 12 Nov</dd><dt>Next due</dt><dd>in 2d 4h</dd></dl>
+          <div class="actions"><span class="btn p">Refresh now</span><span class="btn">Fix match</span><span class="btn d">Stop trying</span><span class="btn g">Open in Plex ↗</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="label"><b>Fix match</b><span>Rich candidates on the left. What autorefresh tried, and why it didn't match, on the right.</span></div>
+  <div class="app">
+    <div class="fm-head">
+      <div class="poster sm px"><span class="yr">2019</span></div>
+      <div><b style="font-size:14px">Fix match · The Quiet Harbor</b><div class="mono dim">/data/movies/The Quiet Harbor (2019) {tmdb-48213} {imdb-tt7712040}</div></div>
+      <div class="sp"></div><span class="btn g">✕</span>
+    </div>
+    <div class="fm">
+      <div class="fm-main">
+        <div class="searchbar"><div class="input">The Quiet Harbor</div><div class="input y">2019</div><span class="btn">Search</span></div>
+        <div class="faint">Search by title and year, or by an ID such as <span class="mono">tmdb-48213</span> or <span class="mono">imdb-tt7712040</span>.</div>
+
+        <div class="cand best">
+          <div class="poster p2"><span class="yr">2019</span></div>
+          <div><h4>The Quiet Harbor</h4><div class="dim">Movie · 2019 · <span class="mono">tmdb-48213 · imdb-tt7712040</span></div>
+            <p>A retired ferry captain returns to the fishing town she left thirty years ago and finds the harbor about to be sold.</p>
+            <div class="ev"><span class="chip gr">✓ matches folder tmdb-48213</span><span class="chip gr">✓ matches folder imdb-tt7712040</span><span class="chip gr">✓ year 2019</span></div></div>
+          <div class="score"><b>98</b><div class="faint">Plex score</div><div style="margin-top:28px"><span class="btn p">Match</span></div></div>
+        </div>
+
+        <div class="cand">
+          <div class="poster p6"><span class="yr">2018</span></div>
+          <div><h4>The Quiet Harbour</h4><div class="dim">Movie · 2018 · <span class="mono">tmdb-51907</span></div>
+            <p>A documentary about the last working boatyard on a small island and the families who keep it running.</p>
+            <div class="ev"><span class="chip a">~ year off by 1</span><span class="chip r">✕ not a folder ID</span><span class="chip n">autorefresh found it via imdb-tt7712040</span></div></div>
+          <div class="score"><b>91</b><div class="faint">Plex score</div><div style="margin-top:28px"><span class="btn">Match</span></div></div>
+        </div>
+
+        <div class="cand">
+          <div class="poster p3"><span class="yr">1987</span></div>
+          <div><h4>Quiet Harbor</h4><div class="dim">Movie · 1987 · <span class="mono">tmdb-20114</span></div>
+            <p>Two brothers smuggle goods along the coast during a long, hard winter.</p>
+            <div class="ev"><span class="chip r">✕ year differs by 32</span><span class="chip r">✕ not a folder ID</span></div></div>
+          <div class="score"><b>64</b><div class="faint">Plex score</div><div style="margin-top:28px"><span class="btn">Match</span></div></div>
+        </div>
+      </div>
+
+      <div class="fm-side">
+        <div class="sec">Last auto fix match · 12 Nov 14:02</div>
+        <div class="step"><b>Searched tmdb-48213</b><span class="dim">1 candidate</span>
+          <div class="mini"><div class="poster sm p2"><span class="yr">2019</span></div><span>The Quiet Harbor</span></div></div>
+        <div class="step"><b>Searched imdb-tt7712040</b><span class="dim">1 candidate</span>
+          <div class="mini"><div class="poster sm p6"><span class="yr">2018</span></div><span>The Quiet Harbour</span></div></div>
+        <div class="step x"><b>Not matched: different candidates</b><span class="dim">The two folder IDs found different items, so autorefresh couldn't tell which one is right.</span></div>
+        <div class="sec" style="margin-top:4px">History</div>
+        <div class="dim" style="line-height:1.6">6 attempts · same result each time<br>Next attempt in 3d</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</div></body></html>
