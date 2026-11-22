@@ -1,0 +1,16 @@
+{
+  "MediaContainer": {
+    "size": 1,
+    "SearchResult": [
+      {
+        "guid": "plex://movie/000000000000000000000003",
+        "name": "Fixture Movie Three",
+        "year": 2022,
+        "score": 98.5,
+        "type": "movie",
+        "summary": 5,
+        "thumb": "https://metadata.example.invalid/three.jpg"
+      }
+    ]
+  }
+}

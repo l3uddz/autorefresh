@@ -28,6 +28,9 @@ func TestSearchMatchesDecodesCandidates(t *testing.T) {
 		{"matches_one.json", []Candidate{{GUID: "plex://movie/000000000000000000000001", Name: "Fixture Movie One", Year: 2020, Type: "movie", Summary: "A neutral summary.", Thumb: "https://metadata.example.invalid/thumb.jpg", Score: 98},
 			{GUID: "plex://movie/000000000000000000000002", Name: "Fixture Movie Two", Year: 2021, Type: "movie", Summary: "Another neutral summary.", Thumb: "", Score: 80}}},
 		{"matches_none.json", nil},
+		// The fields shown only on the dashboard are optional. A value of an
+		// unexpected type leaves that field empty and keeps the candidate.
+		{"matches_odd_fields.json", []Candidate{{GUID: "plex://movie/000000000000000000000003", Name: "Fixture Movie Three", Year: 2022, Type: "movie", Thumb: "https://metadata.example.invalid/three.jpg"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.fixture, func(t *testing.T) {

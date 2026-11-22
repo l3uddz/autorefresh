@@ -2,6 +2,8 @@ package plex
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -47,15 +49,7 @@ func (c *Client) SearchMatches(ctx context.Context, ratingKey, title, agent, lan
 
 	var resp struct {
 		MediaContainer struct {
-			SearchResult []struct {
-				GUID    string `json:"guid"`
-				Name    string `json:"name"`
-				Year    int    `json:"year"`
-				Type    string `json:"type"`
-				Summary string `json:"summary"`
-				Thumb   string `json:"thumb"`
-				Score   int    `json:"score"`
-			} `json:"SearchResult"`
+			SearchResult []json.RawMessage `json:"SearchResult"`
 		} `json:"MediaContainer"`
 	}
 	if err := c.send(ctx, http.MethodGet, endpoint, query, &resp); err != nil {
@@ -63,13 +57,43 @@ func (c *Client) SearchMatches(ctx context.Context, ratingKey, title, agent, lan
 	}
 
 	candidates := make([]Candidate, 0, len(resp.MediaContainer.SearchResult))
-	for _, r := range resp.MediaContainer.SearchResult {
-		candidates = append(candidates, Candidate{
-			GUID: r.GUID, Name: r.Name, Year: r.Year, Type: r.Type,
-			Summary: r.Summary, Thumb: SafeRemoteImage(r.Thumb), Score: r.Score,
-		})
+	for _, raw := range resp.MediaContainer.SearchResult {
+		cand, err := decodeCandidate(raw)
+		if err != nil {
+			return nil, fmt.Errorf("search matches: %w", err)
+		}
+		candidates = append(candidates, cand)
 	}
 	return candidates, nil
+}
+
+// decodeCandidate reads one search result. The fields that a match uses
+// must decode. The other fields are only shown, so a value of an unexpected
+// type leaves only that field empty: json.Unmarshal skips it and still fills
+// the rest.
+func decodeCandidate(raw json.RawMessage) (Candidate, error) {
+	var match struct {
+		GUID string `json:"guid"`
+		Name string `json:"name"`
+		Year int    `json:"year"`
+	}
+	if err := json.Unmarshal(raw, &match); err != nil {
+		return Candidate{}, fmt.Errorf("decoding candidate: %w", err)
+	}
+	var shown struct {
+		Type    string `json:"type"`
+		Summary string `json:"summary"`
+		Thumb   string `json:"thumb"`
+		Score   int    `json:"score"`
+	}
+	var typeErr *json.UnmarshalTypeError
+	if err := json.Unmarshal(raw, &shown); err != nil && !errors.As(err, &typeErr) {
+		return Candidate{}, fmt.Errorf("decoding candidate: %w", err)
+	}
+	return Candidate{
+		GUID: match.GUID, Name: match.Name, Year: match.Year, Type: shown.Type,
+		Summary: shown.Summary, Thumb: SafeRemoteImage(shown.Thumb), Score: shown.Score,
+	}, nil
 }
 
 // Match applies a candidate to one item.
