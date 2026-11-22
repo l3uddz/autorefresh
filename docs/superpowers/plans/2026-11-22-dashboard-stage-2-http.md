@@ -21,7 +21,7 @@
 - Each task that adds a public store method adds it to `TestMethodsReportDatabaseFailure` (`internal/store/store_test.go`).
 - Build URLs with `net/url`. Every URL the server emits (image URLs in JSON, links in the placeholder page) is relative with no leading slash (`api/items/thumb?...`), so the UI works behind a proxy at any sub-path.
 - The Plex token never reaches the browser. No Plex header or body is passed to a response, and a handler answers a failed Plex request with a fixed message.
-- The stored diagnostic texts `event.error` and `run.error` are shown, because explaining failures is a goal of the dashboard and the operator reads the same texts in the log. The `plex` package already keeps addresses and tokens out of its error texts. As a second guard, the API replaces every occurrence of a configured Plex token, Plex URL host, Plex URL path prefix (the `BaseURL.Path` without its trailing `/`, when it is not empty or `/`; a reverse proxy can put a credential there, and `plex` error texts include the request path), TMDB token, and UI password in these texts with `<redacted>` before it sends them (`web.Options.Secrets []string`, filled by `cmd`; empty values are skipped). The method, the rest of the path, and the status stay, for example `GET <redacted>/library/sections: 500 Internal Server Error`.
+- The stored diagnostic texts `event.error` and `run.error` are shown, because explaining failures is a goal of the dashboard and the operator reads the same texts in the log. The `plex` package already keeps addresses and tokens out of its error texts. As a second guard, the API replaces every occurrence of a configured Plex token, Plex URL host, Plex URL path prefix (`plex.Client.PathPrefix()`, the prefix exactly as the client's `JoinPath` puts it in each request path, for example `/gateway/sentinel-path` for a configured `/gateway//sentinel-path/`; a reverse proxy can put a credential there, and `plex` error texts include the request path), TMDB token, and UI password in these texts with `<redacted>` before it sends them (`web.Options.Secrets []string`, filled by `cmd`; empty values are skipped). The method, the rest of the path, and the status stay, for example `GET <redacted>/library/sections: 500 Internal Server Error`.
 - Cursors are opaque to the client but not secret. The server rejects a cursor that does not decode, lacks a required field, has another version, or belongs to another tab, sort, or filter (400 `invalid cursor`). The required fields are listed with each cursor; an item cursor needs only the value field of its sort type. A well-formed cursor with an edited position is only a position, and the API is authenticated, so cursors are not signed.
 - A server is identified by `srv`, its 0-based position in the configured list, as a query parameter. No server name is ever a path segment.
 - JSON keys are camelCase. Times are RFC 3339 (`time.Time`); a zero time is left out with `omitzero`. Every error response is `{"error": "<fixed message>"}` with `Content-Type: application/json`. A store error is logged (`log.Error().Err(err).Str("path", r.URL.Path).Msg("API request failed")`) and answered `500 {"error":"internal error"}`.
@@ -281,6 +281,10 @@ Verified on 2026-11-22 with read-only requests to a real server: `GET /` has `Me
 
 ```go
 func ValidRatingKey(key string) bool // the existing idPattern rule, for callers outside plex
+// PathPrefix returns the path that every request path starts with, derived with the same
+// JoinPath as endpoint (so repeated slashes are cleaned), without a trailing "/"; "" when
+// the base URL has no path.
+func (c *Client) PathPrefix() string
 func (c *Client) Identity(ctx context.Context) (string, error) // GET / -> machineIdentifier
 type Details struct {
 	GUID, Summary         string
@@ -314,6 +318,9 @@ func TestPhotoUsesTranscoder(t *testing.T)
 func TestPhotoRejectsForeignPath(t *testing.T) // path of key 999 with key 1004 -> error, no request recorded
 func TestPhotoLimitsSize(t *testing.T) // MaxPhotoBytes+1 bytes -> error; MaxPhotoBytes bytes -> ok
 func TestPhotoNotFound(t *testing.T) // 404 -> errors.Is(err, ErrNotFound)
+func TestPathPrefix(t *testing.T)
+// base "http://h" and "http://h/" -> ""; "http://h/plex/" -> "/plex"; "http://h/gateway//sentinel-path/"
+// -> "/gateway/sentinel-path", and a recorded Libraries request path starts with it.
 ```
 
 - [ ] **Step 2: Run** `go test ./internal/plex -run 'Identity|ItemDetails|Photo' -v` — Expected: build failure.
@@ -634,7 +641,7 @@ func TestItemsLastPageExactlyLimit(t *testing.T) // 4 rows, limit 2 -> the secon
 
 **Files:**
 - Create: `internal/web/item.go`, `internal/web/runs.go`, `internal/web/item_test.go`, `internal/web/runs_test.go`
-- Modify: `internal/web/server.go` (interfaces)
+- Modify: `internal/web/server.go` (interfaces), `internal/web/respond.go` (`redact`), `internal/web/params.go` (`keyParam`)
 
 **Interfaces:**
 - Consumes: Tasks 3, 4, and 8.
@@ -668,8 +675,8 @@ func TestStoredErrorsAreRedacted(t *testing.T)
 // the item timeline and the runs answer contain "<redacted>" and never "sentinel-token".
 func TestRunErrorFromPrefixedPlexURLIsRedacted(t *testing.T)
 // a real plex.Client with base URL <httptest>/sentinel-path answers Libraries with 500; store
-// its err.Error() as a run error (StartRun, FinishRun); Secrets {"/sentinel-path"} -> the runs
-// answer has "GET <redacted>/library/sections" and "500", and never "sentinel-path".
+// its err.Error() as a run error (StartRun, FinishRun); Secrets {client.PathPrefix()} -> the
+// runs answer has "GET <redacted>/library/sections" and "500", and never "sentinel-path".
 func TestItemLive(t *testing.T)
 // show without a path -> path is the first location and the store row now has it; movie keeps
 // its cached path; an uncached item gets the path in the answer and still has no row.
@@ -762,7 +769,7 @@ Behaviour:
 
 - The UI runs only when `cfg.UI.Listen != ""` and neither `--once` nor `--dry-run` is set. With `ui.listen` set in those modes, log `log.Info().Msg("UI is off with --once or --dry-run")` once and bind nothing.
 - Build `web.NewStatus` before the refresher, and pass it as `Options.Progress` only when the UI runs.
-- Keep each server's `*plex.Client` beside its `refresher.Server`, and pass it as `web.PlexServer.Plex`. `web.Options` gets the store, the status, `cfg.UI.Username` and `cfg.UI.Password`, `Rules: store.DueRules{MinimumAge, RefreshInterval, MaxRefreshInterval, Ignored: cfg.Ignored}`, and `Secrets`: each server's token, `BaseURL.Host`, and `BaseURL.Path` prefix (as in Global Constraints), `cfg.TMDBToken`, and `cfg.UI.Password`.
+- Keep each server's `*plex.Client` beside its `refresher.Server`, and pass it as `web.PlexServer.Plex`. `web.Options` gets the store, the status, `cfg.UI.Username` and `cfg.UI.Password`, `Rules: store.DueRules{MinimumAge, RefreshInterval, MaxRefreshInterval, Ignored: cfg.Ignored}`, and `Secrets` from `uiSecrets(cfg config.Config, clients []*plex.Client) []string` in `ui.go`: each server's token, `BaseURL.Host`, and `client.PathPrefix()`, `cfg.TMDBToken`, and `cfg.UI.Password`.
 - After the `--once` branch and before `checkTokens`, bind with `listenFunc("tcp", cfg.UI.Listen)`. On error, close the store and `return fatal(err, "Failed starting UI listener")`. No Plex request is sent before the bind.
 - Start the server, then log `log.Info().Str("listen", ln.Addr().String()).Bool("auth", cfg.UI.Username != "").Msg("UI listening")`. Without auth, also log `log.Warn().Msg("UI has no authentication, so allow access only through an authenticating reverse proxy or a trusted network")`.
 - Pass the status as `rec` to `checkTokens`, or nil. Report a check only if ctx has not ended.
@@ -804,6 +811,10 @@ func TestRunStopsUIWhenCanceledDuringTokenChecks(t *testing.T)
 // (the token check) -> run returns nil, the listener is closed, serve never ran (no
 // "Run summary"), the database opens.
 func TestCheckTokensRecordsHealth(t *testing.T) // a recording rec gets each server's result and TMDB's; existing calls pass nil
+func TestUISecretsRedactPrefixedPlexError(t *testing.T)
+// config.Decode with a server url <httptest>/gateway//sentinel-path/ whose target answers 500;
+// plex.New from it; Libraries error stored as a run error; a web.Server with
+// uiSecrets(cfg, clients) -> the decoded /api/runs error has "<redacted>" and never "sentinel-path".
 ```
 
 - [ ] **Step 2: Run** `go test ./cmd/autorefresh -run 'UI|Health' -v` — Expected: FAIL.
