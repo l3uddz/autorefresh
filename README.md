@@ -512,7 +512,7 @@ between requests. While a run is busy, the API refuses a new manual scan
 or bulk refresh.
 If a bulk stop or resume fails partway through, earlier changes stay saved.
 
-The dashboard has two pages. With several Plex servers, a server picker in
+The dashboard has three pages. With several Plex servers, a server picker in
 the top bar limits every page to one server or shows all servers. The
 address keeps the choice, so a link or a reload shows the same server.
 
@@ -547,13 +547,47 @@ address keeps the choice, so a link or a reload shows the same server.
   show the poster, the art, the summary, the path, the queue state, the
   last action, and when and how the item was fixed. From there you can
   refresh the item, check its metadata again, stop or resume automatic
-  work on it, and open it in Plex. If Plex no longer has the item, a check
-  says so and autorefresh removes the item from the queue.
+  work on it, fix its match, and open it in Plex. If Plex no longer has the
+  item, a check says so and autorefresh removes the item from the queue.
+  Below the actions, the history of the item lists each event, newest
+  first: requests by autorefresh or by hand and whether Plex accepted them,
+  fix match decisions with their searches, stops and resumes, and when
+  the item was fixed or removed. On a phone, the list fills the screen and
+  an item opens on its own screen.
+- **Runs** lists the runs of every server, or of the chosen server, newest
+  first: the start, the duration, the server, the source (schedule or
+  manual), the kind (run or bulk refresh), the status, and the items read,
+  refreshed, matched, failed, fixed, and due, with the error of a failed
+  run. A run that has not ended shows no duration. **Load more** reads the
+  next page. The list updates when a run starts or ends. On a narrow
+  screen, each run is one row with its summary.
 
-The dashboard asks before it stops work on an item or refreshes items in
-bulk. It updates live while the event stream is connected. It shows a
-banner while the stream is down, also when the first connection fails. The fix match dialog and a page of all runs
-come in a later release.
+**Fix match** in the item details opens a dialog to choose the Plex match
+of the item by hand, also for an item on the Fixed tab that Plex matched
+wrongly. On open, the dialog searches Plex by the title of the item and by
+each ID in its folder and file names. With a `tmdb-token`, and when the
+folder and file names hold no `tmdb` ID, it also searches the TMDB IDs of
+their `imdb` IDs, and of their `tvdb` IDs for a series, as the automatic
+fix match does. You can also search by another title, with an optional year,
+or by an ID such as `tmdb-48213`, `tvdb-31207`, or `imdb-tt7712040`. An ID
+search ignores the year. Each candidate shows its poster, title, year,
+type, summary, and Plex score (when Plex gives one), and how it was found:
+the folder IDs that found it, the year compared with the item, and the
+searches of the last automatic fix match that found it. The current match of the item in Plex
+is marked, and you cannot apply it again. For a series, a candidate that
+a search by one TMDB ID found as its only candidate can compare the
+episode numbers of the item with that TMDB series. This needs a
+`tmdb-token`. The comparison changes nothing. **Match** asks before it
+applies the candidate, and Plex then refreshes the metadata of the item.
+Beside the candidates, the dialog explains the last automatic fix match:
+its searches, their candidates, and why it picked one or none. Searches in
+the dialog call Plex but record nothing. An applied match is recorded in
+the history of the item.
+
+The dashboard asks before it stops work on an item, applies a match, or
+refreshes items in bulk. It updates live while the event stream is
+connected. It shows a banner while the stream is down, also when the first
+connection fails.
 
 ### Dashboard configuration
 
