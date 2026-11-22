@@ -137,6 +137,9 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 		status = web.NewStatus(names, cfg.TMDBToken != "")
 		progress = status
 		rec = status
+		if lookup != nil {
+			lookup = tmdbHealth{tmdb: lookup, rec: status}
+		}
 	}
 
 	rules := queueRules(cfg)
@@ -172,19 +175,22 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 
 	// The UI binds before the token checks, so a bind error stops the start
 	// before any request to Plex.
-	var ui *web.Server
+	jobs := refresher.NewJobs(r)
+	var ui uiStopper
 	if uiOn {
-		ui = newUIServer(cfg, rules, st, status, clients)
-		if err := startUI(cfg.UI, ui); err != nil {
+		dashboard := newUIServer(cfg, rules, st, status, clients, r, jobs)
+		if err := startUI(cfg.UI, dashboard); err != nil {
+			jobs.Close()
 			closeStore(st)
 			return fatal(err, "Failed starting UI listener")
 		}
+		ui = dashboard
 	}
 
 	// schedule. A check of each server and TMDB shows a wrong token or URL at
 	// once, before the first run.
 	checkTokens(ctx, servers, tmdbCheck, rec)
-	serveUntilStopped(ctx, ui, refresher.NewJobs(r), cfg.RunSchedule)
+	serveUntilStopped(ctx, ui, jobs, cfg.RunSchedule)
 	closeStore(st)
 	log.Info().Msg("Stopped")
 	return nil

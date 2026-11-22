@@ -299,7 +299,7 @@ func TestUISecretsRedactPrefixedPlexError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := httptest.NewServer(newUIServer(cfg, queueRules(cfg), st, nil, []*plex.Client{client}).Handler())
+	srv := httptest.NewServer(newUIServer(cfg, queueRules(cfg), st, nil, []*plex.Client{client}, nil, nil).Handler())
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + "/api/runs")
 	if err != nil {
@@ -340,5 +340,50 @@ func TestUICredentialsAndSecrets(t *testing.T) {
 	secrets := uiSecrets(cfg, credentials, []*plex.Client{client})
 	if want := []string{"plex-token", "tmdb-token", "ui-password", "plex:32400", "/gateway"}; !slices.Equal(secrets, want) {
 		t.Errorf("secrets = %q, want %q", secrets, want)
+	}
+}
+
+func TestRunEnablesManualScanWhileTokenCheckIsPending(t *testing.T) {
+	gate := make(chan struct{})
+	first := make(chan struct{})
+	target := runTarget(t, http.StatusOK, func(n int32) {
+		if n == 1 {
+			close(first)
+			<-gate
+		}
+	})
+	t.Cleanup(func() { close(gate) })
+	listeners := recordListener(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	opts := runOptionsWith(t, target.URL, uiConfig("127.0.0.1:0"))
+	done := goRun(t, ctx, cancel, opts)
+	var ln *recordedListener
+	select {
+	case ln = <-listeners:
+	case <-time.After(5 * time.Second):
+		t.Fatal("UI listener did not start")
+	}
+	select {
+	case <-first:
+	case <-time.After(5 * time.Second):
+		t.Fatal("token check did not start")
+	}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+ln.Addr().String()+"/api/runs", strings.NewReader(`{"srv":null}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		t.Errorf("manual scan status = %d, want 202", response.StatusCode)
+	}
+	cancel()
+	if err := waitRun(t, done); err != nil {
+		t.Fatal(err)
 	}
 }
