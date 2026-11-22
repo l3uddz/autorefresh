@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -333,5 +334,46 @@ func TestApplyMatchFailedSkipsRefreshAndCheck(t *testing.T) {
 	}
 	if want := []string{"Match 1 plex://movie/1"}; !reflect.DeepEqual(fake.calls, want) || *checks != 0 || len(f.sleeps) != 0 {
 		t.Errorf("calls %v, checks %d, sleeps %v", fake.calls, *checks, f.sleeps)
+	}
+}
+
+// A run that removes the row during a wait settles the match: the checks
+// stop without a warning.
+func TestApplyMatchStopsWhenRowLeavesCache(t *testing.T) {
+	f, _, checks := matchCheckFixture(t, checkAnswer{item: incompleteItem("1")})
+	buf := captureLogs(t)
+	f.r.sleep = func(context.Context, time.Duration) error {
+		f.sleeps = append(f.sleeps, time.Second)
+		return f.store.RecordGone("home", "1", t0, store.SourceAuto)
+	}
+	cand := plex.Candidate{GUID: "plex://movie/1", Name: "Match", Year: 2020}
+	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {
+		t.Fatal(err)
+	}
+	if *checks != 1 || len(f.sleeps) != 1 {
+		t.Errorf("checks %d, sleeps %v; want 1 check after 1 wait", *checks, f.sleeps)
+	}
+	if strings.Contains(buf.String(), "Following up a manual match failed") {
+		t.Errorf("log warns about a row that a run removed: %s", buf)
+	}
+}
+
+// A refresh that Plex answers with 404 records the item gone and skips the
+// checks; the accepted match is no error.
+func TestApplyMatchRefreshGoneSkipsChecks(t *testing.T) {
+	f, fake, checks := matchCheckFixture(t, checkAnswer{item: completeItem("1")})
+	fake.refreshErrs["1"] = plex.ErrNotFound
+	cand := plex.Candidate{GUID: "plex://movie/1", Name: "Match", Year: 2020}
+	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {
+		t.Fatal(err)
+	}
+	if *checks != 0 || len(f.sleeps) != 0 {
+		t.Errorf("checks %d, sleeps %v; want none", *checks, f.sleeps)
+	}
+	if _, found := f.row("home", "1", "1"); found {
+		t.Error("gone item still cached")
+	}
+	if e := f.newestEvent("1"); e.Kind != store.EventGone {
+		t.Errorf("newest event = %+v, want gone", e)
 	}
 }

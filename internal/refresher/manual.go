@@ -117,7 +117,8 @@ var matchCheckDelays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Se
 
 // settleMatch runs after Plex accepted a manual match of item, under its
 // item lock. It requests a refresh, then checks a cached item until the
-// check completes it, or Plex no longer has it, or the waits run out. A
+// check completes it, Plex no longer has it, a run removed its row, or the
+// waits run out. A
 // failure is logged, because Plex accepted the match and the next run reads
 // the item again.
 func (r *Refresher) settleMatch(ctx context.Context, item manualItem) {
@@ -135,6 +136,10 @@ func (r *Refresher) settleMatch(ctx context.Context, item manualItem) {
 			return
 		}
 		settled, err := r.checkHeld(ctx, item)
+		if errors.Is(err, ErrNotCached) {
+			// A run read the item meanwhile and completed or removed it.
+			return
+		}
 		if err != nil {
 			r.logSettleFailure(item, "check", err)
 		}
