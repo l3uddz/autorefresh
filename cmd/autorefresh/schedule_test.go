@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,7 +27,7 @@ func TestServeStartsFirstRunAtOnce(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		serve(ctx, r, cron.Every(24*time.Hour))
+		serve(ctx, r, cron.Every(24*time.Hour), nil)
 		close(done)
 	}()
 	select {
@@ -53,7 +54,7 @@ func TestServeWaitsForFirstRun(t *testing.T) {
 		finished.Store(true)
 	})
 
-	serve(ctx, r, cron.Every(24*time.Hour))
+	serve(ctx, r, cron.Every(24*time.Hour), nil)
 	if !finished.Load() {
 		t.Fatal("serve returned before the first run returned")
 	}
@@ -87,7 +88,7 @@ func TestServeUntilStoppedDrainsInOrder(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		serveUntilStopped(ctx, ui, jobs, cron.Every(24*time.Hour))
+		serveUntilStopped(ctx, ui, jobs, cron.Every(24*time.Hour), nil)
 	}()
 	select {
 	case <-jobs.started:
@@ -108,6 +109,50 @@ func TestServeUntilStoppedDrainsInOrder(t *testing.T) {
 			}
 		default:
 			t.Fatalf("missing %q", want)
+		}
+	}
+}
+
+// soon is a schedule whose next time is always 50 ms later.
+type soon struct{}
+
+func (soon) Next(t time.Time) time.Time { return t.Add(50 * time.Millisecond) }
+
+// serve publishes the next start of the schedule when it starts and at each
+// time of the schedule, also when the run is busy and skips the time.
+func TestServePublishesNextStart(t *testing.T) {
+	captureLog(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	busy := make(chan struct{})
+	r := fakeStarter(func(context.Context) { <-busy })
+	var mu sync.Mutex
+	var published []time.Time
+	onNext := func(next time.Time) {
+		mu.Lock()
+		defer mu.Unlock()
+		published = append(published, next)
+		if len(published) == 3 {
+			cancel()
+		}
+	}
+	done := make(chan struct{})
+	go func() {
+		serve(ctx, r, soon{}, onNext)
+		close(done)
+	}()
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("serve did not publish three next starts")
+	}
+	close(busy)
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	for i := 1; i < len(published); i++ {
+		if !published[i].After(published[i-1]) {
+			t.Fatalf("published starts %v do not advance", published)
 		}
 	}
 }

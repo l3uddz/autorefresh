@@ -35,8 +35,8 @@ type StatusView struct {
 	Seq     uint64         `json:"seq"`
 	Servers []ServerStatus `json:"servers"`
 	TMDB    string         `json:"tmdb"` // "off", or a Health
-	// NextRun is the next start of the run schedule after the snapshot,
-	// or zero without a schedule.
+	// NextRun is the next time of the run scheduler, or zero before the
+	// scheduler starts.
 	NextRun time.Time `json:"nextRun,omitzero"`
 }
 
@@ -83,8 +83,7 @@ type Status struct {
 	index   map[string]int
 	tmdb    string
 	subs    map[chan struct{}]struct{}
-	now     func() time.Time
-	next    func(time.Time) time.Time // nil: no schedule
+	nextRun time.Time
 }
 
 var _ refresher.Progress = (*Status)(nil)
@@ -98,7 +97,6 @@ func NewStatus(servers []string, tmdb bool) *Status {
 		index:   make(map[string]int, len(servers)),
 		tmdb:    tmdbOff,
 		subs:    make(map[chan struct{}]struct{}),
-		now:     time.Now,
 	}
 	for i, name := range servers {
 		s.servers[i] = ServerStatus{Srv: i, Name: name, Health: HealthUnknown}
@@ -110,12 +108,18 @@ func NewStatus(servers []string, tmdb bool) *Status {
 	return s
 }
 
-// SetSchedule sets the next-run function of the run schedule, such as
-// cron.Schedule.Next. Each later snapshot carries the next start.
-func (s *Status) SetSchedule(next func(time.Time) time.Time) {
+// SetNextRun records the next time of the run scheduler. The scheduler
+// calls it when it starts and at each of its times, also when a busy run
+// skips that time, so the next run on screen never stays in the past. A new
+// time is a change of the status.
+func (s *Status) SetNextRun(next time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.next = next
+	if next.Equal(s.nextRun) {
+		return
+	}
+	s.nextRun = next
+	s.notify()
 }
 
 // Snapshot returns a deep copy of the status, so encoding it never reads
@@ -135,11 +139,7 @@ func (s *Status) Snapshot() StatusView {
 		}
 		servers[i] = srv
 	}
-	view := StatusView{Boot: s.boot, Seq: s.seq, Servers: servers, TMDB: s.tmdb}
-	if s.next != nil {
-		view.NextRun = s.next(s.now())
-	}
-	return view
+	return StatusView{Boot: s.boot, Seq: s.seq, Servers: servers, TMDB: s.tmdb, NextRun: s.nextRun}
 }
 
 // ServerChecked records the result of the start check of server.

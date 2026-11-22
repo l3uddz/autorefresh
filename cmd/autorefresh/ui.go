@@ -120,13 +120,14 @@ type scheduledJobs interface {
 // for example during the token checks, the schedule never starts. Then it
 // stops in this order: the UI, so that no request still reads the store,
 // then the schedule and the busy run. The schedule has its own context, so
-// a busy run goes on while the UI stops. ui can be nil.
-func serveUntilStopped(ctx context.Context, ui uiStopper, r scheduledJobs, sched cron.Schedule) {
+// a busy run goes on while the UI stops. ui and onNext can be nil; serve
+// gives onNext the next time of the schedule.
+func serveUntilStopped(ctx context.Context, ui uiStopper, r scheduledJobs, sched cron.Schedule, onNext func(time.Time)) {
 	schedCtx, cancelSched := context.WithCancel(context.Background())
 	defer cancelSched()
 	var served sync.WaitGroup
 	if ctx.Err() == nil {
-		served.Go(func() { serve(schedCtx, r, sched) })
+		served.Go(func() { serve(schedCtx, r, sched, onNext) })
 	}
 	<-ctx.Done()
 	stopUI(ui)

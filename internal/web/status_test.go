@@ -215,19 +215,22 @@ func TestFinishedStatusRetainsRunIdentity(t *testing.T) {
 }
 
 func TestStatusNextRun(t *testing.T) {
-	at := time.Date(2026, 11, 22, 22, 14, 0, 0, time.UTC)
 	st := NewStatus([]string{"a"}, false)
-	st.now = func() time.Time { return at }
-	if snap := st.Snapshot(); !snap.NextRun.IsZero() {
-		t.Fatalf("next run without a schedule = %v", snap.NextRun)
-	}
-	raw, err := json.Marshal(st.Snapshot())
+	before := st.Snapshot()
+	raw, err := json.Marshal(before)
 	if err != nil || strings.Contains(string(raw), "nextRun") {
 		t.Fatalf("status JSON without a schedule = %s, %v", raw, err)
 	}
 
-	st.SetSchedule(func(t time.Time) time.Time { return t.Truncate(time.Hour).Add(time.Hour) })
-	if snap, want := st.Snapshot(), time.Date(2026, 11, 22, 23, 0, 0, 0, time.UTC); !snap.NextRun.Equal(want) {
-		t.Fatalf("next run = %v, want %v", snap.NextRun, want)
+	next := time.Date(2026, 11, 22, 23, 0, 0, 0, time.UTC)
+	st.SetNextRun(next)
+	after := st.Snapshot()
+	if !after.NextRun.Equal(next) || after.Seq <= before.Seq {
+		t.Fatalf("after SetNextRun: next %v seq %d, want %v and a seq above %d", after.NextRun, after.Seq, next, before.Seq)
+	}
+	// The same time again is no change, so no snapshot replaces another.
+	st.SetNextRun(next)
+	if again := st.Snapshot(); again.Seq != after.Seq {
+		t.Fatalf("seq after the same next run = %d, want %d", again.Seq, after.Seq)
 	}
 }
