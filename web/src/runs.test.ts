@@ -98,6 +98,12 @@ describe('run groups', () => {
     expect(group.entries[0]).toMatchObject({ key: '7', title: 'Item 7', year: 2019, type: 'movie', thumb: '/api/items/thumb?x' });
   });
 
+  it('keeps the item of each bulk item', () => {
+    const items: RunItem[] = [{ key: '1', title: 'One', outcome: 'accepted', year: 2019, type: 'show', thumb: '/api/items/thumb?x', library: 'TV' }];
+    const [group] = runGroups(detail([], { kind: 'bulk-refresh' }, items));
+    expect(group.entries[0]).toMatchObject({ key: '1', title: 'One', year: 2019, type: 'show', thumb: '/api/items/thumb?x', library: 'TV' });
+  });
+
   it('groups the items of a bulk refresh by outcome', () => {
     const items: RunItem[] = [
       { key: '1', title: 'One', outcome: 'accepted' },
