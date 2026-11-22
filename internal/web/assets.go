@@ -70,12 +70,16 @@ func encodingAllowed(parameters string) bool {
 	return true
 }
 
-// dashboardType returns the content type of the dashboard file name. The
-// built-in table of mime has no font types, and the container image has no
-// /etc/mime.types, so the fonts of the build are named here.
+// dashboardType fixes the types of scripts and fonts so they are the same on
+// development hosts and in the container, which has no /etc/mime.types.
 func dashboardType(name string) string {
-	if path.Ext(name) == ".woff2" {
+	ext := path.Ext(name)
+	switch ext {
+	case ".js":
+		return "text/javascript; charset=utf-8"
+	case ".woff2":
 		return "font/woff2"
+	default:
+		return mime.TypeByExtension(ext)
 	}
-	return mime.TypeByExtension(path.Ext(name))
 }

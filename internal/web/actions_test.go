@@ -252,7 +252,7 @@ func TestCheckOfGoneItemAnswersUncachedWithGoneEvent(t *testing.T) {
 	}
 	var got struct {
 		Item struct {
-			Cached  bool     `json:"cached"`
+			Cached  *bool    `json:"cached"`
 			Reasons []string `json:"reasons"`
 		} `json:"item"`
 		Timeline []struct {
@@ -262,7 +262,10 @@ func TestCheckOfGoneItemAnswersUncachedWithGoneEvent(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Item.Cached || len(got.Timeline) == 0 || got.Timeline[0].Kind != "gone" {
-		t.Fatalf("cached %v, timeline %+v", got.Item.Cached, got.Timeline)
+	if got.Item.Cached == nil || *got.Item.Cached {
+		t.Fatalf("expected explicit cached: false, body %s", w.Body)
+	}
+	if len(got.Timeline) == 0 || got.Timeline[0].Kind != "gone" {
+		t.Fatalf("expected newest event to be gone, timeline %+v", got.Timeline)
 	}
 }
