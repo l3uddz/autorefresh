@@ -436,7 +436,10 @@ function SortControl({ tab, sort, onSort }: { tab: TabName; sort: string; onSort
         isLabelHidden
         variant="secondary"
         value={key}
-        options={[{ value: '', label: 'Default order' }, ...sortKeys[tab].map(entry => ({ value: entry.key, label: `Sort by ${entry.label.toLowerCase()}` }))]}
+        // Short option labels keep the menu's typeahead useful; the closed
+        // control says what the value means.
+        options={[{ value: '', label: 'Default order' }, ...sortKeys[tab].map(entry => ({ value: entry.key, label: entry.label }))]}
+        renderValue={option => (option.value ? `Sort by ${(option.label ?? option.value).toLowerCase()}` : option.label)}
         onChange={value => onSort(formatSort(value ?? '', sortKeys[tab].find(entry => entry.key === value)?.desc ?? false))}
       />
       {key && (
