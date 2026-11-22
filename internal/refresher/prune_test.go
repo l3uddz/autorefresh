@@ -197,3 +197,22 @@ func TestDryRunPrunesNothing(t *testing.T) {
 	}
 	wantField(t, lines[0], "server", testServer)
 }
+
+// A dry run logs that it keeps the cache also when the server lists no
+// library, and still keeps the cache of a server that may be starting.
+func TestDryRunWithEmptyListingLogsKeptCache(t *testing.T) {
+	fp := newFakePlex()
+	f := newFixture(t, Server{Name: testServer, Plex: fp})
+	f.seed(testServer, moviesLib, incompleteItem("101"), store.NoSummary, 0)
+
+	f.run(t0)
+
+	if got := f.cached(testServer + "/1"); !got[testServer+"/1"] {
+		t.Errorf("cached = %v, want the library kept", got)
+	}
+	lines := f.logLines("info", "Dry run keeps cache of removed libraries")
+	if len(lines) != 1 {
+		t.Fatalf("got %d dry run lines, want 1", len(lines))
+	}
+	wantField(t, lines[0], "server", testServer)
+}

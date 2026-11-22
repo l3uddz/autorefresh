@@ -69,14 +69,15 @@ func (r *Refresher) saveLibraries(run *serverRun) error {
 }
 
 // pruneSections removes the cache of each library of the server that the
-// run did not select. A server that lists no library at all can still be
-// starting, so it keeps its cache.
+// run did not select. A dry run removes nothing and logs that once. A
+// server that lists no library at all can still be starting, so it keeps
+// its cache.
 func (r *Refresher) pruneSections(run *serverRun, libraries []plex.Library) error {
-	if len(libraries) == 0 {
-		return nil
-	}
 	if r.opts.DryRun {
 		log.Info().Str("server", run.server.Name).Msg("Dry run keeps cache of removed libraries")
+		return nil
+	}
+	if len(libraries) == 0 {
 		return nil
 	}
 	pruned, err := r.store.PruneSections(run.server.Name, run.sections())
