@@ -3,6 +3,7 @@ package refresher
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -199,7 +200,7 @@ func TestCheckGoneItemRemovesRowAndRecordsManualEvent(t *testing.T) {
 
 func TestManualMatchRecordsTargetAndStoppedRunSkipsItem(t *testing.T) {
 	lib := plex.Library{ID: "1", Type: "movie"}
-	f := newRefreshFixture(t, Server{Name: "home", Plex: newFakePlex(lib)})
+	f := newRefreshFixture(t, Server{Name: "home", Plex: checkedMetadata{fakePlex: newFakePlex(lib), answers: []checkAnswer{{item: incompleteItem("1")}}, checks: new(int)}})
 	f.now = t0
 	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
 	batch, _ := f.row("home", "1", "1")
@@ -215,11 +216,106 @@ func TestManualMatchRecordsTargetAndStoppedRunSkipsItem(t *testing.T) {
 		t.Fatal(err)
 	}
 	row, _ := f.row("home", "1", "1")
-	if row.StoppedAt.IsZero() || row.Attempts != 1 {
+	// The match and the refresh after it are two attempts.
+	if row.StoppedAt.IsZero() || row.Attempts != 2 {
 		t.Fatalf("item after match = %+v", row)
 	}
-	e := f.newestEvent("1")
+	e := f.matchEvent("1")
 	if e.MatchGUID != cand.GUID || e.MatchTitle != cand.Name || e.MatchYear != cand.Year || e.Source != store.SourceManual {
 		t.Fatalf("match event = %+v", e)
+	}
+}
+
+// matchEvent returns the newest match request event of key.
+func (f *fixture) matchEvent(key string) store.Event {
+	f.t.Helper()
+	for _, e := range f.timeline(key) {
+		if e.Kind == store.EventRequest && e.Action == store.ActionMatch {
+			return e
+		}
+	}
+	f.t.Fatalf("item %s has no match event", key)
+	return store.Event{}
+}
+
+// checkedMetadata answers each Item call with the next result of answers,
+// and repeats the last one.
+type checkedMetadata struct {
+	*fakePlex
+	answers []checkAnswer
+	checks  *int
+}
+
+type checkAnswer struct {
+	item plex.Item
+	err  error
+}
+
+func (p checkedMetadata) Item(context.Context, string) (plex.Item, error) {
+	a := p.answers[min(*p.checks, len(p.answers)-1)]
+	*p.checks++
+	return a.item, a.err
+}
+
+func matchCheckFixture(t *testing.T, answers ...checkAnswer) (*fixture, *fakePlex, *int) {
+	t.Helper()
+	lib := plex.Library{ID: "1", Type: "movie"}
+	fake, checks := newFakePlex(lib), new(int)
+	f := newRefreshFixture(t, Server{Name: "home", Plex: checkedMetadata{fakePlex: fake, answers: answers, checks: checks}})
+	f.now = t0
+	unmatched := incompleteItem("1")
+	unmatched.GUID = "local://1"
+	f.seed("home", lib, unmatched, store.Unmatched|store.NoSummary, 0)
+	return f, fake, checks
+}
+
+func TestApplyMatchRefreshesAndChecksUntilComplete(t *testing.T) {
+	still := incompleteItem("1")
+	f, fake, checks := matchCheckFixture(t, checkAnswer{item: still}, checkAnswer{item: completeItem("1")})
+	cand := plex.Candidate{GUID: "plex://movie/1", Name: "Match", Year: 2020}
+	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"Match 1 plex://movie/1", "Refresh 1"}; !reflect.DeepEqual(fake.calls, want) {
+		t.Errorf("calls = %v, want %v", fake.calls, want)
+	}
+	if want := []time.Duration{time.Second, 2 * time.Second}; *checks != 2 || !reflect.DeepEqual(f.sleeps, want) {
+		t.Errorf("checks %d, sleeps %v, want 2 and %v", *checks, f.sleeps, want)
+	}
+	if _, found := f.row("home", "1", "1"); found {
+		t.Error("complete item still in the cache")
+	}
+	if e := f.newestEvent("1"); e.Kind != store.EventCompleted || e.FixedMatch != store.ActionMatch {
+		t.Errorf("newest event = %+v, want a completion credited to the match", e)
+	}
+}
+
+func TestApplyMatchCheckFailureKeepsMatch(t *testing.T) {
+	f, _, checks := matchCheckFixture(t, checkAnswer{err: errors.New("plex unavailable")})
+	cand := plex.Candidate{GUID: "plex://movie/1", Name: "Match", Year: 2020}
+	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {
+		t.Fatalf("match = %v, want nil after an accepted match", err)
+	}
+	if want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}; *checks != 3 || !reflect.DeepEqual(f.sleeps, want) {
+		t.Errorf("checks %d, sleeps %v, want 3 and %v", *checks, f.sleeps, want)
+	}
+	row, found := f.row("home", "1", "1")
+	if !found || row.Reasons != store.Unmatched|store.NoSummary || row.LastMatch != store.ActionMatch {
+		t.Errorf("row = %+v, found %v", row, found)
+	}
+	if e := f.matchEvent("1"); !e.Accepted {
+		t.Errorf("match event = %+v", e)
+	}
+}
+
+func TestApplyMatchFailedSkipsRefreshAndCheck(t *testing.T) {
+	f, fake, checks := matchCheckFixture(t, checkAnswer{item: completeItem("1")})
+	fake.matchErrs["1"] = errors.New("plex refused")
+	cand := plex.Candidate{GUID: "plex://movie/1", Name: "Match", Year: 2020}
+	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err == nil {
+		t.Fatal("failed match returned nil")
+	}
+	if want := []string{"Match 1 plex://movie/1"}; !reflect.DeepEqual(fake.calls, want) || *checks != 0 || len(f.sleeps) != 0 {
+		t.Errorf("calls %v, checks %d, sleeps %v", fake.calls, *checks, f.sleeps)
 	}
 }
