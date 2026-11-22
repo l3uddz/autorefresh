@@ -67,7 +67,7 @@ func defaults() Config {
 		CacheRefresh:       "0 3 * * 0",
 		Oversample:         48 * time.Hour,
 		RefreshDelay:       5 * time.Second,
-		MaxRefreshesPerRun: 250,
+		MaxRefreshesPerRun: 100,
 	}
 }
 

@@ -48,8 +48,8 @@ func TestDecodeAppliesDefaults(t *testing.T) {
 	if len(cfg.IgnoreReasons) != 0 {
 		t.Errorf("IgnoreReasons = %v, want none", cfg.IgnoreReasons)
 	}
-	if cfg.MaxRefreshesPerRun != 250 {
-		t.Errorf("MaxRefreshesPerRun = %d, want 250", cfg.MaxRefreshesPerRun)
+	if cfg.MaxRefreshesPerRun != 100 {
+		t.Errorf("MaxRefreshesPerRun = %d, want 100", cfg.MaxRefreshesPerRun)
 	}
 	if got := cfg.Plex[0].RequestTimeout(); got != 30*time.Second {
 		t.Errorf("RequestTimeout = %v, want 30s", got)
