@@ -285,8 +285,24 @@ func TestApplyMatchRefreshesAndChecksUntilComplete(t *testing.T) {
 	if _, found := f.row("home", "1", "1"); found {
 		t.Error("complete item still in the cache")
 	}
-	if e := f.newestEvent("1"); e.Kind != store.EventCompleted || e.FixedMatch != store.ActionMatch {
-		t.Errorf("newest event = %+v, want a completion credited to the match", e)
+	match := f.matchEvent("1")
+	if e := f.newestEvent("1"); e.Kind != store.EventCompleted || e.FixedAction != store.ActionRefresh ||
+		e.FixedMatch != store.ActionMatch || e.FixedMatchEventID != match.ID {
+		t.Errorf("newest event = %+v, want a completion credited to the refresh after match %d", e, match.ID)
+	}
+}
+
+// The first check that leaves reasons saves them: the matched item has a
+// GUID now, so only its missing summary remains.
+func TestApplyMatchCheckSavesRemainingReasons(t *testing.T) {
+	f, _, checks := matchCheckFixture(t, checkAnswer{item: incompleteItem("1")})
+	cand := plex.Candidate{GUID: "plex://movie/1", Name: "Match", Year: 2020}
+	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {
+		t.Fatal(err)
+	}
+	row, found := f.row("home", "1", "1")
+	if *checks != 3 || !found || row.Reasons != store.NoSummary {
+		t.Errorf("checks %d, row %+v, found %v, want 3 checks and only no-summary", *checks, row, found)
 	}
 }
 
