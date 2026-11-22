@@ -373,3 +373,90 @@ func TestDryRunReadWritesNoEvents(t *testing.T) {
 		}
 	}
 }
+
+func TestRecordMatchDecisionRoundTrips(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	at := base.Add(time.Hour)
+	searches := []MatchSearch{
+		{Query: "tmdb-1", Source: "path", Candidates: []MatchCandidate{
+			{GUID: "plex://show/1", Name: "A", Year: 2020, Type: "show", Summary: "S", Thumb: "/t", Score: 90, Verdict: "picked"},
+			{GUID: "plex://show/2", Name: "B", Year: 2019, Score: 40, Verdict: "year-mismatch"},
+		}},
+		{Query: "tmdb-2", Source: "tmdb", FromID: "tvdb-9", Failed: true},
+	}
+	err := s.RecordMatchDecision(MatchDecision{
+		Server: srv, RatingKey: "a", At: at, Source: SourceManual, Outcome: DecisionMatched,
+		Conflict: "c", Error: "e", PathYear: 2020, TMDBYear: 2021, EpisodeCount: 8, Searches: searches,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := s.Timeline(srv, "a")
+	if err != nil || len(events) != 1 {
+		t.Fatalf("Timeline = %v, %v", events, err)
+	}
+	e := events[0]
+	if e.Kind != EventMatchDecision || e.Outcome != "matched" || e.Source != SourceManual || !e.At.Equal(at) ||
+		e.Title != "Title a" || e.Conflict != "c" || e.Error != "e" || e.PathYear != 2020 || e.TMDBYear != 2021 || e.EpisodeCount != 8 {
+		t.Fatalf("event = %+v", e)
+	}
+	if !reflect.DeepEqual(e.Searches, searches) {
+		t.Fatalf("searches = %+v, want %+v", e.Searches, searches)
+	}
+	if got := rows(t, s)["a"]; got.LastMatchOutcome != "matched" {
+		t.Fatalf("row = %+v", got)
+	}
+}
+
+func TestRecordMatchDecisionNoIDs(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	err := s.RecordMatchDecision(MatchDecision{Server: srv, RatingKey: "a", At: base, Source: SourceAuto, Outcome: DecisionNoIDs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := s.Timeline(srv, "a")
+	if err != nil || len(events) != 1 || events[0].Outcome != "no-ids" || events[0].Searches != nil {
+		t.Fatalf("events = %+v, %v", events, err)
+	}
+	if err := s.RecordMatchDecision(MatchDecision{Server: srv, RatingKey: "zz", At: base, Source: SourceAuto, Outcome: DecisionNoIDs}); err != nil {
+		t.Fatalf("missing row: %v", err)
+	}
+	if events, _ := s.Timeline(srv, "zz"); len(events) != 0 {
+		t.Fatalf("events for missing row = %+v", events)
+	}
+}
+
+func TestTimelineWithSeveralDecisions(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt), item("b", NoArt)}})
+	cand := func(g string) []MatchCandidate { return []MatchCandidate{{GUID: g, Verdict: "picked"}} }
+	decide := func(key string, at time.Time, searches ...MatchSearch) {
+		t.Helper()
+		err := s.RecordMatchDecision(MatchDecision{Server: srv, RatingKey: key, At: at, Source: SourceAuto,
+			Outcome: DecisionMatched, Searches: searches})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	decide("a", base, MatchSearch{Query: "q1", Candidates: cand("g1")}, MatchSearch{Query: "q2", Candidates: cand("g2")})
+	accept(t, s, "a", base.Add(time.Minute), ActionMatch)
+	decide("a", base.Add(2*time.Minute), MatchSearch{Query: "q3"})
+	decide("b", base, MatchSearch{Query: "other", Candidates: cand("gb")})
+
+	events, err := s.Timeline(srv, "a")
+	if err != nil || len(events) != 3 {
+		t.Fatalf("Timeline = %+v, %v", events, err)
+	}
+	if got := events[0].Searches; len(got) != 1 || got[0].Query != "q3" || got[0].Candidates != nil {
+		t.Fatalf("newest searches = %+v", got)
+	}
+	if events[1].Kind != EventRequest || events[1].Searches != nil {
+		t.Fatalf("request event = %+v", events[1])
+	}
+	got := events[2].Searches
+	if len(got) != 2 || got[0].Query != "q1" || got[0].Candidates[0].GUID != "g1" || got[1].Query != "q2" || got[1].Candidates[0].GUID != "g2" {
+		t.Fatalf("oldest searches = %+v", got)
+	}
+}
