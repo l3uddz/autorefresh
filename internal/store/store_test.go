@@ -553,6 +553,13 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 			_, err := s.FinishRun(1, RunStart{Server: srv, StartedAt: base}, RunResult{FinishedAt: base, Status: RunFinished})
 			return err
 		},
+		"KnownItem":     func() error { _, _, _, err := s.KnownItem(srv, "101"); return err },
+		"SetStopped":    func() error { _, err := s.SetStopped(context.Background(), srv, "101", base, true); return err },
+		"RecordManual":  func() error { return s.RecordManual(ManualRecord{Request: Request{Source: SourceManual}}) },
+		"ApplyCheck":    func() error { _, err := s.ApplyCheck(srv, item("101", NoSummary), base); return err },
+		"LibraryInfo":   func() error { _, _, err := s.LibraryInfo(srv, sec); return err },
+		"FinishJob":     func() error { _, err := s.FinishJob(1, RunStart{}, RunResult{}, nil); return err },
+		"RunItems":      func() error { _, err := s.RunItems(context.Background(), 1); return err },
 		"InterruptRuns": func() error { _, err := s.InterruptRuns(base); return err },
 		"PruneHistory":  func() error { _, _, err := s.PruneHistory(base); return err },
 		"Runs":          func() error { _, err := s.Runs(context.Background(), RunQuery{Limit: 10}); return err },

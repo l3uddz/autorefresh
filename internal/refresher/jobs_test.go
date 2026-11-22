@@ -6,10 +6,11 @@ import (
 	"errors"
 	"strings"
 	"sync/atomic"
+	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"testing"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
@@ -109,4 +110,107 @@ func captureJobsLog(t *testing.T) *bytes.Buffer {
 	log.Logger = zerolog.New(&buf)
 	t.Cleanup(func() { log.Logger = prev })
 	return &buf
+}
+
+type blockingRefresh struct {
+	*fakePlex
+	entered chan struct{}
+}
+
+func (p blockingRefresh) Refresh(ctx context.Context, _ string) error {
+	close(p.entered)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestCancelBulkRecordsInFlightAttemptAndRemainingKey(t *testing.T) {
+	lib := plex.Library{ID: "1", Type: "movie"}
+	p := blockingRefresh{newFakePlex(lib), make(chan struct{})}
+	f := newRefreshFixture(t, Server{Name: "home", Plex: p})
+	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
+	f.seed("home", lib, incompleteItem("2"), store.NoSummary, 0)
+	jobs := NewJobs(f.r)
+	t.Cleanup(jobs.Close)
+	id, err := jobs.BulkRefresh("home", []string{"1", "2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-p.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("bulk refresh did not reach Plex")
+	}
+	if _, err := jobs.RunNow(nil); !errors.Is(err, ErrBusy) {
+		t.Fatalf("overlapping run error = %v", err)
+	}
+	if err := jobs.Cancel(id); err != nil {
+		t.Fatal(err)
+	}
+	jobs.wg.Wait()
+	if got := f.onlyRun(); got.Status != store.RunCanceled || got.Refreshed != 1 || got.Failed != 1 {
+		t.Errorf("canceled job = %+v", got)
+	}
+	results, err := f.store.RunItems(t.Context(), id)
+	if err != nil || len(results) != 2 || results[0].Outcome != store.ItemFailed || results[1].Outcome != store.ItemNotReached {
+		t.Fatalf("results = %+v, %v", results, err)
+	}
+	if row, ok := f.row("home", lib.ID, "1"); !ok || row.Attempts != 1 {
+		t.Errorf("row = %+v, found = %v", row, ok)
+	}
+}
+
+func TestRunNowStartFailureReleasesAdmission(t *testing.T) {
+	f := newRefreshFixture(t, Server{Name: "home", Plex: newFakePlex()})
+	f.now = t0
+	st := &runStore{Store: f.store, failStart: true}
+	f.r.store = st
+	jobs := NewJobs(f.r)
+	t.Cleanup(jobs.Close)
+	if _, err := jobs.RunNow(nil); !errors.Is(err, errRun) {
+		t.Fatalf("first admission error = %v", err)
+	}
+	st.failStart = false
+	ids, err := jobs.RunNow(nil)
+	if err != nil || len(ids) != 1 {
+		t.Fatalf("second admission = %v, %v", ids, err)
+	}
+	jobs.wg.Wait()
+	if got := f.onlyRun(); got.ID != ids[0] || got.Source != store.RunSourceManual || got.Status != store.RunFinished {
+		t.Fatalf("manual run = %+v", got)
+	}
+}
+
+func TestRunNowSubsetKeepsOtherConfiguredServer(t *testing.T) {
+	lib := plex.Library{ID: "1", Type: "movie"}
+	f := newRefreshFixture(t,
+		Server{Name: "home", Plex: newFakePlex(lib)},
+		Server{Name: "away", Plex: newFakePlex(lib)},
+	)
+	f.now = t0
+	f.seed("away", lib, incompleteItem("1"), store.NoSummary, 0)
+	if _, err := f.store.SetStopped(t.Context(), "away", "1", t0, true); err != nil {
+		t.Fatal(err)
+	}
+	awayRun, err := f.store.StartRun(store.RunStart{Server: "away", Kind: store.RunKindRun, Source: store.RunSourceSchedule, StartedAt: t0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs := NewJobs(f.r)
+	t.Cleanup(jobs.Close)
+	if ids, err := jobs.RunNow([]string{"home"}); err != nil || len(ids) != 1 {
+		t.Fatalf("start = %v, %v", ids, err)
+	}
+	jobs.wg.Wait()
+	row, found := f.row("away", "1", "1")
+	if !found || row.StoppedAt.IsZero() {
+		t.Fatalf("away row = %+v, found %v", row, found)
+	}
+	events, err := f.store.Timeline("away", "1")
+	if err != nil || len(events) != 1 || events[0].Kind != store.EventStopped {
+		t.Fatalf("away events = %+v, %v", events, err)
+	}
+	runs, err := f.store.Runs(t.Context(), store.RunQuery{Servers: []string{"away"}})
+	if err != nil || len(runs) != 1 || runs[0].ID != awayRun {
+		t.Fatalf("away runs = %+v, %v", runs, err)
+	}
 }

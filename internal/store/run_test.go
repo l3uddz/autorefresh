@@ -373,3 +373,25 @@ func TestFinishJobResultsAreAtomic(t *testing.T) {
 		t.Fatalf("runs = %+v, %v", rows, err)
 	}
 }
+
+func TestFinishJobAfterServerPrune(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("1", NoSummary)}})
+	start := runStart(srv, base)
+	start.Kind = RunKindBulkRefresh
+	id, err := s.StartRun(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.PruneServers([]string{"other"}); err != nil {
+		t.Fatal(err)
+	}
+	written, err := s.FinishJob(id, start, RunResult{FinishedAt: base, Status: RunFinished}, []RunItem{{RatingKey: "1", Outcome: ItemAccepted}})
+	if err != nil || written {
+		t.Fatalf("finish after prune = %v, %v", written, err)
+	}
+	items, err := s.RunItems(t.Context(), id)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("item results = %+v, %v", items, err)
+	}
+}

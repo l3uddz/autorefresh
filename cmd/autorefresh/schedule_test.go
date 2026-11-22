@@ -58,3 +58,56 @@ func TestServeWaitsForFirstRun(t *testing.T) {
 		t.Fatal("serve returned before the first run returned")
 	}
 }
+
+type shutdownJobs struct {
+	started chan struct{}
+	order   chan string
+}
+
+func (j shutdownJobs) Scheduled(ctx context.Context) {
+	close(j.started)
+	<-ctx.Done()
+	j.order <- "scheduled-return"
+}
+
+func (j shutdownJobs) Close() { j.order <- "jobs-close" }
+
+type stopFunc func(context.Context) error
+
+func (stop stopFunc) Stop(ctx context.Context) error { return stop(ctx) }
+
+func TestServeUntilStoppedDrainsInOrder(t *testing.T) {
+	jobs := shutdownJobs{started: make(chan struct{}), order: make(chan string, 3)}
+	ui := stopFunc(func(context.Context) error {
+		jobs.order <- "ui-stop"
+		return nil
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		serveUntilStopped(ctx, ui, jobs, cron.Every(24*time.Hour))
+	}()
+	select {
+	case <-jobs.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("schedule did not start")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not finish")
+	}
+	for _, want := range []string{"ui-stop", "scheduled-return", "jobs-close"} {
+		select {
+		case got := <-jobs.order:
+			if got != want {
+				t.Fatalf("shutdown step = %q, want %q", got, want)
+			}
+		default:
+			t.Fatalf("missing %q", want)
+		}
+	}
+}
