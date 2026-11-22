@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { duration, fixedBy, fullReadText, lastAction, nextRunText, plural, queueState, relative, runDuration, runKind, typeName } from './format';
+import { duration, fixedBy, fullReadText, lastAction, nextRunText, plural, queueState, relative, runDuration, runKind, runTitle, typeName } from './format';
 
 const now = Date.parse('2026-11-22T12:00:00Z');
 const at = (seconds: number) => new Date(now + seconds * 1000).toISOString();
@@ -78,6 +78,13 @@ describe('type names', () => {
     // Runs from before the read counts, and runs that read no library.
     expect(runKind(run)).toBe('Run');
     expect(runKind({ kind: 'run' })).toBe('Run');
+  });
+
+  it('names a run by its source and how it read', () => {
+    const run = { kind: 'run', source: 'schedule', fullReads: 2, incrementalReads: 0 };
+    expect(runTitle(run)).toBe('Scheduled · Full run');
+    expect(runTitle({ ...run, source: 'manual', fullReads: 0, incrementalReads: 1 })).toBe('Manual · Incremental run');
+    expect(runTitle({ ...run, kind: 'bulk-refresh', source: 'manual' })).toBe('Bulk refresh');
   });
 
   it('describes the next full cache refresh', () => {

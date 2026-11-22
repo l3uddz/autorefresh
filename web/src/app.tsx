@@ -47,7 +47,7 @@ export function App() {
         </Suspense>
       ) : route.page === 'runs' ? (
         <Suspense fallback={<PageSkeleton />}>
-          <RunsPage srv={srv} />
+          <RunsPage srv={srv} run={route.run} />
         </Suspense>
       ) : (
         <StatusPage srv={srv} />

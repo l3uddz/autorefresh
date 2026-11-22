@@ -15,10 +15,10 @@ import { ClockIcon } from '@heroicons/react/24/outline';
 import { useQuery } from '@tanstack/react-query';
 import { api, useRuns, useServers, useStatus, type Health, type ItemPage, type RunProgress, type RunRecord, type ServerInfo, type ServerStatus } from './api';
 import { useNow } from './clock';
-import { dateTime, fixedBy, fullReadText, label, nextRunText, plural, relative, runDuration, runKind } from './format';
+import { dateTime, fixedBy, fullReadText, label, nextRunText, plural, relative, runDuration, runTitle } from './format';
 import { Poster } from './media';
 import { cancelBulkQueue, isQueueActive, queueProgress, useBulkQueue } from './queue';
-import { itemHash, routeHash } from './route';
+import { itemHash, routeHash, runHash } from './route';
 import { useCancelRun, useRunNow } from './runs';
 
 /** The Status page of every server, or of the server srv. */
@@ -281,7 +281,7 @@ function RecentRuns({ isMulti, srv }: { isMulti: boolean; srv?: number }) {
       {runs.data?.runs.length === 0 && <EmptyState isCompact title="No runs yet" description="Each scheduled or manual run shows up here." />}
       {runs.data && runs.data.runs.length > 0 && (
         <List density="balanced" hasDividers>
-          {runs.data.runs.map(run => <RunRow key={run.id} run={run} isMulti={isMulti} />)}
+          {runs.data.runs.map(run => <RunRow key={run.id} run={run} isMulti={isMulti} href={runHash(run.id, srv)} />)}
         </List>
       )}
     </VStack>
@@ -305,10 +305,10 @@ export function NextRun() {
 
 /** One run as a list row. A detailed row, as on the Runs page of a phone,
  * shows every count and wraps them, with the error below. */
-export function RunRow({ run, isMulti, isDetailed = false }: { run: RunRecord; isMulti: boolean; isDetailed?: boolean }) {
+export function RunRow({ run, isMulti, href, isSelected, isDetailed = false }: { run: RunRecord; isMulti: boolean; href: string; isSelected?: boolean; isDetailed?: boolean }) {
   // The Runs page names how the run read; the Status page keeps it short.
   const source = run.kind === 'bulk-refresh' ? 'Bulk refresh' : run.source === 'manual' ? 'Manual run' : 'Scheduled run';
-  const kind = isDetailed && run.kind !== 'bulk-refresh' ? `${run.source === 'manual' ? 'Manual' : 'Scheduled'} · ${runKind(run)}` : source;
+  const kind = isDetailed ? runTitle(run) : source;
   const duration = run.finishedAt ? runDuration(run.startedAt, run.finishedAt) : 'not ended';
   const counts = isDetailed
     ? [`${run.readItems} read`, `${run.refreshed} refreshed`, `${run.matched} matched`, `${run.failed} failed`, `${run.fixed} fixed`, `${run.due} due`, duration].join(' · ')
@@ -319,6 +319,8 @@ export function RunRow({ run, isMulti, isDetailed = false }: { run: RunRecord; i
           .join(' · ');
   return (
     <ListItem
+      href={href}
+      isSelected={isSelected}
       label={isMulti ? `${run.server} · ${kind}` : kind}
       description={
         isDetailed ? (

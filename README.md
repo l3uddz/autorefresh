@@ -599,8 +599,22 @@ address keeps the choice, so a link or a reload shows the same server.
   was canceled counts only the reads that it completed. A run that
   completed no library read shows **Run**, as do older runs, recorded
   before autorefresh counted its full and incremental reads. A run that
-  has not ended shows no duration. **Load more** reads the next page. The list updates when a run starts or ends. On a narrow
-  screen, each run is one row with its summary.
+  has not ended shows no duration. **Load more** reads the next page.
+  The list updates when a run starts or ends. On a narrow screen, each run
+  is one row with its summary.
+- A click on a run, or Enter or Space on its row, opens its details in a
+  drawer, also from **Recent runs** on the Status page. The drawer shows
+  the kind, the status, the start, the duration, the libraries read, the
+  error, and the counts. Below, it lists the items of the run by outcome:
+  **Refreshed**, **Matched**, **Failed**, **Fixed**, **Completed by
+  Plex**, and **Removed**. Each item shows what happened to it, such as the
+  fix match decision before a request, and opens its item details. A bulk
+  refresh lists its selected items as **Refreshed**, **Failed**,
+  **Removed**, **Skipped**, and **Not reached**. Runs from before this
+  version recorded no items, so their drawer says that the item details
+  were not recorded. The read and due counts stay numbers. A running run
+  reloads its items every 5 seconds. Each run has its own link,
+  `#/runs/<id>`.
 
 **Fix match** in the item details opens a dialog to choose the Plex match
 of the item by hand, also for an item on the Fixed tab that Plex matched

@@ -62,6 +62,13 @@ export function runKind(run: { kind: string; fullReads?: number; incrementalRead
   return 'Run';
 }
 
+/** Returns the title of a run, such as "Scheduled · Full run", or "Bulk
+ * refresh". */
+export function runTitle(run: { kind: string; source: string; fullReads?: number; incrementalReads?: number }): string {
+  if (run.kind === 'bulk-refresh') return 'Bulk refresh';
+  return `${run.source === 'manual' ? 'Manual' : 'Scheduled'} · ${runKind(run)}`;
+}
+
 /** Returns the time of value as a short local date and time. */
 export function dateTime(value?: string): string {
   if (!value) return '—';

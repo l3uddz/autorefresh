@@ -230,6 +230,23 @@ export interface RunItem {
   error?: string;
 }
 
+/** An event that a run wrote, with the item that it names. */
+export interface RunEvent extends TimelineEvent {
+  key: string;
+  title?: string;
+  year?: number;
+  type?: string;
+  thumb?: string;
+}
+
+/** One run with the events that it wrote and, for a bulk refresh, the
+ * outcome of each selected item. */
+export interface RunDetail {
+  run: RunRecord;
+  events: RunEvent[];
+  items: RunItem[];
+}
+
 /** An answer of the API other than 2xx, with the message of its body. */
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) {
