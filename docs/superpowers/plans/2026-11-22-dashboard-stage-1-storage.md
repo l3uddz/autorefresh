@@ -120,12 +120,12 @@ func TestDeletingEventClearsFixedMatchReference(t *testing.T)
 - Modify: `internal/plex/action.go` (`Candidate`, `SearchMatches` decoding)
 - Modify: `internal/plex/testdata/matches_one.json` (add `"score": 98`)
 - Modify: `internal/plex/action_test.go` (`TestSearchMatchesDecodesCandidates` expects the new fields)
-- Modify: `internal/plex/library.go` (`ItemPaths`), `internal/plex/library_test.go` (`TestItemPathsShowWithoutLocation`)
-- Create: `internal/plex/testdata/item_show_no_location.json` (a show with a `Media` part and no `Location`)
+- Modify: `internal/plex/library.go` (`Paths`, `ItemPaths`), `internal/plex/library_test.go`, `internal/plex/client_test.go` (call sites)
+- Modify: `internal/refresher/refresher.go` (`Plex.ItemPaths` signature), `internal/refresher/fake_test.go` (`fakePlex.ItemPaths` returns `plex.Paths{Locations: f.paths[key]}`), `internal/refresher/refresh.go` (`itemPaths` returns `.All()`), `internal/refresher/read.go` (ignores the value as today)
 
 **Interfaces:**
 - Produces: `func ItemImagePath(ratingKey, p string) string` — returns `p` only if `ratingKey` matches `idPattern` (`client.go`) and `p` is exactly `/library/metadata/<ratingKey>/thumb/<digits>` or `/library/metadata/<ratingKey>/art/<digits>` (no query, fragment, or escape); else `""`.
-- Changes: `(c *Client) ItemPaths` falls back to `m.files()` only when the item is not a show (`metadata` gains `Type string \`json:"type"\``; the check is `m.Type != ShowLibrary`); a show without `Location` returns no paths. So every path of a show is a `Location`, which Task 10 saves as the series folder. A show's files are on its episodes, so match evaluation loses nothing.
+- Changes: `type Paths struct{ Locations, Files []string }` with `func (p Paths) All() []string` (Locations when not empty, else Files: today's rule). `(c *Client) ItemPaths(ctx, ratingKey) (Paths, error)` fills both from the response. Match evaluation uses `All()`, so its behavior does not change; Task 10 saves only `Locations[0]`, so a media file can never become a series folder, whatever the response's `type`.
 - Produces: `func SafeRemoteImage(raw string) string` — returns `raw` only if `raw` contains no `#` (a bare trailing `#` leaves `URL.Fragment` empty, as `config.go` already handles), `url.Parse` succeeds, the scheme is `https`, `Hostname()` is not empty, there is no user info, `url.ParseQuery(RawQuery)` succeeds, and no query key contains `token` (case-insensitive, so `X-Plex-Token` too); else `""`.
 - Produces: `Candidate{GUID, Name string; Year int; Type, Summary, Thumb string; Score int}`. `SearchMatches` sets `Thumb` through `SafeRemoteImage`. `Match` keeps sending only `guid`, `name`, `year`.
 
@@ -143,8 +143,8 @@ func TestSafeRemoteImage(t *testing.T)
 // -> "" for: "http://h/x.jpg"; "https://user:pw@h/x.jpg"; "https://:443/x.jpg";
 //    "https://h/x.jpg?X-Plex-Token=abc"; "https://h/x.jpg?apitoken=abc"; "https://h/x.jpg?a=%zz";
 //    "https://h/x.jpg#f"; "https://h/x.jpg#"; "/relative.jpg"; ""
-// TestItemPathsShowWithoutLocation: a show response with Media parts and no Location -> no paths, no error
-// (ItemPaths falls back to the media files only for a non-show item; see the bullet below)
+// TestItemPathsReadsLocationsAndFiles keeps its cases, asserting All(), and also asserts Locations and Files:
+//   item_show.json -> Locations [folder], Files empty; a movie fixture -> Locations empty, Files [file]
 ```
 
 Update `TestSearchMatchesDecodesCandidates` to expect `Candidate{GUID: "plex://movie/000000000000000000000001", Name: "Fixture Movie One", Year: 2020, Type: "movie", Summary: "A neutral summary.", Thumb: "https://metadata.example.invalid/thumb.jpg", Score: 98}`.
@@ -489,7 +489,7 @@ func TestDryRunPrunesNothing(t *testing.T)
 - `refreshItem` → on success `RecordRequest{Action: action, Accepted: true, Source: store.SourceAuto, Match: target(fm)}`. `target(fm *fixMatch) *store.MatchTarget` copies `cand.GUID`, `cand.Name`, `cand.Year`, `links`, `pathYear`, `tmdbYear`, `episodeCount`; nil when `fm` is nil.
 - `itemFailed(ctx, run, it, action, fm, err)`: a 404 calls `RecordGone` (not in dry run); other failures call `countFailure(ctx, run, it, action, fm, err)`, which records `RecordRequest{Action: action, Accepted: false, Source: store.SourceAuto, Error: err.Error(), Match: target(fm)}`. Every refresher call of `RecordRequest` sets `Source: store.SourceAuto`; `RecordRequest` returns an error for an empty `Source` (Task 5), so a missed one fails a test instead of storing an empty source. The attempt counting, stop rules, and log lines stay as today.
 - `storeItem` sets `Thumb: plex.ItemImagePath(it.RatingKey, it.Thumb)`, `Art: plex.ItemImagePath(it.RatingKey, it.Art)`, and for movies `Path: folderOf(it.Files)`. `folderOf(files []string) string` returns the first file up to its last `/` or `\`, or `""`.
-- `(r *Refresher) itemPaths(ctx, run, it)`: after a successful `ItemPaths` of a series (`it.Type == plex.ShowLibrary`), when `len(paths) > 0 && paths[0] != ""` and not a dry run, calls `SetPath` with `paths[0]`. For a show this is always a `Location`, because Task 3 limits the media-file fallback of `ItemPaths` to non-show items; a `SetPath` error returns wrapped with `errCache` so `itemFailed` treats it as a store error.
+- `(r *Refresher) itemPaths(ctx, run, it)` keeps returning `[]string` (`p.All()`). After a successful `ItemPaths` of a series (`it.Type == plex.ShowLibrary`), when `len(p.Locations) > 0 && p.Locations[0] != ""` and not a dry run, it calls `SetPath` with `p.Locations[0]` (never a file from `p.Files`); a `SetPath` error returns wrapped with `errCache` so `itemFailed` treats it as a store error.
 - `readLibraries` calls `SaveLibraries` with the selected libraries after `selectLibraries` (dry runs too: it is cache metadata, not history).
 
 - [ ] **Step 1: Write the failing tests**
