@@ -12,16 +12,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
 )
 
 // testNow is the clock of the API tests.
 var testNow = time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
 
-// fakePlex is a web.Plex with a fixed identity answer.
+// fakePlex is a web.Plex with a fixed identity answer. details answers
+// ItemDetails; without it, ItemDetails gives plex.ErrNotFound.
 type fakePlex struct {
-	id  string
-	err error
+	id      string
+	err     error
+	details func(ctx context.Context, ratingKey string) (plex.Details, error)
 
 	mu    sync.Mutex
 	calls int
@@ -32,6 +35,13 @@ func (f *fakePlex) Identity(context.Context) (string, error) {
 	defer f.mu.Unlock()
 	f.calls++
 	return f.id, f.err
+}
+
+func (f *fakePlex) ItemDetails(ctx context.Context, ratingKey string) (plex.Details, error) {
+	if f.details == nil {
+		return plex.Details{}, plex.ErrNotFound
+	}
+	return f.details(ctx, ratingKey)
 }
 
 func (f *fakePlex) identityCalls() int {

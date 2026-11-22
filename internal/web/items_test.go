@@ -469,7 +469,7 @@ func TestAPIStoreFailureIs500(t *testing.T) {
 	if err := st.Close(); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/api/items", "/api/servers"} {
+	for _, path := range []string{"/api/items", "/api/servers", "/api/runs", "/api/item?srv=0&key=1", "/api/item/live?srv=0&key=1"} {
 		rec := serve(s, httptest.NewRequest(http.MethodGet, path, nil))
 		assertJSONError(t, rec, http.StatusInternalServerError, "internal error")
 	}

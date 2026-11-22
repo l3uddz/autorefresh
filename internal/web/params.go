@@ -4,14 +4,19 @@ import (
 	"errors"
 	"net/url"
 	"strconv"
+
+	"github.com/l3uddz/autorefresh/internal/plex"
 )
 
 // noSrv is the srv of a request without a srv parameter.
 const noSrv = -1
 
-// errInvalidSrv is the error of a srv that is not a configured index. Its
-// text is the message of the 400 answer.
-var errInvalidSrv = errors.New("invalid srv")
+// The errors of the srv and key parameters. Their texts are the messages of
+// the 400 answers.
+var (
+	errInvalidSrv = errors.New("invalid srv")
+	errInvalidKey = errors.New("invalid key")
+)
 
 // srvParam returns the srv parameter of the query v: the index of a
 // configured server, or noSrv when v has none (an empty value counts as
@@ -39,4 +44,13 @@ func (s *Server) serverNames(srv int) []string {
 		names[i] = ps.Name
 	}
 	return names
+}
+
+// keyParam returns the key parameter of the query v, a Plex rating key.
+func keyParam(v url.Values) (string, error) {
+	key := v.Get("key")
+	if !plex.ValidRatingKey(key) {
+		return "", errInvalidKey
+	}
+	return key, nil
 }

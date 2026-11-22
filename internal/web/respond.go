@@ -1,8 +1,11 @@
 package web
 
 import (
+	"cmp"
 	"encoding/json"
 	"net/http"
+	"slices"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 )
@@ -30,4 +33,60 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 func writeStoreError(w http.ResponseWriter, r *http.Request, err error) {
 	log.Error().Err(err).Str("path", r.URL.Path).Msg("API request failed")
 	writeError(w, http.StatusInternalServerError, "internal error")
+}
+
+// redacted replaces each secret in a stored error text.
+const redacted = "<redacted>"
+
+// span is the byte range [start, end) of a text.
+type span struct{ start, end int }
+
+// redact returns text with every occurrence of each configured secret
+// replaced by "<redacted>". It finds the matches of all secrets in the
+// original text, merges the overlapping and touching ones, and replaces each
+// merged span once, so overlapping secrets leave no part of either.
+func (s *Server) redact(text string) string {
+	spans := secretSpans(text, s.secrets)
+	if len(spans) == 0 {
+		return text
+	}
+	slices.SortFunc(spans, func(a, b span) int { return cmp.Compare(a.start, b.start) })
+	var b strings.Builder
+	written := 0
+	cur := spans[0]
+	for _, sp := range spans[1:] {
+		if sp.start <= cur.end {
+			cur.end = max(cur.end, sp.end)
+			continue
+		}
+		b.WriteString(text[written:cur.start])
+		b.WriteString(redacted)
+		written, cur = cur.end, sp
+	}
+	b.WriteString(text[written:cur.start])
+	b.WriteString(redacted)
+	b.WriteString(text[cur.end:])
+	return b.String()
+}
+
+// secretSpans returns the span of every match of each non-empty secret in
+// text. It advances one byte after each match, so it also finds the
+// overlapping matches of one secret.
+func secretSpans(text string, secrets []string) []span {
+	var spans []span
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
+		for from := 0; ; {
+			i := strings.Index(text[from:], secret)
+			if i < 0 {
+				break
+			}
+			start := from + i
+			spans = append(spans, span{start, start + len(secret)})
+			from = start + 1
+		}
+	}
+	return spans
 }

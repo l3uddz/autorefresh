@@ -11,6 +11,7 @@ import (
 
 	"github.com/rs/zerolog/log"
 
+	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
 )
 
@@ -21,6 +22,7 @@ const defaultForceWait = 5 * time.Second
 // Plex is the part of plex.Client that the web server uses.
 type Plex interface {
 	Identity(ctx context.Context) (string, error)
+	ItemDetails(ctx context.Context, ratingKey string) (plex.Details, error)
 }
 
 // Store is the part of store.Store that the web server uses.
@@ -29,6 +31,9 @@ type Store interface {
 	CountItems(ctx context.Context, q store.ListQuery) (store.ListCounts, error)
 	Libraries(ctx context.Context, server string) ([]store.LibraryEntry, error)
 	Runs(ctx context.Context, q store.RunQuery) ([]store.Run, error)
+	ItemDetail(ctx context.Context, server, ratingKey string, rules store.DueRules) (store.ListItem, bool, error)
+	TimelineContext(ctx context.Context, server, ratingKey string) ([]store.Event, error)
+	FillPath(ctx context.Context, server, ratingKey, path string) error
 }
 
 // PlexServer is one configured Plex server.
@@ -50,6 +55,10 @@ type Options struct {
 	// Rules decide the queue state of the listed items. The server sets
 	// Now for each request.
 	Rules store.DueRules
+	// Secrets are the values that the API replaces with "<redacted>" in
+	// the stored error texts: Plex tokens, hosts, and path prefixes, the
+	// TMDB token, and the UI password. Empty values are skipped.
+	Secrets []string
 }
 
 // Server is the HTTP server of the dashboard.
@@ -64,6 +73,9 @@ type Server struct {
 	store    Store
 	rules    store.DueRules
 	now      func() time.Time
+	secrets  []string
+	// liveTimeout bounds the Plex request of GET /api/item/live.
+	liveTimeout time.Duration
 
 	// idMu guards identities, the cached machine identifier of each server
 	// ("": not read yet).
@@ -115,6 +127,8 @@ func New(opts Options) *Server {
 		store:        opts.Store,
 		rules:        opts.Rules,
 		now:          time.Now,
+		secrets:      opts.Secrets,
+		liveTimeout:  defaultLiveTimeout,
 		identities:   make([]string, len(opts.Servers)),
 		sseCtx:       sseCtx,
 		cancelSSE:    cancelSSE,
@@ -128,6 +142,9 @@ func New(opts Options) *Server {
 	s.mux.HandleFunc("GET /api/events", s.serveEvents)
 	s.mux.HandleFunc("GET /api/servers", s.serveServers)
 	s.mux.HandleFunc("GET /api/items", s.serveItems)
+	s.mux.HandleFunc("GET /api/item", s.serveItem)
+	s.mux.HandleFunc("GET /api/item/live", s.serveItemLive)
+	s.mux.HandleFunc("GET /api/runs", s.serveRuns)
 	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})

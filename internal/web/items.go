@@ -17,9 +17,11 @@ import (
 // The limits of GET /api/items.
 const (
 	defaultItemLimit = 100
-	maxItemLimit     = 500
 	maxSearchBytes   = 200
 )
+
+// maxPageLimit is the largest page of a list.
+const maxPageLimit = 500
 
 // The errors of the parameters of GET /api/items. Their texts are the
 // messages of the 400 answers.
@@ -150,7 +152,7 @@ func (s *Server) itemsQuery(r *http.Request) (store.ListQuery, string, error) {
 	}
 	q.WithIgnored = all && q.Tab == store.TabAttention
 	q.WithUnrequested = all && q.Tab == store.TabFixed
-	if q.Limit, err = limitParam(v.Get("limit")); err != nil {
+	if q.Limit, err = limitParam(v.Get("limit"), defaultItemLimit); err != nil {
 		return store.ListQuery{}, "", err
 	}
 	scope := itemsScope(q, srv, sort, all)
@@ -230,14 +232,14 @@ func allParam(raw string) (bool, error) {
 	}
 }
 
-// limitParam returns the page size of raw, defaultItemLimit when raw is
-// empty.
-func limitParam(raw string) (int, error) {
+// limitParam returns the page size of raw, 1 to maxPageLimit, or def when
+// raw is empty.
+func limitParam(raw string, def int) (int, error) {
 	if raw == "" {
-		return defaultItemLimit, nil
+		return def, nil
 	}
 	limit, err := strconv.Atoi(raw)
-	if err != nil || limit < 1 || limit > maxItemLimit {
+	if err != nil || limit < 1 || limit > maxPageLimit {
 		return 0, errInvalidLimit
 	}
 	return limit, nil
