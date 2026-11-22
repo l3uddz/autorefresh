@@ -405,6 +405,21 @@ describe('bulk refresh queue', () => {
     expect((await done).steps.map(step => step.state)).toEqual(['unknown', 'not-started']);
   });
 
+  it('stops recovery when only a stale running snapshot remains', async () => {
+    Object.assign(queueTiming, { pollInterval: 5, unknownAfter: 2 });
+    const running = freshStatus('first', 1);
+    running.servers[0].run = lastRun(7, 'running');
+    client.setQueryData(['status'], running);
+    const calls = fakeApi({ 0: [accepted(7, 2)] });
+    const done = nextDone();
+
+    await startBulkRefresh(client, requests.slice(0, 1), names);
+    await vi.waitFor(() => expect(calls.filter(call => call.startsWith('GET runs?')).length).toBeGreaterThanOrEqual(2));
+    // End the job to release the wait even if recovery wrongly stayed active.
+    if (isQueueActive()) end(client, 0, lastRun(7, 'finished'));
+    expect((await done).steps.map(step => step.state)).toEqual(['unknown']);
+  });
+
   it('keeps waiting while the status reads the job as running, also when the stored runs are unavailable', async () => {
     Object.assign(queueTiming, { pollInterval: 5 });
     const running = freshStatus();

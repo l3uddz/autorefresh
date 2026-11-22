@@ -285,7 +285,8 @@ async function waitForJob(client: QueryClient, srv: number, id: number): Promise
   // own deadline, so they never put it off.
   let deadline = 0;
   for (;;) {
-    const seen = reportedEnd(client.getQueryData<Status>(['status']), srv, id);
+    const cached = client.getQueryData<Status>(['status']);
+    const seen = reportedEnd(cached, srv, id);
     if (seen && seen !== 'running') return seen;
     if (wake === 'timer') {
       const fresh = reportedEnd(await fetchStatus(client), srv, id);
@@ -298,9 +299,12 @@ async function waitForJob(client: QueryClient, srv: number, id: number): Promise
         if (run !== 'error' && run?.status && run.status !== 'running') {
           return { status: run.status, hasItems: run.status !== 'interrupted' };
         }
-        const latest = reportedEnd(client.getQueryData<Status>(['status']), srv, id);
+        const updated = client.getQueryData<Status>(['status']);
+        const latest = reportedEnd(updated, srv, id);
         if (latest && latest !== 'running') return latest;
-        if (latest === 'running') misses = 0;
+        // Only a status received during this poll can confirm the job still runs.
+        const changed = updated?.boot !== cached?.boot || updated?.seq !== cached?.seq;
+        if (latest === 'running' && changed) misses = 0;
         else if (++misses >= queueTiming.unknownAfter) return { status: 'unknown', hasItems: false };
       }
       // The cache may have changed during the requests: check it again
