@@ -198,7 +198,7 @@ func (s *Server) serveItemLive(w http.ResponseWriter, r *http.Request) {
 		Summary: d.Summary, GUID: d.GUID,
 		Locations: nonNil(d.Paths.Locations), Files: nonNil(d.Paths.Files), Path: path,
 	}
-	if it.Type == "show" {
+	if it.Type == plex.ShowLibrary {
 		out.Seasons, out.Episodes = &d.ChildCount, &d.LeafCount
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -208,7 +208,7 @@ func (s *Server) serveItemLive(w http.ResponseWriter, r *http.Request) {
 // location, which FillPath saves when the item is cached. FillPath keeps a
 // path that a run saved during the Plex request, and it adds no row.
 func (s *Server) livePath(ctx context.Context, it store.ListItem, paths plex.Paths) (string, error) {
-	if it.Path != "" || it.Type != "show" || len(paths.Locations) == 0 {
+	if it.Path != "" || it.Type != plex.ShowLibrary || len(paths.Locations) == 0 {
 		return it.Path, nil
 	}
 	path := paths.Locations[0]

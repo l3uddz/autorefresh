@@ -189,7 +189,7 @@ func filterParams(q *store.ListQuery, v url.Values, srv int) error {
 		q.Reason = reason
 	}
 	switch q.Type = v.Get("type"); q.Type {
-	case "", "movie", "show":
+	case "", plex.MovieLibrary, plex.ShowLibrary:
 	default:
 		return errInvalidType
 	}
