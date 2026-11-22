@@ -157,18 +157,20 @@ func TestBulkMatchingPagesAndAppliesFilter(t *testing.T) {
 	readLibrary(t, db, "home", "1", testNow, items...)
 	jobs := &testJobs{}
 	s := New(Options{Store: db, Jobs: jobs, Servers: []PlexServer{{Name: "home"}}})
+	// The dashboard reads "no items" as a server without matching items and
+	// goes on to the next server, so the message is part of the API.
 	for _, tc := range []struct {
-		filter string
-		status int
+		filter, body string
+		status       int
 	}{
-		{"Selected", 202},
-		{"Missing", 400},
+		{"Selected", `"count":501`, 202},
+		{"Missing", `{"error":"no items"}`, 400},
 	} {
 		req := httptest.NewRequest(http.MethodPost, "/api/items/refresh?srv=0&q="+tc.filter, strings.NewReader(`{"matching":true}`))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, req)
-		if w.Code != tc.status {
+		if w.Code != tc.status || !strings.Contains(w.Body.String(), tc.body) {
 			t.Fatalf("filter %s: status %d, body %s", tc.filter, w.Code, w.Body)
 		}
 	}

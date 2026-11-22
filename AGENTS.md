@@ -22,12 +22,13 @@ When the design adds packages or rules, update this file.
 | `internal/tmdb/` | TMDB API client: find the TMDB ID of a TVDB or IMDb ID, read release years and episode numbers, and check the token. It sends the token only in a header. |
 | `internal/store/` | SQLite cache of incomplete items with their attempts and the last requests that Plex accepted, the read times of each library, and the TMDB IDs of items. It also keeps the history: events of requests, fix match decisions with their searches and candidates, completions, and gone items, and the runs of each server. It removes events and runs older than the retention, and the cache of unused servers and libraries. Foreign keys with `ON DELETE CASCADE` remove the rows of an item or a library with it. A connection waits for the locks of another process and keeps temporary data in memory. For the dashboard, it lists the items of the `attention`, `fixed`, and `stopped` tabs with filters, sorts, and cursors, counts each tab, and reads item details, timelines, libraries, and pages of runs. `DueRules` decide the queue state for both `Due` and the lists. The methods that the web server calls take the request context first. The store records stop and resume events, reads cached items or history snapshots through `KnownItem`, updates item metadata through `ApplyCheck`, and saves bulk item results in the same transaction as the terminal run. |
 | `internal/refresher/` | The run of each server. It removes the cache of unused servers and libraries, reads the libraries, and refreshes the due items, with the pacing, the limit for each run, and the dry run. It records the history of each run and removes old history, but a dry run records and removes none. It logs the summary of each server. It also holds the rules for missing metadata, path ID and path year parsing, the fix match choice, the TMDB fallback, and match confirmation by year or episode numbers. `Options.Progress` gets the live state of each run: its start, each library read, the batch, each item, and its end. A nil `Progress` reports nothing. `Jobs` shares one run lock across scheduled scans, manual scans, and bulk refreshes. Item locks protect each send and its recording. A scheduled run rechecks the row after taking the item lock. The refresher also handles manual refresh, match search and application, episode checks, metadata checks, and stop and resume. |
-| `internal/web/` | The HTTP server of the dashboard: optional Basic auth, cross-origin protection, security headers, a placeholder page, and a JSON API under `/api/`. The API serves the live status and its server-sent event stream, the servers, the item lists, the item details and a live Plex view, the posters and art through a proxy, and the runs. The API delegates writes to the refresher and Jobs. POST requires JSON content type. Bodyless routes require an empty body, and other POST routes accept one JSON object up to 1 MiB. The live view fills an empty item path. `Status` keeps the live status and is the `refresher.Progress` of the service. The API replaces the configured secrets in stored error texts with `<redacted>`. It drops a candidate thumb whose URL holds a configured credential, also percent-decoded, but not one that holds only a host or a path prefix. On the routes that take query parameters, a query string that does not parse gets a 400. The handlers share the one SQLite connection with the refresher, so a handler never holds a transaction or open rows across a Plex request or a response write. `Stop` closes handler admission, so later requests get a 503, then ends the event streams and shuts the server down within the deadline of its context. If that fails, it forces a close. |
+| `internal/web/` | The HTTP server of the dashboard: optional Basic auth, cross-origin protection, security headers, the dashboard page, and a JSON API under `/api/`. `assets.go` serves `index.html` and `assets/`, with the `.gz` copy when the request accepts gzip. With the `webui` build tag, `assets_webui.go` embeds the Vite output in `internal/web/dist/`, which git ignores, and the build fails if it is missing. Without the tag, `assets_fallback.go` embeds the committed `fallback/index.html`, which says that the UI is not built. The API serves the live status and its server-sent event stream, the servers, the item lists, the item details and a live Plex view, the posters and art through a proxy, and the runs. The API delegates writes to the refresher and Jobs. POST requires JSON content type. Bodyless routes require an empty body, and other POST routes accept one JSON object up to 1 MiB. The live view fills an empty item path. `Status` keeps the live status and is the `refresher.Progress` of the service. Each snapshot carries the `boot` ID of the process and `seq`, the count of its changes, so the frontend can keep the newer snapshot. The API replaces the configured secrets in stored error texts with `<redacted>`. It drops a candidate thumb whose URL holds a configured credential, also percent-decoded, but not one that holds only a host or a path prefix. On the routes that take query parameters, a query string that does not parse gets a 400. The handlers share the one SQLite connection with the refresher, so a handler never holds a transaction or open rows across a Plex request or a response write. `Stop` closes handler admission, so later requests get a 503, then ends the event streams and shuts the server down within the deadline of its context. If that fails, it forces a close. |
+| `web/` | The dashboard frontend: React, TypeScript, Vite, TanStack Query, and Astryx with its Neutral theme in dark mode, recoloured with the tokens of `src/site-tokens.ts`. The Astryx packages are pinned to one exact version. `web/AGENTS.md` gives the Astryx rules: components and tokens only, no own CSS files or raw `div` styling. Routes live in the hash (`route.ts`), with an optional `?srv=` server scope that the top bar picker sets and every link keeps, and every URL is relative, so the page works at any proxy sub-path. `api.ts` holds the API types, the queries, and the event stream with its reconnect. GET and stream snapshots use `seq` to order updates within a process. A new `boot` replaces the old process, and later snapshots from retired processes are ignored. `bulk.ts` builds the bulk requests and sends bulk stop and resume, and `queue.ts` runs a bulk refresh of several servers as one job per server, each after the previous one ends; it lives outside the components, so it survives page changes. Both skip a server whose bulk request answers 400 `no items`. A start reserves the queue before its first POST, so a second start fails. When the status no longer knows a job (a restart, a missed event, or a later last run), or is unavailable, the queue reads its end from `GET /api/runs` and ends it as unknown after a bounded number of polls, also when the runs are unavailable. `timeline.ts` derives the Fixed and removed details and the Check now result from the item timeline, because the item detail has no completion fields. `status.tsx`, `items.tsx`, and `detail.tsx` are the pages, and `media.tsx` holds the poster, art, and reason badges. Table mode windows its rows with `useTableRowsVirtualization`, which admits only columns without `renderCell`, so `table.ts` builds plain text rows, and a flat row plugin opens a row. Keep the table data identity stable (memoized): Astryx re-anchors the scroll on each new data array. Vitest tests sit beside the modules. `pnpm build` writes `internal/web/dist/`. |
 | `internal/neterr/` | Shared Plex and TMDB transport error classification using fixed messages |
 | `docker/Dockerfile` | Container image, built from the goreleaser output in `dist/`. It runs as the non-root user `65532:65532`, which owns `/config`. It declares `EXPOSE 7380` for the dashboard, but nothing listens until `ui.listen` is set. |
 | `mise.toml` | Tool versions and development tasks |
 | `.golangci.yml` | golangci-lint configuration: the formatter, the linters, and the complexity limit that `mise run lint` checks |
-| `.goreleaser.yml` | Release build configuration |
+| `.goreleaser.yml` | Release build configuration. A `before` hook runs `mise run web-build`, and the build uses the `webui` tag, so every release embeds the dashboard. |
 
 ## Code changes
 
@@ -71,7 +72,8 @@ Apply SOLID, KISS, DRY, and YAGNI to each code change.
 ## Checks
 
 You need [mise](https://mise.jdx.dev). Run `mise install` once to install
-the Go, goreleaser, and golangci-lint versions from `mise.toml`.
+the Go, goreleaser, golangci-lint, Node.js, and pnpm versions from
+`mise.toml`.
 
 The required `build` job of the `ci` workflow runs the following commands in
 order before packaging. Run the same commands before you push.
@@ -80,7 +82,20 @@ order before packaging. Run the same commands before you push.
 mise run vendor
 mise run test
 mise run lint
+mise run web-install
+mise run web-lint
+mise run web-test
+mise run test-webui
 ```
+
+The `web-*` tasks run in `web/`. `web-install` runs
+`pnpm install --frozen-lockfile`. `web-lint` runs the TypeScript check and
+ESLint, and `web-test` runs Vitest. `test-webui` runs `web-build`, which
+builds the frontend into `internal/web/dist/`, and then the `internal/web`
+tests with the `webui` tag. They check that the binary embeds and serves
+the built frontend, not the fallback page. A plain `go test` or `go build` needs
+no Node.js. If you change `web/`, also run `pnpm exec astryx doctor --built .`
+in `web/`.
 
 `mise run vendor` runs `go mod tidy` and then creates `vendor/`. Git ignores
 `vendor/`. Do not commit it. If `go mod tidy` changes `go.mod` or `go.sum`,
@@ -102,7 +117,8 @@ changes the committed files, CI fails.
   check only in `.golangci.yml`, with the reason in a comment, and only
   after the maintainer agrees.
 
-`mise run build` makes a local binary in `dist/`.
+`mise run build` builds the frontend and makes a local binary with the
+`webui` tag in `dist/`.
 `mise run snapshot` makes the release binaries in `dist/` with goreleaser.
 
 ## CI side effects

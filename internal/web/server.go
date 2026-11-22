@@ -157,7 +157,8 @@ func New(opts Options) *Server {
 		cancelBase:    cancelBase,
 		forceWait:     defaultForceWait,
 	}
-	s.mux.HandleFunc("GET /{$}", servePlaceholder)
+	s.mux.HandleFunc("GET /{$}", serveDashboard)
+	s.mux.HandleFunc("GET /assets/", serveDashboard)
 	s.api("GET /api/status", s.serveStatus)
 	s.api("GET /api/events", s.serveEvents)
 	s.api("HEAD /api/events", serveEventsHead)

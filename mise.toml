@@ -1,5 +1,7 @@
 [tools]
 go = "1.27"
+node = "22"
+pnpm = "11.6.0"
 goreleaser = "2.20.2"
 golangci-lint = "2.15.0"
 
@@ -26,16 +28,17 @@ run = ["golangci-lint fmt --diff", "golangci-lint run"]
 
 [tasks.build]
 description = "Build a development binary in dist/"
-depends = ["vendor"]
+depends = ["vendor", "web-build"]
 env = { CGO_ENABLED = "0" }
 run = '''
-go build -mod vendor -trimpath \
+go build -mod vendor -tags webui -trimpath \
   -ldflags "-s -w -X main.Version=0.0.0-dev -X main.GitCommit=$(git rev-parse --short HEAD) -X main.Timestamp=$(date +%s)" \
   -o "dist/autorefresh_$(go env GOOS)_$(go env GOARCH)/autorefresh" \
   ./cmd/autorefresh
 '''
 
 [tasks.snapshot]
+depends = ["web-build"]
 description = "Build a snapshot release in dist/ without publishing"
 run = "goreleaser release --snapshot --clean"
 
@@ -46,3 +49,31 @@ run = "goreleaser release --skip=validate,publish --clean"
 [tasks.publish]
 description = "Build a release and publish it to GitHub"
 run = "goreleaser release --clean"
+
+[tasks.web-install]
+description = "Install the frontend dependencies from the lockfile"
+dir = "web"
+run = "pnpm install --frozen-lockfile"
+
+[tasks.web-build]
+description = "Build the frontend into internal/web/dist/"
+dir = "web"
+depends = ["web-install"]
+run = "pnpm build"
+
+[tasks.web-lint]
+description = "Type-check and lint the frontend"
+dir = "web"
+depends = ["web-install"]
+run = "pnpm lint"
+
+[tasks.test-webui]
+description = "Check that the webui build embeds the built frontend"
+depends = ["vendor", "web-build"]
+run = "go test -mod vendor -tags webui ./internal/web"
+
+[tasks.web-test]
+description = "Run the frontend tests"
+dir = "web"
+depends = ["web-install"]
+run = "pnpm test"

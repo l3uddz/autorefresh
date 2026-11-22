@@ -32,30 +32,6 @@ func assertJSONError(t *testing.T, rec *httptest.ResponseRecorder, status int, m
 	}
 }
 
-func TestPlaceholderPage(t *testing.T) {
-	rec := serve(New(Options{}), httptest.NewRequest(http.MethodGet, "/", nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	if got := rec.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
-		t.Errorf("Content-Type = %q", got)
-	}
-	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
-		t.Errorf("Cache-Control = %q, want no-cache", got)
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "not built") {
-		t.Errorf("body does not say that the UI is not built:\n%s", body)
-	}
-	if !strings.Contains(body, `href="api/status"`) {
-		t.Errorf("body has no relative link to api/status:\n%s", body)
-	}
-	if strings.Contains(body, `href="/`) {
-		t.Errorf("body has an absolute link:\n%s", body)
-	}
-}
-
 func TestUnknownAPIPathIsJSON404(t *testing.T) {
 	for _, path := range []string{"/api/", "/api/x", "/api/x/y"} {
 		t.Run(path, func(t *testing.T) {

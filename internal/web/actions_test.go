@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -220,5 +221,51 @@ func TestServerErrorLogRedactsSecrets(t *testing.T) {
 	s.srv.ErrorLog.Print("server failure " + secret)
 	if !strings.Contains(logs.String(), "UI server error") || !strings.Contains(logs.String(), redacted) || strings.Contains(logs.String(), secret) {
 		t.Fatalf("server log = %q", logs)
+	}
+}
+
+// goneActions records a check of an item that Plex no longer has, as the
+// refresher does after a 404.
+type goneActions struct {
+	Actions
+	db *store.Store
+}
+
+func (a goneActions) CheckItem(_ context.Context, server, key string) error {
+	req := store.Request{Server: server, RatingKey: key, At: testNow, Source: store.SourceManual}
+	return a.db.RecordManual(store.ManualRecord{Request: req, Cached: true, Gone: true})
+}
+
+// The dashboard tells a removed item from a complete one by this answer:
+// the item is no longer cached and its newest event is gone.
+func TestCheckOfGoneItemAnswersUncachedWithGoneEvent(t *testing.T) {
+	db := openStore(t)
+	readLibrary(t, db, "home", "1", testNow.Add(-time.Hour), movie("7", "Harbor", store.NoSummary, testNow.Add(-2*time.Hour)))
+	s := New(Options{Store: db, Actions: goneActions{db: db}, Servers: []PlexServer{{Name: "home"}}})
+	s.now = func() time.Time { return testNow }
+	req := httptest.NewRequest(http.MethodPost, "/api/item/check?srv=0&key=7", nil)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, body %s", w.Code, w.Body)
+	}
+	var got struct {
+		Item struct {
+			Cached  *bool    `json:"cached"`
+			Reasons []string `json:"reasons"`
+		} `json:"item"`
+		Timeline []struct {
+			Kind string `json:"kind"`
+		} `json:"timeline"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Item.Cached == nil || *got.Item.Cached {
+		t.Fatalf("expected explicit cached: false, body %s", w.Body)
+	}
+	if len(got.Timeline) == 0 || got.Timeline[0].Kind != "gone" {
+		t.Fatalf("expected newest event to be gone, timeline %+v", got.Timeline)
 	}
 }

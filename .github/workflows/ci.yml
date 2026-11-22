@@ -39,7 +39,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # tools: go, goreleaser, and golangci-lint, at the versions in mise.toml
+      # tools: go, goreleaser, golangci-lint, node, and pnpm, at the versions in mise.toml
       - name: mise
         uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
 
@@ -75,6 +75,15 @@ jobs:
       # lint: formatting, go vet, staticcheck, and the complexity limit
       - name: lint
         run: mise run lint
+
+      # frontend: install from the lockfile, lint, test, build, and check that
+      # the webui build embeds the built UI instead of the fallback page
+      - name: frontend
+        run: |
+          mise run web-install
+          mise run web-lint
+          mise run web-test
+          mise run test-webui
 
       # Docker tags: the version and latest for a v* tag. Otherwise the
       # branch tag from docker-branch-tag.sh, which docker-cleanup.yml also uses.

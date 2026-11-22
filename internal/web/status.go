@@ -2,6 +2,7 @@ package web
 
 import (
 	"errors"
+	"strconv"
 	"sync"
 	"time"
 
@@ -25,8 +26,13 @@ const (
 // tmdbOff is the TMDB state when no TMDB token is configured.
 const tmdbOff = "off"
 
-// StatusView is a snapshot of the live status.
+// StatusView is a snapshot of the live status. Boot names the process
+// that took it, and Seq counts the changes of that process, so a client
+// can tell an older snapshot from a newer one across GET /api/status and
+// the event stream. A new process starts a new Boot.
 type StatusView struct {
+	Boot    string         `json:"boot"`
+	Seq     uint64         `json:"seq"`
 	Servers []ServerStatus `json:"servers"`
 	TMDB    string         `json:"tmdb"` // "off", or a Health
 }
@@ -67,7 +73,9 @@ type RunProgress struct {
 // Status keeps the live status of each server and of TMDB, and signals each
 // change to its subscribers. It is the refresher.Progress of the service.
 type Status struct {
+	boot    string
 	mu      sync.Mutex
+	seq     uint64
 	servers []ServerStatus
 	index   map[string]int
 	tmdb    string
@@ -80,6 +88,7 @@ var _ refresher.Progress = (*Status)(nil)
 // tmdb false, the TMDB state is "off".
 func NewStatus(servers []string, tmdb bool) *Status {
 	s := &Status{
+		boot:    strconv.FormatInt(time.Now().UnixNano(), 36),
 		servers: make([]ServerStatus, len(servers)),
 		index:   make(map[string]int, len(servers)),
 		tmdb:    tmdbOff,
@@ -112,7 +121,7 @@ func (s *Status) Snapshot() StatusView {
 		}
 		servers[i] = srv
 	}
-	return StatusView{Servers: servers, TMDB: s.tmdb}
+	return StatusView{Boot: s.boot, Seq: s.seq, Servers: servers, TMDB: s.tmdb}
 }
 
 // ServerChecked records the result of the start check of server.
@@ -233,8 +242,10 @@ func (s *Status) subscribe() (<-chan struct{}, func()) {
 	}
 }
 
-// notify signals each subscriber without blocking. The caller holds s.mu.
+// notify counts a change and signals each subscriber without blocking.
+// The caller holds s.mu.
 func (s *Status) notify() {
+	s.seq++
 	for ch := range s.subs {
 		select {
 		case ch <- struct{}{}:

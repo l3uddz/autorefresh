@@ -87,9 +87,15 @@ func TestEventsStreamSnapshots(t *testing.T) {
 	if !strings.Contains(first, `"run":null`) {
 		t.Errorf("first event = %q, want an idle run", first)
 	}
+	before := statusData(t, first)
 	st.RunStarted(0, store.RunStart{Server: "a", StartedAt: time.Now()})
-	if v := statusData(t, readEvent(t, br)); v.Servers[0].Run == nil {
+	v := statusData(t, readEvent(t, br))
+	if v.Servers[0].Run == nil {
 		t.Errorf("event after RunStarted = %+v, want a run", v)
+	}
+	// The client orders snapshots by boot and seq.
+	if before.Boot == "" || v.Boot != before.Boot || v.Seq <= before.Seq {
+		t.Errorf("boot, seq = %q, %d after %q, %d, want the same boot and a larger seq", v.Boot, v.Seq, before.Boot, before.Seq)
 	}
 }
 
