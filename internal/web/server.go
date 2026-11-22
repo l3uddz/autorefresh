@@ -70,7 +70,13 @@ type Options struct {
 	// password. The API drops a candidate poster whose URL holds one.
 	// Empty values are skipped.
 	Credentials []string
+	// CacheRefresh is the schedule of full library reads. Without one,
+	// the servers have no next full read.
+	CacheRefresh Schedule
 }
+
+// Schedule gives the next time of a schedule after t.
+type Schedule interface{ Next(t time.Time) time.Time }
 
 // Server is the HTTP server of the dashboard.
 type Server struct {
@@ -89,6 +95,8 @@ type Server struct {
 	secrets  []string
 	// credentials are the values that no candidate poster URL may hold.
 	credentials []string
+	// cacheRefresh is the schedule of full library reads, or nil.
+	cacheRefresh Schedule
 	// liveTimeout bounds the Plex request of GET /api/item/live.
 	liveTimeout   time.Duration
 	actionTimeout time.Duration
@@ -148,6 +156,7 @@ func New(opts Options) *Server {
 		now:           time.Now,
 		secrets:       opts.Secrets,
 		credentials:   opts.Credentials,
+		cacheRefresh:  opts.CacheRefresh,
 		liveTimeout:   defaultLiveTimeout,
 		actionTimeout: defaultActionTimeout,
 		identities:    make([]string, len(opts.Servers)),

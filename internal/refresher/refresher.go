@@ -126,8 +126,11 @@ type serverRun struct {
 	began                time.Time
 	libraries            []plex.Library      // the selected libraries
 	files                map[string][]string // movie files by rating key, from the reads of this run
+	full                 bool                // read every library fully
 	fullReadItems        int                 // items that full reads listed
 	incrementalReadItems int                 // items that incremental reads listed
+	fullReads            int                 // libraries read fully
+	incrementalReads     int                 // libraries read incrementally
 	completed            []completedItem     // rows that became complete, logged after the refresh step
 	fixed                int                 // completed rows that had a request that Plex accepted
 	fixedAfterMatch      int                 // completed rows that had a match request that Plex accepted
@@ -235,6 +238,7 @@ type startedRun struct {
 	srv   Server
 	id    int64
 	start store.RunStart
+	full  bool // read every library fully
 }
 
 func (r *Refresher) begin(servers []Server, source store.RunSource) ([]startedRun, error) {
@@ -288,7 +292,7 @@ func (r *Refresher) execute(ctx context.Context, runs []startedRun) error {
 
 func (r *Refresher) runServer(ctx context.Context, started startedRun) error {
 	run := &serverRun{server: started.srv, began: started.start.StartedAt, id: started.id,
-		startInfo: started.start, source: store.SourceAuto, files: map[string][]string{}}
+		startInfo: started.start, source: store.SourceAuto, full: started.full, files: map[string][]string{}}
 	r.progress().RunStarted(run.id, run.startInfo)
 	if err := ctx.Err(); err != nil {
 		log.Debug().Str("server", run.server.Name).Msg("Run canceled")
@@ -384,6 +388,7 @@ func (run *serverRun) result(finishedAt time.Time, canceled bool, err error) sto
 		ReadItems: run.fullReadItems + run.incrementalReadItems, Refreshed: run.refreshes,
 		Matched: run.matches, Failed: run.failures, Completed: len(run.completed), Fixed: run.fixed,
 		Incomplete: run.incomplete, Due: run.due, Selected: run.selected, Skipped: run.skipped,
+		FullReads: run.fullReads, IncrementalReads: run.incrementalReads,
 	}
 	switch {
 	case canceled:

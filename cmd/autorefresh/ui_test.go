@@ -116,7 +116,7 @@ func waitHealthy(t *testing.T, addr string) {
 }
 
 // statusHealthy reports whether the status API at u answers 200 with the
-// server test in the health ok.
+// server test in the health ok and the next start of the schedule.
 func statusHealthy(client *http.Client, u string) bool {
 	resp, err := client.Get(u)
 	if err != nil {
@@ -128,11 +128,12 @@ func statusHealthy(client *http.Client, u string) bool {
 			Name   string `json:"name"`
 			Health string `json:"health"`
 		} `json:"servers"`
+		NextRun time.Time `json:"nextRun"`
 	}
 	err = json.NewDecoder(resp.Body).Decode(&body)
 	io.Copy(io.Discard, resp.Body)
 	return err == nil && resp.StatusCode == http.StatusOK && len(body.Servers) == 1 &&
-		body.Servers[0].Name == "test" && body.Servers[0].Health == "ok"
+		body.Servers[0].Name == "test" && body.Servers[0].Health == "ok" && body.NextRun.After(time.Now())
 }
 
 // A port that is in use stops the start before any request to Plex.

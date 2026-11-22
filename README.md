@@ -544,9 +544,18 @@ address keeps the choice, so a link or a reload shows the same server.
 - **Status** shows a card for each Plex server: its connection, the live
   progress of a run, and the result of the last run. It also lists the
   items that were fixed recently and the recent runs. **Run now** starts a
-  run. With several servers, it can start a run of one server or of all
+  run. Its menu also has **Full cache refresh, then run**, which reads
+  every library in full before it refreshes the due items. With several
+  servers, it can start either kind of run for one server or for all
   servers. A manual run or bulk refresh has a **Cancel** button. The item
-  count on a server card opens the items of that server.
+  count on a server card opens the items of that server. The header shows
+  when the next scheduled run starts, for example "Next run in 33m ·
+  23:00". The Runs page shows the same line. Each server card shows when
+  the next full cache refresh of one of its libraries is due. Each library
+  has its own due time, the next `cache-refresh` time after its last full
+  read, and the card shows the earliest one. A new library, or a
+  `cache-refresh` schedule without a next time, is due at once. The first
+  run at or after a due time reads that library in full.
 - **Items** lists the items in three tabs: **Attention** (items that
   autorefresh still tries to fix), **Fixed**, and **Stopped**. You can
   search by title or path and filter by library and type. Attention and
@@ -581,10 +590,16 @@ address keeps the choice, so a link or a reload shows the same server.
   an item opens on its own screen.
 - **Runs** lists the runs of every server, or of the chosen server, newest
   first: the start, the duration, the server, the source (schedule or
-  manual), the kind (run or bulk refresh), the status, and the items read,
+  manual), the kind, the status, and the items read,
   refreshed, matched, failed, fixed, and due, with the error of a failed
-  run. A run that has not ended shows no duration. **Load more** reads the
-  next page. The list updates when a run starts or ends. On a narrow
+  run. The kind counts the library reads that the run completed: **Full
+  run** when each was a full read, **Incremental run** when each read only
+  the changes since the last read, **Full and incremental run** when it
+  did both, and **Bulk refresh** for a bulk refresh. A run that failed or
+  was canceled counts only the reads that it completed. A run that
+  completed no library read shows **Run**, as do older runs, recorded
+  before autorefresh counted its full and incremental reads. A run that
+  has not ended shows no duration. **Load more** reads the next page. The list updates when a run starts or ends. On a narrow
   screen, each run is one row with its summary.
 
 **Fix match** in the item details opens a dialog to choose the Plex match

@@ -213,3 +213,29 @@ func TestFinishedStatusRetainsRunIdentity(t *testing.T) {
 		t.Fatalf("finished status = %+v, last = %+v", got, got.Last)
 	}
 }
+
+func TestStatusNextRun(t *testing.T) {
+	st := NewStatus([]string{"a"}, false)
+	before := st.Snapshot()
+	raw, err := json.Marshal(before)
+	if err != nil || strings.Contains(string(raw), "nextRun") {
+		t.Fatalf("status JSON without a schedule = %s, %v", raw, err)
+	}
+
+	next := time.Date(2026, 11, 22, 23, 0, 0, 0, time.UTC)
+	st.SetNextRun(next)
+	after := st.Snapshot()
+	if !after.NextRun.Equal(next) || after.Seq <= before.Seq {
+		t.Fatalf("after SetNextRun: next %v seq %d, want %v and a seq above %d", after.NextRun, after.Seq, next, before.Seq)
+	}
+	// The same time again is no change, so no snapshot replaces another.
+	st.SetNextRun(next)
+	if again := st.Snapshot(); again.Seq != after.Seq {
+		t.Fatalf("seq after the same next run = %d, want %d", again.Seq, after.Seq)
+	}
+	// A late callback of an earlier tick never moves the time back.
+	st.SetNextRun(next.Add(-time.Hour))
+	if late := st.Snapshot(); !late.NextRun.Equal(next) || late.Seq != after.Seq {
+		t.Fatalf("after an older time: next %v seq %d, want %v and %d", late.NextRun, late.Seq, next, after.Seq)
+	}
+}

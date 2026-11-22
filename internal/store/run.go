@@ -52,6 +52,7 @@ type RunResult struct {
 	ReadItems, Refreshed, Matched, Failed int
 	Completed, Fixed, Incomplete          int
 	Due, Selected, Skipped                int
+	FullReads, IncrementalReads           int // the libraries read fully and incrementally
 }
 
 // Run is one run of a server, with its counts.
@@ -67,6 +68,7 @@ type Run struct {
 	ReadItems, Refreshed, Matched, Failed int
 	Completed, Fixed, Incomplete          int
 	Due, Selected, Skipped                int
+	FullReads, IncrementalReads           int // the libraries read fully and incrementally
 }
 
 // StartRun records a run with the status running and returns its ID.
@@ -119,9 +121,11 @@ func (s *Store) FinishJob(id int64, start RunStart, r RunResult, items []RunItem
 
 func finishRunRow(tx *sql.Tx, id int64, start RunStart, r RunResult) (bool, error) {
 	res, err := tx.Exec(`UPDATE run SET status = ?, finished_at = ?, error = ?, read_items = ?, refreshed = ?,
-  matched = ?, failed = ?, completed = ?, fixed = ?, incomplete = ?, due = ?, selected = ?, skipped = ? WHERE id = ?`,
+  matched = ?, failed = ?, completed = ?, fixed = ?, incomplete = ?, due = ?, selected = ?, skipped = ?,
+  full_reads = ?, incremental_reads = ? WHERE id = ?`,
 		r.Status, r.FinishedAt.Unix(), r.Error, r.ReadItems, r.Refreshed,
-		r.Matched, r.Failed, r.Completed, r.Fixed, r.Incomplete, r.Due, r.Selected, r.Skipped, id)
+		r.Matched, r.Failed, r.Completed, r.Fixed, r.Incomplete, r.Due, r.Selected, r.Skipped,
+		r.FullReads, r.IncrementalReads, id)
 	if err != nil {
 		return false, fmt.Errorf("finish run: %w", err)
 	}
@@ -139,12 +143,13 @@ func finishRunRow(tx *sql.Tx, id int64, start RunStart, r RunResult) (bool, erro
 // has a library row.
 func restoreRun(tx *sql.Tx, id int64, start RunStart, r RunResult) (bool, error) {
 	res, err := tx.Exec(`INSERT INTO run (id, server, kind, source, started_at, status, finished_at, error,
-  read_items, refreshed, matched, failed, completed, fixed, incomplete, due, selected, skipped)
-  SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+  read_items, refreshed, matched, failed, completed, fixed, incomplete, due, selected, skipped,
+  full_reads, incremental_reads)
+  SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
   WHERE EXISTS (SELECT 1 FROM library WHERE server = ?)`,
 		id, start.Server, start.Kind, start.Source, start.StartedAt.Unix(), r.Status, r.FinishedAt.Unix(), r.Error,
 		r.ReadItems, r.Refreshed, r.Matched, r.Failed, r.Completed, r.Fixed, r.Incomplete, r.Due, r.Selected, r.Skipped,
-		start.Server)
+		r.FullReads, r.IncrementalReads, start.Server)
 	if err != nil {
 		return false, fmt.Errorf("restore run: %w", err)
 	}
@@ -249,7 +254,7 @@ type RunQuery struct {
 }
 
 const runColumns = `id, server, kind, source, status, started_at, finished_at, error, read_items,
-	refreshed, matched, failed, completed, fixed, incomplete, due, selected, skipped`
+	refreshed, matched, failed, completed, fixed, incomplete, due, selected, skipped, full_reads, incremental_reads`
 
 // runsQuery builds the query of q.
 func runsQuery(q RunQuery) (string, []any) {
@@ -289,7 +294,7 @@ func scanRun(row scanner) (Run, error) {
 	)
 	if err := row.Scan(&r.ID, &r.Server, &r.Kind, &r.Source, &r.Status, &started, &finished, &r.Error,
 		&r.ReadItems, &r.Refreshed, &r.Matched, &r.Failed, &r.Completed, &r.Fixed, &r.Incomplete,
-		&r.Due, &r.Selected, &r.Skipped); err != nil {
+		&r.Due, &r.Selected, &r.Skipped, &r.FullReads, &r.IncrementalReads); err != nil {
 		return Run{}, err
 	}
 	r.StartedAt, r.FinishedAt = time.Unix(started, 0), timeFrom(finished)

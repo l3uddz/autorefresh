@@ -140,10 +140,12 @@ func recordRun(t *testing.T, st *store.Store, server string, status store.RunSta
 
 type serversAnswer struct {
 	Servers []struct {
-		Srv               int     `json:"srv"`
-		Name              string  `json:"name"`
-		MachineIdentifier *string `json:"machineIdentifier"`
-		Scanned           bool    `json:"scanned"`
+		Srv               int        `json:"srv"`
+		Name              string     `json:"name"`
+		MachineIdentifier *string    `json:"machineIdentifier"`
+		Scanned           bool       `json:"scanned"`
+		NextFullRead      *time.Time `json:"nextFullRead"`
+		FullReadDue       bool       `json:"fullReadDue"`
 		Libraries         []struct {
 			Section      string     `json:"section"`
 			Title        string     `json:"title"`
@@ -263,5 +265,84 @@ func TestServersScanned(t *testing.T) {
 				t.Errorf("servers = %+v, want scanned %v", got.Servers, tt.want)
 			}
 		})
+	}
+}
+
+// daily is a cache refresh schedule whose next time is one day later.
+type daily struct{}
+
+func (daily) Next(t time.Time) time.Time { return t.Add(24 * time.Hour) }
+
+// The next full read of a server is the earliest one of its libraries. A
+// library without a full read is due now. Without a schedule, the field is
+// absent.
+func TestServersNextFullRead(t *testing.T) {
+	st := openStore(t)
+	for _, name := range []string{"Home", "Away"} {
+		if err := st.SaveLibraries(name, []store.LibraryInfo{{Section: "1", Title: "Movies"}, {Section: "2", Title: "Shows"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	readLibrary(t, st, "Home", "1", testNow.Add(-2*time.Hour))
+	readLibrary(t, st, "Home", "2", testNow.Add(-5*time.Hour))
+	readLibrary(t, st, "Away", "1", testNow.Add(-time.Hour))
+	s := newServerWith(st, 0, []PlexServer{{Name: "Home", Plex: &fakePlex{}}, {Name: "Away", Plex: &fakePlex{}}})
+
+	var got serversAnswer
+	getJSON(t, s, "/api/servers", &got)
+	if got.Servers[0].NextFullRead != nil || got.Servers[0].FullReadDue {
+		t.Errorf("next full read without a schedule = %v, due %v", got.Servers[0].NextFullRead, got.Servers[0].FullReadDue)
+	}
+
+	s.cacheRefresh = daily{}
+	getJSON(t, s, "/api/servers", &got)
+	if h := got.Servers[0].NextFullRead; h == nil || !h.Equal(testNow.Add(19*time.Hour)) {
+		t.Errorf("srv 0 next full read = %v, want %v", h, testNow.Add(19*time.Hour))
+	}
+	if a := got.Servers[1].NextFullRead; a == nil || !a.Equal(testNow) {
+		t.Errorf("srv 1 next full read = %v, want now (%v), for its unread library", a, testNow)
+	}
+	if got.Servers[0].FullReadDue || !got.Servers[1].FullReadDue {
+		t.Errorf("full read due = %v, %v, want false, true", got.Servers[0].FullReadDue, got.Servers[1].FullReadDue)
+	}
+}
+
+// A full read whose time passed is due, so the dashboard need not compare
+// the time with its own clock.
+func TestServersFullReadOverdue(t *testing.T) {
+	st := openStore(t)
+	if err := st.SaveLibraries("Home", []store.LibraryInfo{{Section: "1", Title: "Movies"}}); err != nil {
+		t.Fatal(err)
+	}
+	readLibrary(t, st, "Home", "1", testNow.Add(-25*time.Hour))
+	s := newServerWith(st, 0, []PlexServer{{Name: "Home", Plex: &fakePlex{}}})
+	s.cacheRefresh = daily{}
+	var got serversAnswer
+	getJSON(t, s, "/api/servers", &got)
+	if h := got.Servers[0].NextFullRead; h == nil || !h.Equal(testNow.Add(-time.Hour)) || !got.Servers[0].FullReadDue {
+		t.Errorf("next full read = %v, due %v, want %v and due", h, got.Servers[0].FullReadDue, testNow.Add(-time.Hour))
+	}
+}
+
+// never is a cron schedule without a next time, such as 0 3 31 2 *.
+type never struct{}
+
+func (never) Next(time.Time) time.Time { return time.Time{} }
+
+// A schedule without a next time makes the scanner read every library in
+// full, so the full read is due now.
+func TestServersNextFullReadWithoutNextTime(t *testing.T) {
+	st := openStore(t)
+	if err := st.SaveLibraries("Home", []store.LibraryInfo{{Section: "1", Title: "Movies"}, {Section: "2", Title: "Shows"}}); err != nil {
+		t.Fatal(err)
+	}
+	readLibrary(t, st, "Home", "1", testNow.Add(-2*time.Hour))
+	readLibrary(t, st, "Home", "2", testNow.Add(-time.Hour))
+	s := newServerWith(st, 0, []PlexServer{{Name: "Home", Plex: &fakePlex{}}})
+	s.cacheRefresh = never{}
+	var got serversAnswer
+	getJSON(t, s, "/api/servers", &got)
+	if h := got.Servers[0].NextFullRead; h == nil || !h.Equal(testNow) || !got.Servers[0].FullReadDue {
+		t.Errorf("next full read = %v, due %v, want now (%v) and due", h, got.Servers[0].FullReadDue, testNow)
 	}
 }

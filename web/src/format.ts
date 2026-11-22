@@ -28,6 +28,40 @@ export function relative(value: string | undefined, now: number): string {
   return diff > 0 ? `in ${duration(diff)}` : `${duration(-diff)} ago`;
 }
 
+/** Returns when the next scheduled run starts, as "in 45m · 23:00", or
+ * "starting" once that time has come. The status moves to the following
+ * start as soon as the scheduler takes this one, also when a busy run makes
+ * it skip the start. */
+export function nextRunText(value: string | undefined, now: number): string | undefined {
+  if (!value) return undefined;
+  const diff = (Date.parse(value) - now) / 1000;
+  if (Math.round(diff) <= 0) return 'starting';
+  return `in ${duration(diff)} · ${new Date(value).toLocaleTimeString(undefined, { timeStyle: 'short' })}`;
+}
+
+/** Returns when the next full cache refresh is due, as "in 4d 4h · Sun
+ * 3:00 AM", or "with the next run" once it is due: the first run at or
+ * after that time reads the libraries fully. isDue is the server's word that
+ * the time has come, which wins over the page clock. */
+export function fullReadText(value: string | undefined, isDue: boolean, now: number): string | undefined {
+  if (!value) return undefined;
+  const diff = (Date.parse(value) - now) / 1000;
+  if (isDue || Math.round(diff) <= 0) return 'with the next run';
+  return `in ${duration(diff)} · ${new Date(value).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`;
+}
+
+/** Returns the kind of a run: a bulk refresh, or a run named by how it read
+ * the libraries. A run from before the read counts is just a run. */
+export function runKind(run: { kind: string; fullReads?: number; incrementalReads?: number }): string {
+  if (run.kind === 'bulk-refresh') return 'Bulk refresh';
+  const full = (run.fullReads ?? 0) > 0;
+  const incremental = (run.incrementalReads ?? 0) > 0;
+  if (full && incremental) return 'Full and incremental run';
+  if (full) return 'Full run';
+  if (incremental) return 'Incremental run';
+  return 'Run';
+}
+
 /** Returns the time of value as a short local date and time. */
 export function dateTime(value?: string): string {
   if (!value) return '—';

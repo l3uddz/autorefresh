@@ -45,7 +45,8 @@ func recordRunAt(t *testing.T, st *store.Store, server string, started time.Time
 		t.Fatal(err)
 	}
 	res := store.RunResult{FinishedAt: started.Add(time.Minute), Status: store.RunFinished, Error: errText,
-		ReadItems: 1, Refreshed: 2, Matched: 3, Failed: 4, Completed: 5, Fixed: 6, Incomplete: 7, Due: 8, Selected: 9}
+		ReadItems: 1, Refreshed: 2, Matched: 3, Failed: 4, Completed: 5, Fixed: 6, Incomplete: 7, Due: 8, Selected: 9,
+		FullReads: 10, IncrementalReads: 11}
 	if _, err := st.FinishRun(id, start, res); err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +130,7 @@ func TestRunsEndpoint(t *testing.T) {
 	want := map[string]any{
 		"id": float64(h5), "srv": 0.0, "server": "Home", "kind": "run", "source": "schedule", "status": "finished",
 		"readItems": 1.0, "refreshed": 2.0, "matched": 3.0, "failed": 4.0, "completed": 5.0, "fixed": 6.0,
-		"incomplete": 7.0, "due": 8.0, "selected": 9.0,
+		"incomplete": 7.0, "due": 8.0, "selected": 9.0, "fullReads": 10.0, "incrementalReads": 11.0,
 	}
 	for field, w := range want {
 		if !reflect.DeepEqual(finished[field], w) {

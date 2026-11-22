@@ -35,6 +35,9 @@ type StatusView struct {
 	Seq     uint64         `json:"seq"`
 	Servers []ServerStatus `json:"servers"`
 	TMDB    string         `json:"tmdb"` // "off", or a Health
+	// NextRun is the next time of the run scheduler, or zero before the
+	// scheduler starts.
+	NextRun time.Time `json:"nextRun,omitzero"`
 }
 
 // ServerStatus is the live status of one server.
@@ -80,6 +83,7 @@ type Status struct {
 	index   map[string]int
 	tmdb    string
 	subs    map[chan struct{}]struct{}
+	nextRun time.Time
 }
 
 var _ refresher.Progress = (*Status)(nil)
@@ -104,6 +108,22 @@ func NewStatus(servers []string, tmdb bool) *Status {
 	return s
 }
 
+// SetNextRun records the next time of the run scheduler. The scheduler
+// calls it when it starts and at each of its times, also when a busy run
+// skips that time, so the next run on screen never stays in the past. The
+// callbacks of two ticks can arrive out of order, and the time of a
+// scheduler only moves forward, so a time that is not after the recorded
+// one is ignored. A new time is a change of the status.
+func (s *Status) SetNextRun(next time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !next.After(s.nextRun) {
+		return
+	}
+	s.nextRun = next
+	s.notify()
+}
+
 // Snapshot returns a deep copy of the status, so encoding it never reads
 // shared state.
 func (s *Status) Snapshot() StatusView {
@@ -121,7 +141,7 @@ func (s *Status) Snapshot() StatusView {
 		}
 		servers[i] = srv
 	}
-	return StatusView{Boot: s.boot, Seq: s.seq, Servers: servers, TMDB: s.tmdb}
+	return StatusView{Boot: s.boot, Seq: s.seq, Servers: servers, TMDB: s.tmdb, NextRun: s.nextRun}
 }
 
 // ServerChecked records the result of the start check of server.

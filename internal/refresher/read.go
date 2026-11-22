@@ -151,7 +151,7 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 		Server:  name,
 		Section: lib.ID,
 		At:      at,
-		Full:    state.LastFullRead.IsZero() || !r.opts.CacheRefresh.Next(state.LastFullRead).After(at),
+		Full:    run.full || state.LastFullRead.IsZero() || !r.opts.CacheRefresh.Next(state.LastFullRead).After(at),
 		Shows:   lib.Type == plex.ShowLibrary,
 		DryRun:  r.opts.DryRun,
 		RunID:   run.id,
@@ -205,8 +205,10 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 // match can use instead of a request.
 func (run *serverRun) recordRead(rd store.Read, lib plex.Library, items []plex.Item, fixed []store.Item) {
 	if rd.Full {
+		run.fullReads++
 		run.fullReadItems += len(items)
 	} else {
+		run.incrementalReads++
 		run.incrementalReadItems += len(items)
 	}
 	for _, it := range fixed {
