@@ -92,9 +92,9 @@ const eventColumns = `id, server, section, rating_key, at, kind, source, title, 
 	action, accepted, outcome, error, match_guid, match_title, match_year, conflict, path_year, tmdb_year,
 	episode_count, links, fixed_action, fixed_match, fixed_match_event_id`
 
-// requestOutcome is the outcome of a request: the action, with "-failed"
-// when Plex did not accept it, or "search-failed" without an action.
-func requestOutcome(r Request) string {
+// Outcome is the outcome of the request: the action, with "-failed" when
+// Plex did not accept it, or "search-failed" without an action.
+func (r Request) Outcome() string {
 	switch {
 	case r.Action == "":
 		return "search-failed"
@@ -141,7 +141,7 @@ func (s *Store) RecordRequest(r Request) error {
 // writeRequestOutcome sets the last outcome of the row and writes the event
 // of the request. An accepted match event becomes the last match event.
 func writeRequestOutcome(tx *sql.Tx, r Request, snap Item) error {
-	outcome := requestOutcome(r)
+	outcome := r.Outcome()
 	var matchEventID any
 	if r.Action != "" {
 		id, err := insertEvent(tx, requestEvent(r, snap, outcome))
