@@ -24,7 +24,7 @@ import { colorVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { BarsArrowDownIcon, BarsArrowUpIcon, InboxIcon } from '@heroicons/react/24/outline';
 import * as stylex from '@stylexjs/stylex';
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, invalidateLists, itemID, useServers, type ItemPage, type ItemRecord, type ServerInfo } from './api';
 import { bulkError, bulkRequests, isSearchTooLong, listParams, maxSearchBytes, stopOrResume, tabActions, type BulkAction, type BulkRequest, type Filters, type Selection } from './bulk';
 import { useNow } from './clock';
@@ -164,6 +164,12 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
   const [shownParams, setShownParams] = useState(params);
   if (!page.isPlaceholderData && shownParams !== params) setShownParams(params);
   const tableKey = page.isPlaceholderData ? shownParams : params;
+  // List mode scrolls the content itself, so a new filter or sort scrolls
+  // it back to the top once the new rows arrive, as the table remounts.
+  const contentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (mode !== 'table') contentRef.current?.scrollTo({ top: 0 });
+  }, [tableKey, mode]);
   const counts = page.data?.pages[0]?.counts;
   const server = (key: ItemKey) => inventory.find(entry => entry.srv === key.srv);
   const close = () => navigate({ page: 'items', tab, srv });
@@ -241,7 +247,7 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
   );
 
   const content = (
-    <LayoutContent padding={isTable ? 4 : 0} isScrollable={!isTable || (Boolean(item) && !isTwoPane)}>
+    <LayoutContent ref={contentRef} padding={isTable ? 4 : 0} isScrollable={!isTable || (Boolean(item) && !isTwoPane)}>
       {item && !isTwoPane ? (
         detail
       ) : (
