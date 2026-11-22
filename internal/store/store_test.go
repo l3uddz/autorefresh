@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -525,6 +526,10 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 			return err
 		},
 		"CountIncomplete": func() error { _, err := s.CountIncomplete(srv, []string{sec}, 0); return err },
+		"ListItems": func() error {
+			_, _, err := s.ListItems(context.Background(), ListQuery{Tab: TabAttention, Limit: 10, Rules: DueRules{Now: base}})
+			return err
+		},
 		"RecordRequest": func() error {
 			return s.RecordRequest(Request{Server: srv, RatingKey: "101", At: base, Source: SourceAuto, Action: ActionRefresh})
 		},
