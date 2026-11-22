@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/l3uddz/autorefresh/internal/refresher"
 	"github.com/l3uddz/autorefresh/internal/store"
+	"github.com/l3uddz/autorefresh/internal/tmdb"
 )
 
 type refreshActions struct {
@@ -137,5 +139,86 @@ func TestForcedHTTPStopPreservesInFlightManualRecording(t *testing.T) {
 	events, err := db.Timeline("home", "1")
 	if err != nil || len(events) != 1 || !events[0].Accepted {
 		t.Fatalf("events = %+v, %v", events, err)
+	}
+}
+
+type rejectedRefresh struct {
+	Actions
+	err error
+}
+
+func (a rejectedRefresh) RefreshItem(context.Context, string, string) error { return a.err }
+
+func TestWriteActionErrorsMapToHTTP(t *testing.T) {
+	for _, tc := range []struct {
+		err     error
+		status  int
+		message string
+	}{
+		{refresher.ErrItemBusy, 409, "item busy"},
+		{refresher.ErrNotCached, 409, "item not cached"},
+		{refresher.ErrClosed, 503, "shutting down"},
+		{fmt.Errorf("%w: %w", refresher.ErrTMDB, tmdb.ErrUnauthorized), 502, "TMDB rejected the token"},
+	} {
+		s := New(Options{Actions: rejectedRefresh{err: tc.err}, Servers: []PlexServer{{Name: "home"}}})
+		req := httptest.NewRequest(http.MethodPost, "/api/item/refresh?srv=0&key=1", nil)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, req)
+		if w.Code != tc.status || !strings.Contains(w.Body.String(), tc.message) {
+			t.Errorf("%v: status %d, body %s", tc.err, w.Code, w.Body)
+		}
+	}
+}
+
+func TestDisconnectedStoreFailureIsLoggedAndRedacted(t *testing.T) {
+	const secret = "fake-private-token"
+	logs := captureLog(t)
+	s := New(Options{Secrets: []string{secret}})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, "/api/item/refresh", nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+	s.writeActionError(w, req, fmt.Errorf("%w: disk failure %s", refresher.ErrStore, secret))
+	if w.Body.Len() != 0 || !strings.Contains(logs.String(), `"level":"error"`) ||
+		!strings.Contains(logs.String(), redacted) || strings.Contains(logs.String(), secret) {
+		t.Fatalf("body %q, log %q", w.Body, logs)
+	}
+}
+
+type fakeMatchSearch struct {
+	Actions
+	result refresher.MatchResult
+}
+
+func (s fakeMatchSearch) SearchMatches(context.Context, string, string, refresher.MatchQuery) (refresher.MatchResult, error) {
+	return s.result, nil
+}
+
+func TestMatchSearchOmitsCredentialFromCandidateThumb(t *testing.T) {
+	const secret = "fake-private-token"
+	actions := fakeMatchSearch{result: refresher.MatchResult{Searches: []store.MatchSearch{{Candidates: []store.MatchCandidate{
+		{GUID: "plex://movie/1", Thumb: "https://example.invalid/1?token=" + secret},
+		{GUID: "plex://movie/2", Thumb: "https://example.invalid/2"},
+	}}}}}
+	server := New(Options{Actions: actions, Credentials: []string{secret}, Servers: []PlexServer{{Name: "home"}}})
+	var got matchesJSON
+	body := getJSON(t, server, "/api/item/matches?srv=0&key=1", &got)
+	if strings.Contains(body, secret) || len(got.Searches) != 1 || len(got.Searches[0].Candidates) != 2 {
+		t.Fatalf("matches response = %s", body)
+	}
+	candidates := got.Searches[0].Candidates
+	if candidates[0].Thumb != "" || candidates[1].Thumb != "https://example.invalid/2" {
+		t.Fatalf("candidate thumbs = %+v", candidates)
+	}
+}
+
+func TestServerErrorLogRedactsSecrets(t *testing.T) {
+	const secret = "fake-private-token"
+	logs := captureLog(t)
+	s := New(Options{Secrets: []string{secret}})
+	s.srv.ErrorLog.Print("server failure " + secret)
+	if !strings.Contains(logs.String(), "UI server error") || !strings.Contains(logs.String(), redacted) || strings.Contains(logs.String(), secret) {
+		t.Fatalf("server log = %q", logs)
 	}
 }

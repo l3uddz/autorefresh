@@ -533,3 +533,40 @@ func TestManualStoreLifecycle(t *testing.T) {
 		t.Fatalf("events = %v, want %v", kinds, want)
 	}
 }
+
+func TestRecordManualUsesAdmissionSnapshotAcrossRowChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		cached, gone, rowExists bool
+		kind                    EventKind
+		leavesRow               bool
+	}{
+		{"history admission with new row", false, false, true, EventRequest, true},
+		{"cached admission after row removed", true, false, false, EventRequest, false},
+		{"cached gone with row", true, true, true, EventGone, false},
+		{"cached gone after row removed", true, true, false, EventGone, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := openTest(t)
+			snapshot := item("1", NoSummary)
+			apply(t, s, Read{Items: []Item{snapshot}})
+			if !tc.rowExists {
+				complete := snapshot
+				complete.Reasons = 0
+				apply(t, s, Read{Items: []Item{complete}, DryRun: true})
+			}
+			req := Request{Server: srv, RatingKey: "1", At: base, Source: SourceManual, Action: ActionRefresh, Accepted: !tc.gone}
+			if err := s.RecordManual(ManualRecord{Request: req, Snapshot: snapshot, Cached: tc.cached, Gone: tc.gone}); err != nil {
+				t.Fatal(err)
+			}
+			row, cached, found, err := s.KnownItem(srv, "1")
+			if err != nil || !found || cached != tc.leavesRow || row.Attempts != 0 {
+				t.Fatalf("known item = %+v, cached %v, found %v, %v", row, cached, found, err)
+			}
+			events, err := s.Timeline(srv, "1")
+			if err != nil || len(events) != 1 || events[0].Kind != tc.kind || events[0].Title != snapshot.Title || events[0].Source != SourceManual {
+				t.Fatalf("events = %+v, %v", events, err)
+			}
+		})
+	}
+}

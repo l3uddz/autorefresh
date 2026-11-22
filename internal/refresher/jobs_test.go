@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -120,7 +121,7 @@ type blockingRefresh struct {
 func (p blockingRefresh) Refresh(ctx context.Context, _ string) error {
 	close(p.entered)
 	<-ctx.Done()
-	return ctx.Err()
+	return fmt.Errorf("%w: %w", plex.ErrUnavailable, ctx.Err())
 }
 
 func TestCancelBulkRecordsInFlightAttemptAndRemainingKey(t *testing.T) {
@@ -129,6 +130,7 @@ func TestCancelBulkRecordsInFlightAttemptAndRemainingKey(t *testing.T) {
 	f := newRefreshFixture(t, Server{Name: "home", Plex: p})
 	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
 	f.seed("home", lib, incompleteItem("2"), store.NoSummary, 0)
+	progress := withProgress(f)
 	jobs := NewJobs(f.r)
 	t.Cleanup(jobs.Close)
 	id, err := jobs.BulkRefresh("home", []string{"1", "2"})
@@ -147,6 +149,9 @@ func TestCancelBulkRecordsInFlightAttemptAndRemainingKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	jobs.wg.Wait()
+	if len(progress.errs) != 1 || progress.errs[0] != nil || len(progress.counts) != 1 {
+		t.Fatalf("progress errors = %v, item completions = %v", progress.errs, progress.counts)
+	}
 	if got := f.onlyRun(); got.Status != store.RunCanceled || got.Refreshed != 1 || got.Failed != 1 {
 		t.Errorf("canceled job = %+v", got)
 	}
@@ -212,5 +217,27 @@ func TestRunNowSubsetKeepsOtherConfiguredServer(t *testing.T) {
 	runs, err := f.store.Runs(t.Context(), store.RunQuery{Servers: []string{"away"}})
 	if err != nil || len(runs) != 1 || runs[0].ID != awayRun {
 		t.Fatalf("away runs = %+v, %v", runs, err)
+	}
+}
+
+type failedBulkRecheck struct{ Store }
+
+func (failedBulkRecheck) KnownItem(string, string) (store.Item, bool, bool, error) {
+	return store.Item{}, false, false, errRun
+}
+
+func TestBulkRecheckFailureDoesNotReportItemDone(t *testing.T) {
+	f := newRefreshFixture(t, Server{Name: "home", Plex: newFakePlex()})
+	p := withProgress(f)
+	f.r.store = failedBulkRecheck{Store: f.store}
+	run := &serverRun{server: f.r.servers[0]}
+	item := store.RunItem{RatingKey: "1", Outcome: store.ItemNotReached}
+	results := []store.RunItem{item}
+	err := f.r.bulkBatch(t.Context(), run, []bulkAdmission{{item: item, cached: true}}, results)
+	if !errors.Is(err, ErrStore) || results[0].Outcome != store.ItemNotReached {
+		t.Fatalf("results = %+v, error = %v", results, err)
+	}
+	if len(p.counts) != 0 {
+		t.Fatalf("reported %d item completions", len(p.counts))
 	}
 }

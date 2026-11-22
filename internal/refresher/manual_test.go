@@ -1,6 +1,7 @@
 package refresher
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -146,5 +147,79 @@ waitForGate:
 	}
 	if event := f.newestEvent("1"); !event.Accepted || event.Source != store.SourceManual {
 		t.Fatalf("event = %+v", event)
+	}
+}
+
+type manualMetadata struct {
+	*fakePlex
+	live plex.Item
+	err  error
+}
+
+func (p manualMetadata) Item(context.Context, string) (plex.Item, error) { return p.live, p.err }
+
+func TestCheckItemValidatesImagesAgainstRequestedKey(t *testing.T) {
+	lib := plex.Library{ID: "1", Type: "movie"}
+	const thumb = "/library/metadata/1/thumb/1700000050"
+	p := manualMetadata{fakePlex: newFakePlex(lib), live: plex.Item{Title: "Updated", Thumb: thumb}}
+	f := newRefreshFixture(t, Server{Name: "home", Plex: p})
+	f.now = t0
+	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
+	if err := f.r.CheckItem(t.Context(), "home", "1"); err != nil {
+		t.Fatal(err)
+	}
+	row, found := f.row("home", "1", "1")
+	if !found || row.Thumb != thumb || row.Title != "Updated" || row.Attempts != 0 {
+		t.Fatalf("checked item = %+v, found %v", row, found)
+	}
+}
+
+func TestCheckGoneItemRemovesRowAndRecordsManualEvent(t *testing.T) {
+	lib := plex.Library{ID: "1", Type: "movie"}
+	p := manualMetadata{fakePlex: newFakePlex(lib), err: plex.ErrNotFound}
+	f := newRefreshFixture(t, Server{Name: "home", Plex: p})
+	f.now = t0
+	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
+	if err := f.r.CheckItem(t.Context(), "home", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, found := f.row("home", "1", "1"); found {
+		t.Fatal("gone item still cached")
+	}
+	if event := f.newestEvent("1"); event.Kind != store.EventGone || event.Source != store.SourceManual {
+		t.Fatalf("gone event = %+v", event)
+	}
+	if err := f.r.CheckItem(t.Context(), "home", "1"); !errors.Is(err, ErrNotCached) {
+		t.Fatalf("history check = %v", err)
+	}
+	if _, err := f.r.SetStopped(t.Context(), "home", "1", true); !errors.Is(err, ErrNotCached) {
+		t.Fatalf("history stop = %v", err)
+	}
+}
+
+func TestManualMatchRecordsTargetAndStoppedRunSkipsItem(t *testing.T) {
+	lib := plex.Library{ID: "1", Type: "movie"}
+	f := newRefreshFixture(t, Server{Name: "home", Plex: newFakePlex(lib)})
+	f.now = t0
+	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
+	batch, _ := f.row("home", "1", "1")
+	if changed, err := f.r.SetStopped(t.Context(), "home", "1", true); err != nil || !changed {
+		t.Fatalf("stop = %v, %v", changed, err)
+	}
+	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto}
+	if err := f.r.runItem(t.Context(), run, batch); err != nil || run.skipped != 1 {
+		t.Fatalf("scheduled skip = %d, %v", run.skipped, err)
+	}
+	cand := plex.Candidate{GUID: "plex://movie/1", Name: "Match", Year: 2020}
+	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {
+		t.Fatal(err)
+	}
+	row, _ := f.row("home", "1", "1")
+	if row.StoppedAt.IsZero() || row.Attempts != 1 {
+		t.Fatalf("item after match = %+v", row)
+	}
+	e := f.newestEvent("1")
+	if e.MatchGUID != cand.GUID || e.MatchTitle != cand.Name || e.MatchYear != cand.Year || e.Source != store.SourceManual {
+		t.Fatalf("match event = %+v", e)
 	}
 }
