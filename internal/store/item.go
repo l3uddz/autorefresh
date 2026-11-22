@@ -589,13 +589,16 @@ type Pruned struct {
 }
 
 // PruneServers removes the libraries of each server that is not in servers.
-// The removal of a library also removes its item rows.
+// The removal of a library also removes its item rows. It also removes the
+// run rows of those servers, because a run has no library.
 func (s *Store) PruneServers(servers []string) ([]Pruned, error) {
 	keep := make(map[string]bool, len(servers))
 	for _, name := range servers {
 		keep[name] = true
 	}
-	return s.prune("", func(server, _ string) bool { return !keep[server] })
+	return s.prune("", func(server, _ string) bool { return !keep[server] }, func(tx *sql.Tx) error {
+		return deleteRunsExcept(tx, servers)
+	})
 }
 
 // PruneSections removes the library of each section of server that is not in
@@ -605,14 +608,15 @@ func (s *Store) PruneSections(server string, sections []string) ([]Pruned, error
 	for _, section := range sections {
 		keep[section] = true
 	}
-	return s.prune(server, func(_, section string) bool { return !keep[section] })
+	return s.prune(server, func(_, section string) bool { return !keep[section] }, nil)
 }
 
 // prune removes each library for which remove is true, in one transaction.
 // The foreign key of item removes the item rows of the library. It reads only the libraries of server,
 // or of all servers if server is "". It returns the removed libraries,
-// ordered by server and section.
-func (s *Store) prune(server string, remove func(server, section string) bool) ([]Pruned, error) {
+// ordered by server and section. If also is not nil, it runs in the same
+// transaction after the libraries are removed.
+func (s *Store) prune(server string, remove func(server, section string) bool, also func(tx *sql.Tx) error) ([]Pruned, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("begin prune: %w", err)
@@ -646,6 +650,11 @@ func (s *Store) prune(server string, remove func(server, section string) bool) (
 	for _, p := range pruned {
 		if _, err := tx.Exec(`DELETE FROM library WHERE server = ? AND section = ?`, p.Server, p.Section); err != nil {
 			return nil, fmt.Errorf("prune library: %w", err)
+		}
+	}
+	if also != nil {
+		if err := also(tx); err != nil {
+			return nil, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
