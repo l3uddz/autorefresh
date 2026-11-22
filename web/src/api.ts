@@ -213,12 +213,17 @@ export function useServers() {
   });
 }
 
-/** Returns the newer of the cached status and next, so a GET that
- * answers late cannot undo a newer event, nor the other way round. A
- * snapshot of another process always wins: after a restart the counts
- * start again, and process IDs have no order. */
-export function newerStatus(cached: Status | undefined, next: Status): Status {
-  return !cached || cached.boot !== next.boot || next.seq >= cached.seq ? next : cached;
+const retiredBoots = new WeakMap<QueryClient, Set<string>>();
+
+/** Keeps the highest sequence for each process and ignores retired ones. */
+export function newerStatus(cached: Status | undefined, next: Status, client: QueryClient): Status {
+  if (!cached) return next;
+  if (cached.boot === next.boot) return next.seq >= cached.seq ? next : cached;
+  const retired = retiredBoots.get(client) ?? new Set<string>();
+  if (retired.has(next.boot)) return cached;
+  retired.add(cached.boot);
+  retiredBoots.set(client, retired);
+  return next;
 }
 
 /** The query of GET /api/status. Its answer replaces the cache only when
@@ -232,7 +237,7 @@ export function statusQuery(client: QueryClient) {
       // A stream event may have reported a restart while the GET was in flight.
       const cached = client.getQueryData<Status>(['status']);
       if (cached && cached.boot !== startingBoot && next.boot === startingBoot) return cached;
-      return newerStatus(cached, next);
+      return newerStatus(cached, next, client);
     },
   };
 }
@@ -283,7 +288,7 @@ export function useLiveStatus(): Connection {
 
     const onStatus = (event: MessageEvent<string>) => {
       const next = JSON.parse(event.data) as Status;
-      const status = newerStatus(client.getQueryData<Status>(['status']), next);
+      const status = newerStatus(client.getQueryData<Status>(['status']), next, client);
       const runs = JSON.stringify(status.servers.map(({ last }) => [last?.id, last?.finishedAt]));
       if (runs !== lastRuns) invalidateLists(client);
       lastRuns = runs;

@@ -52,6 +52,7 @@ export class NothingMatched extends Error {
 }
 
 let current: BulkQueue | undefined;
+let queueGeneration = 0;
 // Whether a bulk refresh waits for the admission of its first job. The
 // queue exists only after that, so this keeps a second start out.
 let isAdmitting = false;
@@ -127,6 +128,7 @@ export async function startBulkRefresh(client: QueryClient, requests: BulkReques
   } finally {
     setAdmitting(false);
   }
+  queueGeneration++;
   publish({
     isCanceled: false,
     isDone: false,
@@ -176,12 +178,13 @@ export function cancelQueueOfJob(id: number): boolean {
 /** Cancels job id. A failure stays on the queue, which stays canceled, so
  * the waiting servers still do not start. */
 async function cancelJob(id: number) {
+  const generation = queueGeneration;
   try {
     await post(`runs/cancel?${new URLSearchParams({ id: String(id) })}`);
   } catch (error) {
     // A job that already ended answers 404, which changes nothing here.
     if (error instanceof ApiError && error.status === 404) return;
-    if (current) publish({ ...current, cancelError: (error as Error).message });
+    if (current && queueGeneration === generation) publish({ ...current, cancelError: (error as Error).message });
   }
 }
 
@@ -295,6 +298,8 @@ async function waitForJob(client: QueryClient, srv: number, id: number): Promise
         if (run !== 'error' && run?.status && run.status !== 'running') {
           return { status: run.status, hasItems: run.status !== 'interrupted' };
         }
+        const latest = reportedEnd(client.getQueryData<Status>(['status']), srv, id);
+        if (latest && latest !== 'running') return latest;
         if (++misses >= queueTiming.unknownAfter) return { status: 'unknown', hasItems: false };
       }
       // The cache may have changed during the requests: check it again
@@ -430,6 +435,7 @@ export const currentQueue = () => current;
 
 /** Forgets the queue. Tests use it. */
 export function resetQueue() {
+  queueGeneration++;
   current = undefined;
   isAdmitting = false;
 }

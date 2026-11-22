@@ -22,7 +22,7 @@ interface Stored {
   status?: Status;
   runs?: Record<number, RunRecord[]>;
   /** The answer of runs/cancel, 200 by default. */
-  cancel?: Answer;
+  cancel?: Answer | Promise<Answer>;
 }
 
 /** A fake API: refresh POSTs take answers from a list per server, cancel
@@ -36,7 +36,7 @@ function fakeApi(refresh: Record<number, Answer[]>, items: Record<number, string
     calls.push(`${init?.method ?? 'GET'} ${path}${url.search}`);
     let answer: Answer = { status: 404, body: { error: 'no such route' } };
     if (path === 'items/refresh') answer = refresh[Number(url.searchParams.get('srv'))].shift()!;
-    if (path === 'runs/cancel') answer = stored.cancel ?? { status: 200, body: {} };
+    if (path === 'runs/cancel') answer = await (stored.cancel ?? { status: 200, body: {} });
     if (path === 'status' && stored.status) answer = { status: 200, body: stored.status };
     if (path === 'runs' && stored.runs) answer = { status: 200, body: { runs: stored.runs[Number(url.searchParams.get('srv'))] ?? [] } };
     if (path === 'runs/items') {
@@ -315,6 +315,26 @@ describe('bulk refresh queue', () => {
     expect(result.steps.map(step => [step.state, step.note])).toEqual([['finished', undefined], ['not-started', 'canceled']]);
   });
 
+  it('does not put an old cancellation failure on a new queue', async () => {
+    let resolve!: (value: Answer) => void;
+    const promise = new Promise<Answer>(done => { resolve = done; });
+    fakeApi({ 0: [accepted(7, 2), accepted(8, 2)] }, { 7: ['accepted'], 8: ['accepted'] }, { cancel: promise });
+    const firstDone = nextDone();
+    await startBulkRefresh(client, requests.slice(0, 1), names);
+    const cancel = cancelBulkQueue();
+    end(client, 0, lastRun(7, 'finished'));
+    await firstDone;
+
+    const secondDone = nextDone();
+    await startBulkRefresh(client, requests.slice(0, 1), names);
+    resolve({ status: 503, body: { error: 'shutting down' } });
+    await cancel;
+    const cancelError = currentQueue()?.cancelError;
+    end(client, 0, lastRun(8, 'finished'));
+    await secondDone;
+    expect(cancelError).toBeUndefined();
+  });
+
   it('does not report the cancel of a job that already ended', async () => {
     fakeApi({ 0: [accepted(7, 2)], 1: [accepted(8, 1)] }, {}, { cancel: { status: 404, body: { error: 'not found' } } });
     await startBulkRefresh(client, requests, names);
@@ -343,6 +363,20 @@ describe('bulk refresh queue', () => {
     const done = nextDone();
     await startBulkRefresh(client, requests, names);
     expect((await done).steps.map(step => step.state)).toEqual(['unknown', 'not-started']);
+  });
+
+  it('uses a completion received while the last recovery lookup is pending', async () => {
+    Object.assign(queueTiming, { unknownAfter: 1 });
+    // The stream catches up during the recovery request, which still returns no run.
+    const stored: Stored = { status: freshStatus() };
+    Object.defineProperty(stored, 'runs', { get: () => {
+      end(client, 0, lastRun(7, 'finished'));
+      return { 0: [] };
+    } });
+    fakeApi({ 0: [accepted(7, 2)] }, { 7: ['accepted'] }, stored);
+    const done = nextDone();
+    await startBulkRefresh(client, requests.slice(0, 1), names);
+    expect((await done).steps.map(step => step.state)).toEqual(['finished']);
   });
 
   it('ends a job as unknown when the status and the stored runs are both unavailable', async () => {

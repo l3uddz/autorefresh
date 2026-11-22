@@ -8,16 +8,28 @@ describe('status order', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('keeps the newer snapshot of one process', () => {
+    const client = new QueryClient();
     const cached = status('a', 5);
-    expect(newerStatus(cached, status('a', 4))).toBe(cached);
+    expect(newerStatus(cached, status('a', 4), client)).toBe(cached);
     const next = status('a', 6);
-    expect(newerStatus(cached, next)).toBe(next);
-    expect(newerStatus(undefined, next)).toBe(next);
+    expect(newerStatus(cached, next, client)).toBe(next);
+    expect(newerStatus(undefined, next, client)).toBe(next);
   });
 
   it('takes the snapshot of a restarted process, whatever its count', () => {
     const next = status('b', 0);
-    expect(newerStatus(status('a', 9), next)).toBe(next);
+    expect(newerStatus(status('a', 9), next, new QueryClient())).toBe(next);
+  });
+
+  it('keeps a restart fetched over HTTP when an older stream event arrives', async () => {
+    const client = new QueryClient();
+    client.setQueryData(['status'], status('a', 10));
+    const restarted = status('b', 0);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(restarted))));
+    await client.fetchQuery(statusQuery(client));
+    const buffered = status('a', 11);
+    expect(newerStatus(client.getQueryData<Status>(['status']), buffered, client)).toEqual(restarted);
+    client.clear();
   });
 
   it('does not let a late GET replace a newer event', async () => {
