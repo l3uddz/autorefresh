@@ -59,6 +59,10 @@ func (r *Refresher) pruneSections(run *serverRun, libraries []plex.Library) erro
 	if len(libraries) == 0 {
 		return nil
 	}
+	if r.opts.DryRun {
+		log.Info().Str("server", run.server.Name).Msg("Dry run keeps cache of removed libraries")
+		return nil
+	}
 	pruned, err := r.store.PruneSections(run.server.Name, run.sections())
 	if err != nil {
 		return err

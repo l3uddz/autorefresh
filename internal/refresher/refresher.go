@@ -159,7 +159,26 @@ func (run *serverRun) sections() []string {
 	return sections
 }
 
-// Run removes the cache of the servers that are not configured. Then it
+// pruneServers removes the cache of the servers that are not configured. A
+// dry run keeps it.
+func (r *Refresher) pruneServers() error {
+	if r.opts.DryRun {
+		return nil
+	}
+	names := make([]string, 0, len(r.servers))
+	for _, srv := range r.servers {
+		names = append(names, srv.Name)
+	}
+	pruned, err := r.store.PruneServers(names)
+	if err != nil {
+		return err
+	}
+	logPruned(pruned, nil)
+	return nil
+}
+
+// Run removes the cache of the servers that are not configured, unless it
+// is a dry run. Then it
 // checks each server in its own goroutine. It reads the libraries of the
 // server, refreshes its due items, and logs its summary. It returns the
 // store errors and the errors of the unavailable servers. A store error of
@@ -172,15 +191,9 @@ func (r *Refresher) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	names := make([]string, 0, len(r.servers))
-	for _, srv := range r.servers {
-		names = append(names, srv.Name)
-	}
-	pruned, err := r.store.PruneServers(names)
-	if err != nil {
+	if err := r.pruneServers(); err != nil {
 		return err
 	}
-	logPruned(pruned, nil)
 
 	errs := make([]error, len(r.servers))
 	var wg sync.WaitGroup
