@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"reflect"
 	"testing"
 	"time"
@@ -523,5 +524,63 @@ func TestRunItemsCarryTheirItem(t *testing.T) {
 	}
 	if !reflect.DeepEqual(detail.Items, want) {
 		t.Fatalf("items = %+v\nwant %+v", detail.Items, want)
+	}
+}
+
+// Migration 12 keeps the events and runs of a version 11 database. The old
+// events link to no run, and a new event of a run loses only its link when
+// retention removes the run.
+func TestRunLinkMigrationKeepsOldRows(t *testing.T) {
+	file := openAtVersion(t, 11)
+	db, err := sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO library (server, section) VALUES (?, ?)`, []any{srv, sec}},
+		{`INSERT INTO run (server, kind, source, status, started_at, finished_at) VALUES (?, 'run', 'schedule', 'finished', ?, ?)`,
+			[]any{srv, base.Unix(), base.Add(time.Minute).Unix()}},
+		{`INSERT INTO event (server, section, rating_key, at, kind) VALUES (?, ?, 'old', ?, 'request')`, []any{srv, sec, base.Add(30 * time.Second).Unix()}},
+	} {
+		if _, err := db.Exec(stmt.sql, stmt.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	s, err := Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	old, found, err := s.RunDetail(context.Background(), 1)
+	if err != nil || !found || old.Run.Status != RunFinished || len(old.Events) != 0 {
+		t.Fatalf("old run = %+v, %v, %v; want it without events", old, found, err)
+	}
+	if events, err := s.Timeline(srv, "old"); err != nil || len(events) != 1 || events[0].RunID != 0 {
+		t.Fatalf("old events = %+v, %v; want one event without a run", events, err)
+	}
+
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	start := runStart(srv, base)
+	id := startRun(t, s, srv, base)
+	if _, err := s.FinishRun(id, start, RunResult{FinishedAt: base, Status: RunFinished}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordRequest(Request{Server: srv, RatingKey: "a", At: base.Add(2 * time.Hour), Source: SourceAuto,
+		Action: ActionRefresh, Accepted: true, RunID: id}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.PruneHistory(base.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := s.RunDetail(context.Background(), id); err != nil || found {
+		t.Fatalf("pruned run found = %v, %v", found, err)
+	}
+	if events, err := s.Timeline(srv, "a"); err != nil || len(events) != 1 || events[0].RunID != 0 {
+		t.Fatalf("events = %+v, %v; want the event without its run", events, err)
 	}
 }
