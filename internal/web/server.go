@@ -19,6 +19,9 @@ const defaultForceWait = 5 * time.Second
 // Options configures a Server.
 type Options struct {
 	Username, Password string // both empty: no auth
+	// Status is the live status that /api/status and /api/events show.
+	// Without one, the server shows an empty status.
+	Status *Status
 }
 
 // Server is the HTTP server of the dashboard.
@@ -26,6 +29,17 @@ type Server struct {
 	mux     *http.ServeMux
 	handler http.Handler
 	srv     *http.Server
+	status  *Status
+
+	// sseCtx ends the event streams. Stop cancels it first, so that
+	// Shutdown does not wait for open streams.
+	sseCtx    context.Context
+	cancelSSE context.CancelFunc
+	// writeTimeout bounds each write to an event stream.
+	writeTimeout time.Duration
+	// keepalive is the interval of the keepalive comments of an idle
+	// event stream.
+	keepalive time.Duration
 
 	// cancelBase cancels the base context of every request.
 	cancelBase context.CancelFunc
@@ -44,13 +58,25 @@ type Server struct {
 
 // New returns a Server with the routes of the dashboard.
 func New(opts Options) *Server {
+	status := opts.Status
+	if status == nil {
+		status = NewStatus(nil, false)
+	}
 	baseCtx, cancelBase := context.WithCancel(context.Background())
+	sseCtx, cancelSSE := context.WithCancel(context.Background())
 	s := &Server{
-		mux:        http.NewServeMux(),
-		cancelBase: cancelBase,
-		forceWait:  defaultForceWait,
+		mux:          http.NewServeMux(),
+		status:       status,
+		sseCtx:       sseCtx,
+		cancelSSE:    cancelSSE,
+		writeTimeout: defaultWriteTimeout,
+		keepalive:    defaultKeepalive,
+		cancelBase:   cancelBase,
+		forceWait:    defaultForceWait,
 	}
 	s.mux.HandleFunc("GET /{$}", servePlaceholder)
+	s.mux.HandleFunc("GET /api/status", s.serveStatus)
+	s.mux.HandleFunc("GET /api/events", s.serveEvents)
 	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})
@@ -84,12 +110,13 @@ func (s *Server) Start(ln net.Listener) {
 	}()
 }
 
-// Stop calls Shutdown(ctx). If Shutdown fails, it closes handler admission,
+// Stop ends the event streams and calls Shutdown(ctx). If Shutdown fails, it closes handler admission,
 // cancels the base context of every request, calls Close, and waits for the
 // active handlers for at most forceWait. It always waits for Serve to return.
 // It returns the Shutdown error. The budget is the deadline of ctx plus
 // forceWait.
 func (s *Server) Stop(ctx context.Context) error {
+	s.cancelSSE()
 	err := s.srv.Shutdown(ctx)
 	if err != nil {
 		s.force()

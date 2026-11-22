@@ -227,6 +227,9 @@ func TestStopForcesBlockedHandlers(t *testing.T) {
 	if s.srv.BaseContext(nil).Err() == nil {
 		t.Error("Stop did not cancel the base context of the requests")
 	}
+	if rec := serve(s, httptest.NewRequest(http.MethodGet, "/", nil)); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status after a forced Stop = %d, want 503", rec.Code)
+	}
 }
 
 func TestStopBoundsHandlersThatIgnoreCancel(t *testing.T) {
