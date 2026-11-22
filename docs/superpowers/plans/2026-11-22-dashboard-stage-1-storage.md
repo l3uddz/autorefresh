@@ -32,7 +32,7 @@
 1. **An item that completes, comes back incomplete, and completes again, with both accepted matches in the same second.** The second `completed` event credits the second request's event ID. Test in Task 6.
 2. **A dry run against a shared database with a different configuration.** It must not delete any library, server cache, or history, and must write no event. Tests in Tasks 6 and 9.
 3. **An upgrade from schema version 5 with action history.** Data is kept, new columns take their defaults, the row is still due, and its completion writes an event with no match event ID. Tests in Tasks 2, 4, and 6.
-4. **A fix match whose TMDB lookup fails after a successful path search.** The decision is `failed` with that search kept, and the item still gets its plain refresh as today. Test in Task 11.
+4. **A fix match whose TMDB lookup fails after a successful path search.** The decision is `failed` with that search kept, and the item still gets its plain refresh as today. A Plex episode-number error instead stops the item before any request, as today. Tests in Task 11.
 5. **Plex-supplied image values that are not a plain item image path or a safe remote URL.** They are stored as empty. Tests in Task 3.
 
 ---
@@ -140,6 +140,7 @@ func TestSafeRemoteImage(t *testing.T)
 // -> "" for: "http://h/x.jpg"; "https://user:pw@h/x.jpg"; "https://:443/x.jpg";
 //    "https://h/x.jpg?X-Plex-Token=abc"; "https://h/x.jpg?apitoken=abc"; "https://h/x.jpg?a=%zz";
 //    "https://h/x.jpg#f"; "https://h/x.jpg#"; "/relative.jpg"; ""
+// TestItemPathsShowWithoutLocation: a show response with no Location and no Media -> no paths, no error
 ```
 
 Update `TestSearchMatchesDecodesCandidates` to expect `Candidate{GUID: "plex://movie/000000000000000000000001", Name: "Fixture Movie One", Year: 2020, Type: "movie", Summary: "A neutral summary.", Thumb: "https://metadata.example.invalid/thumb.jpg", Score: 98}`.
@@ -271,7 +272,8 @@ func (s *Store) Timeline(server, ratingKey string) ([]Event, error)
 - `RecordGone`: a `gone` event with the snapshot, then the row delete, in one transaction. A missing row writes nothing.
 - `Timeline` decodes `links` with `strings.Split` only when the text is not empty.
 
-- [ ] **Step 1: Write the failing tests** — only the history-specific ones. The attempt-counting assertions stay in `TestRecordAttempt*` until Task 10 converts those tests to `RecordRequest`, so there is one set of them.
+- `RecordRequest` returns an error when `Source` is empty, before it writes anything.
+- [ ] **Step 1: Write the failing tests** — only the history-specific ones, plus `TestRecordRequestRequiresSource` (empty `Source` -> error, row and Timeline unchanged). The attempt-counting assertions stay in `TestRecordAttempt*` until Task 10 converts those tests to `RecordRequest`, so there is one set of them.
 
 ```go
 func TestRecordRequestWritesEventAndOutcome(t *testing.T)      // accepted refresh -> one event: request, auto, refresh, accepted, Title from row; LastOutcome "refresh"
@@ -481,9 +483,9 @@ func TestDryRunPrunesNothing(t *testing.T)
 
 **Interfaces:**
 - `refreshItem` → on success `RecordRequest{Action: action, Accepted: true, Source: store.SourceAuto, Match: target(fm)}`. `target(fm *fixMatch) *store.MatchTarget` copies `cand.GUID`, `cand.Name`, `cand.Year`, `links`, `pathYear`, `tmdbYear`, `episodeCount`; nil when `fm` is nil.
-- `itemFailed(ctx, run, it, action, fm, err)`: a 404 calls `RecordGone` (not in dry run); other failures call `countFailure(ctx, run, it, action, fm, err)`, which records `RecordRequest{Action: action, Accepted: false, Error: err.Error(), Match: target(fm)}`. The attempt counting, stop rules, and log lines stay as today.
+- `itemFailed(ctx, run, it, action, fm, err)`: a 404 calls `RecordGone` (not in dry run); other failures call `countFailure(ctx, run, it, action, fm, err)`, which records `RecordRequest{Action: action, Accepted: false, Source: store.SourceAuto, Error: err.Error(), Match: target(fm)}`. Every refresher call of `RecordRequest` sets `Source: store.SourceAuto`; `RecordRequest` returns an error for an empty `Source` (Task 5), so a missed one fails a test instead of storing an empty source. The attempt counting, stop rules, and log lines stay as today.
 - `storeItem` sets `Thumb: plex.ItemImagePath(it.RatingKey, it.Thumb)`, `Art: plex.ItemImagePath(it.RatingKey, it.Art)`, and for movies `Path: folderOf(it.Files)`. `folderOf(files []string) string` returns the first file up to its last `/` or `\`, or `""`.
-- `(r *Refresher) itemPaths(ctx, run, it)`: after a successful `ItemPaths` of a series, when `len(paths) > 0 && paths[0] != ""` and not a dry run, calls `SetPath`; a `SetPath` error returns wrapped with `errCache` so `itemFailed` treats it as a store error.
+- `(r *Refresher) itemPaths(ctx, run, it)`: after a successful `ItemPaths` of a series (`it.Type == plex.ShowLibrary`), when `len(paths) > 0 && paths[0] != ""` and not a dry run, calls `SetPath` with `paths[0]`. For a show this is always a `Location`: `ItemPaths` falls back to `Media[].Part[].file` only without a `Location`, and a show item carries no `Media` (its files are on its episodes). Task 3 pins that with a Plex test; a `SetPath` error returns wrapped with `errCache` so `itemFailed` treats it as a store error.
 - `readLibraries` calls `SaveLibraries` with the selected libraries after `selectLibraries` (dry runs too: it is cache metadata, not history).
 
 - [ ] **Step 1: Write the failing tests**
@@ -531,7 +533,8 @@ func (d *decisionLog) fail(err error)                                           
 
 - `findMatch` creates the `decisionLog` right after its guard (unmatched, not ignored, refreshed before), before `itemPaths`, and passes it down: `searchIDs` (source `path`), `tmdbResults` (source `tmdb`, `fromID` = the path ID's `title()`), and `tieTMDBCandidate` (source `tie`). Every `SearchMatches` call adds its result before any return, with `failed: true` for any error (also one that `searchFailureIsEmpty` accepts). A failure that `searchFailureIsEmpty` accepts does not set `d.err` and counts as an empty search, exactly as the match code treats it today: the outcome follows the other searches and the TMDB fallback (which this empty result can trigger). The search keeps `Failed` in every outcome, so the UI can tell it apart from an empty answer. First-pass searches stay in the log when the TMDB pass replaces `results`.
 - `searchResult` gains `pos int`, the index of its search in the `decisionLog`, so `resolveMatch` sets verdicts on the logged copy of exactly the results it evaluated.
-- Handled failures: `recordTMDBFailure` and `confirmationLookupFailed` (and the episode lookup failure path) call `d.fail(err)` and keep returning exactly what they return today, so the item still gets its plain refresh.
+- Handled failures: `recordTMDBFailure` and `confirmationLookupFailed` call `d.fail(err)` and keep returning exactly what they return today, so the item still gets its plain refresh. In `confirmEpisodeNumbers` this covers a TMDB `SeasonEpisodes` error (through `confirmationLookupFailed`: plain refresh as today).
+- A Plex `EpisodeNumbers` error is not handled: it returns as today, so no request is sent and `countFailure` records the failed attempt (`Match search failed`). The decision is `failed` through rule 2 below. `TestEpisodeEvidenceLookupFailures` keeps its three cases unchanged and gains the decision assertions: Plex error -> `failed` and no request; TMDB error -> `failed` and the `Refresh 201` request; cancel -> no decision.
 - `findMatch` records one decision on its way out, with `Source: store.SourceAuto`, never in a dry run. The classification, in this order:
   1. skip (record nothing) when the returned error is `errCache`, when `ctx.Err() != nil`, or when it is `plex.ErrNotFound` (a `gone` event follows);
   2. a returned error (for example a non-404 `ItemPaths` failure) or `d.err != nil` → `failed` with `Error` and the searches so far, all verdicts empty;
