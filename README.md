@@ -295,10 +295,10 @@ it. The dashboard does not exist yet. The history has these records:
 Autorefresh also keeps the images and the path of each item that it reads
 from Plex. It keeps the title, type, agent, and language of each library.
 
-At the start of each run, autorefresh removes the events and runs that are
-older than `history-retention`. It keeps a run that is still `running`. A
-removed library loses its events, and a
-removed server loses its runs. If a process stops during a run, the run
+At the start of each run, autorefresh removes the events that are older
+than `history-retention` and the runs that ended longer ago than that. It
+keeps a run that is still `running`. A removed library loses its events,
+and a removed server loses its runs. If a process stops during a run, the run
 stays in the status `running`. When the scheduled service starts, it marks
 each such run as `interrupted`. A process with `--once` or `--dry-run`
 leaves these runs as they are, because it can run beside the service.

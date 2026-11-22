@@ -105,9 +105,10 @@ func (s *Store) InterruptRuns(at time.Time) (int, error) {
 }
 
 // PruneHistory removes the events that are older than before, with their
-// searches and candidates, and the runs that started before it and are no
-// longer running: a running row stays until FinishRun or InterruptRuns ends
-// it, however long it runs. It first
+// searches and candidates, and the runs that ended before it. A running
+// row stays, however long it runs. An interrupted row counts from the time
+// it was marked, so a process that still runs it (for example --once
+// beside the service) can finish it later. It first
 // clears the last match event of each item row that points to a removed
 // event. It runs in one transaction and returns the numbers of removed
 // events and runs.
@@ -126,7 +127,7 @@ func (s *Store) PruneHistory(before time.Time) (events, runs int, err error) {
 	if events, err = deleteBefore(tx, `DELETE FROM event WHERE at < ?`, cutoff); err != nil {
 		return 0, 0, fmt.Errorf("prune events: %w", err)
 	}
-	if runs, err = deleteBefore(tx, `DELETE FROM run WHERE started_at < ? AND status != ?`, cutoff, RunRunning); err != nil {
+	if runs, err = deleteBefore(tx, `DELETE FROM run WHERE status != ? AND COALESCE(finished_at, started_at) < ?`, RunRunning, cutoff); err != nil {
 		return 0, 0, fmt.Errorf("prune runs: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

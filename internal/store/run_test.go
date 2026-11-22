@@ -130,9 +130,35 @@ func TestPruneHistoryKeepsRunningRuns(t *testing.T) {
 		t.Fatalf("runs = %+v, want the finished run %d", got, id)
 	}
 
-	// Once finished, the old run goes with the next prune.
-	if _, runs, err = s.PruneHistory(base.Add(time.Hour)); err != nil || runs != 1 {
+	// Once it ended before the cutoff, the run goes with the next prune.
+	if _, runs, err = s.PruneHistory(base.Add(3 * time.Hour)); err != nil || runs != 1 {
 		t.Fatalf("second prune = %d runs, %v; want 1, nil", runs, err)
+	}
+}
+
+// A run that the scheduled service marked interrupted while another
+// process (for example --once) still ran it is kept for the whole
+// retention after the mark, so that process's FinishRun still finds it.
+func TestPruneHistoryKeepsRecentlyInterruptedRuns(t *testing.T) {
+	s := openTest(t)
+	id := startRun(t, s, srv, base)
+	restart := base.Add(800 * time.Hour)
+	if _, err := s.InterruptRuns(restart); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, runs, err := s.PruneHistory(restart.Add(-720 * time.Hour)); err != nil || runs != 0 {
+		t.Fatalf("prune = %d runs, %v; want 0, nil", runs, err)
+	}
+	if err := s.FinishRun(id, RunResult{FinishedAt: restart.Add(time.Hour), Status: RunFinished, Refreshed: 2}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Runs(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Status != RunFinished || got[0].Refreshed != 2 {
+		t.Fatalf("runs = %+v, want the finished run %d", got, id)
 	}
 }
 

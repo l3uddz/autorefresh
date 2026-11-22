@@ -248,8 +248,10 @@ New and changed tables (one migration each, numbered after `5_actions.sql`):
   `--once` or `--dry-run` process can share the database with a running
   daemon, so it must not mark the daemon's runs.
 
-Retention: at the start of each run, delete `event` and `run` rows older than
-`history-retention`. The cascade removes their searches and candidates. The
+Retention: at the start of each run, delete `event` rows older than
+`history-retention`, and `run` rows that ended longer ago than that (a
+`running` row is kept, and an `interrupted` row counts from when it was
+marked, so a `--once` process that still runs it can finish it). The cascade removes their searches and candidates. The
 `library` cascade removes the history of a pruned library. Dry runs skip
 retention, record nothing, and prune no library or server, so a dry run
 with another configuration cannot delete the daemon's cache or history.
