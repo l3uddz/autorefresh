@@ -63,6 +63,9 @@ type Read struct {
 	// Folders maps a rating key to its series folder. ApplyRead saves each
 	// non-empty value as the path of the row, if the read keeps the row.
 	Folders map[string]string
+	// DryRun keeps ApplyRead from writing events. The rows and the read
+	// times change as in any other read.
+	DryRun bool
 }
 
 const itemColumns = `server, section, rating_key, type, title, year, added_at, reasons, last_refresh, last_attempt, refreshes,
@@ -194,9 +197,15 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	return fixed, nil
 }
 
-// deleteGone deletes the rows of r.Gone.
+// deleteGone deletes the rows of r.Gone. Unless r.DryRun, it writes a gone
+// event for each row that exists.
 func deleteGone(tx *sql.Tx, r Read) error {
 	for _, key := range r.Gone {
+		if !r.DryRun {
+			if err := writeGone(tx, r, key); err != nil {
+				return err
+			}
+		}
 		if err := deleteItem(tx, r.Server, key); err != nil {
 			return err
 		}
@@ -222,18 +231,36 @@ func oldRows(tx *sql.Tx, r Read, incoming map[string]readKey) (map[string]Item, 
 	return old, nil
 }
 
+// completion is a row that a read completed, with what the read says about it.
+type completion struct {
+	prev Item
+	in   readKey
+}
+
 // applyOldRows updates or deletes each stored row in old after the read r,
-// returning the rows that became complete.
+// returning the rows that became complete. Unless r.DryRun, it writes a
+// completed event for each of them, ordered by rating key.
 func applyOldRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]readKey) ([]Item, error) {
-	var fixed []Item
+	var done []completion
 	for key, prev := range old {
-		done, err := writeExisting(tx, r, prev, incoming[key])
+		fixed, err := writeExisting(tx, r, prev, incoming[key])
 		if err != nil {
 			return nil, err
 		}
-		if done {
-			fixed = append(fixed, prev)
+		if fixed {
+			done = append(done, completion{prev, incoming[key]})
 		}
+	}
+	sort.Slice(done, func(i, j int) bool { return done[i].prev.RatingKey < done[j].prev.RatingKey })
+
+	fixed := make([]Item, 0, len(done))
+	for _, c := range done {
+		if !r.DryRun {
+			if err := writeCompleted(tx, r, c.prev, c.in); err != nil {
+				return nil, err
+			}
+		}
+		fixed = append(fixed, c.prev)
 	}
 	return fixed, nil
 }

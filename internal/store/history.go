@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -202,6 +203,35 @@ func (s *Store) RecordGone(server, ratingKey string, at time.Time, source Source
 	return nil
 }
 
+// writeGone writes a gone event of the read r for the row of key, if it
+// exists. The row keeps its snapshot.
+func writeGone(tx *sql.Tx, r Read, key string) error {
+	snap, found, err := readItem(tx, r.Server, key)
+	if err != nil || !found {
+		return err
+	}
+	_, err = insertEvent(tx, snapshotEvent(snap, r.At, EventGone, SourceAuto))
+	return err
+}
+
+// writeCompleted writes the completed event of the row prev, which the read
+// r completed. The snapshot takes the newest title, year, images, and path
+// that the read has, and the event credits the requests that fixed the row.
+func writeCompleted(tx *sql.Tx, r Read, prev Item, in readKey) error {
+	// in.meta is empty for a row that the read does not list.
+	snap := prev
+	snap.Section = r.Section
+	snap.Title = cmp.Or(in.meta.Title, prev.Title)
+	snap.Year = cmp.Or(in.meta.Year, prev.Year)
+	snap.Thumb = cmp.Or(in.meta.Thumb, prev.Thumb)
+	snap.Art = cmp.Or(in.meta.Art, prev.Art)
+	snap.Path = cmp.Or(in.meta.Path, r.Folders[prev.RatingKey], prev.Path)
+	e := snapshotEvent(snap, r.At, EventCompleted, SourceAuto)
+	e.FixedAction, e.FixedMatch, e.FixedMatchEventID = prev.LastAction, prev.LastMatch, prev.LastMatchEventID
+	_, err := insertEvent(tx, e)
+	return err
+}
+
 // readItem reads one row and closes the query before it returns.
 func readItem(tx *sql.Tx, server, ratingKey string) (it Item, found bool, err error) {
 	items, err := queryItems(tx, `SELECT `+itemColumns+` FROM item WHERE server = ? AND rating_key = ?`, server, ratingKey)
@@ -218,11 +248,11 @@ func readItem(tx *sql.Tx, server, ratingKey string) (it Item, found bool, err er
 func insertEvent(tx *sql.Tx, e Event) (int64, error) {
 	res, err := tx.Exec(`INSERT INTO event (server, section, rating_key, at, kind, source, title, year, type, thumb, art, path,
 		action, accepted, outcome, error, match_guid, match_title, match_year, conflict, path_year, tmdb_year,
-		episode_count, links, fixed_action, fixed_match)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		episode_count, links, fixed_action, fixed_match, fixed_match_event_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT id FROM event WHERE id = ?))`,
 		e.Server, e.Section, e.RatingKey, e.At.Unix(), e.Kind, e.Source, e.Title, e.Year, e.Type, e.Thumb, e.Art, e.Path,
 		e.Action, e.Accepted, e.Outcome, e.Error, e.MatchGUID, e.MatchTitle, e.MatchYear, e.Conflict,
-		e.PathYear, e.TMDBYear, e.EpisodeCount, strings.Join(e.Links, "\n"), e.FixedAction, e.FixedMatch)
+		e.PathYear, e.TMDBYear, e.EpisodeCount, strings.Join(e.Links, "\n"), e.FixedAction, e.FixedMatch, e.FixedMatchEventID)
 	if err != nil {
 		return 0, fmt.Errorf("write event: %w", err)
 	}

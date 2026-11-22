@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"reflect"
 	"testing"
 	"time"
@@ -164,5 +165,211 @@ func TestTimelineOrdersSameSecondByID(t *testing.T) {
 	events, err := s.Timeline(srv, "a")
 	if err != nil || len(events) != 2 || events[0].Action != ActionMatch || events[0].ID <= events[1].ID {
 		t.Fatalf("events = %+v, %v", events, err)
+	}
+}
+
+// accept records an accepted request of action for the row at at.
+func accept(t *testing.T, s *Store, key string, at time.Time, action Action) {
+	t.Helper()
+	err := s.RecordRequest(Request{Server: srv, RatingKey: key, At: at, Source: SourceAuto, Action: action, Accepted: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// completedEvent returns the only completed event of the row.
+func completedEvent(t *testing.T, s *Store, key string) Event {
+	t.Helper()
+	events, err := s.Timeline(srv, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []Event
+	for _, e := range events {
+		if e.Kind == EventCompleted {
+			got = append(got, e)
+		}
+	}
+	if len(got) != 1 {
+		t.Fatalf("completed events = %+v, want one", got)
+	}
+	return got[0]
+}
+
+func TestApplyReadWritesCompletedEvent(t *testing.T) {
+	s := openTest(t)
+	it := item("a", NoArt)
+	it.Thumb, it.Art, it.Path = "/t", "/a", "/tv/A"
+	apply(t, s, Read{Items: []Item{it}})
+	accept(t, s, "a", base.Add(time.Minute), ActionRefresh)
+
+	at := base.Add(time.Hour)
+	apply(t, s, Read{At: at, Items: []Item{item("a", 0)}})
+
+	want := Event{
+		ID: 0, Server: srv, Section: sec, RatingKey: "a", At: at, Kind: EventCompleted, Source: SourceAuto,
+		Title: "Title a", Year: 2020, Type: "show", Thumb: "/t", Art: "/a", Path: "/tv/A", FixedAction: ActionRefresh,
+	}
+	got := completedEvent(t, s, "a")
+	want.ID = got.ID
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("event = %+v, want %+v", got, want)
+	}
+}
+
+func TestCompletedEventCreditsCurrentOccurrence(t *testing.T) {
+	s := openTest(t)
+	var requestIDs []int64
+	for i := 0; i < 2; i++ {
+		apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+		accept(t, s, "a", base.Add(time.Minute), ActionMatch)
+		requestIDs = append(requestIDs, rows(t, s)["a"].LastMatchEventID)
+		apply(t, s, Read{At: base.Add(time.Hour), Items: []Item{item("a", 0)}})
+	}
+	events, _ := s.Timeline(srv, "a")
+	var credited []int64
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Kind == EventCompleted {
+			credited = append(credited, events[i].FixedMatchEventID)
+		}
+	}
+	if !reflect.DeepEqual(credited, requestIDs) || requestIDs[0] == requestIDs[1] {
+		t.Fatalf("credited = %v, want %v", credited, requestIDs)
+	}
+}
+
+func TestCompletedAfterPlainRefreshHasNoMatch(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	accept(t, s, "a", base.Add(time.Minute), ActionMatch)
+	apply(t, s, Read{Items: []Item{item("a", 0)}})
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	accept(t, s, "a", base.Add(2*time.Minute), ActionRefresh)
+	apply(t, s, Read{At: base.Add(time.Hour), Items: []Item{item("a", 0)}})
+
+	events, _ := s.Timeline(srv, "a")
+	last := events[0]
+	if last.Kind != EventCompleted || last.FixedAction != ActionRefresh || last.FixedMatch != "" || last.FixedMatchEventID != 0 {
+		t.Fatalf("latest event = %+v", last)
+	}
+}
+
+func TestCompletedEventPrefersReadMetadata(t *testing.T) {
+	s := openTest(t)
+	old := item("a", NoArt)
+	old.Title, old.Path = "Old", "/tv/A"
+	apply(t, s, Read{Items: []Item{old}})
+
+	fresh := item("a", 0)
+	fresh.Title, fresh.Thumb = "New", "/t"
+	apply(t, s, Read{Items: []Item{fresh}})
+
+	got := completedEvent(t, s, "a")
+	if got.Title != "New" || got.Thumb != "/t" || got.Path != "/tv/A" {
+		t.Fatalf("event = %+v", got)
+	}
+}
+
+func TestMovedRowCompletesInNewSection(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	moved := item("a", 0)
+	moved.Section = "2"
+	apply(t, s, Read{Section: "2", Items: []Item{moved}})
+
+	if got := completedEvent(t, s, "a"); got.Section != "2" {
+		t.Fatalf("event = %+v, want section 2", got)
+	}
+}
+
+func TestLegacyRowCompletesWithoutMatchEvent(t *testing.T) {
+	file := openAtVersion(t, 5)
+	db, err := sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO library (server, section) VALUES ('srv', '1')`,
+		`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons, refreshes, attempts, last_action, last_match)
+			VALUES ('srv', '1', 'a', 'movie', 'Title a', 2020, 1000, 2, 1, 1, 'match', 'match')`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	s, err := Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	apply(t, s, Read{Items: []Item{item("a", 0)}})
+
+	got := completedEvent(t, s, "a")
+	if got.FixedMatch != ActionMatch || got.FixedAction != ActionMatch || got.FixedMatchEventID != 0 {
+		t.Fatalf("event = %+v", got)
+	}
+}
+
+func TestCompletedEventUsesStagedFolder(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	apply(t, s, Read{Full: true, Items: []Item{item("a", 0)}, Folders: map[string]string{"a": "/tv/A"}})
+
+	if got := completedEvent(t, s, "a"); got.Path != "/tv/A" {
+		t.Fatalf("path = %q, want /tv/A", got.Path)
+	}
+}
+
+func TestCompletesAfterMatchEventExpired(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	accept(t, s, "a", base.Add(time.Minute), ActionMatch)
+	if _, err := s.db.Exec(`DELETE FROM event WHERE kind = 'request'`); err != nil {
+		t.Fatal(err)
+	}
+	apply(t, s, Read{Items: []Item{item("a", 0)}})
+
+	got := completedEvent(t, s, "a")
+	if got.FixedMatch != ActionMatch || got.FixedMatchEventID != 0 {
+		t.Fatalf("event = %+v", got)
+	}
+}
+
+func TestApplyReadWritesGoneEvents(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt), item("b", NoArt)}})
+	at := base.Add(time.Hour)
+	apply(t, s, Read{At: at, Full: true, Items: []Item{item("b", NoArt)}, Gone: []string{"a", "missing"}})
+
+	events, _ := s.Timeline(srv, "a")
+	if len(events) != 1 || events[0].Kind != EventGone || events[0].Title != "Title a" || events[0].Source != SourceAuto ||
+		!events[0].At.Equal(at) {
+		t.Fatalf("events = %+v", events)
+	}
+	if events, _ := s.Timeline(srv, "missing"); len(events) != 0 {
+		t.Fatalf("events of a missing row = %+v", events)
+	}
+}
+
+func TestDryRunReadWritesNoEvents(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt), item("b", NoArt), item("c", NoArt)}})
+	at := base.Add(time.Hour)
+	fixed := apply(t, s, Read{At: at, Full: true, DryRun: true, Items: []Item{item("a", 0), item("c", NoArt)}, Gone: []string{"b"}})
+
+	if len(fixed) != 1 || fixed[0].RatingKey != "a" {
+		t.Fatalf("fixed = %+v", fixed)
+	}
+	if got := rows(t, s); len(got) != 1 || got["c"].RatingKey != "c" {
+		t.Fatalf("rows = %+v", got)
+	}
+	if lib, _ := s.Library(srv, sec); !lib.LastFullRead.Equal(at) {
+		t.Fatalf("library = %+v", lib)
+	}
+	for _, key := range []string{"a", "b", "c"} {
+		if events, _ := s.Timeline(srv, key); len(events) != 0 {
+			t.Fatalf("events of %s = %+v", key, events)
+		}
 	}
 }
