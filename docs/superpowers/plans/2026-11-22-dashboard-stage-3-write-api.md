@@ -514,6 +514,8 @@ func (r *Refresher) execute(ctx context.Context, runs []startedRun) error
   - `Status store.RunStatus` (`status`; `running` while the run is live)
   - `FinishedAt time.Time` (`finishedAt,omitzero`)
   - `Error string` (`error,omitempty`)
+  - `Recorded bool` (`recorded`; set only in `Last`): true when the run row's final write committed, so the stored row and (for a bulk job) `GET /api/runs/items` match `Last`. `RunFinished` sets it to `!errors.Is(err, ErrNotRecorded)`.
+- `var ErrNotRecorded = errors.New("result not recorded")` in `refresher`: `finishRun` and the bulk `finishJob` pass `errors.Join(err, ErrNotRecorded)` to `RunFinished` when `FinishRun` or `FinishJob` failed (the error they return is unchanged). Stream consumers fetch a bulk job's results only when `Last.Recorded` is true.
 - **`ServerStatus`** gets `Last *RunProgress` (`last`). `RunFinished` copies the run into `Last` with the final `Refreshed`, `Matched`, `Failed`, `Skipped`, `Selected`, `Due`, `Status`, `FinishedAt`, and `Error` of `res`, then sets `Run` to nil. `Snapshot` deep-copies `Last`.
 - **Redaction:** `func (s *Server) redactStatus(v StatusView) StatusView` redacts `Last.Error`. `serveStatus` and the event stream both use it.
 
@@ -528,6 +530,8 @@ func TestCanceledBeforeExecuteFinishesRow(t *testing.T) // canceled ctx -> row c
 func TestStatusKeepsLastRun(t *testing.T)
 // RunStarted(7, {kind bulk-refresh, source manual}) -> Run.ID 7, Kind, Source, Status running;
 // RunFinished(res{finished, Skipped 1, Refreshed 2}) -> Run nil, Last.ID 7, Last.Status finished, Last.Skipped 1
+//   and Last.Recorded true; RunFinished with an err wrapping refresher.ErrNotRecorded -> Last.Recorded false
+func TestFinishRunFailureMarksNotRecorded(t *testing.T) // embedded store fails FinishRun -> progress err wraps ErrNotRecorded; returned error unchanged
 func TestStatusRedactsLastError(t *testing.T)          // Last.Error with a configured secret -> "<redacted>" in /api/status and the stream
 ```
 
@@ -734,7 +738,8 @@ func (j *Jobs) Close()
      - `errors.Is(err, ErrStore)`: the item is `failed` with the error text `recording failed`. The loop ends, and the job ends as failed with that store error, as a run ends on a store error.
      - `err == nil`: `accepted`
      - `plex.ErrNotFound`: `gone`
-     - `plex.ErrUnavailable`: `failed` with the error text. The loop ends, and the job ends as failed.
+     - `ctx` ended (the job was canceled or closed) after the call started: `failed` with the error text (it was sent), and the loop ends. This rule comes before the next one, because a Plex call canceled in flight wraps both `plex.ErrUnavailable` and the context error (`internal/plex/client.go` `transportError`).
+     - `plex.ErrUnavailable` with `ctx` still live: `failed` with the error text. The loop ends, and the job ends as failed.
      - any other error: `failed`, with the error text
   5. Unlock.
 - **Counters.** Each comes from the outcome and the `sent` flag, never from the error type alone:
@@ -743,10 +748,10 @@ func (j *Jobs) Close()
   - `run.skipped` counts `stopped`, `changed`, and `not-cached`.
   - `ItemDone` reports each item with these counts.
 - **Terminal write.** The results are collected in memory in key order. When the job ends, by cancel, `Close`, store failure, unavailable server, or completion, every key it did not reach is added as `not-reached`. Then one `FinishJob(id, start, res, items)` call writes the run row and the results in one transaction.
-  - The bulk job has its own `finishJob` next to `finishRun`. Its status rule, first match wins: a store error (recording or other) -> failed with that error; `plex.ErrUnavailable` -> failed with that error; `ctx` ended -> canceled; else finished. A store failure therefore wins over a cancellation that arrived during the same item.
+  - The bulk job has its own `finishJob` next to `finishRun`. Its status rule, first match wins: a store error (recording or other) -> failed with that error; `ctx` ended -> canceled; `plex.ErrUnavailable` -> failed with that error; else finished. A store failure therefore wins over a cancellation that arrived during the same item.
   - A `FinishJob` failure is returned as the job's error also when the job was canceled. It is never dropped. The row then stays `running` until `InterruptRuns` at the next start.
   - The job goroutine logs a job error with `log.Error().Str("server").Int64("run", id).Str("reason", reason).Msg("Bulk refresh failed")`, where `reason` is a fixed text: `store`, `result not recorded` (FinishJob failed), or `plex unavailable`. No error text is logged; the diagnostic text stays in the stored results and run error, which the API redacts.
-- **Progress** gets `RunStarted`, `Batch(server, n, n)`, `ItemStarted` and `ItemDone` for each item, and `RunFinished`. `RunFinished` is called after `FinishJob` returned. On success it gets the committed `res`, so when an event stream client sees `Last.ID` with a final status, the results are committed and `GET /api/runs/items?id=` returns them. That is how the stream delivers the item results (Task 10). When `FinishJob` failed, `RunFinished` gets `res` with `Status: store.RunFailed` and the fixed `Error: "result not recorded"`, so the live status clears the job and says why, instead of showing a terminal result that the database does not have.
+- **Progress** gets `RunStarted`, `Batch(server, n, n)`, `ItemStarted` and `ItemDone` for each item, and `RunFinished`. `RunFinished` is called after `FinishJob` returned. On success it gets the committed `res`, so when an event stream client sees `Last.ID` with a final status, the results are committed and `GET /api/runs/items?id=` returns them. That is how the stream delivers the item results (Task 10). When `FinishJob` failed, `RunFinished` gets `res` with `Status: store.RunFailed`, the fixed `Error: "result not recorded"`, and an `err` that wraps `ErrNotRecorded`, so the live status clears the job, says why, and shows `Last.Recorded == false`, which tells a stream consumer that the database has no terminal result for it.
 - **New log line,** at info: `log.Info().Str("server").Int("selected").Int("refresh_requests").Int("failed_requests").Int("skipped_items").Dur("duration").Msg("Bulk refresh summary")`. The bulk job logs no `Run summary`.
 
 **CLI:**
@@ -781,7 +786,8 @@ func TestCancelBulkBeforeDispatch(t *testing.T)
 // the embedded store's KnownItem (the re-check of item 1) cancels the job -> no Plex call, item 1 not-reached,
 // refreshed 0
 func TestCancelBulkDuringCall(t *testing.T)
-// item 1's fake Refresh cancels the job and returns ctx.Err() -> item 1 failed (sent), refreshed 1, failed 1,
+// item 1's fake Refresh cancels the job and returns fmt.Errorf("PUT /x: request canceled: %w: %w", plex.ErrUnavailable, ctx.Err())
+// (the shape of the real transportError) -> item 1 failed (sent), refreshed 1, failed 1,
 // items 2-3 not-reached, row canceled
 func TestBulkRecordingFailureEndsJob(t *testing.T)
 // embedded store fails RecordManual on item 1 -> item 1 failed "recording failed", others not-reached, row failed,
@@ -789,9 +795,12 @@ func TestBulkRecordingFailureEndsJob(t *testing.T)
 func TestBulkFinishJobFailureDuringCancel(t *testing.T)
 // canceled job whose FinishJob fails -> "Bulk refresh failed" reason "result not recorded" logged; the row stays
 // running; the recording progress got RunFinished with Status failed and Error "result not recorded"
-func TestBulkFinishJobSuccessPublishesResult(t *testing.T) // RunFinished res equals the committed row's status and counts
+func TestBulkFinishJobSuccessPublishesResult(t *testing.T)
+// the recording progress's RunFinished callback itself reads the run row and RunItems from the store: the row is
+// already finished with res's counts and the items are present; err does not wrap ErrNotRecorded
+func TestBulkUnavailableWithLiveContextFails(t *testing.T) // ErrUnavailable without cancel -> item failed, job failed
 func TestBulkRecordingFailureWinsOverCancel(t *testing.T)
-// item 1's fake Refresh cancels the job and returns ctx.Err(); the embedded store then fails RecordManual ->
+// item 1's fake Refresh cancels the job and returns the same dual-wrapped error; the embedded store then fails RecordManual ->
 // refreshed 1, item 1 failed "recording failed", row failed with the recording error (not canceled)
 func TestBulkFailureLogHasNoSecret(t *testing.T)
 // fake Refresh returns an ErrUnavailable error whose text holds a configured path prefix -> the log has
