@@ -21,7 +21,7 @@
 - Each task that adds a public store method adds it to `TestMethodsReportDatabaseFailure` (`internal/store/store_test.go`).
 - Build URLs with `net/url`. Every URL the server emits (image URLs in JSON, links in the placeholder page) is relative with no leading slash (`api/items/thumb?...`), so the UI works behind a proxy at any sub-path.
 - The Plex token never reaches the browser. No Plex header or body is passed to a response, and a handler answers a failed Plex request with a fixed message.
-- The stored diagnostic texts `event.error` and `run.error` are shown, because explaining failures is a goal of the dashboard and the operator reads the same texts in the log. The `plex` package already keeps addresses and tokens out of its error texts. As a second guard, the API replaces every occurrence of a configured Plex token, Plex URL host, Plex URL path prefix (`plex.Client.PathPrefix()`, the prefix exactly as the client's `JoinPath` puts it in each request path, for example `/gateway/sentinel-path` for a configured `/gateway//sentinel-path/`; a reverse proxy can put a credential there, and `plex` error texts include the request path), TMDB token, and UI password in these texts with `<redacted>` before it sends them (`web.Options.Secrets []string`, filled by `cmd`; empty values are skipped). The method, the rest of the path, and the status stay, for example `GET <redacted>/library/sections: 500 Internal Server Error`.
+- The stored diagnostic texts `event.error` and `run.error` are shown, because explaining failures is a goal of the dashboard and the operator reads the same texts in the log. The `plex` package already keeps addresses and tokens out of its error texts. As a second guard, the API replaces every occurrence of a configured Plex token, Plex URL host, Plex URL path prefix (`plex.Client.PathPrefix()`, the prefix exactly as the client's `JoinPath` puts it in each request path, for example `/gateway/sentinel-path` for a configured `/gateway//sentinel-path/`; a reverse proxy can put a credential there, and `plex` error texts include the request path), TMDB token, and UI password in these texts with `<redacted>` before it sends them (`web.Options.Secrets []string`, filled by `cmd`; empty values are skipped). Secrets can overlap (`/gateway` and `/gateway/sentinel-path`), so `redact` finds every match of every secret in the original text (`strings.Index` from each position), merges overlapping or touching spans, and replaces each merged span once; it never replaces one secret after another. The method, the rest of the path, and the status stay, for example `GET <redacted>/library/sections: 500 Internal Server Error`.
 - Cursors are opaque to the client but not secret. The server rejects a cursor that does not decode, lacks a required field, has another version, or belongs to another tab, sort, or filter (400 `invalid cursor`). The required fields are listed with each cursor; an item cursor needs only the value field of its sort type. A well-formed cursor with an edited position is only a position, and the API is authenticated, so cursors are not signed.
 - A server is identified by `srv`, its 0-based position in the configured list, as a query parameter. No server name is ever a path segment.
 - JSON keys are camelCase. Times are RFC 3339 (`time.Time`); a zero time is left out with `omitzero`. Every error response is `{"error": "<fixed message>"}` with `Content-Type: application/json`. A store error is logged (`log.Error().Err(err).Str("path", r.URL.Path).Msg("API request failed")`) and answered `500 {"error":"internal error"}`.
@@ -323,7 +323,7 @@ func TestPathPrefix(t *testing.T)
 // -> "/gateway/sentinel-path", and a recorded Libraries request path starts with it.
 ```
 
-- [ ] **Step 2: Run** `go test ./internal/plex -run 'Identity|ItemDetails|Photo' -v` — Expected: build failure.
+- [ ] **Step 2: Run** `go test ./internal/plex -run 'Identity|ItemDetails|Photo|PathPrefix' -v` — Expected: build failure.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** the plex package — Expected: PASS, with every existing test unchanged.
 - [ ] **Step 5: Commit** — `feat(plex): read the server identity, item details, and photos`
@@ -673,6 +673,10 @@ func TestItemTimelineDropsUnsafeCandidateThumbs(t *testing.T) // a stored candid
 func TestStoredErrorsAreRedacted(t *testing.T)
 // Secrets {"sentinel-token"}; a request event and a run whose error texts contain it ->
 // the item timeline and the runs answer contain "<redacted>" and never "sentinel-token".
+func TestRedactMergesOverlappingSecrets(t *testing.T)
+// Secrets {"/gateway", "/gateway/sentinel-path"} (shorter first) and a run error
+// "GET /gateway/sentinel-path/library/sections: 500" -> the runs answer error is
+// "GET <redacted>/library/sections: 500"; redact with {"abc", "bcd"} on "xabcdy" -> "x<redacted>y".
 func TestRunErrorFromPrefixedPlexURLIsRedacted(t *testing.T)
 // a real plex.Client with base URL <httptest>/sentinel-path answers Libraries with 500; store
 // its err.Error() as a run error (StartRun, FinishRun); Secrets {client.PathPrefix()} -> the
