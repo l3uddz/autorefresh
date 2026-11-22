@@ -289,7 +289,7 @@ max-refresh-interval: 168h    # the longest wait between attempts after the back
 cache-refresh: "0 3 * * 0"    # cron expression for full reads of each library
 oversample: 48h               # each incremental read also gets changes from this far back
 refresh-delay: 5s             # wait between two due items on one server
-max-refreshes-per-run: 250    # the most due items in each run on each server; 0 for no limit
+max-refreshes-per-run: 100    # the most due items in each run on each server; 0 for no limit
 ignore-reasons: []            # reasons that never cause a refresh, for example [no-art]
 tmdb-token: ""                # optional; the TMDB API Read Access Token for the fix match fallback
 
@@ -312,7 +312,7 @@ plex:
 | `cache-refresh` | no | `0 3 * * 0` |
 | `oversample` | no | `48h` |
 | `refresh-delay` | no | `5s` |
-| `max-refreshes-per-run` | no | `250` |
+| `max-refreshes-per-run` | no | `100` |
 | `ignore-reasons` | no | none |
 | `tmdb-token` | no | none |
 | `plex` | yes, at least one server | none |
