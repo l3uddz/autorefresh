@@ -140,15 +140,16 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 		rec = status
 	}
 
+	rules := queueRules(cfg)
 	r := refresher.New(servers, st, refresher.Options{
-		MinimumAge:         cfg.MinimumAge,
-		RefreshInterval:    cfg.RefreshInterval,
-		MaxRefreshInterval: cfg.MaxRefreshInterval,
+		MinimumAge:         rules.MinimumAge,
+		RefreshInterval:    rules.RefreshInterval,
+		MaxRefreshInterval: rules.MaxRefreshInterval,
 		Oversample:         cfg.Oversample,
 		RefreshDelay:       cfg.RefreshDelay,
 		CacheRefresh:       cfg.CacheRefreshSchedule,
 		MaxRefreshesPerRun: cfg.MaxRefreshesPerRun,
-		IgnoreReasons:      cfg.Ignored,
+		IgnoreReasons:      rules.Ignored,
 		DryRun:             opts.DryRun,
 		HistoryRetention:   cfg.HistoryRetention,
 		TMDB:               lookup,
@@ -174,7 +175,7 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 	// before any request to Plex.
 	var ui *web.Server
 	if uiOn {
-		ui = newUIServer(cfg, st, status, clients)
+		ui = newUIServer(cfg, rules, st, status, clients)
 		if err := startUI(cfg.UI, ui); err != nil {
 			closeStore(st)
 			return fatal(err, "Failed starting UI listener")
@@ -188,6 +189,18 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 	closeStore(st)
 	log.Info().Msg("Stopped")
 	return nil
+}
+
+// queueRules returns the rules of cfg that decide the queue state of an
+// item. The refresher and the dashboard both get them, so the schedule and
+// the dashboard queue cannot disagree.
+func queueRules(cfg config.Config) store.DueRules {
+	return store.DueRules{
+		MinimumAge:         cfg.MinimumAge,
+		RefreshInterval:    cfg.RefreshInterval,
+		MaxRefreshInterval: cfg.MaxRefreshInterval,
+		Ignored:            cfg.Ignored,
+	}
 }
 
 // newServers returns the refresher server, the Plex client, and the name of

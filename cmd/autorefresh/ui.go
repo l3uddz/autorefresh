@@ -37,9 +37,10 @@ func uiEnabled(cfg config.Config, opts options) bool {
 	return true
 }
 
-// newUIServer returns the dashboard server of cfg. clients holds the Plex
-// client of each server in cfg.Plex, in the same order.
-func newUIServer(cfg config.Config, st *store.Store, status *web.Status, clients []*plex.Client) *web.Server {
+// newUIServer returns the dashboard server of cfg with the queue rules.
+// clients holds the Plex client of each server in cfg.Plex, in the same
+// order.
+func newUIServer(cfg config.Config, rules store.DueRules, st *store.Store, status *web.Status, clients []*plex.Client) *web.Server {
 	servers := make([]web.PlexServer, len(clients))
 	for i, client := range clients {
 		servers[i] = web.PlexServer{Name: cfg.Plex[i].Name, Plex: client}
@@ -50,13 +51,8 @@ func newUIServer(cfg config.Config, st *store.Store, status *web.Status, clients
 		Status:   status,
 		Servers:  servers,
 		Store:    st,
-		Rules: store.DueRules{
-			MinimumAge:         cfg.MinimumAge,
-			RefreshInterval:    cfg.RefreshInterval,
-			MaxRefreshInterval: cfg.MaxRefreshInterval,
-			Ignored:            cfg.Ignored,
-		},
-		Secrets: uiSecrets(cfg, clients),
+		Rules:    rules,
+		Secrets:  uiSecrets(cfg, clients),
 	})
 }
 

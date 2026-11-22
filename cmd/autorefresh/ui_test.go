@@ -298,7 +298,7 @@ func TestUISecretsRedactPrefixedPlexError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := httptest.NewServer(newUIServer(cfg, st, nil, []*plex.Client{client}).Handler())
+	srv := httptest.NewServer(newUIServer(cfg, queueRules(cfg), st, nil, []*plex.Client{client}).Handler())
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + "/api/runs")
 	if err != nil {
