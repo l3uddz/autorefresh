@@ -17,7 +17,7 @@ import { api, useStatus, type RunRecord } from './api';
 import { useNow } from './clock';
 import { dateTime, label, relative, runDuration, runKind } from './format';
 import { navigate, runHash } from './route';
-import { RunDrawer } from './rundetail';
+import { RunDetails, RunDrawer } from './rundetail';
 import { useRowOpen } from './rowopen';
 import { NextRun, RunRow, statusDots } from './status';
 
@@ -54,6 +54,10 @@ export function RunsPage({ srv, run }: { srv?: number; run?: number }) {
     getNextPageParam: page => page.next || undefined,
   });
   const runs = useMemo(() => pages.data?.pages.flatMap(page => page.runs) ?? [], [pages.data]);
+  const close = () => navigate({ page: 'runs', srv });
+  // A narrow screen shows the open run on its own screen, as the Items page
+  // shows an open item.
+  if (!isTable && run !== undefined) return <RunDetails id={run} isMulti={isMulti} srv={srv} onClose={close} />;
   return (
     <>
       <VStack gap={6} padding={6}>
@@ -95,7 +99,7 @@ export function RunsPage({ srv, run }: { srv?: number; run?: number }) {
           </HStack>
         )}
       </VStack>
-      <RunDrawer id={run} isMulti={isMulti} srv={srv} onClose={() => navigate({ page: 'runs', srv })} />
+      {isTable && <RunDrawer id={run} isMulti={isMulti} srv={srv} onClose={close} />}
     </>
   );
 }

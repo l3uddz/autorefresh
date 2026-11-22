@@ -21,7 +21,8 @@ import { itemHash } from './route';
 import { runCounts, runGroups, type RunEntry, type RunGroup } from './runs';
 import { statusDots } from './status';
 
-/** How often the details of a running run reload. */
+/** How often the events of a running run reload. A bulk refresh records
+ * its items when it ends, so it does not reload. */
 const runningInterval = 5_000;
 
 interface Props {
@@ -33,8 +34,9 @@ interface Props {
   onClose: () => void;
 }
 
-/** The details of one run in a drawer, as an item of the Items table opens:
- * what the run was, its counts, and its items grouped by outcome. */
+/** The details of one run in a drawer, as an item of the Items table opens.
+ * A narrow screen shows RunDetails in place of the list instead, as the
+ * Items page does. */
 export function RunDrawer({ id, isMulti, srv, onClose }: Props) {
   return (
     <Drawer isOpen={id !== undefined} onOpenChange={open => !open && onClose()} label="Run details" width={600} padding={0}>
@@ -43,13 +45,17 @@ export function RunDrawer({ id, isMulti, srv, onClose }: Props) {
   );
 }
 
-function RunDetails({ id, isMulti, srv, onClose }: Props & { id: number }) {
+/** What the run id was, its counts, and its items grouped by outcome. */
+export function RunDetails({ id, isMulti, srv, onClose }: Props & { id: number }) {
   const detail = useQuery({
     // Under 'runs', so the live status reloads it when a run starts or ends.
     queryKey: ['runs', 'detail', id],
     queryFn: ({ signal }) => api<RunDetail>(`runs/detail?${new URLSearchParams({ id: String(id) })}`, { signal }),
     retry: (count, error) => !(error instanceof ApiError && error.status === 404) && count < 1,
-    refetchInterval: query => (query.state.status === 'success' && query.state.data?.run.status === 'running' ? runningInterval : false),
+    refetchInterval: query => {
+      const run = query.state.status === 'success' ? query.state.data?.run : undefined;
+      return run?.status === 'running' && run.kind !== 'bulk-refresh' ? runningInterval : false;
+    },
   });
   const isGone = detail.error instanceof ApiError && detail.error.status === 404;
   // A run that retention removed while the drawer was open is gone: its
@@ -59,7 +65,7 @@ function RunDetails({ id, isMulti, srv, onClose }: Props & { id: number }) {
     <VStack gap={6} padding={6}>
       <HStack gap={3} vAlign="start">
         <StackItem size="fill">
-          {data ? <RunHead run={data.run} isMulti={isMulti} /> : <Heading level={2} accessibilityLevel={2}>Run</Heading>}
+          {data ? <RunHead run={data.run} isMulti={isMulti} /> : detail.isPending && <Skeleton height={32} width="60%" />}
         </StackItem>
         <IconButton label="Close details" icon={<Icon icon={XMarkIcon} size="sm" />} variant="secondary" onClick={onClose} />
       </HStack>
@@ -79,7 +85,7 @@ function RunDetails({ id, isMulti, srv, onClose }: Props & { id: number }) {
           endContent={<Button label="Try again" onClick={() => void detail.refetch()} />}
         />
       )}
-      {data && <RunBody detail={data} srv={srv} />}
+      {data && <RunBody detail={data} scope={srv === undefined || srv === data.run.srv ? srv : undefined} />}
     </VStack>
   );
 }
@@ -87,6 +93,7 @@ function RunDetails({ id, isMulti, srv, onClose }: Props & { id: number }) {
 function DetailSkeleton() {
   return (
     <VStack gap={4}>
+      <Skeleton height={16} width="40%" />
       <Skeleton height={72} />
       {[0, 1, 2].map(i => <Skeleton key={i} index={i} height={56} />)}
     </VStack>
@@ -98,9 +105,11 @@ function RunHead({ run, isMulti }: { run: RunRecord; isMulti: boolean }) {
   return (
     <VStack gap={2}>
       <Heading level={2} accessibilityLevel={2} wordBreak="break-word">{runTitle(run)}</Heading>
-      <HStack gap={2} vAlign="center" wrap="wrap">
-        <StatusDot variant={statusDots[run.status] ?? 'neutral'} isPulsing={run.status === 'running'} label={label(run.status)} />
-        <Text>{label(run.status)}</Text>
+      <HStack gap={3} vAlign="center" wrap="wrap">
+        <HStack gap={1.5} vAlign="center">
+          <StatusDot variant={statusDots[run.status] ?? 'neutral'} isPulsing={run.status === 'running'} label={label(run.status)} />
+          <Text>{label(run.status)}</Text>
+        </HStack>
         <Text color="secondary" hasTabularNumbers>
           {[dateTime(run.startedAt), run.finishedAt ? runDuration(run.startedAt, run.finishedAt) : 'not ended', isMulti ? run.server : undefined].filter(Boolean).join(' · ')}
         </Text>
@@ -114,14 +123,21 @@ function RunHead({ run, isMulti }: { run: RunRecord; isMulti: boolean }) {
   );
 }
 
-function RunBody({ detail, srv }: { detail: RunDetail; srv?: number }) {
+/** The body of the details of a run. scope is the server scope that item
+ * links keep: undefined when the route names another server. */
+function RunBody({ detail, scope }: { detail: RunDetail; scope?: number }) {
   const { run } = detail;
   const groups = runGroups(detail);
   return (
     <>
       {run.error && <Banner status="error" title={`The run ${run.status === 'canceled' ? 'was canceled' : 'failed'}`} description={run.error} />}
-      <RunCounts run={run} />
-      {groups.length > 0 ? groups.map(group => <EntryGroup key={group.id} group={group} srv={run.srv} scope={srv} />) : <NoEntries run={run} />}
+      {run.status === 'running' ? (
+        // The run writes its counts when it ends.
+        <Text type="supporting" color="secondary">The counts show when the run ends.</Text>
+      ) : (
+        <RunCounts run={run} />
+      )}
+      {groups.length > 0 ? groups.map(group => <EntryGroup key={group.id} group={group} srv={run.srv} scope={scope} />) : <NoEntries run={run} />}
     </>
   );
 }
@@ -129,7 +145,7 @@ function RunBody({ detail, srv }: { detail: RunDetail; srv?: number }) {
 function RunCounts({ run }: { run: RunRecord }) {
   const counts = runCounts(run);
   return (
-    <Grid columns={{ minWidth: 80, repeat: 'fit' }} gap={2}>
+    <Grid columns={{ minWidth: 112, repeat: 'fit' }} gap={2}>
       {counts.map(([name, value]) => (
         <Section key={name} variant="muted" paddingInline={3} paddingBlock={2}>
           <VStack gap={0.5}>
@@ -144,15 +160,18 @@ function RunCounts({ run }: { run: RunRecord }) {
 
 function EntryGroup({ group, srv, scope }: { group: RunGroup; srv: number; scope?: number }) {
   return (
-    <VStack gap={2}>
-      <HStack gap={2} vAlign="center">
-        <Heading level={3} accessibilityLevel={3}>{group.title}</Heading>
-        <Badge label={group.entries.length.toLocaleString()} />
-      </HStack>
-      <List density="balanced" hasDividers>
-        {group.entries.map(entry => <EntryRow key={entry.id} entry={entry} srv={srv} scope={scope} />)}
-      </List>
-    </VStack>
+    <List
+      density="balanced"
+      hasDividers
+      edge="outset"
+      header={
+        <HStack gap={2} vAlign="center">
+          <Heading level={3} accessibilityLevel={3}>{group.title}</Heading>
+          <Badge label={group.entries.length.toLocaleString()} />
+        </HStack>
+      }>
+      {group.entries.map(entry => <EntryRow key={entry.id} entry={entry} srv={srv} scope={scope} />)}
+    </List>
   );
 }
 
@@ -165,7 +184,7 @@ function EntryRow({ entry, srv, scope }: { entry: RunEntry; srv: number; scope?:
       label={entry.title ? titleYear(entry.title, entry.year) : `Item ${entry.key}`}
       description={
         <VStack gap={0.5}>
-          <Text type="supporting" color="secondary">{entry.summary}</Text>
+          <Text type="supporting" color="secondary">{[entry.library, entry.summary].filter(Boolean).join(' · ')}</Text>
           {entry.detail && <Text type="supporting" wordBreak="break-word">{entry.detail}</Text>}
         </VStack>
       }
@@ -178,6 +197,9 @@ function EntryRow({ entry, srv, scope }: { entry: RunEntry; srv: number; scope?:
  * its items were not recorded. */
 function NoEntries({ run }: { run: RunRecord }) {
   const icon = <Icon icon={InboxIcon} size="lg" />;
+  if (run.status === 'running' && run.kind === 'bulk-refresh') {
+    return <EmptyState isCompact title="The items show when the bulk refresh ends" description="A bulk refresh records the outcome of its items when it ends." icon={icon} />;
+  }
   if (run.status === 'running') return <EmptyState isCompact title="No item changed yet" description="The items show here as the run works on them." icon={icon} />;
   const changed = run.kind === 'bulk-refresh' ? run.selected : run.refreshed + run.matched + run.failed + run.completed;
   if (changed > 0) {
@@ -190,5 +212,6 @@ function NoEntries({ run }: { run: RunRecord }) {
       />
     );
   }
-  return <EmptyState isCompact title="No item changed in this run" description={`It read ${plural(run.readItems, 'item')} and refreshed none.`} icon={icon} />;
+  const description = run.status === 'finished' ? `It read ${plural(run.readItems, 'item')} and refreshed none.` : 'The run ended before it changed an item.';
+  return <EmptyState isCompact title="No item changed in this run" description={description} icon={icon} />;
 }
