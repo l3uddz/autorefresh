@@ -296,7 +296,8 @@ Autorefresh also keeps the images and the path of each item that it reads
 from Plex. It keeps the title, type, agent, and language of each library.
 
 At the start of each run, autorefresh removes the events and runs that are
-older than `history-retention`. A removed library loses its events, and a
+older than `history-retention`. It keeps a run that is still `running`. A
+removed library loses its events, and a
 removed server loses its runs. If a process stops during a run, the run
 stays in the status `running`. When the scheduled service starts, it marks
 each such run as `interrupted`. A process with `--once` or `--dry-run`

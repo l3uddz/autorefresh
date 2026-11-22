@@ -103,6 +103,39 @@ func count(t *testing.T, s *Store, query string) int {
 	return n
 }
 
+// A run that is still running is never pruned, so its FinishRun still
+// finds the row, however long the run takes.
+func TestPruneHistoryKeepsRunningRuns(t *testing.T) {
+	s := openTest(t)
+	id, err := s.StartRun(RunStart{Server: srv, Kind: RunKindRun, Source: RunSourceSchedule, StartedAt: base})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, runs, err := s.PruneHistory(base.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runs != 0 {
+		t.Fatalf("pruned runs = %d, want 0", runs)
+	}
+	if err := s.FinishRun(id, RunResult{FinishedAt: base.Add(2 * time.Hour), Status: RunFinished, Refreshed: 3}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Runs(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != id || got[0].Status != RunFinished || got[0].Refreshed != 3 {
+		t.Fatalf("runs = %+v, want the finished run %d", got, id)
+	}
+
+	// Once finished, the old run goes with the next prune.
+	if _, runs, err = s.PruneHistory(base.Add(time.Hour)); err != nil || runs != 1 {
+		t.Fatalf("second prune = %d runs, %v; want 1, nil", runs, err)
+	}
+}
+
 func TestPruneHistoryDeletesOldRowsWithChildren(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
@@ -114,7 +147,10 @@ func TestPruneHistoryDeletesOldRowsWithChildren(t *testing.T) {
 	}
 	fresh := base.Add(48 * time.Hour)
 	accept(t, s, "a", fresh, ActionRefresh)
-	startRun(t, s, srv, old)
+	oldRun := startRun(t, s, srv, old)
+	if err := s.FinishRun(oldRun, RunResult{FinishedAt: old, Status: RunFinished}); err != nil {
+		t.Fatal(err)
+	}
 	newRun := startRun(t, s, srv, fresh)
 
 	events, runs, err := s.PruneHistory(base.Add(24 * time.Hour))

@@ -105,7 +105,9 @@ func (s *Store) InterruptRuns(at time.Time) (int, error) {
 }
 
 // PruneHistory removes the events that are older than before, with their
-// searches and candidates, and the runs that started before it. It first
+// searches and candidates, and the runs that started before it and are no
+// longer running: a running row stays until FinishRun or InterruptRuns ends
+// it, however long it runs. It first
 // clears the last match event of each item row that points to a removed
 // event. It runs in one transaction and returns the numbers of removed
 // events and runs.
@@ -124,7 +126,7 @@ func (s *Store) PruneHistory(before time.Time) (events, runs int, err error) {
 	if events, err = deleteBefore(tx, `DELETE FROM event WHERE at < ?`, cutoff); err != nil {
 		return 0, 0, fmt.Errorf("prune events: %w", err)
 	}
-	if runs, err = deleteBefore(tx, `DELETE FROM run WHERE started_at < ?`, cutoff); err != nil {
+	if runs, err = deleteBefore(tx, `DELETE FROM run WHERE started_at < ? AND status != ?`, cutoff, RunRunning); err != nil {
 		return 0, 0, fmt.Errorf("prune runs: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -133,9 +135,9 @@ func (s *Store) PruneHistory(before time.Time) (events, runs int, err error) {
 	return events, runs, nil
 }
 
-// deleteBefore runs the DELETE statement with cutoff and returns the number of rows.
-func deleteBefore(tx *sql.Tx, query string, cutoff int64) (int, error) {
-	res, err := tx.Exec(query, cutoff)
+// deleteBefore runs the DELETE statement with args and returns the number of rows.
+func deleteBefore(tx *sql.Tx, query string, args ...any) (int, error) {
+	res, err := tx.Exec(query, args...)
 	if err != nil {
 		return 0, err
 	}
