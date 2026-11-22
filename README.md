@@ -596,10 +596,10 @@ address keeps the choice, so a link or a reload shows the same server.
   run** when each was a full read, **Incremental run** when each read only
   the changes since the last read, **Full and incremental run** when it
   did both, and **Bulk refresh** for a bulk refresh. A run that failed or
-  was canceled counts only the reads that it completed. Older runs, recorded before autorefresh counted its full
-  and incremental reads, show **Run**. A run that
-  has not ended shows no duration. **Load more** reads the
-  next page. The list updates when a run starts or ends. On a narrow
+  was canceled counts only the reads that it completed. A run that
+  completed no library read shows **Run**, as do older runs, recorded
+  before autorefresh counted its full and incremental reads. A run that
+  has not ended shows no duration. **Load more** reads the next page. The list updates when a run starts or ends. On a narrow
   screen, each run is one row with its summary.
 
 **Fix match** in the item details opens a dialog to choose the Plex match
