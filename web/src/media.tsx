@@ -132,3 +132,30 @@ export function Reasons({ reasons, ignored }: { reasons?: string[]; ignored: str
     </HStack>
   );
 }
+
+/** Shows a remote poster of a match candidate, which Plex gave as an https
+ * URL of a third-party host. The browser loads it without a referrer, and
+ * without a poster it shows the icon of the type. */
+export function RemotePoster({ src, title, type }: { src?: string; title?: string; type?: string }) {
+  const [failed, setFailed] = useState<string>();
+  const showImage = src !== undefined && failed !== src;
+  return (
+    <AspectRatio ratio={2 / 3} xstyle={[styles.frame, styles.md]}>
+      {showImage ? (
+        <img
+          src={src}
+          alt={title ? `Poster of ${title}` : ''}
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+          onError={() => setFailed(src)}
+          {...stylex.props(styles.image)}
+        />
+      ) : (
+        <VStack hAlign="center" vAlign="center" height="100%">
+          <Icon icon={type === 'show' ? TvIcon : FilmIcon} size="sm" color="secondary" />
+        </VStack>
+      )}
+    </AspectRatio>
+  );
+}

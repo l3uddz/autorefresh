@@ -242,7 +242,7 @@ function RecentFixes({ isMulti, srv }: { isMulti: boolean; srv?: number }) {
   );
 }
 
-const statusDots: Record<string, 'success' | 'error' | 'warning' | 'neutral' | 'accent'> = {
+export const statusDots: Record<string, 'success' | 'error' | 'warning' | 'neutral' | 'accent'> = {
   finished: 'success',
   failed: 'error',
   canceled: 'warning',
@@ -254,7 +254,10 @@ function RecentRuns({ isMulti, srv }: { isMulti: boolean; srv?: number }) {
   const runs = useRuns(6, srv);
   return (
     <VStack gap={3}>
-      <Heading level={3} accessibilityLevel={2}>Recent runs</Heading>
+      <HStack hAlign="between" vAlign="center">
+        <Heading level={3} accessibilityLevel={2}>Recent runs</Heading>
+        <Link href={routeHash({ page: 'runs', srv })}>All runs</Link>
+      </HStack>
       {runs.error && <Text color="secondary">{runs.error.message}</Text>}
       {runs.isPending && <Skeleton height={200} />}
       {runs.data?.runs.length === 0 && <EmptyState isCompact title="No runs yet" description="Each scheduled or manual run shows up here." />}
@@ -267,17 +270,31 @@ function RecentRuns({ isMulti, srv }: { isMulti: boolean; srv?: number }) {
   );
 }
 
-function RunRow({ run, isMulti }: { run: RunRecord; isMulti: boolean }) {
+/** One run as a list row. A detailed row, as on the Runs page of a phone,
+ * shows every count and wraps them, with the error below. */
+export function RunRow({ run, isMulti, isDetailed = false }: { run: RunRecord; isMulti: boolean; isDetailed?: boolean }) {
   const kind = run.kind === 'bulk-refresh' ? 'Bulk refresh' : run.source === 'manual' ? 'Manual run' : 'Scheduled run';
-  const counts = run.error
-    ? run.error
-    : [`${run.refreshed} refreshed`, `${run.matched} matched`, run.failed ? `${run.failed} failed` : undefined, `${run.fixed} fixed`, runDuration(run.startedAt, run.finishedAt)]
-        .filter(Boolean)
-        .join(' · ');
+  const duration = run.finishedAt ? runDuration(run.startedAt, run.finishedAt) : 'not ended';
+  const counts = isDetailed
+    ? [`${run.readItems} read`, `${run.refreshed} refreshed`, `${run.matched} matched`, `${run.failed} failed`, `${run.fixed} fixed`, `${run.due} due`, duration].join(' · ')
+    : run.error
+      ? run.error
+      : [`${run.refreshed} refreshed`, `${run.matched} matched`, run.failed ? `${run.failed} failed` : undefined, `${run.fixed} fixed`, runDuration(run.startedAt, run.finishedAt)]
+          .filter(Boolean)
+          .join(' · ');
   return (
     <ListItem
       label={isMulti ? `${run.server} · ${kind}` : kind}
-      description={counts}
+      description={
+        isDetailed ? (
+          <VStack gap={0.5}>
+            <Text type="supporting" color="secondary">{counts}</Text>
+            {run.error && <Text type="supporting" wordBreak="break-word">{run.error}</Text>}
+          </VStack>
+        ) : (
+          counts
+        )
+      }
       endContent={
         <VStack gap={1} hAlign="end">
           <HStack gap={2} vAlign="center">

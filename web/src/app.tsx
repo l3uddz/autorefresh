@@ -2,6 +2,8 @@ import { AppShell } from '@astryxdesign/core/AppShell';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
+import { useMediaQuery } from '@astryxdesign/core/hooks';
+import { DEFAULT_WIDTH_BREAKPOINTS } from '@astryxdesign/core/theme';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Selector } from '@astryxdesign/core/Selector';
 import { Skeleton } from '@astryxdesign/core/Skeleton';
@@ -18,6 +20,7 @@ import { useRunNow } from './runs';
 import { StatusPage } from './status';
 
 const ItemsPage = lazy(async () => ({ default: (await import('./items')).ItemsPage }));
+const RunsPage = lazy(async () => ({ default: (await import('./runspage')).RunsPage }));
 
 export function App() {
   const connection = useLiveStatus();
@@ -38,6 +41,10 @@ export function App() {
       ) : route.page === 'items' ? (
         <Suspense fallback={<PageSkeleton />}>
           <ItemsPage tab={route.tab} item={route.item} srv={srv} />
+        </Suspense>
+      ) : route.page === 'runs' ? (
+        <Suspense fallback={<PageSkeleton />}>
+          <RunsPage srv={srv} />
         </Suspense>
       ) : (
         <StatusPage srv={srv} />
@@ -76,6 +83,7 @@ function TopBar({ route, srv }: { route: Route; srv?: number }) {
         <>
           <TopNavItem label="Status" href={routeHash({ page: 'status', srv })} isSelected={route.page === 'status'} />
           <TopNavItem label="Items" href={routeHash({ page: 'items', tab: 'attention', srv })} isSelected={route.page === 'items'} />
+          <TopNavItem label="Runs" href={routeHash({ page: 'runs', srv })} isSelected={route.page === 'runs'} />
         </>
       }
       endContent={
@@ -106,10 +114,15 @@ function ServerPicker({ servers, route, srv }: { servers: ServerStatus[]; route:
   );
 }
 
+// Below this width, with several servers, the top bar keeps its room for
+// the server picker and Run now. The Status page shows each run.
+const roomyTopBar = `(min-width: ${DEFAULT_WIDTH_BREAKPOINTS.sm}px)`;
+
 /** Shows the progress of the running servers, combined when several run. */
 function RunSummary({ servers }: { servers: ServerStatus[] }) {
+  const isRoomy = useMediaQuery(roomyTopBar);
   const running = servers.filter(server => server.run);
-  if (!running.length) return null;
+  if (!running.length || (servers.length > 1 && !isRoomy)) return null;
   const done = running.reduce((sum, server) => sum + (server.run?.done ?? 0), 0);
   const selected = running.reduce((sum, server) => sum + (server.run?.selected ?? 0), 0);
   const who = running.length === 1 ? running[0].name : `${plural(running.length, 'server')} running`;

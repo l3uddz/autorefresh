@@ -90,15 +90,25 @@ const matchText: Record<string, string> = {
   failed: 'match search failed',
 };
 
+/** Returns the name of a request action, such as "TMDB match". */
+export function actionText(action?: string): string {
+  return action ? outcomeText[action] ?? label(action) : 'request';
+}
+
+/** Returns "Title (2019)", or the title alone without a year. */
+export function titleYear(title: string, year?: number): string {
+  return year ? `${title} (${year})` : title;
+}
+
 /** Returns the last action of an item, such as "refresh · no match". */
 export function lastAction(outcome?: string, matchOutcome?: string): string {
-  const parts = [outcome && (outcomeText[outcome] ?? label(outcome))];
+  const parts = [outcome && actionText(outcome)];
   if (matchOutcome && matchOutcome !== 'matched') parts.push(matchText[matchOutcome] ?? label(matchOutcome));
   return parts.filter(Boolean).join(' · ') || 'none yet';
 }
 
 /** Returns what fixed an item, from its completion attribution. */
 export function fixedBy(action?: string, match?: string): string {
-  if (match) return `${outcomeText[match] ?? label(match)}${action && action !== match ? ` · then ${outcomeText[action] ?? label(action)}` : ''}`;
-  return action ? outcomeText[action] ?? label(action) : 'Plex on its own';
+  if (match) return `${actionText(match)}${action && action !== match ? ` · then ${actionText(action)}` : ''}`;
+  return action ? actionText(action) : 'Plex on its own';
 }
