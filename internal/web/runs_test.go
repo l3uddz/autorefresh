@@ -254,6 +254,9 @@ func TestRunDetailListsEventsOfRun(t *testing.T) {
 	db := openStore(t)
 	one := movie("1", "One", store.NoSummary, testNow)
 	one.Thumb = "/library/metadata/1/thumb/1700000000"
+	if err := db.SaveLibraries("home", []store.LibraryInfo{{Section: "1", Title: "Movies"}}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.ApplyRead(store.Read{Server: "home", Section: "1", At: testNow, Items: []store.Item{one, movie("2", "Two", store.NoSummary, testNow)}}); err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +289,7 @@ func TestRunDetailListsEventsOfRun(t *testing.T) {
 		t.Fatalf("events = %v, want only the event of the run", got.Events)
 	}
 	e := got.Events[0]
-	want := map[string]any{"key": "1", "title": "One", "type": "movie", "kind": "request", "action": "refresh",
+	want := map[string]any{"key": "1", "title": "One", "type": "movie", "library": "Movies", "kind": "request", "action": "refresh",
 		"accepted": false, "error": "Plex error " + redacted}
 	for field, w := range want {
 		if !reflect.DeepEqual(e[field], w) {
@@ -335,6 +338,9 @@ func TestRunDetailErrors(t *testing.T) {
 		{fmt.Sprintf("id=%d", away+1), http.StatusNotFound},
 		{fmt.Sprintf("id=%d", away), http.StatusNotFound}, // a server that is not configured
 		{"id=x", http.StatusBadRequest},
+		{"id=0", http.StatusBadRequest},
+		{"", http.StatusBadRequest},
+		{"id=%zz", http.StatusBadRequest},
 	}
 	for _, tt := range tests {
 		if rec := serve(s, httptest.NewRequest(http.MethodGet, "/api/runs/detail?"+tt.query, nil)); rec.Code != tt.code {

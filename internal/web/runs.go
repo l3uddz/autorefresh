@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -175,6 +176,9 @@ type runEventJSON struct {
 	Year  int    `json:"year,omitempty"`
 	Type  string `json:"type,omitempty"`
 	Thumb string `json:"thumb,omitempty"`
+	// Library is the title of the library of the item, which tells apart
+	// the same title in several libraries.
+	Library string `json:"library,omitempty"`
 }
 
 // serveRunDetail answers GET /api/runs/detail with one run of a configured
@@ -205,15 +209,33 @@ func (s *Server) serveRunDetail(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, r, err)
 		return
 	}
+	libraries, err := s.libraryTitles(r.Context(), run.Server)
+	if err != nil {
+		writeStoreError(w, r, err)
+		return
+	}
 	out := runDetailJSON{Run: s.toRunJSON(run), Events: make([]runEventJSON, 0, len(events)), Items: make([]runItemJSON, 0, len(items))}
 	for _, e := range events {
 		out.Events = append(out.Events, runEventJSON{
 			eventJSON: s.toEventJSON(e), Key: e.RatingKey, Title: e.Title, Year: e.Year, Type: e.Type,
-			Thumb: imageURL("thumb", srv, e.RatingKey, e.Thumb),
+			Thumb: imageURL("thumb", srv, e.RatingKey, e.Thumb), Library: libraries[e.Section],
 		})
 	}
 	for _, item := range items {
 		out.Items = append(out.Items, s.toRunItemJSON(item))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// libraryTitles returns the title of each library of server by section.
+func (s *Server) libraryTitles(ctx context.Context, server string) (map[string]string, error) {
+	libs, err := s.store.Libraries(ctx, server)
+	if err != nil {
+		return nil, err
+	}
+	titles := make(map[string]string, len(libs))
+	for _, l := range libs {
+		titles[l.Section] = l.Title
+	}
+	return titles, nil
 }
