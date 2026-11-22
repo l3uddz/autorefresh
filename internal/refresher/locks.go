@@ -49,3 +49,8 @@ func (l *itemLocks) acquire(key itemKey) (func(), <-chan struct{}) {
 		close(held)
 	}, nil
 }
+
+func (l *itemLocks) tryLock(server, ratingKey string) (func(), bool) {
+	unlock, _ := l.acquire(itemKey{server, ratingKey})
+	return unlock, unlock != nil
+}

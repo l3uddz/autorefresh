@@ -30,6 +30,10 @@ type Plex interface {
 
 // Store is the part of store.Store that the refresher uses.
 type Store interface {
+	SetStopped(context.Context, string, string, time.Time, bool) (bool, error)
+	ApplyCheck(string, store.Item, time.Time) (bool, error)
+	LibraryInfo(string, string) (store.LibraryInfo, bool, error)
+	RecordManual(store.ManualRecord) error
 	KnownItem(server, ratingKey string) (store.Item, bool, bool, error)
 	Library(server, section string) (store.Library, error)
 	ApplyRead(r store.Read) (fixed []store.Item, err error)
@@ -75,6 +79,9 @@ type Options struct {
 
 // Refresher checks the libraries of each server.
 type Refresher struct {
+	gateMu  sync.Mutex
+	closed  bool
+	actions sync.WaitGroup
 	locks   itemLocks
 	servers []Server
 	store   Store
