@@ -379,9 +379,12 @@ type RunItem struct {
 }
 // FinishJob records the end of the bulk job id like FinishRun and writes its item
 // results, in one transaction, so a job never shows a terminal status without its
-// results. FinishRun keeps its signature; both share one unexported helper that runs
+// results. FinishRun changes in this task to FinishRun(id, start, r) (written bool, err error):
+// written is true when an update or a restore wrote the row, false (nil error) when the server was
+// pruned meanwhile. Update every caller and fake now (the refresher keeps ignoring written until
+// Task 5). Both share one unexported helper that runs
 // inside the transaction.
-func (s *Store) FinishJob(id int64, start RunStart, r RunResult, items []RunItem) error
+func (s *Store) FinishJob(id int64, start RunStart, r RunResult, items []RunItem) (written bool, err error)
 // RunItems returns the results of a run in position order ([] when none).
 func (s *Store) RunItems(ctx context.Context, runID int64) ([]RunItem, error)
 ```
@@ -394,6 +397,7 @@ func (s *Store) RunItems(ctx context.Context, runID int64) ([]RunItem, error)
 func TestFinishRunStoresSkipped(t *testing.T)     // Skipped 3 -> Runs() Skipped 3, also via restoreRun
 func TestRunItemsRoundTrip(t *testing.T)          // FinishJob with 2 items -> run finished, RunItems same order and fields
 func TestFinishJobIsAtomic(t *testing.T)          // an item that violates the primary key (duplicate position) -> error, run still running, no items
+func TestFinishRunReportsWritten(t *testing.T)    // normal finish -> written true; restore after retention -> true; pruned server -> false, nil error
 func TestRunItemsGoWithRun(t *testing.T)          // PruneHistory removes the run -> RunItems []
 func TestServeRunsShowsSkipped(t *testing.T)      // kind "bulk-refresh", skipped 2 in JSON
 ```
@@ -516,7 +520,8 @@ func (r *Refresher) execute(ctx context.Context, runs []startedRun) error
   - `Error string` (`error,omitempty`)
   - `Recorded bool` (`recorded`; set only in `Last`): true when the run row's final write committed, so the stored row and (for a bulk job) `GET /api/runs/items` match `Last`. Stream consumers fetch a bulk job's results only when `Last.Recorded` is true.
 - **`Progress.RunFinished`** becomes `RunFinished(server string, res store.RunResult, err error, recorded bool)`. `recorded` is true only when the run has a row (`id != 0`; a dry run has none) and its final write committed. `err` is the outcome error that decides health, exactly as today: `finishRun` already passes nil for a canceled run, and the bulk `finishJob` (Task 7) does the same, so a cancellation never marks a server unreachable, and a failed final write never changes health. `Status.RunFinished` sets `Last.Recorded = recorded` and keeps `runHealth(srv.Health, res, err)`. Update `noProgress` and every fake.
-- **`recordFinish`** becomes `recordFinish(run *serverRun, id int64, res store.RunResult, err error) (error, bool)`: the returned error keeps today's rules, and the bool reports whether `FinishRun` committed. `finishRun` passes `id != 0 && committed` (dry run: false) as `recorded`.
+- **`written`** from `store.FinishRun` (Task 3) now reaches the progress.
+- **`recordFinish`** becomes `recordFinish(run *serverRun, id int64, res store.RunResult, err error) (error, bool)`: the returned error keeps today's rules, and the bool is `written` (false on a `FinishRun` error). `finishRun` passes `id != 0 && written` (dry run: false) as `recorded`.
 - **`ServerStatus`** gets `Last *RunProgress` (`last`). `RunFinished` copies the run into `Last` with the final `Refreshed`, `Matched`, `Failed`, `Skipped`, `Selected`, `Due`, `Status`, `FinishedAt`, and `Error` of `res`, then sets `Run` to nil. `Snapshot` deep-copies `Last`.
 - **Redaction:** `func (s *Server) redactStatus(v StatusView) StatusView` redacts `Last.Error`. `serveStatus` and the event stream both use it.
 
@@ -536,6 +541,7 @@ func TestFinishRunFailureMarksNotRecorded(t *testing.T)
 // embedded store fails FinishRun on a run that also ends with a Plex error -> progress gets recorded false and the
 // Plex error as err; the caller still gets the Plex error
 func TestDryRunIsNotRecorded(t *testing.T)            // dry run -> RunFinished recorded false
+func TestFinishRunPrunedServerNotRecorded(t *testing.T) // store: server pruned (no library, row deleted) -> FinishRun (false, nil); refresher -> recorded false, no error
 func TestStatusHealthIgnoresRecording(t *testing.T)   // finished run with recorded false -> health ok; canceled run (err nil) keeps the previous health
 func TestStatusRedactsLastError(t *testing.T)          // Last.Error with a configured secret -> "<redacted>" in /api/status and the stream
 ```
@@ -756,7 +762,7 @@ func (j *Jobs) Close()
   - The bulk job has its own `finishJob` next to `finishRun`. Its status rule, first match wins: a store error (recording or other) -> failed with that error; `ctx` ended -> canceled; `plex.ErrUnavailable` -> failed with that error; else finished. A store failure therefore wins over a cancellation that arrived during the same item.
   - A `FinishJob` failure is returned as the job's error also when the job was canceled. It is never dropped. The row then stays `running` until `InterruptRuns` at the next start.
   - The job goroutine logs a job error with `log.Error().Str("server").Int64("run", id).Str("reason", reason).Msg("Bulk refresh failed")`, where `reason` is a fixed text: `store`, `result not recorded` (FinishJob failed), or `plex unavailable`. No error text is logged; the diagnostic text stays in the stored results and run error, which the API redacts.
-- **Progress** gets `RunStarted`, `Batch(server, n, n)`, `ItemStarted` and `ItemDone` for each item, and `RunFinished`. `RunFinished` is called after `FinishJob` returned. On success it gets the committed `res`, so when an event stream client sees `Last.ID` with a final status, the results are committed and `GET /api/runs/items?id=` returns them. That is how the stream delivers the item results (Task 10). `finishJob` passes to `RunFinished` the same `err` its status rule used, with nil for a canceled job (so the dual-wrapped transport error of a canceled call never reaches `runHealth`), and `recorded` = whether `FinishJob` committed. When `FinishJob` failed, `res` is passed with `Status: store.RunFailed` and the fixed `Error: "result not recorded"`, so the live status clears the job, says why, and shows `Last.Recorded == false`, which tells a stream consumer that the database has no terminal result for it.
+- **Progress** gets `RunStarted`, `Batch(server, n, n)`, `ItemStarted` and `ItemDone` for each item, and `RunFinished`. `RunFinished` is called after `FinishJob` returned. On success it gets the committed `res`, so when an event stream client sees `Last.ID` with a final status, the results are committed and `GET /api/runs/items?id=` returns them. That is how the stream delivers the item results (Task 10). `finishJob` passes to `RunFinished` the same `err` its status rule used, with nil for a canceled job (so the dual-wrapped transport error of a canceled call never reaches `runHealth`), and `recorded` = whether `FinishJob` committed. When `FinishJob` failed or wrote nothing, `RunFinished` still gets the job's real `res` and `err` (so health follows the job's outcome, never the recording), with `recorded` false. `Last` then shows the real outcome with `Last.Recorded == false`, which tells a stream consumer that the database has no terminal result for it; the job error is logged with reason `result not recorded`.
 - **New log line,** at info: `log.Info().Str("server").Int("selected").Int("refresh_requests").Int("failed_requests").Int("skipped_items").Dur("duration").Msg("Bulk refresh summary")`. The bulk job logs no `Run summary`.
 
 **CLI:**
@@ -799,7 +805,10 @@ func TestBulkRecordingFailureEndsJob(t *testing.T)
 // "Bulk refresh failed" logged
 func TestBulkFinishJobFailureDuringCancel(t *testing.T)
 // canceled job whose FinishJob fails -> "Bulk refresh failed" reason "result not recorded" logged; the row stays
-// running; the recording progress got RunFinished with Status failed and Error "result not recorded"
+// running; the recording progress got RunFinished with Status canceled, err nil, recorded false
+func TestBulkFinishJobFailureKeepsHealth(t *testing.T)
+// Status starts with the server unreachable; a bulk job completes successfully but FinishJob fails ->
+// health becomes ok; Last.Status finished, Last.Recorded false
 func TestBulkFinishJobSuccessPublishesResult(t *testing.T)
 // the recording progress's RunFinished callback itself reads the run row and RunItems from the store: the row is
 // already finished with res's counts and the items are present; recorded true
