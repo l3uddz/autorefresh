@@ -25,7 +25,8 @@ func TestSearchMatchesDecodesCandidates(t *testing.T) {
 		fixture string
 		want    []Candidate
 	}{
-		{"matches_one.json", []Candidate{{GUID: "plex://movie/000000000000000000000001", Name: "Fixture Movie One", Year: 2020, Type: "movie", Summary: "A neutral summary.", Thumb: "https://metadata.example.invalid/thumb.jpg", Score: 98}}},
+		{"matches_one.json", []Candidate{{GUID: "plex://movie/000000000000000000000001", Name: "Fixture Movie One", Year: 2020, Type: "movie", Summary: "A neutral summary.", Thumb: "https://metadata.example.invalid/thumb.jpg", Score: 98},
+			{GUID: "plex://movie/000000000000000000000002", Name: "Fixture Movie Two", Year: 2021, Type: "movie", Summary: "Another neutral summary.", Thumb: "", Score: 80}}},
 		{"matches_none.json", nil},
 	}
 	for _, tt := range tests {

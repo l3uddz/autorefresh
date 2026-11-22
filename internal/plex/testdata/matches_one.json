@@ -1,6 +1,6 @@
 {
   "MediaContainer": {
-    "size": 1,
+    "size": 2,
     "SearchResult": [
       {
         "guid": "plex://movie/000000000000000000000001",
@@ -10,6 +10,15 @@
         "type": "movie",
         "summary": "A neutral summary.",
         "thumb": "https://metadata.example.invalid/thumb.jpg"
+      },
+      {
+        "guid": "plex://movie/000000000000000000000002",
+        "name": "Fixture Movie Two",
+        "year": 2021,
+        "score": 80,
+        "type": "movie",
+        "summary": "Another neutral summary.",
+        "thumb": "https://h/x.jpg?X-Plex-Token=abc"
       }
     ]
   }
