@@ -297,15 +297,17 @@ That also covers "matched by autorefresh on 12 Nov" in the detail view.
   (path lookup, search, TMDB, or episode lookup failed, with the searches
   made before the failure). A TVDB or IMDb search that Plex answers with an
   error counts as an empty search, as it does today: it is marked failed in
-  the decision, and the outcome follows the other searches. The extra search of `tieTMDBCandidate` is
+  the decision, and the outcome follows the other searches and the TMDB
+  fallback. The extra search of `tieTMDBCandidate` is
   recorded too. The verdict of each candidate uses the existing
   rules: `picked`, `several candidates`, `candidate without guid`,
   `different candidates`, `year differs`, and the confirmations by path
   year, TMDB year, or episode numbers.
 - Completion: see "Completion" above.
-- Dry runs record no events, as they record no attempts today. They also
-  delete no item row that a read finds complete or gone, so the next
-  scheduled run still records that completion or gone event.
+- Dry runs record no events, as they record no attempts today. They still
+  update the item cache as today, so an item that completes or disappears
+  while only a dry run reads it gets no event. This is an accepted limit of
+  a diagnostic mode.
 - The log lines stay as they are.
 
 ### Live status

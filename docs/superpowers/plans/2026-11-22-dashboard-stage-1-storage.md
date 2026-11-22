@@ -20,7 +20,7 @@
 - Every store write method that touches more than one row or table runs in one transaction.
 - The store has one connection. Never run a query while another query's `*sql.Rows` is open: read all parent rows and close them before reading children.
 - Event and run IDs are `INTEGER PRIMARY KEY AUTOINCREMENT`, so a deleted ID is never reused.
-- Dry runs (`Options.DryRun`) write no event, no decision, and no run row, run no retention, and prune nothing (they log one `Dry run keeps cache of removed libraries` line per server, Task 9). Dry runs still update the item cache as today, except that they delete no item row: a row that a read finds complete or gone stays as it was, so a later scheduled run records the completion or the gone event (Task 6).
+- Dry runs (`Options.DryRun`) write no event, no decision, and no run row, run no retention, and prune nothing (they log one `Dry run keeps cache of removed libraries` line per server, Task 9). Dry runs still update the item cache and the read times exactly as today, also deleting rows that a read finds complete or gone. Known limit, accepted on purpose: a completion or gone item that a dry run sees first is never recorded as an event, because the row is gone before a scheduled run reads it. Keeping those rows would also need the dry run to keep the read checkpoints and to leave them out of `Due` and every count; a diagnostic mode does not justify that. The README states the limit (Task 13).
 - `event.source` is `auto` or `manual`. `run.source` is `schedule` or `manual`. They are different Go types.
 - Times are stored as Unix seconds (`nullTime`, `timeFrom`). Lists of events and runs are ordered newest first by time, then by ID (`at DESC, id DESC`).
 - `history-retention` defaults to `720h` and must be positive.
@@ -30,7 +30,7 @@
 ## Review Focus
 
 1. **An item that completes, comes back incomplete, and completes again, with both accepted matches in the same second.** The second `completed` event credits the second request's event ID. Test in Task 6.
-2. **A dry run against a shared database with a different configuration.** It must not delete any library, server cache, history, or completed or gone item row, and must write no event. Tests in Tasks 6 and 9.
+2. **A dry run against a shared database with a different configuration.** It must not delete any library, server cache, or history, and must write no event. Tests in Tasks 6 and 9.
 3. **An upgrade from schema version 5 with action history.** Data is kept, new columns take their defaults, the row is still due, and its completion writes an event with no match event ID. Tests in Tasks 2, 4, and 6.
 4. **A fix match whose TMDB lookup fails after a successful path search.** The decision is `failed` with that search kept, and the item still gets its plain refresh as today. Test in Task 11.
 5. **Plex-supplied image values that are not a plain item image path or a safe remote URL.** They are stored as empty. Tests in Task 3.
@@ -295,13 +295,11 @@ func TestTimelineOrdersSameSecondByID(t *testing.T)           // two events at t
 **Files:**
 - Modify: `internal/store/item.go` (`Read`, `ApplyRead`, `applyOldRows`, `writeExisting`, `deleteGone`)
 - Modify: `internal/store/history.go` (`writeCompleted`, `writeGone`)
-- Modify: `internal/refresher/read.go` (`readLibrary` sets `rd.DryRun = r.opts.DryRun`; `recordRead` adds the keys of `fixed` and `rd.Gone` to a new `serverRun.kept map[string]bool` in a dry run)
-- Modify: `internal/refresher/refresh.go` (`refreshDue` skips kept keys)
+- Modify: `internal/refresher/read.go` (`readLibrary` sets `rd.DryRun = r.opts.DryRun`)
 - Test: `internal/store/history_test.go`, `internal/refresher/history_test.go`
 
 **Interfaces:**
-- Produces: `Read.DryRun bool` — when true, `ApplyRead` writes no event and deletes no row: it leaves the rows of `r.Gone` untouched (skips `deleteGone`, and `applyOldRows` skips those keys, so they are not taken as complete), and it leaves a row whose final reasons are 0 untouched while still returning it in `fixed`, so the dry run logs it as completed as today. Other rows update as today.
-- In a dry run, `refreshDue` skips an item whose key is in `run.kept` (the row is complete or gone, only kept for the next scheduled run). A skipped item does not count in `run.due` or `run.remaining`.
+- Produces: `Read.DryRun bool` — when true, `ApplyRead` writes no event; the rows and read times change exactly as today (see the known limit in Global Constraints).
 - When not `DryRun`, `ApplyRead` writes in its transaction:
   - one `completed` event (source `auto`, `section = r.Section`) for each row it deletes because its final reasons are 0. Snapshot: title, year, thumb, art, and path from the read when the read lists the key (`readKey.present`) and the value is not empty, else from the row. Attribution: `fixed_action = last_action`, `fixed_match = last_match`, and `fixed_match_event_id = (SELECT id FROM event WHERE id = ?)` with the row's `last_match_event_id`, so an expired or deleted request (or 0) gives null instead of a foreign-key failure.
   - one `gone` event for each `r.Gone` row that exists, before it is deleted.
@@ -320,8 +318,7 @@ func TestMovedRowCompletesInNewSection(t *testing.T)            // as TestApplyR
 func TestLegacyRowCompletesWithoutMatchEvent(t *testing.T)      // openAtVersion(t, 5) row with last_match 'match' completes -> FixedMatch match, FixedMatchEventID 0
 func TestCompletesAfterMatchEventExpired(t *testing.T)          // accepted match, its request event deleted by SQL, then the row completes -> ApplyRead succeeds, FixedMatch match, FixedMatchEventID 0
 func TestApplyReadWritesGoneEvents(t *testing.T)
-func TestDryRunReadWritesNoEvents(t *testing.T)                 // Read.DryRun with a completed and a gone row -> both rows unchanged, fixed holds the completed row, Timeline empty
-func TestDryRunThenReadRecordsCompletion(t *testing.T)          // accepted match; dry read completes the row and marks another gone; then the same read without DryRun -> completed event with FixedMatchEventID of the request, and a gone event
+func TestDryRunReadWritesNoEvents(t *testing.T)                 // Read.DryRun with a completed and a gone row -> rows change as today, Timeline empty
 ```
 
 In `internal/refresher/history_test.go`:
@@ -330,8 +327,6 @@ In `internal/refresher/history_test.go`:
 func TestReadRecordsCompletionOnlyWhenNotDryRun(t *testing.T)
 // the same seeded row completed by the same listing, once with DryRun false and once with DryRun true
 // -> one completed event in the first store, none in the second
-func TestDryRunSkipsKeptItems(t *testing.T)
-// dry Run where a read completes a seeded due row -> no "Dry run" request line for it, and the summary does not count it as due
 ```
 
 - [ ] **Step 2: Run** `go test ./internal/store ./internal/refresher -run 'Completed|Completes|GoneEvents|DryRunRead|RecordsCompletion' -v` — Expected: FAIL.
@@ -534,7 +529,7 @@ func (d *decisionLog) add(id pathID, source, fromID string, cands []plex.Candida
 func (d *decisionLog) fail(err error)                                                            // keeps the first error
 ```
 
-- `findMatch` creates the `decisionLog` right after its guard (unmatched, not ignored, refreshed before), before `itemPaths`, and passes it down: `searchIDs` (source `path`), `tmdbResults` (source `tmdb`, `fromID` = the path ID's `title()`), and `tieTMDBCandidate` (source `tie`). Every `SearchMatches` call adds its result before any return, with `failed: true` for any error (also one that `searchFailureIsEmpty` accepts). A failure that `searchFailureIsEmpty` accepts does not set `d.err` and counts as an empty search for the outcome, as it does for the match today: alone it gives `no-match` with conflict `""`, and next to a search that matches it gives `matched`. The failed flag on that search lets the UI tell it apart from an empty answer. First-pass searches stay in the log when the TMDB pass replaces `results`.
+- `findMatch` creates the `decisionLog` right after its guard (unmatched, not ignored, refreshed before), before `itemPaths`, and passes it down: `searchIDs` (source `path`), `tmdbResults` (source `tmdb`, `fromID` = the path ID's `title()`), and `tieTMDBCandidate` (source `tie`). Every `SearchMatches` call adds its result before any return, with `failed: true` for any error (also one that `searchFailureIsEmpty` accepts). A failure that `searchFailureIsEmpty` accepts does not set `d.err` and counts as an empty search, exactly as the match code treats it today: the outcome follows the other searches and the TMDB fallback (which this empty result can trigger). The search keeps `Failed` in every outcome, so the UI can tell it apart from an empty answer. First-pass searches stay in the log when the TMDB pass replaces `results`.
 - `searchResult` gains `pos int`, the index of its search in the `decisionLog`, so `resolveMatch` sets verdicts on the logged copy of exactly the results it evaluated.
 - Handled failures: `recordTMDBFailure` and `confirmationLookupFailed` (and the episode lookup failure path) call `d.fail(err)` and keep returning exactly what they return today, so the item still gets its plain refresh.
 - `findMatch` records one decision on its way out, with `Source: store.SourceAuto`, never in a dry run. The classification, in this order:
@@ -569,7 +564,8 @@ func TestSwallowedTMDBFailureRecordsFailedAndRefreshes(t *testing.T) // path sea
 func TestAcceptedEmptySearchFailureIsMarkedFailed(t *testing.T) // tvdb search error accepted as empty -> Failed true
 func TestCanceledOrCacheErrorRecordsNoDecision(t *testing.T)
 func TestPathLookupErrorRecordsFailed(t *testing.T)       // non-404 ItemPaths error -> failed, not no-ids, no searches
-func TestAcceptedSearchFailureOutcome(t *testing.T)        // tvdb search answers 500 -> no-match, conflict "", that search Failed; with a second (imdb) search that matches -> matched, first search still Failed
+func TestAcceptedSearchFailureOutcome(t *testing.T)        // TMDB off: tvdb search answers 500 -> no-match, conflict "", that search Failed; with a second (imdb) search that matches -> matched, first search still Failed
+func TestAcceptedSearchFailureThenTMDBMatch(t *testing.T)  // TMDB on: tvdb search answers 500, the TMDB pass matches -> matched, the tvdb search still Failed, the tmdb search picked
 func TestMixedResultsVerdicts(t *testing.T)               // one search with two candidates, another with one valid -> "several candidates" x2 and "not compared"
 func TestTMDBFallbackKeepsPositions(t *testing.T)         // verdicts land on the tmdb searches, the empty first-pass search keeps none
 ```
@@ -620,7 +616,7 @@ func TestScheduledStartMarksInterruptedRuns(t *testing.T) // running row of serv
 ### Task 13: Documentation
 
 **Files:**
-- Modify: `README.md`: a short "History" section under "How it works" (what is recorded, `history-retention`, cascades with a removed library); the "Dry run" section and the `--dry-run` flag row (a dry run records no history and prunes nothing, and logs `Dry run keeps cache of removed libraries`); the "Cache cleanup" section (a removed library also loses its history).
+- Modify: `README.md`: a short "History" section under "How it works" (what is recorded, `history-retention`, cascades with a removed library); the "Dry run" section and the `--dry-run` flag row (a dry run records no history and prunes nothing, and logs `Dry run keeps cache of removed libraries`; an item that completes or disappears while only a dry run reads it gets no history entry); the "Cache cleanup" section (a removed library also loses its history).
 - Modify: `AGENTS.md`: the `internal/store/` and `internal/refresher/` rows of the path table.
 
 - [ ] **Step 1: Write the sections** in the README's existing style.
