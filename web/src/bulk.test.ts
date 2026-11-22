@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { bulkRequests, listParams, stopOrResume, type BulkRequest } from './bulk';
+import { bulkRequests, isSearchTooLong, listParams, stopOrResume, type BulkRequest } from './bulk';
 
 describe('bulk requests', () => {
   const filters = { srv: 1, library: '3', reason: 'no-art', type: 'movie', q: '  harbor ', all: true };
@@ -68,5 +68,15 @@ describe('bulk stop and resume', () => {
   it('reports a failed server beside the servers that changed items', async () => {
     fakeApi({ 0: changed(2), 1: { status: 500, body: { error: 'internal error' } } });
     expect(await stopOrResume('stop', requests, names)).toEqual({ text: 'Stopped 2 items · failed on Cabin: internal error', isError: true });
+  });
+});
+
+describe('search limit', () => {
+  it('counts the UTF-8 bytes of the trimmed search, as the API does', () => {
+    expect(isSearchTooLong(`  ${'a'.repeat(200)}  `)).toBe(false);
+    expect(isSearchTooLong('a'.repeat(201))).toBe(true);
+    // 101 characters of two bytes each.
+    expect(isSearchTooLong('é'.repeat(100))).toBe(false);
+    expect(isSearchTooLong('é'.repeat(101))).toBe(true);
   });
 });

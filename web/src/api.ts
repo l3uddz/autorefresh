@@ -123,6 +123,10 @@ export interface ServerStatus {
 }
 
 export interface Status {
+  /** The process that took the snapshot. A restart starts a new one. */
+  boot: string;
+  /** The number of changes of that process before the snapshot. */
+  seq: number;
   servers: ServerStatus[];
   tmdb: 'off' | Health;
 }
@@ -209,12 +213,33 @@ export function useServers() {
   });
 }
 
-export function useStatus() {
-  return useQuery({
+/** Returns the newer of the cached status and next, so a GET that
+ * answers late cannot undo a newer event, nor the other way round. A
+ * snapshot of another process always wins: after a restart the counts
+ * start again, and process IDs have no order. */
+export function newerStatus(cached: Status | undefined, next: Status): Status {
+  return !cached || cached.boot !== next.boot || next.seq >= cached.seq ? next : cached;
+}
+
+/** The query of GET /api/status. Its answer replaces the cache only when
+ * it is newer. */
+export function statusQuery(client: QueryClient) {
+  return {
     queryKey: ['status'],
-    queryFn: ({ signal }) => api<Status>('status', { signal }),
-    staleTime: Infinity,
-  });
+    queryFn: async ({ signal }: { signal: AbortSignal }) => {
+      const startingBoot = client.getQueryData<Status>(['status'])?.boot;
+      const next = await api<Status>('status', { signal });
+      // A stream event may have reported a restart while the GET was in flight.
+      const cached = client.getQueryData<Status>(['status']);
+      if (cached && cached.boot !== startingBoot && next.boot === startingBoot) return cached;
+      return newerStatus(cached, next);
+    },
+  };
+}
+
+export function useStatus() {
+  const client = useQueryClient();
+  return useQuery({ ...statusQuery(client), staleTime: Infinity });
 }
 
 /** Reads the latest runs of the server srv, or of every server. */
@@ -241,7 +266,9 @@ export type Connection = 'connecting' | 'open' | 'reconnecting' | 'unavailable';
 const retryDelay = 3000;
 
 /** Keeps the status query up to date from GET /api/events and refreshes
- * the lists when a run ends. It returns the state of the stream. */
+ * the lists when a run ends, and when a stream connects: a run may have
+ * ended before it, after the lists loaded. It returns the state of the
+ * stream. */
 export function useLiveStatus(): Connection {
   const client = useQueryClient();
   const [connection, setConnection] = useState<Connection>('connecting');
@@ -249,23 +276,26 @@ export function useLiveStatus(): Connection {
   useEffect(() => {
     let stream: EventSource | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
+    // The last runs of the newest status, undefined until the first
+    // status after each open.
     let lastRuns: string | undefined;
     let wasOpen = false;
 
     const onStatus = (event: MessageEvent<string>) => {
-      const status = JSON.parse(event.data) as Status;
-      client.setQueryData(['status'], status);
+      const next = JSON.parse(event.data) as Status;
+      const status = newerStatus(client.getQueryData<Status>(['status']), next);
       const runs = JSON.stringify(status.servers.map(({ last }) => [last?.id, last?.finishedAt]));
-      if (lastRuns !== undefined && runs !== lastRuns) invalidateLists(client);
+      if (runs !== lastRuns) invalidateLists(client);
       lastRuns = runs;
+      if (status === next) client.setQueryData(['status'], status);
     };
 
     const connect = () => {
       stream = new EventSource('./api/events');
       stream.addEventListener('status', onStatus);
       stream.onopen = () => {
-        // After a gap, the lists may have missed a finished run.
-        if (wasOpen) invalidateLists(client);
+        // Each open, also a reconnect of the browser, starts again.
+        lastRuns = undefined;
         wasOpen = true;
         setConnection('open');
       };

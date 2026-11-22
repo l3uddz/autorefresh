@@ -1,6 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { useSyncExternalStore } from 'react';
-import { ApiError, api, invalidateLists, isNoItems, post, type RunItem, type RunRecord, type Status } from './api';
+import { ApiError, api, invalidateLists, isNoItems, post, statusQuery, type RunItem, type RunRecord, type Status } from './api';
 import type { BulkRequest } from './bulk';
 import { plural } from './format';
 
@@ -31,6 +31,9 @@ export interface BulkQueue {
   steps: QueueStep[];
   isCanceled: boolean;
   isDone: boolean;
+  /** Why the cancel of the running job failed. The job may still run;
+   * its server card can cancel it. */
+  cancelError?: string;
 }
 
 /** The timing of the queue. retries and retryDelay apply to a job that the
@@ -49,12 +52,24 @@ export class NothingMatched extends Error {
 }
 
 let current: BulkQueue | undefined;
+// Whether a bulk refresh waits for the admission of its first job. The
+// queue exists only after that, so this keeps a second start out.
+let isAdmitting = false;
 const listeners = new Set<() => void>();
 const doneListeners = new Set<(queue: BulkQueue) => void>();
 
+function notify() {
+  for (const listener of listeners) listener();
+}
+
 function publish(next: BulkQueue) {
   current = next;
-  for (const listener of listeners) listener();
+  notify();
+}
+
+function setAdmitting(value: boolean) {
+  isAdmitting = value;
+  notify();
 }
 
 function setStep(index: number, change: Partial<QueueStep>) {
@@ -86,6 +101,14 @@ export function onQueueDone(listener: (queue: BulkQueue) => void): () => void {
 
 export const isQueueActive = (queue = current) => Boolean(queue && !queue.isDone);
 
+const isRefreshBusy = () => isAdmitting || isQueueActive();
+
+/** Reports whether a bulk refresh is starting or running, so another one
+ * cannot start. A component that mounts during the start sees it too. */
+export function useIsRefreshBusy(): boolean {
+  return useSyncExternalStore(subscribe, isRefreshBusy);
+}
+
 type Job = { id: number; count: number };
 
 /** Starts the bulk refresh of requests, one server after another. It
@@ -95,18 +118,15 @@ type Job = { id: number; count: number };
  * refused its job otherwise, so nothing runs. names gives the name of each
  * server. */
 export async function startBulkRefresh(client: QueryClient, requests: BulkRequest[], names: Record<number, string>): Promise<BulkQueue> {
-  if (isQueueActive()) throw new Error('A bulk refresh is already running. Wait until it ends.');
+  if (isRefreshBusy()) throw new Error('A bulk refresh is already running. Wait until it ends.');
   if (!requests.length) throw new Error('The servers are not loaded yet. Try again in a moment.');
-  let first: { index: number; job: Job } | undefined;
-  for (let i = 0; i < requests.length && !first; i++) {
-    try {
-      first = { index: i, job: await post<Job>(requests[i].path, requests[i].body) };
-    } catch (error) {
-      if (!isNoItems(error)) throw error;
-    }
+  setAdmitting(true);
+  let start: { index: number; job: Job };
+  try {
+    start = await admitFirst(requests);
+  } finally {
+    setAdmitting(false);
   }
-  if (!first) throw new NothingMatched();
-  const start = first;
   publish({
     isCanceled: false,
     isDone: false,
@@ -120,6 +140,18 @@ export async function startBulkRefresh(client: QueryClient, requests: BulkReques
   const queue = current!;
   void drive(client, requests, start.index);
   return queue;
+}
+
+/** Starts the job of the first request with matching items. */
+async function admitFirst(requests: BulkRequest[]): Promise<{ index: number; job: Job }> {
+  for (let i = 0; i < requests.length; i++) {
+    try {
+      return { index: i, job: await post<Job>(requests[i].path, requests[i].body) };
+    } catch (error) {
+      if (!isNoItems(error)) throw error;
+    }
+  }
+  throw new NothingMatched();
 }
 
 /** Cancels the queue: the running job stops at its next item, and the
@@ -141,9 +173,16 @@ export function cancelQueueOfJob(id: number): boolean {
   return true;
 }
 
+/** Cancels job id. A failure stays on the queue, which stays canceled, so
+ * the waiting servers still do not start. */
 async function cancelJob(id: number) {
-  // A job that already ended answers 404, which changes nothing here.
-  await post(`runs/cancel?${new URLSearchParams({ id: String(id) })}`).catch(() => undefined);
+  try {
+    await post(`runs/cancel?${new URLSearchParams({ id: String(id) })}`);
+  } catch (error) {
+    // A job that already ended answers 404, which changes nothing here.
+    if (error instanceof ApiError && error.status === 404) return;
+    if (current) publish({ ...current, cancelError: (error as Error).message });
+  }
 }
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -198,8 +237,10 @@ function nextStatus(client: QueryClient, ms: number): Promise<'status' | 'timer'
   });
 }
 
+/** Reads the status, or undefined when it is unavailable. The cached
+ * status is the answer when it is newer. */
 function fetchStatus(client: QueryClient): Promise<Status | undefined> {
-  return client.fetchQuery({ queryKey: ['status'], queryFn: ({ signal }) => api<Status>('status', { signal }), staleTime: 0 }).catch(() => undefined);
+  return client.fetchQuery({ ...statusQuery(client), staleTime: 0 }).catch(() => undefined);
 }
 
 /** Returns the stored run id of the server srv, undefined when the store
@@ -228,9 +269,12 @@ async function storedRun(srv: number, id: number): Promise<RunRecord | undefined
 
 /** Waits until job id on the server srv ends. The event stream normally
  * reports the end. Each poll covers a stream that is down. When the status
- * no longer knows the job, the stored runs tell how it ended. A job that
- * neither reports as ended within queueTiming.unknownAfter polls ends as
- * unknown, so the queue never waits forever. */
+ * no longer knows the job, the stored runs tell how it ended. A poll that
+ * does not read the job as running counts as a miss: the status does not
+ * know the job, or is unavailable. After queueTiming.unknownAfter misses
+ * in a row the job ends as unknown, also when the stored runs are unavailable, so
+ * the queue never waits forever. While the status reads the job as
+ * running, the wait goes on. */
 async function waitForJob(client: QueryClient, srv: number, id: number): Promise<JobEnd> {
   let misses = 0;
   let wake: 'status' | 'timer' = 'timer';
@@ -243,12 +287,15 @@ async function waitForJob(client: QueryClient, srv: number, id: number): Promise
     if (wake === 'timer') {
       const fresh = reportedEnd(await fetchStatus(client), srv, id);
       if (fresh && fresh !== 'running') return fresh;
+      // Only consecutive misses count: a job that runs for long can see a
+      // few failed reads.
+      if (fresh === 'running') misses = 0;
       if (!fresh) {
         const run = await storedRun(srv, id);
         if (run !== 'error' && run?.status && run.status !== 'running') {
           return { status: run.status, hasItems: run.status !== 'interrupted' };
         }
-        if (run !== 'error' && ++misses >= queueTiming.unknownAfter) return { status: 'unknown', hasItems: false };
+        if (++misses >= queueTiming.unknownAfter) return { status: 'unknown', hasItems: false };
       }
       // The cache may have changed during the requests: check it again
       // before waiting. The check and the wait start in the same tick.
@@ -378,7 +425,11 @@ export function queueProgress(queue: BulkQueue): string {
   return queue.steps.map(step => `${step.server} ${stepText(step)}`).join(' · ');
 }
 
+/** Returns the latest queue outside React. Tests use it. */
+export const currentQueue = () => current;
+
 /** Forgets the queue. Tests use it. */
 export function resetQueue() {
   current = undefined;
+  isAdmitting = false;
 }

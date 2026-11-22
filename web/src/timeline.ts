@@ -4,16 +4,19 @@ import type { ItemDetail, TimelineEvent } from './api';
 // item detail of the API has no completion fields: a fixed item has no
 // cached row, and its detail is the snapshot of its newest event.
 
-/** Returns the newest completed event: the one that the Fixed tab lists
- * for the item. */
-export function fixedEvent(timeline: TimelineEvent[]): TimelineEvent | undefined {
-  return timeline.find(event => event.kind === 'completed');
-}
+/** What last happened to an item: Plex completed it (the Fixed tab lists
+ * it), or Plex removed it. */
+export type Disposition = { kind: 'fixed' | 'removed'; event: TimelineEvent };
 
-/** Returns the newest gone event of an item that is no longer cached, so
- * the detail can say that Plex removed it. */
-export function goneEvent(detail: ItemDetail): TimelineEvent | undefined {
-  return detail.item.cached ? undefined : detail.timeline.find(event => event.kind === 'gone');
+/** Returns the disposition of an item from its newest completed or gone
+ * event, so a later completion replaces an older removal and the other
+ * way round. Requests and other events change nothing. A removal counts
+ * only while the item is not cached: a later read added it back. */
+export function disposition(detail: ItemDetail): Disposition | undefined {
+  const event = detail.timeline.find(entry => entry.kind === 'completed' || entry.kind === 'gone');
+  if (event?.kind === 'completed') return { kind: 'fixed', event };
+  if (event?.kind === 'gone' && !detail.item.cached) return { kind: 'removed', event };
+  return undefined;
 }
 
 export type CheckResult = { kind: 'gone' } | { kind: 'complete' } | { kind: 'missing'; reasons: string[] };

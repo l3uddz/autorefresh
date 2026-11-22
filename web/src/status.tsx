@@ -1,4 +1,3 @@
-import { Badge } from '@astryxdesign/core/Badge';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { Card } from '@astryxdesign/core/Card';
@@ -66,7 +65,7 @@ function QueueBanner() {
     <Banner
       status="info"
       title="Bulk refresh, one server at a time"
-      description={queueProgress(queue)}
+      description={queue.cancelError ? `${queueProgress(queue)}. The cancel failed: ${queue.cancelError}. Cancel the running job on its server card.` : queueProgress(queue)}
       endContent={queue.isCanceled ? undefined : <Button label="Cancel the rest" variant="secondary" onClick={() => void cancelBulkQueue()} />}
     />
   );
@@ -119,7 +118,7 @@ function ServerCard({ server, info, isMulti, isBusy }: { server: ServerStatus; i
         {run ? <RunLive run={run} /> : <LastRun last={last} />}
         <HStack gap={3} vAlign="center" wrap="wrap">
           <StackItem size="fill">
-            <ServerCounts counts={counts.data} isScanned={info?.scanned ?? true} srv={isMulti ? server.srv : undefined} />
+            <ServerCounts counts={counts.data} error={counts.error} isScanned={info?.scanned ?? true} srv={isMulti ? server.srv : undefined} />
           </StackItem>
           {run?.source === 'manual' && (
             <Button label="Cancel" variant="secondary" isLoading={cancel.isPending} onClick={() => cancel.mutate(run.id)} />
@@ -192,9 +191,11 @@ function LastRun({ last }: { last?: RunProgress }) {
 }
 
 /** The counts of a server. Its link opens the items of that server: srv
- * is the scope, undefined on an install with one server. */
-function ServerCounts({ counts, isScanned, srv }: { counts?: ItemPage['counts']; isScanned: boolean; srv?: number }) {
+ * is the scope, undefined on an install with one server. error is the
+ * error of the count query, shown while no counts are loaded. */
+function ServerCounts({ counts, error, isScanned, srv }: { counts?: ItemPage['counts']; error: Error | null; isScanned: boolean; srv?: number }) {
   if (!isScanned) return <Text type="supporting" color="secondary">Waiting for the first scan of this server</Text>;
+  if (!counts && error) return <Text type="supporting" color="secondary">The counts are unavailable: {error.message}</Text>;
   if (!counts) return <Skeleton width={220} height={16} />;
   return (
     <HStack gap={3} wrap="wrap">
@@ -241,12 +242,12 @@ function RecentFixes({ isMulti, srv }: { isMulti: boolean; srv?: number }) {
   );
 }
 
-const statusBadge: Record<string, 'success' | 'error' | 'warning' | 'neutral' | 'info'> = {
+const statusDots: Record<string, 'success' | 'error' | 'warning' | 'neutral' | 'accent'> = {
   finished: 'success',
   failed: 'error',
   canceled: 'warning',
   interrupted: 'warning',
-  running: 'info',
+  running: 'accent',
 };
 
 function RecentRuns({ isMulti, srv }: { isMulti: boolean; srv?: number }) {
@@ -279,7 +280,10 @@ function RunRow({ run, isMulti }: { run: RunRecord; isMulti: boolean }) {
       description={counts}
       endContent={
         <VStack gap={1} hAlign="end">
-          <Badge label={label(run.status)} variant={statusBadge[run.status] ?? 'neutral'} />
+          <HStack gap={2} vAlign="center">
+            <StatusDot variant={statusDots[run.status] ?? 'neutral'} label={label(run.status)} />
+            <Text type="supporting">{label(run.status)}</Text>
+          </HStack>
           <Text type="supporting" color="secondary">{dateTime(run.startedAt)}</Text>
         </VStack>
       }

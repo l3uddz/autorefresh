@@ -17,7 +17,7 @@ import { useNow } from './clock';
 import { dateTime, fixedBy, label, lastAction, plural, queueState, relative, typeName } from './format';
 import { askThen } from './confirm';
 import { Backdrop, Poster, Reasons } from './media';
-import { checkResult, fixedEvent, goneEvent } from './timeline';
+import { checkResult, disposition } from './timeline';
 import type { ItemKey } from './route';
 
 const styles = stylex.create({
@@ -85,8 +85,7 @@ interface BodyProps {
 function DetailBody({ detail, server, ignored, params }: BodyProps) {
   const { item, timeline } = detail;
   const now = useNow();
-  const fixed = fixedEvent(timeline);
-  const gone = goneEvent(detail);
+  const end = disposition(detail);
   const live = useQuery({
     queryKey: ['item', 'live', params],
     queryFn: ({ signal }) => api<LiveItem>(`item/live?${params}`, { signal }),
@@ -132,8 +131,8 @@ function DetailBody({ detail, server, ignored, params }: BodyProps) {
           <MetadataListItem label="Queue">{queueState(item.state, item.nextDue, now)}</MetadataListItem>
         )}
         {item.stoppedAt && <MetadataListItem label="Stopped">{`${relative(item.stoppedAt, now)} · ${dateTime(item.stoppedAt)}`}</MetadataListItem>}
-        {fixed && <MetadataListItem label="Fixed">{`${fixedBy(fixed.fixedAction, fixed.fixedMatch)} · ${relative(fixed.at, now)}`}</MetadataListItem>}
-        {gone && <MetadataListItem label="Removed">{`Plex no longer had it · ${relative(gone.at, now)}`}</MetadataListItem>}
+        {end?.kind === 'fixed' && <MetadataListItem label="Fixed">{`${fixedBy(end.event.fixedAction, end.event.fixedMatch)} · ${relative(end.event.at, now)}`}</MetadataListItem>}
+        {end?.kind === 'removed' && <MetadataListItem label="Removed">{`Plex no longer had it · ${relative(end.event.at, now)}`}</MetadataListItem>}
         {item.cached && (
           <MetadataListItem label="Attempts">{`${plural(item.attempts, 'attempt')} · ${plural(item.refreshes, 'refresh', 'refreshes')} accepted`}</MetadataListItem>
         )}
@@ -176,7 +175,7 @@ function actionError(error: Error): string {
       case 409:
         return error.message === 'item not cached' ? 'Autorefresh no longer tracks this item.' : 'This item is busy with another request. Try again in a moment.';
       case 404:
-        return 'This item is no longer known.';
+        return error.message === 'not found in Plex' ? 'Plex no longer has this item. It was deleted or moved.' : 'Autorefresh no longer knows this item. Its history may have expired.';
       case 502:
         return `${error.message}. Try again later.`;
       case 504:
@@ -205,11 +204,13 @@ function DetailActions({ item, server, params }: { item: ItemRecord; server?: Se
       } else {
         showToast({ body: successText(operation, title) });
       }
-      invalidateLists(client);
     },
     onError: error => {
       showToast({ body: actionError(error), type: 'error' });
     },
+    // A failed request can change the store too: a Plex 404 removes the
+    // item and records that Plex no longer has it.
+    onSettled: () => invalidateLists(client),
   });
   const busy = action.isPending;
   const running = action.variables;

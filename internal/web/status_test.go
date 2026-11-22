@@ -191,6 +191,10 @@ func TestStatusEndpoint(t *testing.T) {
 	if want := st.Snapshot(); !reflect.DeepEqual(got, want) {
 		t.Errorf("body = %+v, want %+v", got, want)
 	}
+	// Three changes: the check of a, the start of the run, and its item.
+	if got.Boot == "" || got.Seq != 3 {
+		t.Errorf("boot, seq = %q, %d, want a boot and seq 3", got.Boot, got.Seq)
+	}
 
 	empty := serve(New(Options{}), httptest.NewRequest(http.MethodGet, "/api/status", nil))
 	if body := empty.Body.String(); !strings.Contains(body, `"servers":[]`) || !strings.Contains(body, `"tmdb":"off"`) {

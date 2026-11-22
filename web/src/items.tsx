@@ -25,15 +25,15 @@ import * as stylex from '@stylexjs/stylex';
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { api, invalidateLists, itemID, useServers, type ItemPage, type ItemRecord, type ServerInfo } from './api';
-import { bulkError, bulkRequests, listParams, stopOrResume, tabActions, type BulkAction, type Filters, type Selection } from './bulk';
+import { bulkError, bulkRequests, isSearchTooLong, listParams, maxSearchBytes, stopOrResume, tabActions, type BulkAction, type BulkRequest, type Filters, type Selection } from './bulk';
 import { useNow } from './clock';
 import { askThen } from './confirm';
 import { ItemDetail } from './detail';
 import { fixedBy, label, plural, queueState, relative } from './format';
 import { Poster, Reasons } from './media';
-import { isQueueActive, NothingMatched, startBulkRefresh, useBulkQueue } from './queue';
+import { NothingMatched, startBulkRefresh, useIsRefreshBusy } from './queue';
 import { itemHash, navigate, tabNames, type ItemKey, type TabName } from './route';
-import { tableRow, type TableRow } from './table';
+import { stableRows, tableRow, type TableRow } from './table';
 
 const tabTitles: Record<TabName, string> = { attention: 'Attention', fixed: 'Fixed', stopped: 'Stopped' };
 const reasonOptions = ['unmatched', 'no-summary', 'no-poster', 'no-art', 'episode-no-summary', 'episode-unmatched'];
@@ -113,7 +113,15 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
   // "All" means another filter on each tab, so each tab keeps its own.
   const [all, setAll] = useState<Partial<Record<TabName, boolean>>>({});
   const [search, setSearch] = useState('');
-  const q = useDebounced(search, 250);
+  // A search that the API would refuse is not applied: the list keeps the
+  // last one that it takes.
+  const [query, setQuery] = useState('');
+  const isSearchInvalid = isSearchTooLong(search);
+  const changeSearch = (value: string) => {
+    setSearch(value);
+    if (!isSearchTooLong(value)) setQuery(value);
+  };
+  const q = useDebounced(query, 250);
   const [sorts, setSorts] = useState<Partial<Record<TabName, string>>>({});
   const sort = sorts[tab] ?? '';
   // A single server is always the scope, so its libraries can be filtered.
@@ -183,7 +191,8 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
         setFilters(previous => ({ ...previous, ...rest }));
       }}
       search={search}
-      onSearch={setSearch}
+      isSearchInvalid={isSearchInvalid}
+      onSearch={changeSearch}
       bulk={
         selected && (
           <BulkBand
@@ -194,6 +203,9 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
             inventory={inventory}
             isInventoryKnown={servers.data !== undefined}
             onClear={() => select(undefined)}
+            // A bulk action clears the selection that it took, but not a
+            // newer one that the user made while it ran.
+            onDone={submitted => setSelection(current => (current?.value === submitted ? undefined : current))}
           />
         )
       }
@@ -322,11 +334,13 @@ interface HeaderProps {
   /** Gets only the filters that changed. */
   onFilters: (change: Filters) => void;
   search: string;
+  /** Whether search is too long for the API, so the list ignores it. */
+  isSearchInvalid: boolean;
   onSearch: (value: string) => void;
   bulk?: React.ReactNode;
 }
 
-function ItemsHeader({ tab, counts, mode, onMode, srv, server, filters, onFilters, search, onSearch, bulk }: HeaderProps) {
+function ItemsHeader({ tab, counts, mode, onMode, srv, server, filters, onFilters, search, isSearchInvalid, onSearch, bulk }: HeaderProps) {
   const set = onFilters;
   const optional = (value: string | null) => value || undefined;
   return (
@@ -334,7 +348,17 @@ function ItemsHeader({ tab, counts, mode, onMode, srv, server, filters, onFilter
       <VStack gap={3} paddingInline={4} paddingBlockStart={4}>
         <HStack gap={3} vAlign="end" wrap="wrap">
           <StackItem size="fill">
-            <TextInput label="Search" isLabelHidden type="search" placeholder="Search title or path" startIcon="search" hasClear value={search} onChange={onSearch} />
+            <TextInput
+              label="Search"
+              isLabelHidden
+              type="search"
+              placeholder="Search title or path"
+              startIcon="search"
+              hasClear
+              value={search}
+              onChange={onSearch}
+              status={isSearchInvalid ? { type: 'error', message: `The search is too long. Use at most ${maxSearchBytes} bytes; letters with accents and other scripts take more than one.` } : undefined}
+            />
           </StackItem>
           <SegmentedControl label="View" value={mode} onChange={onMode}>
             <SegmentedControlItem value="list" label="List" />
@@ -484,7 +508,12 @@ function useRowOpen(onOpen: (row: TableRow) => void, openID?: string): TablePlug
 
 function ItemTable({ tab, rows, isMulti, ignored, sort, onSort, selection, onSelect, openItem, srv }: TableProps) {
   const now = useNow();
-  const data = useMemo(() => rows.map(item => tableRow(item, now, isMulti, ignored)), [rows, now, isMulti, ignored]);
+  const built = useMemo(() => rows.map(item => tableRow(item, now, isMulti, ignored)), [rows, now, isMulti, ignored]);
+  // A clock tick that changes no cell keeps the data, so the windowed
+  // table does not move.
+  const [data, setData] = useState(built);
+  const next = stableRows(data, built);
+  if (next !== data) setData(next);
   const keys = new Set(selection?.kind === 'keys' ? selection.items.map(itemID) : []);
   const isMatching = selection?.kind === 'matching';
   const virtualization = useTableRowsVirtualization({ rowHeight: tableRowHeight, initialViewportHeight: 640 });
@@ -566,21 +595,32 @@ interface BulkProps {
    * it sends one request for each server, to a server that they validate. */
   isInventoryKnown: boolean;
   onClear: () => void;
+  /** Gets the selection of a bulk action that succeeded. */
+  onDone: (submitted: Selection) => void;
+}
+
+/** A bulk action as the user submitted it. It keeps the requests, the
+ * server names, and the selection of that moment, so a selection change
+ * while the confirmation is open or the request waits changes nothing. */
+interface Submitted {
+  action: BulkAction;
+  requests: BulkRequest[];
+  names: Record<number, string>;
+  selection: Selection;
 }
 
 /** The band that replaces the tabs while rows are selected. */
-function BulkBand({ tab, scope, selection, total, inventory, isInventoryKnown, onClear }: BulkProps) {
+function BulkBand({ tab, scope, selection, total, inventory, isInventoryKnown, onClear, onDone }: BulkProps) {
   const client = useQueryClient();
   const showToast = useToast();
   const confirm = useImperativeAlertDialog();
-  const queue = useBulkQueue();
-  const names = Object.fromEntries(inventory.map(entry => [entry.srv, entry.name]));
+  const isRefreshBusy = useIsRefreshBusy();
   const count = selection.kind === 'matching' ? total : selection.items.length;
-  const requests = (action: BulkAction) => bulkRequests(action, tab, scope, selection, inventory.map(entry => entry.srv));
+  const requestsOf = (action: BulkAction) => bulkRequests(action, tab, scope, selection, inventory.map(entry => entry.srv));
   const run = useMutation({
-    mutationFn: async (action: BulkAction) => {
-      if (action !== 'refresh') return stopOrResume(action, requests(action), names);
-      const started = await startBulkRefresh(client, requests(action), names).catch((error: unknown) => {
+    mutationFn: async ({ action, requests, names }: Submitted) => {
+      if (action !== 'refresh') return stopOrResume(action, requests, names);
+      const started = await startBulkRefresh(client, requests, names).catch((error: unknown) => {
         if (error instanceof NothingMatched) return undefined;
         throw error;
       });
@@ -591,18 +631,19 @@ function BulkBand({ tab, scope, selection, total, inventory, isInventoryKnown, o
       const text = `Bulk refresh started for ${plural(first.count ?? 0, 'item')}${next}. Progress shows on the Status page.`;
       return { text, isError: false };
     },
-    onSuccess: ({ text, isError }) => {
+    onSuccess: ({ text, isError }, submitted) => {
       showToast({ body: text, type: isError ? 'error' : 'info' });
-      onClear();
+      onDone(submitted.selection);
     },
     onError: error => showToast({ body: bulkError(error), type: 'error' }),
     onSettled: () => invalidateLists(client),
   });
 
-  const servers = requests('refresh').length;
+  const servers = requestsOf('refresh').length;
   const start = (action: BulkAction) => {
+    const submitted: Submitted = { action, requests: requestsOf(action), names: Object.fromEntries(inventory.map(entry => [entry.srv, entry.name])), selection };
     if (action === 'resume') {
-      run.mutate(action);
+      run.mutate(submitted);
       return;
     }
     const items = plural(count, 'item');
@@ -622,15 +663,14 @@ function BulkBand({ tab, scope, selection, total, inventory, isInventoryKnown, o
             actionLabel: 'Stop trying',
             actionVariant: 'destructive',
           },
-      () => run.mutateAsync(action),
+      () => run.mutateAsync(submitted),
     );
   };
 
-  const isQueued = isQueueActive(queue);
   const isWaiting = selection.kind === 'matching' && !isInventoryKnown;
   const disabledReason = (action: BulkAction) => {
     if (isWaiting) return 'Loading the servers';
-    if (action === 'refresh' && isQueued) return 'A bulk refresh is running. Wait until it ends.';
+    if (action === 'refresh' && isRefreshBusy) return 'A bulk refresh is running. Wait until it ends.';
     return undefined;
   };
   return (
@@ -646,8 +686,8 @@ function BulkBand({ tab, scope, selection, total, inventory, isInventoryKnown, o
               label={actionLabels[action]}
               size="md"
               variant={action === 'stop' ? 'destructive' : 'secondary'}
-              isLoading={run.isPending && run.variables === action}
-              isDisabled={count === 0 || (run.isPending && run.variables !== action) || disabledReason(action) !== undefined}
+              isLoading={run.isPending && run.variables?.action === action}
+              isDisabled={count === 0 || (run.isPending && run.variables?.action !== action) || disabledReason(action) !== undefined}
               tooltip={disabledReason(action)}
               onClick={() => start(action)}
             />

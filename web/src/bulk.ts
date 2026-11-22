@@ -35,6 +35,15 @@ export interface BulkRequest {
   body: { keys: string[] } | { matching: true };
 }
 
+/** The largest search that the API takes, in UTF-8 bytes of the trimmed
+ * text. */
+export const maxSearchBytes = 200;
+
+/** Reports whether the API would refuse search as too long. */
+export function isSearchTooLong(search: string): boolean {
+  return new TextEncoder().encode(search.trim()).length > maxSearchBytes;
+}
+
 /** Returns the filter parameters of a list or a bulk request. The bulk API
  * rejects tab and sort, so they are added by listParams only. The Fixed tab
  * has no reason filter, and Stopped has no "all". */

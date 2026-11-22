@@ -2,7 +2,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RunProgress, RunRecord, Status } from './api';
 import type { BulkRequest } from './bulk';
-import { cancelBulkQueue, cancelQueueOfJob, isQueueActive, NothingMatched, onQueueDone, queueFailed, queueText, queueTiming, resetQueue, startBulkRefresh, type BulkQueue } from './queue';
+import { cancelBulkQueue, cancelQueueOfJob, currentQueue, isQueueActive, NothingMatched, onQueueDone, queueFailed, queueText, queueTiming, resetQueue, startBulkRefresh, type BulkQueue } from './queue';
 
 const requests: BulkRequest[] = [
   { srv: 0, path: 'items/refresh?srv=0', body: { keys: ['1', '2'] } },
@@ -21,6 +21,8 @@ interface Answer {
 interface Stored {
   status?: Status;
   runs?: Record<number, RunRecord[]>;
+  /** The answer of runs/cancel, 200 by default. */
+  cancel?: Answer;
 }
 
 /** A fake API: refresh POSTs take answers from a list per server, cancel
@@ -34,7 +36,7 @@ function fakeApi(refresh: Record<number, Answer[]>, items: Record<number, string
     calls.push(`${init?.method ?? 'GET'} ${path}${url.search}`);
     let answer: Answer = { status: 404, body: { error: 'no such route' } };
     if (path === 'items/refresh') answer = refresh[Number(url.searchParams.get('srv'))].shift()!;
-    if (path === 'runs/cancel') answer = { status: 200, body: {} };
+    if (path === 'runs/cancel') answer = stored.cancel ?? { status: 200, body: {} };
     if (path === 'status' && stored.status) answer = { status: 200, body: stored.status };
     if (path === 'runs' && stored.runs) answer = { status: 200, body: { runs: stored.runs[Number(url.searchParams.get('srv'))] ?? [] } };
     if (path === 'runs/items') {
@@ -54,19 +56,21 @@ function storedRun(id: number, srv: number, status: string): RunRecord {
   return { id, srv, server: '', kind: 'bulk-refresh', source: 'manual', status, readItems: 0, refreshed: 0, matched: 0, failed: 0, completed: 0, fixed: 0, incomplete: 0, due: 0, selected: 0, skipped: 0 };
 }
 
-/** A status in which no server runs or ran anything, as after a restart. */
-function freshStatus(): Status {
-  return { tmdb: 'off', servers: [0, 1, 2].map(srv => ({ srv, name: '', health: 'ok' as const, run: null })) };
+/** A status in which no server runs or ran anything, as after a restart:
+ * its process is another one than the one of end. */
+function freshStatus(boot = 'restarted', seq = 0): Status {
+  return { boot, seq, tmdb: 'off', servers: [0, 1, 2].map(srv => ({ srv, name: '', health: 'ok' as const, run: null })) };
 }
 
 function lastRun(id: number, status: string, recorded = true): RunProgress {
   return { id, kind: 'bulk-refresh', source: 'manual', status, startedAt: '', recorded, librariesRead: 0, selected: 0, due: 0, done: 0, refreshed: 0, matched: 0, failed: 0, skipped: 0 };
 }
 
-/** Reports in the status that job id of the server srv ended. */
+/** Reports in the status that job id of the server srv ended, as the
+ * next event of the stream. */
 function end(client: QueryClient, srv: number, run: RunProgress) {
-  const status = client.getQueryData<Status>(['status']) ?? { tmdb: 'off', servers: [0, 1, 2].map(i => ({ srv: i, name: '', health: 'ok' as const, run: null })) };
-  client.setQueryData<Status>(['status'], { ...status, servers: status.servers.map(server => (server.srv === srv ? { ...server, last: run } : server)) });
+  const status = client.getQueryData<Status>(['status']) ?? freshStatus('first');
+  client.setQueryData<Status>(['status'], { ...status, seq: status.seq + 1, servers: status.servers.map(server => (server.srv === srv ? { ...server, last: run } : server)) });
 }
 
 function nextDone(): Promise<BulkQueue> {
@@ -281,10 +285,105 @@ describe('bulk refresh queue', () => {
   });
 
   it('starts nothing when the first server refuses the job', async () => {
-    const calls = fakeApi({ 0: [{ status: 400, body: { error: 'too many items' } }] });
+    const calls = fakeApi({ 0: [{ status: 400, body: { error: 'too many items' } }, accepted(7, 2)], 1: [] });
     await expect(startBulkRefresh(client, requests, names)).rejects.toThrow('too many items');
     expect(refreshCalls(calls)).toHaveLength(1);
     expect(isQueueActive()).toBe(false);
+    // The refused start releases its admission.
+    await expect(startBulkRefresh(client, requests, names)).resolves.toBeDefined();
+  });
+
+  it('refuses a second start while the first one waits for its admission', async () => {
+    const calls = fakeApi({ 0: [accepted(7, 2)], 1: [] });
+    const first = startBulkRefresh(client, requests, names);
+    await expect(startBulkRefresh(client, requests, names)).rejects.toThrow('already running');
+    await first;
+    expect(refreshCalls(calls)).toEqual(['POST items/refresh?srv=0']);
+  });
+
+  it('keeps the queue canceled and reports a cancel that failed', async () => {
+    const calls = fakeApi({ 0: [accepted(7, 2)], 1: [accepted(8, 1)] }, { 7: ['accepted'] }, { cancel: { status: 503, body: { error: 'shutting down' } } });
+    const done = nextDone();
+    await startBulkRefresh(client, requests, names);
+    await cancelBulkQueue();
+    const queue = currentQueue();
+    expect(queue?.cancelError).toBe('shutting down');
+    expect(queue?.isCanceled).toBe(true);
+    end(client, 0, lastRun(7, 'finished'));
+    const result = await done;
+    expect(refreshCalls(calls)).toHaveLength(1);
+    expect(result.steps.map(step => [step.state, step.note])).toEqual([['finished', undefined], ['not-started', 'canceled']]);
+  });
+
+  it('does not report the cancel of a job that already ended', async () => {
+    fakeApi({ 0: [accepted(7, 2)], 1: [accepted(8, 1)] }, {}, { cancel: { status: 404, body: { error: 'not found' } } });
+    await startBulkRefresh(client, requests, names);
+    await cancelBulkQueue();
+    expect(currentQueue()?.cancelError).toBeUndefined();
+  });
+
+  it('takes the status of a restarted service, whatever its count', async () => {
+    // The cache holds the old process, which says that job 7 runs. The new
+    // process does not know the job and has a lower count, and the stored
+    // runs say how the job ended.
+    Object.assign(queueTiming, { pollInterval: 5 });
+    const old = freshStatus('old', 50);
+    old.servers[0].run = lastRun(7, 'running');
+    client.setQueryData(['status'], old);
+    fakeApi({ 0: [accepted(7, 2)], 1: [accepted(8, 1)] }, {}, { status: freshStatus('new', 1), runs: { 0: [storedRun(7, 0, 'interrupted')] } });
+    const done = nextDone();
+    await startBulkRefresh(client, requests, names);
+    expect((await done).steps.map(step => step.state)).toEqual(['interrupted', 'not-started']);
+    expect(client.getQueryData<Status>(['status'])?.boot).toBe('new');
+  });
+
+  it('ends a job as unknown when the status does not know it and the stored runs are unavailable', async () => {
+    Object.assign(queueTiming, { pollInterval: 5 });
+    fakeApi({ 0: [accepted(7, 2)], 1: [accepted(8, 1)] }, {}, { status: freshStatus() });
+    const done = nextDone();
+    await startBulkRefresh(client, requests, names);
+    expect((await done).steps.map(step => step.state)).toEqual(['unknown', 'not-started']);
+  });
+
+  it('ends a job as unknown when the status and the stored runs are both unavailable', async () => {
+    Object.assign(queueTiming, { pollInterval: 5 });
+    fakeApi({ 0: [accepted(7, 2)], 1: [accepted(8, 1)] });
+    const done = nextDone();
+    await startBulkRefresh(client, requests, names);
+    expect((await done).steps.map(step => step.state)).toEqual(['unknown', 'not-started']);
+  });
+
+  it('keeps waiting while the status reads the job as running, also when the stored runs are unavailable', async () => {
+    Object.assign(queueTiming, { pollInterval: 5 });
+    const running = freshStatus();
+    running.servers[0].run = lastRun(7, 'running');
+    const calls = fakeApi({ 0: [accepted(7, 2)] }, { 7: ['accepted'] }, { status: running });
+    const done = nextDone();
+    await startBulkRefresh(client, requests.slice(0, 1), names);
+    // Many more polls than unknownAfter.
+    await vi.waitFor(() => expect(calls.filter(call => call === 'GET status').length).toBeGreaterThan(10));
+    expect(isQueueActive()).toBe(true);
+    expect(calls.filter(call => call.startsWith('GET runs?'))).toEqual([]);
+    end(client, 0, lastRun(7, 'finished'));
+    expect((await done).steps.map(step => step.state)).toEqual(['finished']);
+  });
+
+  it('counts only failed reads in a row against a running job', async () => {
+    Object.assign(queueTiming, { pollInterval: 5 });
+    const running = freshStatus();
+    running.servers[0].run = lastRun(7, 'running');
+    // Every other read of the status fails: far more failures than
+    // unknownAfter in total, but never two in a row.
+    const statusReads = () => calls.filter(call => call === 'GET status').length;
+    const stored: Stored = {};
+    Object.defineProperty(stored, 'status', { get: () => (statusReads() % 2 ? running : undefined) });
+    const calls = fakeApi({ 0: [accepted(7, 2)] }, { 7: ['accepted'] }, stored);
+    const done = nextDone();
+    await startBulkRefresh(client, requests.slice(0, 1), names);
+    await vi.waitFor(() => expect(statusReads()).toBeGreaterThan(20));
+    expect(isQueueActive()).toBe(true);
+    end(client, 0, lastRun(7, 'finished'));
+    expect((await done).steps.map(step => step.state)).toEqual(['finished']);
   });
 });
 

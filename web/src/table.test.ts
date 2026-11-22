@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ItemRecord } from './api';
-import { tableRow } from './table';
+import { stableRows, tableRow } from './table';
 
 describe('table rows', () => {
   const now = Date.parse('2026-11-22T12:00:00Z');
@@ -41,5 +41,15 @@ describe('table rows', () => {
   it('leaves out the server of a single-server install and fills empty cells', () => {
     const row = tableRow({ srv: 0, key: '7', cached: true, attempts: 0, refreshes: 0, library: 'TV' }, now, false, []);
     expect(row).toMatchObject({ title: 'Item 7', library: 'TV', reasons: '—', 'last-attempt': '—', 'fixed-by': 'Plex on its own' });
+  });
+
+  it('keeps the rows when a clock tick changes no cell and replaces them when one changes', () => {
+    const rows = [tableRow(item, now - 60_000, false, [])];
+    // A minute later every label still reads the same.
+    expect(stableRows(rows, [tableRow(item, now, false, [])])).toBe(rows);
+    // A day later the due label changes.
+    const later = [tableRow(item, now + 86_400_000, false, [])];
+    expect(stableRows(rows, later)).toBe(later);
+    expect(stableRows(rows, [])).toEqual([]);
   });
 });
