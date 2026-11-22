@@ -292,6 +292,7 @@ refresh-delay: 5s             # wait between two due items on one server
 max-refreshes-per-run: 100    # the most due items in each run on each server; 0 for no limit
 ignore-reasons: []            # reasons that never cause a refresh, for example [no-art]
 tmdb-token: ""                # optional; the TMDB API Read Access Token for the fix match fallback
+history-retention: 720h       # how long the dashboard history is kept
 
 plex:
   - name: main                    # label for logs and the database
@@ -315,6 +316,7 @@ plex:
 | `max-refreshes-per-run` | no | `100` |
 | `ignore-reasons` | no | none |
 | `tmdb-token` | no | none |
+| `history-retention` | no | `720h` |
 | `plex` | yes, at least one server | none |
 
 `schedule` and `cache-refresh` are cron expressions with 5 fields, or
@@ -326,7 +328,8 @@ at or after that time.
 Durations use Go units such as `h`, `m`, and `s`, so write 7 days as
 `168h`. `refresh-interval` must be at least `1ms`. `max-refresh-interval`,
 `minimum-age`, `oversample`, and `refresh-delay` must be 0 or more.
-`max-refreshes-per-run` must be 0 or more, and 0 means no limit. An unknown
+`max-refreshes-per-run` must be 0 or more, and 0 means no limit.
+`history-retention` must be positive. An unknown
 name in `ignore-reasons` is an error. These keys apply to all servers.
 
 Each entry in `plex` is one Plex server:

@@ -268,3 +268,24 @@ func TestDecodeSyntaxErrorNamesLine(t *testing.T) {
 		t.Errorf("error %q does not name the line", err)
 	}
 }
+
+func TestDecodeDefaultsHistoryRetention(t *testing.T) {
+	cfg, err := Decode(strings.NewReader(minimalServer))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if cfg.HistoryRetention != 720*time.Hour {
+		t.Errorf("HistoryRetention = %v, want 720h", cfg.HistoryRetention)
+	}
+}
+
+func TestDecodeRejectsNonPositiveHistoryRetention(t *testing.T) {
+	for _, value := range []string{"0s", "-1h"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := Decode(strings.NewReader("history-retention: " + value + "\n" + minimalServer))
+			if err == nil || !strings.Contains(err.Error(), "history-retention must be positive") {
+				t.Fatalf("Decode error = %v, want history-retention must be positive", err)
+			}
+		})
+	}
+}

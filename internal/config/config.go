@@ -28,6 +28,7 @@ type Config struct {
 	MaxRefreshesPerRun int           `yaml:"max-refreshes-per-run"` // 0: no limit
 	IgnoreReasons      []string      `yaml:"ignore-reasons"`        // reason names such as "no-art"
 	TMDBToken          string        `yaml:"tmdb-token"`            // "": no TMDB fallback in fix match
+	HistoryRetention   time.Duration `yaml:"history-retention"`     // how long the dashboard history is kept
 	Plex               []Server      `yaml:"plex"`
 
 	// Decode parses these values from the keys above.
@@ -68,6 +69,7 @@ func defaults() Config {
 		Oversample:         48 * time.Hour,
 		RefreshDelay:       5 * time.Second,
 		MaxRefreshesPerRun: 100,
+		HistoryRetention:   720 * time.Hour,
 	}
 }
 
@@ -160,6 +162,9 @@ func (c *Config) validate() error {
 	}
 	if c.MaxRefreshesPerRun < 0 {
 		return errors.New("max-refreshes-per-run must not be negative")
+	}
+	if c.HistoryRetention <= 0 {
+		return errors.New("history-retention must be positive")
 	}
 	if c.Ignored, err = store.ParseReasons(c.IgnoreReasons); err != nil {
 		return fmt.Errorf("ignore-reasons: %w", err)
