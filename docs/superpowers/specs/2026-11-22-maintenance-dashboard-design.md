@@ -157,8 +157,10 @@ history-retention: 720h    # default 30 days; how long history is kept
 - If the listener cannot bind, autorefresh exits at start with a clear error,
   like any other configuration error. (My call.) It binds before
   `checkTokens`, so a bind error does not wait for the token checks.
-- Stop order: the HTTP server shuts down (`Shutdown`, which also ends SSE
-  streams through their context), then the jobs and the scheduler stop, and
+- Stop order: first cancel the SSE lifecycle context, a context of its own
+  that every SSE handler watches, because `Shutdown` waits for active
+  connections and does not cancel their request contexts. Then the HTTP
+  server shuts down (`Shutdown`), then the jobs and the scheduler stop, and
   only then the store closes.
 - The docker image documents the port with `EXPOSE`.
 
