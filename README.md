@@ -604,20 +604,23 @@ address keeps the choice, so a link or a reload shows the same server.
   is one row with its summary.
 - A click on a run opens its details in a drawer, also from **Recent
   runs** on the Status page. In the table, Enter or Space on a row opens
-  it too. The drawer shows the kind, the status, the start, the duration,
-  the libraries read, the error, and the counts. The counts of refreshes
-  and matches are the requests sent, so they include the requests that
-  failed. Below, it lists the items of the run by outcome: **Refreshed**
-  and **Matched** for the requests that Plex accepted, **Failed**,
-  **Fixed**, **Completed by Plex**, **Removed**, and **Not sent** for a fix
-  match decision whose request the end of the run stopped. Each item shows
-  what happened to it, such as the fix match decision before a request,
-  and opens its item details. A bulk refresh lists its selected items as
-  **Refreshed**, **Failed**, **Removed**, **Skipped**, and **Not
-  reached**. Runs from before this
-  version recorded no items, so their drawer says that the item details
+  it too. On a narrow screen, the details replace the list, as on the
+  Items page. The details show the kind, the status, the start, the
+  duration, the libraries read, the error, and the counts. The counts of
+  refreshes and matches are the requests sent, so they include the
+  requests that failed. Below, the details list the items of the run by
+  outcome: **Refreshed** and **Matched** for the requests that Plex
+  accepted, **Failed** for rejected requests and failed fix match
+  searches, **Fixed**, **Completed by Plex**, **Removed**, and **Not
+  sent** for a fix match decision whose request the end of the run
+  stopped. Each item shows its library and what happened to it, such as
+  the fix match decision before a request, and opens its item details. A
+  bulk refresh lists its selected items as **Refreshed**, **Failed**,
+  **Removed**, **Skipped**, and **Not reached**. Runs from before this
+  version recorded no items, so their details say that the item details
   were not recorded. The read and due counts stay numbers. A running run
-  reloads its items every 5 seconds. Each run has its own link,
+  shows its counts when it ends, and reloads its items every 5 seconds. A
+  bulk refresh shows its items when it ends. Each run has its own link,
   `#/runs/<id>`.
 
 **Fix match** in the item details opens a dialog to choose the Plex match
@@ -744,12 +747,13 @@ The image declares port `7380`. Nothing listens on it until you set
 | `api/item/live` | What Plex tells about one item now |
 | `api/items/thumb`, `api/items/art` | The poster and the background art of one item |
 | `api/runs` | One page of the runs, newest first |
+| `api/runs/detail` | One run with the events that it wrote, or the items of a bulk refresh |
 
 The API names a server by its position in the `plex` list, from 0, in the
 `srv` query parameter. On `api/items`, `api/item`, `api/item/live`,
-`api/items/thumb`, `api/items/art`, and `api/runs`, a query string that
-does not decode, for example one with a bad percent escape, gets a 400
-answer.
+`api/items/thumb`, `api/items/art`, `api/runs`, and `api/runs/detail`, a
+query string that does not decode, for example one with a bad percent
+escape, gets a 400 answer.
 
 ## Logging
 
