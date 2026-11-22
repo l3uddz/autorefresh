@@ -159,7 +159,7 @@ func (c *Client) send(ctx context.Context, method string, endpoint *url.URL, que
 		return nil
 	}
 	if err := json.NewDecoder(res.Body).Decode(out); err != nil {
-		return bodyError(method, res.Request.URL.Path, err)
+		return bodyError(method, endpoint.Path, err)
 	}
 	return nil
 }

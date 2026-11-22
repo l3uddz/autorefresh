@@ -157,3 +157,18 @@ func TestPathPrefix(t *testing.T) {
 		t.Fatalf("path = %s, prefix = %s", p, c.PathPrefix())
 	}
 }
+
+func TestBodyErrorsKeepTheRequestPathAfterRedirect(t *testing.T) {
+	_, c := newServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/elsewhere" {
+			w.Write([]byte("not json"))
+			return
+		}
+		http.Redirect(w, r, "/elsewhere", http.StatusFound)
+	})
+	c.base = mustURL(t, c.base.String()+"/plex")
+	_, err := c.Libraries(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "/plex/library/sections") || strings.Contains(err.Error(), "/elsewhere") {
+		t.Fatalf("err = %v", err)
+	}
+}

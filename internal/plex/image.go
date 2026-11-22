@@ -68,14 +68,15 @@ func (c *Client) Photo(ctx context.Context, ratingKey, imagePath string, width, 
 		"minSize": {"1"},
 		"upscale": {"1"},
 	}
-	res, err := c.do(ctx, http.MethodGet, c.endpoint("photo", ":", "transcode"), query, "image/*")
+	endpoint := c.endpoint("photo", ":", "transcode")
+	res, err := c.do(ctx, http.MethodGet, endpoint, query, "image/*")
 	if err != nil {
 		return nil, fmt.Errorf("photo: %w", err)
 	}
 	body, err := io.ReadAll(io.LimitReader(res.Body, MaxPhotoBytes+1))
 	if err != nil {
 		res.Body.Close()
-		return nil, bodyError(http.MethodGet, res.Request.URL.Path, err)
+		return nil, bodyError(http.MethodGet, endpoint.Path, err)
 	}
 	if len(body) > MaxPhotoBytes {
 		res.Body.Close() // no draining: the server can stall after the limit
