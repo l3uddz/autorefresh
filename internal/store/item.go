@@ -22,7 +22,7 @@ type Item struct {
 	AddedAt                    time.Time
 	Reasons                    Reasons
 	LastRefresh, LastAttempt   time.Time // zero: never
-	Refreshes                  int
+	Refreshes, Attempts        int
 	LastAction                 Action // the last request that Plex accepted
 	LastMatch                  Action // the last match request that Plex accepted
 
@@ -69,7 +69,7 @@ type Read struct {
 }
 
 const itemColumns = `server, section, rating_key, type, title, year, added_at, reasons, last_refresh, last_attempt, refreshes,
-	last_action, last_match, thumb, art, path, stopped_at, last_outcome, last_match_outcome, last_match_event_id`
+	last_action, last_match, thumb, art, path, stopped_at, last_outcome, last_match_outcome, last_match_event_id, attempts`
 
 // nullTime stores a zero time as NULL and any other time as Unix seconds.
 func nullTime(t time.Time) any {
@@ -98,7 +98,7 @@ func scanItem(row scanner) (Item, error) {
 	)
 	err := row.Scan(&it.Server, &it.Section, &it.RatingKey, &it.Type, &it.Title, &it.Year,
 		&addedAt, &reasons, &lastRefresh, &lastAttempt, &it.Refreshes, &it.LastAction, &it.LastMatch,
-		&it.Thumb, &it.Art, &it.Path, &stoppedAt, &it.LastOutcome, &it.LastMatchOutcome, &matchEventID)
+		&it.Thumb, &it.Art, &it.Path, &stoppedAt, &it.LastOutcome, &it.LastMatchOutcome, &matchEventID, &it.Attempts)
 	if err != nil {
 		return Item{}, err
 	}

@@ -491,3 +491,45 @@ func TestTimelineWithSeveralDecisions(t *testing.T) {
 		t.Fatalf("oldest searches = %+v", got)
 	}
 }
+
+func TestManualStoreLifecycle(t *testing.T) {
+	s := openTest(t)
+	it := item("a", NoSummary)
+	apply(t, s, Read{Items: []Item{it}})
+	if changed, err := s.SetStopped(t.Context(), srv, "a", base, true); err != nil || !changed {
+		t.Fatalf("stop = %v, %v", changed, err)
+	}
+	if changed, err := s.SetStopped(t.Context(), srv, "a", base, true); err != nil || changed {
+		t.Fatalf("repeated stop = %v, %v", changed, err)
+	}
+	if changed, err := s.SetStopped(t.Context(), srv, "a", base, false); err != nil || !changed {
+		t.Fatalf("resume = %v, %v", changed, err)
+	}
+	request := Request{Server: srv, RatingKey: "a", At: base, Source: SourceManual, Action: ActionRefresh, Accepted: true}
+	if err := s.RecordManual(ManualRecord{Request: request, Snapshot: it, Cached: true}); err != nil {
+		t.Fatal(err)
+	}
+	row, cached, found, err := s.KnownItem(srv, "a")
+	if err != nil || !cached || !found || row.Attempts != 1 || !row.StoppedAt.IsZero() {
+		t.Fatalf("cached item = %+v, %v, %v, %v", row, cached, found, err)
+	}
+	it.Reasons, it.Title = 0, "Updated"
+	if completed, err := s.ApplyCheck(srv, it, base); err != nil || !completed {
+		t.Fatalf("check = %v, %v", completed, err)
+	}
+	row, cached, found, err = s.KnownItem(srv, "a")
+	if err != nil || cached || !found || row.Title != "Updated" {
+		t.Fatalf("snapshot = %+v, %v, %v, %v", row, cached, found, err)
+	}
+	events, err := s.Timeline(srv, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []EventKind
+	for _, event := range events {
+		kinds = append(kinds, event.Kind)
+	}
+	if want := []EventKind{EventCompleted, EventRequest, EventResumed, EventStopped}; !reflect.DeepEqual(kinds, want) {
+		t.Fatalf("events = %v, want %v", kinds, want)
+	}
+}

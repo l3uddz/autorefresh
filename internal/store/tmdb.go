@@ -22,12 +22,12 @@ func (s *Store) TMDBID(server, ratingKey, source, externalID string) (tmdbID str
 }
 
 // SaveTMDBID caches the TMDB ID of an external ID of an item. The item row
-// must exist, and the cached ID goes with it.
+// must exist to cache the ID. A missing item is a no-op.
 func (s *Store) SaveTMDBID(server, ratingKey, source, externalID, tmdbID string) error {
 	_, err := s.db.Exec(`INSERT INTO tmdb_id (server, rating_key, source, external_id, tmdb_id)
-		VALUES (?, ?, ?, ?, ?)
+		SELECT ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM item WHERE server = ? AND rating_key = ?)
 		ON CONFLICT (server, rating_key, source, external_id) DO UPDATE SET tmdb_id = excluded.tmdb_id`,
-		server, ratingKey, source, externalID, tmdbID)
+		server, ratingKey, source, externalID, tmdbID, server, ratingKey)
 	if err != nil {
 		return fmt.Errorf("save tmdb id: %w", err)
 	}
