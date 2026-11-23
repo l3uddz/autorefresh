@@ -344,7 +344,7 @@ func TestApplyMatchStopsWhenRowLeavesCache(t *testing.T) {
 	buf := captureLogs(t)
 	f.r.sleep = func(context.Context, time.Duration) error {
 		f.sleeps = append(f.sleeps, time.Second)
-		return f.store.RecordGone("home", "1", t0, store.SourceAuto)
+		return f.store.RecordGone("home", "1", t0, store.SourceAuto, 0)
 	}
 	cand := plex.Candidate{GUID: "plex://movie/1", Name: "Match", Year: 2020}
 	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {

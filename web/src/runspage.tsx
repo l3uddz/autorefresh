@@ -16,6 +16,9 @@ import { useMemo } from 'react';
 import { api, useStatus, type RunRecord } from './api';
 import { useNow } from './clock';
 import { dateTime, label, relative, runDuration, runKind } from './format';
+import { navigate, runHash } from './route';
+import { RunDetails, RunDrawer } from './rundetail';
+import { useRowOpen } from './rowopen';
 import { NextRun, RunRow, statusDots } from './status';
 
 const tableQuery = `(min-width: ${DEFAULT_WIDTH_BREAKPOINTS.lg}px)`;
@@ -35,8 +38,9 @@ function runsPath(srv: number | undefined, cursor: string): string {
   return `runs?${params}`;
 }
 
-/** The run history of every server, or of the server srv, newest first. */
-export function RunsPage({ srv }: { srv?: number }) {
+/** The run history of every server, or of the server srv, newest first.
+ * The run whose ID is run opens in a drawer. */
+export function RunsPage({ srv, run }: { srv?: number; run?: number }) {
   const status = useStatus();
   const isMulti = (status.data?.servers.length ?? 0) > 1;
   const isTable = useMediaQuery(tableQuery);
@@ -50,46 +54,53 @@ export function RunsPage({ srv }: { srv?: number }) {
     getNextPageParam: page => page.next || undefined,
   });
   const runs = useMemo(() => pages.data?.pages.flatMap(page => page.runs) ?? [], [pages.data]);
+  const close = () => navigate({ page: 'runs', srv });
+  // A narrow screen shows the open run on its own screen, as the Items page
+  // shows an open item.
+  if (!isTable && run !== undefined) return <RunDetails id={run} isMulti={isMulti} srv={srv} onClose={close} />;
   return (
-    <VStack gap={6} padding={6}>
-      <HStack hAlign="between" vAlign="center" wrap="wrap" gap={3}>
-        <Heading level={1}>Runs</Heading>
-        <NextRun />
-      </HStack>
-      {pages.error && (
-        <Banner
-          status="error"
-          title="The runs are unavailable"
-          description={pages.error.message}
-          endContent={<Button label="Try again" onClick={() => void pages.refetch()} />}
-        />
-      )}
-      {pages.isPending ? (
-        <VStack gap={3}>
-          {[0, 1, 2, 3].map(i => <Skeleton key={i} index={i} height={48} />)}
-        </VStack>
-      ) : runs.length === 0 ? (
-        !pages.error && <EmptyState title="No runs yet" description="Runs show here once autorefresh has run, on its schedule or by hand." icon={<Icon icon={ClockIcon} size="lg" />} />
-      ) : isTable ? (
-        <RunTable runs={runs} isMulti={isMulti} />
-      ) : (
-        <List density="balanced" hasDividers>
-          {runs.map(run => <RunRow key={run.id} run={run} isMulti={isMulti} isDetailed />)}
-        </List>
-      )}
-      {pages.hasNextPage && (
-        <HStack hAlign="center">
-          <Button
-            label="Load more"
-            isLoading={pages.isFetchingNextPage}
-            isDisabled={pages.isFetching}
-            onClick={() => {
-              if (!pages.isFetching) void pages.fetchNextPage({ cancelRefetch: false });
-            }}
-          />
+    <>
+      <VStack gap={6} padding={6}>
+        <HStack hAlign="between" vAlign="center" wrap="wrap" gap={3}>
+          <Heading level={1}>Runs</Heading>
+          <NextRun />
         </HStack>
-      )}
-    </VStack>
+        {pages.error && (
+          <Banner
+            status="error"
+            title="The runs are unavailable"
+            description={pages.error.message}
+            endContent={<Button label="Try again" onClick={() => void pages.refetch()} />}
+          />
+        )}
+        {pages.isPending ? (
+          <VStack gap={3}>
+            {[0, 1, 2, 3].map(i => <Skeleton key={i} index={i} height={48} />)}
+          </VStack>
+        ) : runs.length === 0 ? (
+          !pages.error && <EmptyState title="No runs yet" description="Runs show here once autorefresh has run, on its schedule or by hand." icon={<Icon icon={ClockIcon} size="lg" />} />
+        ) : isTable ? (
+          <RunTable runs={runs} isMulti={isMulti} srv={srv} openRun={run} />
+        ) : (
+          <List density="balanced" hasDividers>
+            {runs.map(entry => <RunRow key={entry.id} run={entry} isMulti={isMulti} href={runHash(entry.id, srv)} isSelected={entry.id === run} isDetailed />)}
+          </List>
+        )}
+        {pages.hasNextPage && (
+          <HStack hAlign="center">
+            <Button
+              label="Load more"
+              isLoading={pages.isFetchingNextPage}
+              isDisabled={pages.isFetching}
+              onClick={() => {
+                if (!pages.isFetching) void pages.fetchNextPage({ cancelRefetch: false });
+              }}
+            />
+          </HStack>
+        )}
+      </VStack>
+      {isTable && <RunDrawer id={run} isMulti={isMulti} srv={srv} onClose={close} />}
+    </>
   );
 }
 
@@ -98,8 +109,12 @@ interface Row extends Record<string, unknown> {
   id: number;
 }
 
-function RunTable({ runs, isMulti }: { runs: RunRecord[]; isMulti: boolean }) {
+function RunTable({ runs, isMulti, srv, openRun }: { runs: RunRecord[]; isMulti: boolean; srv?: number; openRun?: number }) {
   const now = useNow();
+  const open = useRowOpen(
+    useMemo(() => (row: Row) => navigate({ page: 'runs', run: row.id, srv }), [srv]),
+    openRun,
+  );
   const rows = useMemo(() => runs.map(run => ({ id: run.id, run })), [runs]);
   const count = (key: keyof RunRecord, header: string): TableColumn<Row> => ({
     key,
@@ -153,5 +168,5 @@ function RunTable({ runs, isMulti }: { runs: RunRecord[]; isMulti: boolean }) {
       renderCell: ({ run }) => <Text type="supporting" wordBreak="break-word">{run.error ?? ''}</Text>,
     },
   ];
-  return <Table data={rows} columns={columns} idKey="id" density="spacious" hasHover />;
+  return <Table data={rows} columns={columns} idKey="id" density="spacious" hasHover plugins={{ open }} />;
 }

@@ -66,6 +66,8 @@ type Read struct {
 	// DryRun keeps ApplyRead from writing events. The rows and the read
 	// times change as in any other read.
 	DryRun bool
+	// RunID is the run of the read, which its events name; 0: none.
+	RunID int64
 }
 
 const itemColumns = `server, section, rating_key, type, title, year, added_at, reasons, last_refresh, last_attempt, refreshes,

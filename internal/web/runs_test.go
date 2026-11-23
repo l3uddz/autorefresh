@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -130,6 +131,7 @@ func TestRunsEndpoint(t *testing.T) {
 		"id": float64(h5), "srv": 0.0, "server": "Home", "kind": "run", "source": "schedule", "status": "finished",
 		"readItems": 1.0, "refreshed": 2.0, "matched": 3.0, "failed": 4.0, "completed": 5.0, "fixed": 6.0,
 		"incomplete": 7.0, "due": 8.0, "selected": 9.0, "fullReads": 10.0, "incrementalReads": 11.0,
+		"eventsLinked": true,
 	}
 	for field, w := range want {
 		if !reflect.DeepEqual(finished[field], w) {
@@ -240,5 +242,110 @@ func TestRunsEmptyIsArray(t *testing.T) {
 	_, body := getRuns(t, newAPIServer(openStore(t), 0, "Home"), "")
 	if !strings.Contains(body, `"runs":[]`) || strings.Contains(body, `"next"`) {
 		t.Errorf("body = %s", body)
+	}
+}
+
+type runDetailAnswer struct {
+	Run    map[string]any   `json:"run"`
+	Events []map[string]any `json:"events"`
+	Items  []runItemJSON    `json:"items"`
+}
+
+func TestRunDetailListsEventsOfRun(t *testing.T) {
+	db := openStore(t)
+	one := movie("1", "One", store.NoSummary, testNow)
+	one.Thumb = "/library/metadata/1/thumb/1700000000"
+	if err := db.SaveLibraries("home", []store.LibraryInfo{{Section: "1", Title: "Movies"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ApplyRead(store.Read{Server: "home", Section: "1", At: testNow, Items: []store.Item{one, movie("2", "Two", store.NoSummary, testNow)}}); err != nil {
+		t.Fatal(err)
+	}
+	start := store.RunStart{Server: "home", Kind: store.RunKindRun, Source: store.RunSourceSchedule, StartedAt: testNow}
+	id, err := db.StartRun(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const secret = "fake-private-token"
+	at := testNow.Add(time.Minute)
+	for _, r := range []store.Request{
+		{Server: "home", RatingKey: "1", At: at, Source: store.SourceAuto, Action: store.ActionRefresh, Error: "Plex error " + secret, RunID: id},
+		{Server: "home", RatingKey: "2", At: at, Source: store.SourceManual, Action: store.ActionRefresh, Accepted: true},
+	} {
+		if err := db.RecordRequest(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.FinishRun(id, start, store.RunResult{FinishedAt: at, Status: store.RunFinished, Failed: 1}); err != nil {
+		t.Fatal(err)
+	}
+	s := New(Options{Store: db, Secrets: []string{secret}, Servers: []PlexServer{{Name: "home"}}})
+
+	var got runDetailAnswer
+	body := getJSON(t, s, fmt.Sprintf("/api/runs/detail?id=%d", id), &got)
+	if got.Run["id"] != float64(id) || got.Run["failed"] != 1.0 || len(got.Items) != 0 {
+		t.Errorf("run = %v, items = %v", got.Run, got.Items)
+	}
+	if len(got.Events) != 1 {
+		t.Fatalf("events = %v, want only the event of the run", got.Events)
+	}
+	e := got.Events[0]
+	want := map[string]any{"key": "1", "title": "One", "type": "movie", "library": "Movies", "kind": "request", "action": "refresh",
+		"accepted": false, "error": "Plex error " + redacted}
+	for field, w := range want {
+		if !reflect.DeepEqual(e[field], w) {
+			t.Errorf("event %s = %#v, want %#v", field, e[field], w)
+		}
+	}
+	if thumb, _ := e["thumb"].(string); !strings.HasPrefix(thumb, "api/items/thumb?") {
+		t.Errorf("thumb = %q, want the image endpoint", thumb)
+	}
+	if strings.Contains(body, secret) {
+		t.Errorf("body holds the secret: %s", body)
+	}
+}
+
+func TestRunDetailListsItemsOfBulkJob(t *testing.T) {
+	db := openStore(t)
+	start := store.RunStart{Server: "home", Kind: store.RunKindBulkRefresh, Source: store.RunSourceManual, StartedAt: testNow}
+	id, err := db.StartRun(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.FinishJob(id, start, store.RunResult{Status: store.RunFinished, FinishedAt: testNow}, []store.RunItem{
+		{RatingKey: "1", Title: "One", Outcome: store.ItemAccepted},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := New(Options{Store: db, Servers: []PlexServer{{Name: "home"}}})
+	var got runDetailAnswer
+	getJSON(t, s, fmt.Sprintf("/api/runs/detail?id=%d", id), &got)
+	if len(got.Items) != 1 || got.Items[0].Key != "1" || got.Items[0].Outcome != store.ItemAccepted || len(got.Events) != 0 {
+		t.Fatalf("detail = %+v", got)
+	}
+}
+
+func TestRunDetailErrors(t *testing.T) {
+	db := openStore(t)
+	away, err := db.StartRun(store.RunStart{Server: "away", Kind: store.RunKindRun, Source: store.RunSourceSchedule, StartedAt: testNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(Options{Store: db, Servers: []PlexServer{{Name: "home"}}})
+	tests := []struct {
+		query string
+		code  int
+	}{
+		{fmt.Sprintf("id=%d", away+1), http.StatusNotFound},
+		{fmt.Sprintf("id=%d", away), http.StatusNotFound}, // a server that is not configured
+		{"id=x", http.StatusBadRequest},
+		{"id=0", http.StatusBadRequest},
+		{"", http.StatusBadRequest},
+		{"id=%zz", http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		if rec := serve(s, httptest.NewRequest(http.MethodGet, "/api/runs/detail?"+tt.query, nil)); rec.Code != tt.code {
+			t.Errorf("%s: code %d, want %d", tt.query, rec.Code, tt.code)
+		}
 	}
 }

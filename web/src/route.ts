@@ -5,6 +5,7 @@ import { useSyncExternalStore } from 'react';
 //
 //   #/status
 //   #/runs
+//   #/runs/<id>
 //   #/items/<tab>
 //   #/items/<tab>/<srv>/<key>
 //
@@ -20,12 +21,12 @@ export interface ItemKey {
   key: string;
 }
 
-export type Route = ({ page: 'status' } | { page: 'runs' } | { page: 'items'; tab: TabName; item?: ItemKey }) & {
+export type Route = ({ page: 'status' } | { page: 'runs'; run?: number } | { page: 'items'; tab: TabName; item?: ItemKey }) & {
   /** The server that scopes the page, or undefined for every server. */
   srv?: number;
 };
 
-const runsPattern = /^#\/runs\/?$/;
+const runsPattern = /^#\/runs(?:\/([1-9]\d*))?\/?$/;
 const itemsPattern = /^#\/items(?:\/(attention|fixed|stopped))?(?:\/(\d+)\/(\d+))?\/?$/;
 
 function scopeParam(query: string): number | undefined {
@@ -38,7 +39,10 @@ export function parseRoute(hash: string): Route {
   const [path, query = ''] = hash.split('?', 2);
   const srv = scopeParam(query);
   const scope = srv === undefined ? {} : { srv };
-  if (runsPattern.test(path)) return { page: 'runs', ...scope };
+  const runs = runsPattern.exec(path);
+  if (runs && runs[1] === undefined) return { page: 'runs', ...scope };
+  // A run ID is a positive safe integer, as the API takes it.
+  if (runs && Number.isSafeInteger(Number(runs[1]))) return { page: 'runs', run: Number(runs[1]), ...scope };
   const match = itemsPattern.exec(path);
   if (!match) return { page: 'status', ...scope };
   const tab = (match[1] as TabName | undefined) ?? 'attention';
@@ -49,7 +53,8 @@ export function parseRoute(hash: string): Route {
 /** Returns the hash of route. */
 export function routeHash(route: Route): string {
   const query = route.srv === undefined ? '' : `?${new URLSearchParams({ srv: String(route.srv) })}`;
-  if (route.page === 'status' || route.page === 'runs') return `#/${route.page}${query}`;
+  if (route.page === 'status') return `#/status${query}`;
+  if (route.page === 'runs') return `${route.run === undefined ? '#/runs' : `#/runs/${route.run}`}${query}`;
   const base = `#/items/${route.tab}`;
   return `${route.item ? `${base}/${route.item.srv}/${route.item.key}` : base}${query}`;
 }
@@ -57,6 +62,11 @@ export function routeHash(route: Route): string {
 /** Returns the hash of the detail of item on tab in the scope srv. */
 export function itemHash(tab: TabName, item: ItemKey, srv?: number): string {
   return routeHash({ page: 'items', tab, item, srv });
+}
+
+/** Returns the hash of the details of the run id in the scope srv. */
+export function runHash(id: number, srv?: number): string {
+  return routeHash({ page: 'runs', run: id, srv });
 }
 
 /** Returns the server scope of route: undefined (every server) when the
@@ -68,11 +78,14 @@ export function routeScope(route: Route, serverCount: number | undefined): numbe
   return serverCount > 1 && route.srv !== undefined && route.srv < serverCount ? route.srv : undefined;
 }
 
-/** Returns route in the scope srv. It drops an open item of another server. */
+/** Returns route in the scope srv. It drops an open item of another
+ * server, and an open run when the scope changes to another server: the
+ * route does not know the server of the run. */
 export function withScope(route: Route, srv: number | undefined): Route {
   if (route.page === 'items' && route.item && srv !== undefined && route.item.srv !== srv) {
     return { page: 'items', tab: route.tab, srv };
   }
+  if (route.page === 'runs' && route.run !== undefined && srv !== undefined && srv !== route.srv) return { page: 'runs', srv };
   return { ...route, srv };
 }
 

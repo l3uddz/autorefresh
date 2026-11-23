@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { itemHash, parseRoute, routeHash, routeScope, withScope } from './route';
+import { itemHash, parseRoute, routeHash, routeScope, runHash, withScope } from './route';
 
 describe('routes', () => {
   it('parses each page and falls back to Status', () => {
@@ -37,10 +37,28 @@ describe('routes', () => {
     expect(parseRoute('#/runs/')).toEqual({ page: 'runs' });
     expect(parseRoute('#/runs?srv=1')).toEqual({ page: 'runs', srv: 1 });
     expect(parseRoute('#/runs?srv=one')).toEqual({ page: 'runs' });
-    expect(parseRoute('#/runs/3')).toEqual({ page: 'status' });
+    expect(parseRoute('#/runs/x')).toEqual({ page: 'status' });
     // A scope that names no configured server shows every server.
     expect(routeScope(parseRoute('#/runs?srv=5'), 2)).toBeUndefined();
     expect(withScope({ page: 'runs', srv: 1 }, 0)).toEqual({ page: 'runs', srv: 0 });
+  });
+
+  it('opens a run of the Runs page, with or without a scope', () => {
+    expect(parseRoute('#/runs/12')).toEqual({ page: 'runs', run: 12 });
+    expect(parseRoute('#/runs/12/')).toEqual({ page: 'runs', run: 12 });
+    expect(parseRoute('#/runs/12?srv=1')).toEqual({ page: 'runs', run: 12, srv: 1 });
+    for (const hash of ['#/runs/12', '#/runs/12?srv=1']) expect(routeHash(parseRoute(hash))).toBe(hash);
+    expect(runHash(12)).toBe('#/runs/12');
+    expect(runHash(12, 1)).toBe('#/runs/12?srv=1');
+    // A run ID is a positive safe integer, as the API takes it.
+    expect(parseRoute('#/runs/0')).toEqual({ page: 'status' });
+    expect(parseRoute('#/runs/012')).toEqual({ page: 'status' });
+    expect(parseRoute('#/runs/99999999999999999999')).toEqual({ page: 'status' });
+    // Every server keeps the run open.
+    expect(withScope({ page: 'runs', run: 12, srv: 0 }, undefined)).toEqual({ page: 'runs', run: 12 });
+    // A new scope closes the run, which may belong to another server.
+    expect(withScope({ page: 'runs', run: 12, srv: 0 }, 1)).toEqual({ page: 'runs', srv: 1 });
+    expect(withScope({ page: 'runs', run: 12, srv: 1 }, 1)).toEqual({ page: 'runs', run: 12, srv: 1 });
   });
 
   it('scopes only installs with several servers to a server that exists', () => {

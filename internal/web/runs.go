@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -57,6 +58,8 @@ type runJSON struct {
 	// read fully and incrementally.
 	FullReads        int `json:"fullReads"`
 	IncrementalReads int `json:"incrementalReads"`
+	// EventsLinked is false for a run from before runs linked their events.
+	EventsLinked bool `json:"eventsLinked"`
 }
 
 // serveRuns answers GET /api/runs with one page of the runs of the
@@ -156,6 +159,85 @@ func (s *Server) toRunJSON(run store.Run) runJSON {
 		ReadItems: run.ReadItems, Refreshed: run.Refreshed, Matched: run.Matched, Failed: run.Failed,
 		Completed: run.Completed, Fixed: run.Fixed, Incomplete: run.Incomplete, Due: run.Due,
 		Selected: run.Selected, Skipped: run.Skipped,
-		FullReads: run.FullReads, IncrementalReads: run.IncrementalReads,
+		FullReads: run.FullReads, IncrementalReads: run.IncrementalReads, EventsLinked: run.EventsLinked,
 	}
+}
+
+// runDetailJSON is a run with its events and, for a bulk job, its items.
+type runDetailJSON struct {
+	Run    runJSON        `json:"run"`
+	Events []runEventJSON `json:"events"`
+	Items  []runItemJSON  `json:"items"`
+}
+
+// runEventJSON is an event of a run with the item that it names.
+type runEventJSON struct {
+	eventJSON
+	Key   string `json:"key"`
+	Title string `json:"title,omitempty"`
+	Year  int    `json:"year,omitempty"`
+	Type  string `json:"type,omitempty"`
+	Thumb string `json:"thumb,omitempty"`
+	// Library is the title of the library of the item, which tells apart
+	// the same title in several libraries.
+	Library string `json:"library,omitempty"`
+}
+
+// serveRunDetail answers GET /api/runs/detail with one run of a configured
+// server, its events, and its bulk items. It reads everything before it
+// writes the answer.
+func (s *Server) serveRunDetail(w http.ResponseWriter, r *http.Request) {
+	id, ok := runID(w, r)
+	if !ok {
+		return
+	}
+	run, found, err := s.store.Run(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, r, err)
+		return
+	}
+	srv, configured := s.srvIndex[run.Server]
+	if !found || !configured {
+		writeError(w, http.StatusNotFound, "no such run")
+		return
+	}
+	events, err := s.store.RunEvents(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, r, err)
+		return
+	}
+	items, err := s.store.RunItems(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, r, err)
+		return
+	}
+	libraries, err := s.libraryTitles(r.Context(), run.Server)
+	if err != nil {
+		writeStoreError(w, r, err)
+		return
+	}
+	out := runDetailJSON{Run: s.toRunJSON(run), Events: make([]runEventJSON, 0, len(events)), Items: make([]runItemJSON, 0, len(items))}
+	for _, e := range events {
+		out.Events = append(out.Events, runEventJSON{
+			eventJSON: s.toEventJSON(e), Key: e.RatingKey, Title: e.Title, Year: e.Year, Type: e.Type,
+			Thumb: imageURL("thumb", srv, e.RatingKey, e.Thumb), Library: libraries[e.Section],
+		})
+	}
+	for _, item := range items {
+		out.Items = append(out.Items, s.toRunItemJSON(item))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// libraryTitles returns the title of each library of server by section.
+func (s *Server) libraryTitles(ctx context.Context, server string) (map[string]string, error) {
+	libs, err := s.store.Libraries(ctx, server)
+	if err != nil {
+		return nil, err
+	}
+	titles := make(map[string]string, len(libs))
+	for _, l := range libs {
+		titles[l.Section] = l.Title
+	}
+	return titles, nil
 }

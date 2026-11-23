@@ -115,6 +115,7 @@ func (r *Refresher) recordDecision(ctx context.Context, run *serverRun, it store
 	}
 	dec := d.decision(ev, err)
 	dec.Server, dec.RatingKey, dec.At, dec.Source = run.server.Name, it.RatingKey, r.now(), store.SourceAuto
+	dec.RunID = run.id
 	if err := r.store.RecordMatchDecision(dec); err != nil {
 		return fmt.Errorf("%w: %w", errCache, err)
 	}

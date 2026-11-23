@@ -155,6 +155,7 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 		Full:    run.full || state.LastFullRead.IsZero() || !r.opts.CacheRefresh.Next(state.LastFullRead).After(at),
 		Shows:   lib.Type == plex.ShowLibrary,
 		DryRun:  r.opts.DryRun,
+		RunID:   run.id,
 	}
 	itemType := plex.TypeMovie
 	if rd.Shows {

@@ -444,3 +444,28 @@ func TestFolderOf(t *testing.T) {
 		}
 	}
 }
+
+// The events of a run name it: the request that it sent and the completion
+// that its read found.
+func TestRunLinksItsEvents(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	fp.lists["1?type=1&updatedAt>>="+unixString(seedAt.Add(-oversample))] = []plex.Item{completeItem("102")}
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.seed(testServer, moviesLib, incompleteItem("101"), store.NoSummary, 0)
+	f.seed(testServer, moviesLib, incompleteItem("102"), store.NoSummary, 0)
+
+	f.run(t0)
+
+	run := f.onlyRun()
+	events, err := f.store.RunEvents(t.Context(), run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range events {
+		got = append(got, e.RatingKey+" "+string(e.Kind))
+	}
+	if want := []string{"102 completed", "101 request"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("run events = %v, want %v", got, want)
+	}
+}

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"reflect"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ func TestStartAndFinishRun(t *testing.T) {
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("Runs = %v, %v", runs, err)
 	}
-	want := Run{ID: id, Server: srv, Kind: RunKindRun, Source: RunSourceSchedule, Status: RunRunning, StartedAt: base}
+	want := Run{ID: id, Server: srv, Kind: RunKindRun, Source: RunSourceSchedule, Status: RunRunning, StartedAt: base, EventsLinked: true}
 	if !reflect.DeepEqual(runs[0], want) {
 		t.Fatalf("running = %+v, want %+v", runs[0], want)
 	}
@@ -40,7 +41,7 @@ func TestStartAndFinishRun(t *testing.T) {
 		ID: id, Server: srv, Kind: RunKindRun, Source: RunSourceSchedule, Status: RunFailed, StartedAt: base,
 		FinishedAt: end, Error: "boom",
 		ReadItems: 1, Refreshed: 2, Matched: 3, Failed: 4, Completed: 5, Fixed: 6, Incomplete: 7, Due: 8, Selected: 9,
-		FullReads: 10, IncrementalReads: 11,
+		FullReads: 10, IncrementalReads: 11, EventsLinked: true,
 	}
 	if !reflect.DeepEqual(runs[0], want) {
 		t.Fatalf("finished = %+v, want %+v", runs[0], want)
@@ -195,7 +196,7 @@ func TestFinishRunRestoresRemovedRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Run{ID: id, Server: srv, Kind: RunKindRun, Source: RunSourceManual, Status: RunFinished,
-		StartedAt: base, FinishedAt: end, Refreshed: 4, FullReads: 2}
+		StartedAt: base, FinishedAt: end, Refreshed: 4, FullReads: 2, EventsLinked: true}
 	if len(got) != 1 || !reflect.DeepEqual(got[0], want) {
 		t.Fatalf("runs = %+v, want %+v", got, want)
 	}
@@ -395,5 +396,133 @@ func TestFinishJobAfterServerPrune(t *testing.T) {
 	items, err := s.RunItems(t.Context(), id)
 	if err != nil || len(items) != 0 {
 		t.Fatalf("item results = %+v, %v", items, err)
+	}
+}
+
+// RunEvents returns the events that a run wrote, oldest first: requests,
+// match decisions, and the completions and gone items of its reads.
+func TestRunEventsOfRun(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt), item("b", NoArt), item("c", NoArt)}})
+	one := startRun(t, s, srv, base)
+	two := startRun(t, s, srv, base)
+	at := base.Add(time.Hour)
+	requests := []Request{
+		{Server: srv, RatingKey: "a", At: at, Source: SourceAuto, Action: ActionRefresh, Accepted: true, RunID: one},
+		{Server: srv, RatingKey: "b", At: at, Source: SourceAuto, Action: ActionRefresh, Accepted: true, RunID: two},
+		{Server: srv, RatingKey: "c", At: at, Source: SourceManual, Action: ActionRefresh, Accepted: true},
+	}
+	for _, r := range requests {
+		if err := s.RecordRequest(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.RecordMatchDecision(MatchDecision{Server: srv, RatingKey: "c", At: at, Source: SourceAuto,
+		Outcome: DecisionNoMatch, RunID: one}); err != nil {
+		t.Fatal(err)
+	}
+	later := at.Add(time.Hour)
+	apply(t, s, Read{At: later, Full: true, Items: []Item{item("a", 0), item("b", NoArt)}, Gone: []string{"c"}, RunID: one})
+
+	events, err := s.RunEvents(context.Background(), one)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range events {
+		if e.RunID != one {
+			t.Errorf("event %d has run %d, want %d", e.ID, e.RunID, one)
+		}
+		got = append(got, e.RatingKey+" "+string(e.Kind))
+	}
+	want := []string{"a request", "c match-decision", "c gone", "a completed"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("run events = %v, want %v", got, want)
+	}
+}
+
+// An event of a run whose row is gone stores no run, and the write succeeds.
+func TestEventOfMissingRunStoresNoRun(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	if err := s.RecordRequest(Request{Server: srv, RatingKey: "a", At: base, Source: SourceAuto,
+		Action: ActionRefresh, Accepted: true, RunID: 999}); err != nil {
+		t.Fatal(err)
+	}
+	events, err := s.Timeline(srv, "a")
+	if err != nil || len(events) != 1 || events[0].RunID != 0 {
+		t.Fatalf("events = %+v, %v; want one event without a run", events, err)
+	}
+}
+
+// Pruning a run keeps its events, which lose only the link to it.
+func TestPruneRunKeepsItsEvents(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	start := runStart(srv, base)
+	id := startRun(t, s, srv, base)
+	if _, err := s.FinishRun(id, start, RunResult{FinishedAt: base, Status: RunFinished}); err != nil {
+		t.Fatal(err)
+	}
+	at := base.Add(2 * time.Hour)
+	if err := s.RecordRequest(Request{Server: srv, RatingKey: "a", At: at, Source: SourceAuto,
+		Action: ActionRefresh, Accepted: true, RunID: id}); err != nil {
+		t.Fatal(err)
+	}
+	if _, runs, err := s.PruneHistory(base.Add(time.Hour)); err != nil || runs != 1 {
+		t.Fatalf("prune = %d runs, %v; want 1", runs, err)
+	}
+	events, err := s.Timeline(srv, "a")
+	if err != nil || len(events) != 1 || events[0].RunID != 0 {
+		t.Fatalf("events = %+v, %v; want the event without its run", events, err)
+	}
+}
+
+func TestRunByID(t *testing.T) {
+	s := openTest(t)
+	id := startRun(t, s, srv, base)
+	run, found, err := s.Run(context.Background(), id)
+	if err != nil || !found || run.ID != id || run.Status != RunRunning {
+		t.Fatalf("Run(%d) = %+v, %v, %v", id, run, found, err)
+	}
+	if _, found, err := s.Run(context.Background(), id+1); err != nil || found {
+		t.Fatalf("Run(%d) = found %v, %v; want not found", id+1, found, err)
+	}
+}
+
+// A run from before runs linked their events says so, and a new run links
+// its events, so the dashboard can tell an old run without recorded items
+// from a run that changed none.
+func TestRunEventsLinkedMarksOnlyNewRuns(t *testing.T) {
+	file := openAtVersion(t, 12)
+	old, err := sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(`INSERT INTO run (id, server, kind, source, status, started_at) VALUES (1, ?, 'run', 'schedule', 'finished', ?)`,
+		srv, base.Unix()); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+	s, err := Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	id, err := s.StartRun(RunStart{Server: srv, Kind: RunKindRun, Source: RunSourceManual, StartedAt: base.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		id   int64
+		want bool
+	}{{1, false}, {id, true}} {
+		run, found, err := s.Run(context.Background(), tt.id)
+		if err != nil || !found {
+			t.Fatalf("Run(%d) = %v, %v", tt.id, found, err)
+		}
+		if run.EventsLinked != tt.want {
+			t.Errorf("run %d EventsLinked = %v, want %v", tt.id, run.EventsLinked, tt.want)
+		}
 	}
 }

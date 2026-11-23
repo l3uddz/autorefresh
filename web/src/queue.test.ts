@@ -53,7 +53,7 @@ const accepted = (id: number, count: number): Answer => ({ status: 202, body: { 
 const noItems: Answer = { status: 400, body: { error: 'no items' } };
 
 function storedRun(id: number, srv: number, status: string): RunRecord {
-  return { id, srv, server: '', kind: 'bulk-refresh', source: 'manual', status, readItems: 0, refreshed: 0, matched: 0, failed: 0, completed: 0, fixed: 0, incomplete: 0, due: 0, selected: 0, skipped: 0 };
+  return { id, srv, server: '', kind: 'bulk-refresh', source: 'manual', status, readItems: 0, refreshed: 0, matched: 0, failed: 0, completed: 0, fixed: 0, incomplete: 0, due: 0, selected: 0, skipped: 0, eventsLinked: true };
 }
 
 /** A status in which no server runs or ran anything, as after a restart:

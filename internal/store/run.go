@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -67,7 +68,8 @@ type Run struct {
 	ReadItems, Refreshed, Matched, Failed int
 	Completed, Fixed, Incomplete          int
 	Due, Selected, Skipped                int
-	FullReads, IncrementalReads           int // the libraries read fully and incrementally
+	FullReads, IncrementalReads           int  // the libraries read fully and incrementally
+	EventsLinked                          bool // false for a run from before runs linked their events
 }
 
 // StartRun records a run with the status running and returns its ID.
@@ -252,6 +254,10 @@ type RunQuery struct {
 	Limit   int        // <= 0: all
 }
 
+const runColumns = `id, server, kind, source, status, started_at, finished_at, error, read_items,
+	refreshed, matched, failed, completed, fixed, incomplete, due, selected, skipped, full_reads, incremental_reads,
+	events_linked`
+
 // runsQuery builds the query of q.
 func runsQuery(q RunQuery) (string, []any) {
 	var (
@@ -274,8 +280,7 @@ func runsQuery(q RunQuery) (string, []any) {
 		conds = append(conds, `(started_at, id) < (?, ?)`)
 		args = append(args, q.Before.StartedAt.Unix(), q.Before.ID)
 	}
-	query := `SELECT id, server, kind, source, status, started_at, finished_at, error, read_items,
-		refreshed, matched, failed, completed, fixed, incomplete, due, selected, skipped, full_reads, incremental_reads FROM run`
+	query := `SELECT ` + runColumns + ` FROM run`
 	if len(conds) > 0 {
 		query += ` WHERE ` + strings.Join(conds, ` AND `)
 	}
@@ -291,7 +296,7 @@ func scanRun(row scanner) (Run, error) {
 	)
 	if err := row.Scan(&r.ID, &r.Server, &r.Kind, &r.Source, &r.Status, &started, &finished, &r.Error,
 		&r.ReadItems, &r.Refreshed, &r.Matched, &r.Failed, &r.Completed, &r.Fixed, &r.Incomplete,
-		&r.Due, &r.Selected, &r.Skipped, &r.FullReads, &r.IncrementalReads); err != nil {
+		&r.Due, &r.Selected, &r.Skipped, &r.FullReads, &r.IncrementalReads, &r.EventsLinked); err != nil {
 		return Run{}, err
 	}
 	r.StartedAt, r.FinishedAt = time.Unix(started, 0), timeFrom(finished)
@@ -318,6 +323,40 @@ func (s *Store) Runs(ctx context.Context, q RunQuery) ([]Run, error) {
 		return nil, fmt.Errorf("read runs: %w", err)
 	}
 	return runs, nil
+}
+
+// Run returns the run id, or false if there is none.
+func (s *Store) Run(ctx context.Context, id int64) (Run, bool, error) {
+	r, err := scanRun(s.db.QueryRowContext(ctx, `SELECT `+runColumns+` FROM run WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Run{}, false, nil
+	}
+	if err != nil {
+		return Run{}, false, fmt.Errorf("read run: %w", err)
+	}
+	return r, true, nil
+}
+
+// RunEvents returns the events that the run runID wrote, ordered at ASC,
+// id ASC, without the searches of match decisions.
+func (s *Store) RunEvents(ctx context.Context, runID int64) ([]Event, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+eventColumns+` FROM event WHERE run_id = ? ORDER BY at, id`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("read run events: %w", err)
+	}
+	defer rows.Close()
+	events := []Event{}
+	for rows.Next() {
+		e, err := scanEvent(rows)
+		if err != nil {
+			return nil, fmt.Errorf("read run event: %w", err)
+		}
+		events = append(events, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read run events: %w", err)
+	}
+	return events, nil
 }
 
 // Outcomes of bulk refresh items.

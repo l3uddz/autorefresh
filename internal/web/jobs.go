@@ -93,6 +93,11 @@ type runItemJSON struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// toRunItemJSON returns item with its error text redacted.
+func (s *Server) toRunItemJSON(item store.RunItem) runItemJSON {
+	return runItemJSON{Key: item.RatingKey, Title: item.Title, Outcome: item.Outcome, Error: s.redact(item.Error)}
+}
+
 func (s *Server) serveRunItems(w http.ResponseWriter, r *http.Request) {
 	id, ok := runID(w, r)
 	if !ok {
@@ -105,7 +110,7 @@ func (s *Server) serveRunItems(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]runItemJSON, 0, len(items))
 	for _, item := range items {
-		out = append(out, runItemJSON{Key: item.RatingKey, Title: item.Title, Outcome: item.Outcome, Error: s.redact(item.Error)})
+		out = append(out, s.toRunItemJSON(item))
 	}
 	writeJSON(w, http.StatusOK, map[string][]runItemJSON{"items": out})
 }
