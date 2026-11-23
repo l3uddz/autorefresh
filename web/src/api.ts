@@ -221,6 +221,9 @@ export interface RunRecord {
    * have neither. */
   fullReads?: number;
   incrementalReads?: number;
+  /** False for a run from before runs linked their events, which lists no
+   * item. */
+  eventsLinked: boolean;
 }
 
 export interface RunItem {

@@ -1,7 +1,7 @@
 import { useToast } from '@astryxdesign/core/Toast';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ApiError, post, type RunDetail, type RunEvent, type RunItem, type RunRecord } from './api';
-import { fixedBy } from './format';
+import { fixedBy, plural } from './format';
 import { cancelQueueOfJob } from './queue';
 import type { TabName } from './route';
 import { decisionView, eventView, type EventView } from './timeline';
@@ -218,4 +218,21 @@ function eventEntry(event: RunEvent, decision?: RunEvent): RunEntry {
     at: event.at,
     tab: event.kind === 'completed' ? 'fixed' : 'attention',
   };
+}
+
+/** Returns why a run lists no item: it is still at work, it is from before
+ * runs linked their events, its history expired, or it changed none. A run
+ * from before runs linked their events can have changed items that its
+ * counts leave out, such as removed items, so its counts do not decide. */
+export function noEntries(run: RunRecord): { title: string; description: string } {
+  if (run.status === 'running' && run.kind === 'bulk-refresh') {
+    return { title: 'The items show when the bulk refresh ends', description: 'A bulk refresh records the outcome of its items when it ends.' };
+  }
+  if (run.status === 'running') return { title: 'No item changed yet', description: 'The items show here as the run works on them.' };
+  const notRecorded = 'Item details were not recorded for this run';
+  if (run.kind !== 'bulk-refresh' && !run.eventsLinked) return { title: notRecorded, description: 'The run is from before autorefresh recorded them.' };
+  const changed = run.kind === 'bulk-refresh' ? run.selected : run.refreshed + run.matched + run.failed + run.completed;
+  if (changed > 0) return { title: notRecorded, description: 'Their history expired.' };
+  const description = run.status === 'finished' ? `It read ${plural(run.readItems, 'item')} and refreshed none.` : 'The run ended before it changed an item.';
+  return { title: 'No item changed in this run', description };
 }
