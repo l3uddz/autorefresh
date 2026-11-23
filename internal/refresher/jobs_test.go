@@ -243,6 +243,48 @@ func TestRunNowFullReadsEveryLibrary(t *testing.T) {
 	}
 }
 
+// A full run that cannot read a library fails and refreshes no item,
+// because it promises a full read of every library first. Another run
+// skips that library and refreshes the due items.
+func TestRunNowReadFailure(t *testing.T) {
+	tests := []struct {
+		name       string
+		full       bool
+		wantStatus store.RunStatus
+		wantSent   bool
+	}{
+		{"full run fails", true, store.RunFailed, false},
+		{"other run continues", false, store.RunFinished, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := newFakePlex(moviesLib, showsLib)
+			fp.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
+			fp.listErrs["2?type=2"] = errors.New("listing section 2: decoding response: unexpected token")
+			f := newRefreshFixture(t, Server{Name: "home", Plex: fp})
+			f.now = t0
+			f.seed("home", moviesLib, incompleteItem("101"), store.NoSummary, 0)
+			f.seed("home", showsLib, incompleteItem("201"), store.NoSummary, 0)
+			jobs := NewJobs(f.r)
+			t.Cleanup(jobs.Close)
+			if _, err := jobs.RunNow(nil, tt.full); err != nil {
+				t.Fatal(err)
+			}
+			jobs.wg.Wait()
+			if got := slices.Contains(fp.calls, "Refresh 101"); got != tt.wantSent {
+				t.Errorf("refresh sent = %v, want %v; calls %v", got, tt.wantSent, fp.calls)
+			}
+			run := f.onlyRun()
+			if run.Status != tt.wantStatus {
+				t.Errorf("run status = %q, want %q", run.Status, tt.wantStatus)
+			}
+			if tt.full && !strings.Contains(run.Error, "TV") {
+				t.Errorf("run error = %q, want one that names the library", run.Error)
+			}
+		})
+	}
+}
+
 // Without full, a library whose full read is not due gets an incremental read.
 func TestRunNowReadsIncrementally(t *testing.T) {
 	lib := moviesLib
