@@ -40,7 +40,7 @@ func (r *Refresher) refreshDue(ctx context.Context, run *serverRun) error {
 
 func (r *Refresher) refreshBatch(ctx context.Context, run *serverRun, items []store.Item) error {
 	for i, it := range items {
-		if err := r.pace(ctx, i); err != nil {
+		if err := r.pace(ctx, run, r.shownItem(run, it), i == 0); err != nil {
 			return err
 		}
 		if err := r.runItem(ctx, run, it); err != nil {
@@ -50,17 +50,26 @@ func (r *Refresher) refreshBatch(ctx context.Context, run *serverRun, items []st
 	return nil
 }
 
-func (r *Refresher) pace(ctx context.Context, i int) error {
-	if i == 0 || r.opts.DryRun {
+// pace waits RefreshDelay before the item next, unless it is the first item
+// or the run is a dry run. It reports next as the next item before it
+// waits.
+func (r *Refresher) pace(ctx context.Context, run *serverRun, next ProgressItem, first bool) error {
+	if first || r.opts.DryRun {
 		return nil
 	}
+	r.progress().ItemNext(run.server.Name, next, r.now().Add(r.opts.RefreshDelay))
 	return r.sleep(ctx, r.opts.RefreshDelay)
+}
+
+// shownItem returns the ProgressItem of the due item it of run.
+func (r *Refresher) shownItem(run *serverRun, it store.Item) ProgressItem {
+	return progressItem(it, run.library(it.Section).Title)
 }
 
 func (r *Refresher) runItem(ctx context.Context, run *serverRun, batch store.Item) error {
 	run.remaining--
 	server := run.server.Name
-	r.progress().ItemStarted(server, batch.RatingKey, batch.Title)
+	r.progress().ItemStarted(server, r.shownItem(run, batch))
 	unlock, err := r.locks.lock(ctx, server, batch.RatingKey)
 	if err != nil {
 		return err

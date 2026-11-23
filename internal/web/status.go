@@ -188,11 +188,15 @@ func (s *Status) Batch(server string, selected, due int) {
 }
 
 // ItemStarted records the item that the run of server works on.
-func (s *Status) ItemStarted(server, _, title string) {
+func (s *Status) ItemStarted(server string, item refresher.ProgressItem) {
 	s.updateRun(server, func(run *RunProgress) {
-		run.Current = title
+		run.Current = item.Title
 	})
 }
+
+// ItemNext records the item that the run of server works on after its
+// pace wait.
+func (s *Status) ItemNext(string, refresher.ProgressItem, time.Time) {}
 
 // ItemDone counts a finished item of the run of server and takes the
 // request counts of the run so far from the refresher.

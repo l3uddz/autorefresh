@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ type recordingProgress struct {
 	counts  []Counts
 	results []store.RunResult
 	errs    []error
+	started []ProgressItem // the item of each ItemStarted call
 }
 
 func (p *recordingProgress) add(parts ...string) {
@@ -44,8 +46,15 @@ func (p *recordingProgress) Batch(server string, selected, due int) {
 	p.add("Batch", server, strconv.Itoa(selected), strconv.Itoa(due))
 }
 
-func (p *recordingProgress) ItemStarted(server, ratingKey, title string) {
-	p.add("ItemStarted", server, ratingKey, title)
+func (p *recordingProgress) ItemStarted(server string, item ProgressItem) {
+	p.mu.Lock()
+	p.started = append(p.started, item)
+	p.mu.Unlock()
+	p.add("ItemStarted", server, item.RatingKey, item.Title)
+}
+
+func (p *recordingProgress) ItemNext(server string, item ProgressItem, at time.Time) {
+	p.add("ItemNext", server, item.RatingKey, at.UTC().Format(time.RFC3339))
 }
 
 func (p *recordingProgress) ItemDone(server, ratingKey, outcome string, counts Counts) {
@@ -94,6 +103,26 @@ func (p *recordingProgress) itemCalls() []string {
 	return out
 }
 
+// nextCalls returns the ItemNext calls.
+func (p *recordingProgress) nextCalls() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []string
+	for _, c := range p.calls {
+		if strings.HasPrefix(c, "ItemNext ") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// startedItems returns the item of each ItemStarted call.
+func (p *recordingProgress) startedItems() []ProgressItem {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.Clone(p.started)
+}
+
 // wantStoredCounts checks that the counts of the last ItemDone call are want
 // and equal the counts of the only stored run.
 func (p *recordingProgress) wantStoredCounts(t *testing.T, f *fixture, want Counts) {
@@ -135,6 +164,7 @@ func TestProgressReportsRunSteps(t *testing.T) {
 		"Batch home 2 3",
 		"ItemStarted home 101 Title 101",
 		"ItemDone home 101 refresh",
+		"ItemNext home 102 "+t0.Add(refreshDelay).UTC().Format(time.RFC3339),
 		"ItemStarted home 102 Title 102",
 		"ItemDone home 102 refresh-failed",
 		"RunFinished home finished",
@@ -430,5 +460,50 @@ func TestProgressSkipsStoreFailure(t *testing.T) {
 				t.Errorf("RunFinished = %+v, %v; want a failed run with the store error", res, err)
 			}
 		})
+	}
+}
+
+// Before the pace wait for an item, the run reports that item as the next
+// one with the time that the wait ends. Each started item carries its
+// library, year, type, thumb, and reasons.
+func TestRunReportsNextItemBeforePace(t *testing.T) {
+	first, second := incompleteItem("101"), incompleteItem("102")
+	first.Thumb = "/library/metadata/101/thumb/170"
+	second.AddedAt = addedAt.Add(time.Hour)
+	fp := newFakePlex(moviesLib)
+	fp.lists["1?type=1"] = []plex.Item{first, second}
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	p := withProgress(f)
+
+	f.run(t0)
+
+	next := "ItemNext home 102 " + t0.Add(refreshDelay).UTC().Format(time.RFC3339)
+	if got := p.nextCalls(); !slices.Equal(got, []string{next}) {
+		t.Fatalf("next calls = %q, want %q", got, next)
+	}
+	done, at, started := slices.Index(p.calls, "ItemDone home 101 refresh"), slices.Index(p.calls, next), slices.Index(p.calls, "ItemStarted home 102 Title 102")
+	if done < 0 || done >= at || at >= started {
+		t.Errorf("calls = %q, want ItemDone 101, then ItemNext 102, then ItemStarted 102", p.calls)
+	}
+	want := ProgressItem{RatingKey: "101", Title: "Title 101", Type: "movie", Library: "Movies", Thumb: "/library/metadata/101/thumb/170", Year: 2020, Reasons: store.NoSummary}
+	if items := p.startedItems(); len(items) != 2 || items[0] != want {
+		t.Errorf("started items = %+v, want first %+v", items, want)
+	}
+}
+
+func TestDryRunReportsNoNextItem(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102")}
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.opts.DryRun = true
+	p := withProgress(f)
+
+	f.run(t0)
+
+	if got := p.nextCalls(); len(got) != 0 {
+		t.Errorf("next calls = %q, want none", got)
+	}
+	if items := p.startedItems(); len(items) != 2 {
+		t.Errorf("started items = %+v, want 2", items)
 	}
 }

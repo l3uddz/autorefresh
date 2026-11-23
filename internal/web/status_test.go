@@ -30,7 +30,7 @@ func TestStatusTracksRun(t *testing.T) {
 	st.LibraryRead("two", "Movies")
 	st.LibraryRead("two", "Shows")
 	st.Batch("two", 8, 12)
-	st.ItemStarted("two", "1", "Alien")
+	st.ItemStarted("two", refresher.ProgressItem{RatingKey: "1", Title: "Alien"})
 	inWork := st.Snapshot()
 	// The counts come from the refresher and are not derived from the
 	// outcome: a failed refresh and a 404 answer count as sent refreshes.
@@ -39,7 +39,7 @@ func TestStatusTracksRun(t *testing.T) {
 	st.ItemDone("two", "3", "refresh-failed", refresher.Counts{Refreshed: 2, Matched: 1, Failed: 1})
 	st.ItemDone("two", "4", "search-failed", refresher.Counts{Refreshed: 2, Matched: 1, Failed: 2})
 	st.ItemDone("two", "5", refresher.OutcomeGone, refresher.Counts{Refreshed: 3, Matched: 1, Failed: 2})
-	st.ItemStarted("two", "6", "Brazil")
+	st.ItemStarted("two", refresher.ProgressItem{RatingKey: "6", Title: "Brazil"})
 	st.ItemDone("two", "6", refresher.OutcomeDryRun, refresher.Counts{Refreshed: 3, Matched: 1, Failed: 2})
 	st.ItemDone("unknown", "7", "refresh", refresher.Counts{Refreshed: 9})
 
@@ -175,7 +175,7 @@ func TestStatusEndpoint(t *testing.T) {
 	st := NewStatus([]string{"a", "b"}, true)
 	st.ServerChecked("a", nil)
 	st.RunStarted(0, store.RunStart{Server: "b", StartedAt: time.Date(2026, 11, 22, 10, 0, 0, 0, time.UTC)})
-	st.ItemStarted("b", "1", "Alien")
+	st.ItemStarted("b", refresher.ProgressItem{RatingKey: "1", Title: "Alien"})
 
 	rec := serve(New(Options{Status: st}), httptest.NewRequest(http.MethodGet, "/api/status", nil))
 	if rec.Code != http.StatusOK {
@@ -206,7 +206,7 @@ func TestFinishedStatusRetainsRunIdentity(t *testing.T) {
 	s := NewStatus([]string{"a"}, false)
 	start := store.RunStart{Server: "a", Kind: store.RunKindRun, Source: store.RunSourceManual, StartedAt: time.Now()}
 	s.RunStarted(42, start)
-	s.ItemStarted("a", "1", "Current")
+	s.ItemStarted("a", refresher.ProgressItem{RatingKey: "1", Title: "Current"})
 	s.RunFinished("a", store.RunResult{Status: store.RunCanceled}, nil, true)
 	got := s.Snapshot().Servers[0]
 	if got.Run != nil || got.Last == nil || got.Last.ID != 42 || got.Last.Current != "" || !got.Last.Recorded || got.Last.Status != store.RunCanceled {
