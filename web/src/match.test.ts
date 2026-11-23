@@ -142,8 +142,8 @@ describe('match helpers', () => {
     expect(asksProvider(group('plex://show/5d9c086c46115600200aa2fe', 'show'), 'movie')).toBe(false);
     expect(asksProvider(group('plex://movie/5d9c086c46115600200aa2fe', 'movie'), 'show')).toBe(false);
     expect(asksProvider(group('com.plexapp.agents.thetvdb://5', 'show'), 'show')).toBe(false);
-    const query = candidateQuery('srv=1&key=7', 'plex://show/5d9c086c46115600200aa2fe');
-    expect(query.queryKey).toEqual(['candidate', '1', 'plex://show/5d9c086c46115600200aa2fe']);
+    const query = candidateQuery('srv=1&key=7', 'plex://show/5d9c086c46115600200aa2fe', 'b1');
+    expect(query.queryKey).toEqual(['candidate', 'b1', '1', 'plex://show/5d9c086c46115600200aa2fe']);
   });
 
   it('compares the episode counts of a candidate and the item', () => {
@@ -151,6 +151,7 @@ describe('match helpers', () => {
     expect(compareEpisodeCount(10, 12)).toEqual({ kind: 'differs', episodes: 12, yours: 10 });
     expect(compareEpisodeCount(undefined, 12)).toEqual({ kind: 'unknown' });
     expect(compareEpisodeCount(10, undefined)).toEqual({ kind: 'unknown' });
+    expect(compareEpisodeCount(10, 0)).toEqual({ kind: 'differs', episodes: 0, yours: 10 });
   });
 
   it('reads TMDB IDs and ID searches like the API', () => {

@@ -167,7 +167,8 @@ export function episodeCheckId(group: CandidateGroup, itemType: string | undefin
 }
 
 /** The series of a candidate from the metadata provider, asked with the
- * token of the server of the item params. The answer depends on the server
+ * token of the server of the item params. boot is the process of the
+ * service: a restart can renumber the servers, so the cache starts again. The answer depends on the server
  * and the GUID only, so items share it. The provider is a remote service,
  * so each GUID is asked once while the page is open: no refetch, no retry,
  * also not when the dialog opens again after a failure, and the answer
@@ -175,10 +176,10 @@ export function episodeCheckId(group: CandidateGroup, itemType: string | undefin
  * The request takes no abort signal, so closing the dialog lets it finish
  * into the cache instead of starting it again on the next open. Its key is
  * outside the item prefix. */
-export function candidateQuery(params: string, guid: string) {
+export function candidateQuery(params: string, guid: string, boot: string | undefined) {
   const srv = new URLSearchParams(params).get('srv') ?? '';
   return queryOptions({
-    queryKey: ['candidate', srv, guid],
+    queryKey: ['candidate', boot, srv, guid],
     queryFn: () => api<CandidateSeries>(`candidate?${new URLSearchParams({ srv, guid })}`),
     staleTime: Infinity,
     gcTime: Infinity,
@@ -192,9 +193,9 @@ export function candidateQuery(params: string, guid: string) {
 export type EpisodeCountCheck = { kind: 'same' | 'differs'; episodes: number; yours: number } | { kind: 'unknown' };
 
 /** Compares the episode count of a candidate with the count that Plex has
- * for the item. */
+ * for the item. Only an absent count is unknown; 0 is a count. */
 export function compareEpisodeCount(itemEpisodes: number | undefined, candidateEpisodes: number | undefined): EpisodeCountCheck {
-  if (itemEpisodes === undefined || !candidateEpisodes) return { kind: 'unknown' };
+  if (itemEpisodes === undefined || candidateEpisodes === undefined) return { kind: 'unknown' };
   return { kind: itemEpisodes === candidateEpisodes ? 'same' : 'differs', episodes: candidateEpisodes, yours: itemEpisodes };
 }
 
@@ -312,11 +313,13 @@ export function autoMatchPath(params: string): string {
  * maybe TMDB, so it runs only on request (refetch), never by itself: not
  * on mount, focus, or a reconnect, and with no retry. Its answer stays in
  * the cache while the page is open, so the Fix match dialog shows it again
- * when it reopens for the item. Its key is outside the item prefix, which
+ * when it reopens for the item. boot is the process of the service: a
+ * restart can renumber the servers, so params can name another item, and
+ * the cache starts again. Its key is outside the item prefix, which
  * invalidateLists refreshes. */
-export function previewQuery(params: string) {
+export function previewQuery(params: string, boot: string | undefined) {
   return queryOptions({
-    queryKey: ['auto-match', params],
+    queryKey: ['auto-match', boot, params],
     queryFn: ({ signal }) => api<TimelineEvent>(autoMatchPath(params), { signal }),
     enabled: false,
     staleTime: Infinity,

@@ -10,9 +10,10 @@ import { candidateQuery, newerDecision, previewQuery } from './match';
 const params = 'srv=0&key=7';
 const decision = (at: string, outcome = 'no-match'): TimelineEvent => ({ id: 0, kind: 'match-decision', at, outcome, accepted: false, searches: [] });
 
-/** Opens the dialog: an observer of the preview, and how to close it. */
-function open(client: QueryClient) {
-  const observer = new QueryObserver(client, previewQuery(params));
+/** Opens the dialog of the process boot: an observer of the preview, and
+ * how to close it. */
+function open(client: QueryClient, boot = 'b1') {
+  const observer = new QueryObserver(client, previewQuery(params, boot));
   const close = observer.subscribe(() => {});
   return { observer, close };
 }
@@ -36,6 +37,19 @@ describe('fix match preview', () => {
     expect(second.observer.getCurrentResult().data).toEqual(preview);
     expect(fetch).toHaveBeenCalledTimes(1);
     second.close();
+    client.clear();
+  });
+
+  it('forgets the preview of an earlier process, which can number the servers otherwise', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(decision('2026-11-23T10:00:00Z')))));
+    const client = new QueryClient();
+    const first = open(client, 'b1');
+    await first.observer.refetch();
+    first.close();
+
+    const restarted = open(client, 'b2');
+    expect(restarted.observer.getCurrentResult().data).toBeUndefined();
+    restarted.close();
     client.clear();
   });
 
@@ -104,7 +118,7 @@ describe('candidate series', () => {
   const guid = 'plex://show/000000000000000000000001';
 
   function openCard(client: QueryClient) {
-    const observer = new QueryObserver(client, candidateQuery(params, guid));
+    const observer = new QueryObserver(client, candidateQuery(params, guid, 'b1'));
     const close = observer.subscribe(() => {});
     return { observer, close };
   }
@@ -136,7 +150,7 @@ describe('candidate series', () => {
     first.close();
     answer(new Response(JSON.stringify({ tmdbId: '48213', seasons: 1, episodes: 10 })));
 
-    await vi.waitFor(() => expect(client.getQueryData(candidateQuery(params, guid).queryKey)).toEqual({ tmdbId: '48213', seasons: 1, episodes: 10 }));
+    await vi.waitFor(() => expect(client.getQueryData(candidateQuery(params, guid, 'b1').queryKey)).toEqual({ tmdbId: '48213', seasons: 1, episodes: 10 }));
     const second = openCard(client);
     expect(second.observer.getCurrentResult().data).toEqual({ tmdbId: '48213', seasons: 1, episodes: 10 });
     expect(fetch).toHaveBeenCalledTimes(1);

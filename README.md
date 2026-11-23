@@ -687,8 +687,8 @@ the seasons and episodes that Plex has for the item, and each series
 candidate with a `plex://` GUID shows its seasons and episodes when the
 Plex metadata provider gives them, with a check of its episode count
 against the item. Autorefresh asks the provider once for each candidate
-while the page is open, also when the answer failed or the dialog closed
-before it came. A series candidate with a TMDB ID can compare the
+while the page is open and autorefresh keeps running, also when the
+answer failed or the dialog closed before it came. A series candidate with a TMDB ID can compare the
 episode numbers of the item with that TMDB series. The TMDB ID comes from
 a search by one TMDB ID that found the candidate as its only candidate, if
 no search by that TMDB ID found another candidate, or else from the
@@ -720,7 +720,8 @@ run, as the next run does. It marks the candidate that it picked, which
 you can then apply with **Match**. The pick gets a card even when the
 opening search of its folder ID failed. The dialog keeps the last preview
 of the item while the page is open, so it shows it again, with **Run
-again**, when you reopen the dialog. A reload of the page drops it. If a
+again**, when you reopen the dialog. A reload of the page, or a restart of
+autorefresh, drops it. If a
 run records an automatic fix match after the preview, the dialog shows
 the newer of the two. Both keep whole seconds, so in the same second the
 recorded decision wins. The preview records nothing, saves nothing to the

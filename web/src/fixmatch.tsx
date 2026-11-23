@@ -86,7 +86,8 @@ function FixMatchBody({ item, params, timeline, live, isWide, onClose }: BodyPro
   const client = useQueryClient();
   const showToast = useToast();
   const confirm = useImperativeAlertDialog();
-  const isTMDBOn = (useStatus().data?.tmdb ?? 'off') !== 'off';
+  const status = useStatus().data;
+  const isTMDBOn = (status?.tmdb ?? 'off') !== 'off';
   const [typed, setTyped] = useState<TypedSearch>();
 
   const opening = useQuery({
@@ -102,7 +103,7 @@ function FixMatchBody({ item, params, timeline, live, isWide, onClose }: BodyPro
   });
   // The preview searches like a run, so it runs only on request. A
   // preview that still runs is joined, not restarted.
-  const preview = useQuery(previewQuery(params));
+  const preview = useQuery(previewQuery(params, status?.boot));
   const runPreview = () => void preview.refetch({ cancelRefetch: false });
 
   const apply = useMutation({
@@ -182,6 +183,7 @@ function FixMatchBody({ item, params, timeline, live, isWide, onClose }: BodyPro
               isCurrent={isCurrentMatch(group, live?.guid)}
               itemEpisodes={live?.episodes}
               isTMDBOn={isTMDBOn}
+              boot={status?.boot}
               isApplying={apply.isPending}
               isCompact={!isWide}
               onChoose={() => choose(group)}
@@ -413,17 +415,19 @@ interface CardProps {
   /** The episodes that Plex has for the item, from the live view. */
   itemEpisodes?: number;
   isTMDBOn: boolean;
+  /** The process of the service, which scopes the provider cache. */
+  boot?: string;
   isApplying: boolean;
   /** Puts the score and the button below the details, for a phone. */
   isCompact: boolean;
   onChoose: () => void;
 }
 
-function CandidateCard({ group, item, params, decision, isPreview, isCurrent, itemEpisodes, isTMDBOn, isApplying, isCompact, onChoose }: CardProps) {
+function CandidateCard({ group, item, params, decision, isPreview, isCurrent, itemEpisodes, isTMDBOn, boot, isApplying, isCompact, onChoose }: CardProps) {
   const { candidate } = group;
   // The metadata provider gives a series candidate its counts and TMDB ID.
   // A failed or unknown answer adds nothing to the card.
-  const series = useQuery({ ...candidateQuery(params, group.guid), enabled: asksProvider(group, item.type) });
+  const series = useQuery({ ...candidateQuery(params, group.guid, boot), enabled: asksProvider(group, item.type) });
   const tmdbId = episodeCheckId(group, item.type, isTMDBOn, series.data?.tmdbId);
   const folder = group.foundBy.filter(isFolderEvidence);
   const found = group.foundBy.filter(e => !isFolderEvidence(e));
