@@ -669,9 +669,10 @@ func TestRunMatchStopsTheServerWhenPlexBecomesUnavailable(t *testing.T) {
 // The end of the run during a wait between the checks of a follow-up
 // reaches the run, as the end of the run in a request does.
 func TestRunMatchFollowUpReturnsTheEndOfTheRun(t *testing.T) {
-	f, fp, checks := runMatchFixture(t, checkAnswer{item: completeItem("101")})
+	f, _, checks := runMatchFixture(t, checkAnswer{item: completeItem("101")})
 	row, _ := f.row(testServer, "1", "101")
-	run := &serverRun{server: Server{Name: testServer, Plex: fp}, source: store.SourceAuto, files: map[string][]string{}}
+	// The configured server counts the checks that its Plex answers.
+	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto, files: map[string][]string{}}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	f.r.sleep = func(ctx context.Context, _ time.Duration) error {
