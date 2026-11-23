@@ -45,8 +45,9 @@ sent and in which library, in a layout that looks good.
 - Astryx components and tokens only (`web/AGENTS.md`). Reuse `Poster`
   (`sm`) from `media.tsx`, `StatusDot`, `Text`, the layout stacks, and
   `useSecondClock` for the countdown and the relative time: a clock that
-  ticks each second only while a panel shows a countdown or a last item,
-  and that each render reads afresh. `Badge` is for counts only.
+  ticks each second only while a countdown or an age shows, and that is
+  never earlier than the mount of its component. Each of them takes its
+  time as key, so a new status event starts it from the time of the event. `Badge` is for counts only.
 - Each production Go function has a cognitive complexity of 15 or less.
 - The poster goes through the existing proxy, `imageURL("thumb", srv, key,
   thumb)` in `internal/web/items.go`. The status never carries a raw Plex
