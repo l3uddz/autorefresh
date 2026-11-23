@@ -34,27 +34,44 @@ export function nextForced<T>(forced: string | undefined, value: T | undefined, 
   return forced !== undefined && value !== undefined && key(value) === forced ? forced : undefined;
 }
 
-/** Returns the value that a drawer shows, as nextShown decides, and a ref
- * for the Drawer. The ref listens on its dialog:
+/** What a drawer takes from useShown. */
+export interface DrawerPresence<T> {
+  /** The value that the drawer shows. */
+  shown: T | undefined;
+  /** The ref of the Drawer, which listens on its dialog. */
+  ref: (dialog: HTMLDialogElement | null) => (() => void) | undefined;
+  /** Whether the Drawer is open. */
+  isOpen: boolean;
+  /** The key of the Drawer. It changes after a forced close, so the Drawer
+   * mounts a new dialog, which opens when isOpen is true. */
+  generation: number;
+}
+
+/** Returns the value that a drawer shows, as nextShown decides, and the
+ * rest that its Drawer takes. The ref listens on its dialog:
  * - A cancel event that forces the dialog closed calls onDismiss at once, in
- *   the task of the request, so the page closes the selection. isOpen stays
- *   false for that value meanwhile, also when the location moves on before
- *   React sees the dismissal, so another value reopens the dialog.
+ *   the task of the request, so the page closes the selection. The browser
+ *   closes the dialog itself, and Astryx would open it again only when
+ *   isOpen changes. So the Drawer mounts a new dialog, and isOpen stays false
+ *   for the closed value meanwhile, also when the location moves on before
+ *   React sees the dismissal. The new dialog stays closed, or opens for
+ *   another value.
  * - The close event comes when the exit slide ends, and drops the value as
  *   afterExit decides. A close event while the dialog is open again is
  *   stale: it was queued before the drawer opened again.
  * The value can also close before the dialog opened, or the browser can
  * close the dialog without a slide. Then a dialog that is closed after a
- * render drops the value too. The Drawer takes isOpen from this hook. */
+ * render drops the value too. */
 export function useShown<T>(
   value: T | undefined,
   key: (value: T) => string,
   onDismiss: () => void,
-): [shown: T | undefined, ref: (dialog: HTMLDialogElement | null) => (() => void) | undefined, isOpen: boolean] {
+): DrawerPresence<T> {
   const [shown, setShown] = useState(value);
   const next = nextShown(shown, value, key);
   if (next !== shown) setShown(next);
   const [forced, setForced] = useState<string>();
+  const [generation, setGeneration] = useState(0);
   const nextForce = nextForced(forced, value, key);
   if (nextForce !== forced) setForced(nextForce);
   // The listeners read the value and the callback of the latest render.
@@ -77,6 +94,7 @@ export function useShown<T>(
       if (!isForcedClose({ cancelable: event.cancelable, fromDialog: event.target === dialog })) return;
       const closed = latest.current;
       if (closed !== undefined) setForced(keyRef.current(closed));
+      setGeneration(current => current + 1);
       dismiss.current();
     };
     const onClose = () => {
@@ -90,5 +108,5 @@ export function useShown<T>(
       dialogRef.current = null;
     };
   }, []);
-  return [next, ref, value !== undefined && nextForce === undefined];
+  return { shown: next, ref, isOpen: value !== undefined && nextForce === undefined, generation };
 }

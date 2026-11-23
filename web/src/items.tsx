@@ -284,9 +284,10 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
 /** The item details of table mode in a drawer. It keeps the item while it
  * slides out, and drops it once the slide ends. */
 function ItemDrawer({ item, server, ignored, onClose }: { item?: ItemKey; server: (key: ItemKey) => ServerInfo | undefined; ignored: string[]; onClose: () => void }) {
-  const [shown, drawerRef, isOpen] = useShown(item, itemID, onClose);
+  const drawer = useShown(item, itemID, onClose);
+  const shown = drawer.shown;
   return (
-    <Drawer isOpen={isOpen} onOpenChange={open => !open && onClose()} ref={drawerRef} label="Item details" width={600} padding={0}>
+    <Drawer key={drawer.generation} isOpen={drawer.isOpen} onOpenChange={open => !open && onClose()} ref={drawer.ref} label="Item details" width={600} padding={0}>
       {shown ? <ItemDetail key={itemID(shown)} target={shown} server={server(shown)} ignored={ignored} onClose={onClose} /> : null}
     </Drawer>
   );
