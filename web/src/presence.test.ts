@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { afterExit, isForcedClose, nextShown } from './presence';
+import { afterExit, isForcedClose, nextForced, nextShown } from './presence';
 
 describe('drawer presence', () => {
   const key = (value: { id: number }) => String(value.id);
@@ -33,5 +33,16 @@ describe('drawer presence', () => {
     // A cancel that bubbled up from inside, such as a dismissed file picker,
     // is no close request.
     expect(isForcedClose({ cancelable: false, fromDialog: false })).toBe(false);
+  });
+
+  it('keeps a force-closed value closed until the selection changes', () => {
+    // After a forced close of item 1, the drawer stays closed while the route
+    // still names item 1, even before React sees the new location.
+    expect(nextForced('1', { id: 1 }, key)).toBe('1');
+    // Another item opens the drawer again, and a cleared selection resets it,
+    // so item 1 can open again later.
+    expect(nextForced('1', { id: 2 }, key)).toBeUndefined();
+    expect(nextForced('1', undefined, key)).toBeUndefined();
+    expect(nextForced(undefined, { id: 1 }, key)).toBeUndefined();
   });
 });
