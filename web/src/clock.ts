@@ -28,19 +28,15 @@ export function useNow(): number {
 
 // A second clock for countdowns, such as the wait before the next item of
 // a run. It ticks only while a component that is active listens, so the
-// rest of the page keeps the slow clock above.
+// rest of the page keeps the slow clock above. It reads the time at each
+// render, so a status event that brings a new countdown shows it at once.
 
 const secondListeners = new Set<() => void>();
-let secondNow = Date.now();
 let secondTimer: ReturnType<typeof setInterval> | undefined;
 
 function subscribeSeconds(listener: () => void) {
   secondListeners.add(listener);
-  secondNow = Date.now();
-  secondTimer ??= setInterval(() => {
-    secondNow = Date.now();
-    secondListeners.forEach(notify => notify());
-  }, 1000);
+  secondTimer ??= setInterval(() => secondListeners.forEach(notify => notify()), 1000);
   return () => {
     secondListeners.delete(listener);
     if (secondListeners.size === 0) {
@@ -52,8 +48,15 @@ function subscribeSeconds(listener: () => void) {
 
 const subscribeNever = () => () => {};
 
-/** Returns the current time in milliseconds, updated every second while
- * isActive. */
+/** Returns the time t in milliseconds, rounded up to a whole second. A
+ * countdown that reads it never shows more seconds than are left, and the
+ * value stays the same within a second, as useSyncExternalStore needs. */
+export function wholeSecond(t: number): number {
+  return Math.ceil(t / 1000) * 1000;
+}
+
+/** Returns the current time in milliseconds, rounded up to a whole second
+ * (wholeSecond), and updated every second while isActive. */
 export function useSecondClock(isActive: boolean): number {
-  return useSyncExternalStore(isActive ? subscribeSeconds : subscribeNever, () => secondNow);
+  return useSyncExternalStore(isActive ? subscribeSeconds : subscribeNever, () => wholeSecond(Date.now()));
 }
