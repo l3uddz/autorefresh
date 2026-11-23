@@ -24,6 +24,10 @@ import (
 // ErrUnauthorized marks a 401 status, which means that TMDB rejected the token.
 var ErrUnauthorized = errors.New("tmdb token rejected")
 
+// ErrSeveral marks a Find answer with several entries, so the external ID
+// names no single TMDB entry. It is no failed request.
+var ErrSeveral = errors.New("tmdb has several entries")
+
 // errNotFound marks a 404 for a missing TMDB entry or season.
 var errNotFound = errors.New("tmdb entry not found")
 
@@ -100,7 +104,8 @@ func sameOrigin(req *http.Request, via []*http.Request) error {
 
 // Find returns the TMDB ID of the series (show true) or the movie with an
 // external ID. source is "tvdb" or "imdb". ok is false unless TMDB has
-// exactly one such entry with a positive ID.
+// exactly one such entry with a positive ID. Several entries return
+// ErrSeveral.
 func (c *Client) Find(ctx context.Context, source, id string, show bool) (tmdbID string, ok bool, err error) {
 	ext, known := externalSources[source]
 	if !known {
@@ -127,7 +132,10 @@ func (c *Client) Find(ctx context.Context, source, id string, show bool) (tmdbID
 	if show {
 		entries = resp.Series
 	}
-	if len(entries) != 1 || entries[0].ID <= 0 {
+	if len(entries) > 1 {
+		return "", false, ErrSeveral
+	}
+	if len(entries) == 0 || entries[0].ID <= 0 {
 		return "", false, nil
 	}
 	return strconv.Itoa(entries[0].ID), true, nil

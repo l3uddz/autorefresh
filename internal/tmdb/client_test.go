@@ -117,7 +117,6 @@ func TestFindNothing(t *testing.T) {
 		show       bool
 	}{
 		{"no entry", "find_empty.json", true},
-		{"two series", "find_two_tv.json", true},
 		{"series for a movie", "find_tv.json", false},
 	}
 	for _, tt := range tests {
@@ -128,6 +127,14 @@ func TestFindNothing(t *testing.T) {
 				t.Fatalf("Find = %q, %v, %v, want nothing", id, ok, err)
 			}
 		})
+	}
+}
+
+func TestFindSeveral(t *testing.T) {
+	c := serve(t, file(t, "find_two_tv.json"))
+	id, ok, err := c.Find(context.Background(), "tvdb", "81189", true)
+	if !errors.Is(err, ErrSeveral) || ok || id != "" {
+		t.Fatalf("Find = %q, %v, %v, want ErrSeveral", id, ok, err)
 	}
 }
 
