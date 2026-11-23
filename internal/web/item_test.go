@@ -599,12 +599,14 @@ func TestItemCandidate(t *testing.T) {
 		if g != guid {
 			return plex.Series{}, fmt.Errorf("provider series: %w", plex.ErrNotFound)
 		}
-		return plex.Series{TMDBID: "48213", Seasons: 1, Episodes: 10}, nil
+		seasons, episodes := 1, 0
+		return plex.Series{TMDBID: "48213", Seasons: &seasons, Episodes: &episodes}, nil
 	})
 	query := url.Values{"srv": {"0"}, "guid": {guid}}
 	var got map[string]any
 	getJSON(t, s, "/api/candidate?"+query.Encode(), &got)
-	if !reflect.DeepEqual(got, map[string]any{"tmdbId": "48213", "seasons": 1.0, "episodes": 10.0}) {
+	// A known count of 0 stays in the answer.
+	if !reflect.DeepEqual(got, map[string]any{"tmdbId": "48213", "seasons": 1.0, "episodes": 0.0}) {
 		t.Errorf("candidate = %v", got)
 	}
 	query.Set("guid", "plex://show/000000000000000000000002")

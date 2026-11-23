@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"reflect"
 	"testing"
 )
 
@@ -20,7 +21,7 @@ func newProvider(t *testing.T, handle http.HandlerFunc) (*recorder, *Client) {
 func TestProviderSeries(t *testing.T) {
 	rec, c := newProvider(t, serveFixture(t, "provider_show.json"))
 	got, err := c.ProviderSeries(context.Background(), fixtureShow)
-	if err != nil || got != (Series{TMDBID: "48213", Seasons: 1, Episodes: 10}) {
+	if err != nil || !reflect.DeepEqual(got, Series{TMDBID: "48213", Seasons: ptr(1), Episodes: ptr(10)}) {
 		t.Fatalf("ProviderSeries = %+v, %v", got, err)
 	}
 	reqs := rec.all()
@@ -30,17 +31,20 @@ func TestProviderSeries(t *testing.T) {
 	}
 }
 
-// A series without counts or a usable TMDB ID leaves those fields empty.
+// A series without counts or a usable TMDB ID leaves those fields empty. A
+// count of 0 is known.
 func TestProviderSeriesWithoutCounts(t *testing.T) {
 	_, c := newProvider(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(`{"MediaContainer":{"Metadata":[{"guid":"` + fixtureShow + `","childCount":-1,
+		w.Write([]byte(`{"MediaContainer":{"Metadata":[{"guid":"` + fixtureShow + `","childCount":-1,"leafCount":0,
 			"Guid":[{"id":"tmdb://12/../x"},{"id":"tvdb://5"}]}]}}`))
 	})
 	got, err := c.ProviderSeries(context.Background(), fixtureShow)
-	if err != nil || got != (Series{}) {
+	if err != nil || !reflect.DeepEqual(got, Series{Episodes: ptr(0)}) {
 		t.Fatalf("ProviderSeries = %+v, %v", got, err)
 	}
 }
+
+func ptr(n int) *int { return &n }
 
 func TestProviderSeriesNotFound(t *testing.T) {
 	for name, handle := range map[string]http.HandlerFunc{

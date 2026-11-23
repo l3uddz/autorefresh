@@ -25,10 +25,11 @@ var tmdbGUID = regexp.MustCompile(`^tmdb://(\d{1,12})$`)
 var ErrInvalidGUID = errors.New("invalid plex show guid")
 
 // Series is what the metadata provider tells about the series of a plex://
-// GUID. Each field is empty when the provider does not give it.
+// GUID. Each field is empty, or nil, when the provider does not give it, so
+// a count of 0 stays apart from an unknown count.
 type Series struct {
 	TMDBID            string
-	Seasons, Episodes int
+	Seasons, Episodes *int
 }
 
 // providerSeries holds the fields of a series that Series uses. The answer
@@ -40,8 +41,16 @@ type providerSeries struct {
 	Guids []struct {
 		ID string `json:"id"`
 	} `json:"Guid"`
-	ChildCount int `json:"childCount"`
-	LeafCount  int `json:"leafCount"`
+	ChildCount *int `json:"childCount"`
+	LeafCount  *int `json:"leafCount"`
+}
+
+// count returns n, or nil for an absent or negative count.
+func count(n *int) *int {
+	if n == nil || *n < 0 {
+		return nil
+	}
+	return n
 }
 
 // ProviderSeries reads the series of the plex:// GUID guid from the Plex
@@ -66,7 +75,7 @@ func (c *Client) ProviderSeries(ctx context.Context, guid string) (Series, error
 	if len(items) == 0 || items[0].GUID != guid {
 		return Series{}, fmt.Errorf("provider series: %w", ErrNotFound)
 	}
-	s := Series{Seasons: max(items[0].ChildCount, 0), Episodes: max(items[0].LeafCount, 0)}
+	s := Series{Seasons: count(items[0].ChildCount), Episodes: count(items[0].LeafCount)}
 	for _, g := range items[0].Guids {
 		if id := tmdbGUID.FindStringSubmatch(strings.TrimSpace(g.ID)); id != nil {
 			s.TMDBID = id[1]

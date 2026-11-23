@@ -276,10 +276,11 @@ func (s *Server) livePath(ctx context.Context, it store.ListItem, paths plex.Pat
 }
 
 // seriesJSON is what the metadata provider tells about a series candidate.
+// A count is absent when the provider does not give it.
 type seriesJSON struct {
 	TMDBID   string `json:"tmdbId,omitempty"`
-	Seasons  int    `json:"seasons,omitempty"`
-	Episodes int    `json:"episodes,omitempty"`
+	Seasons  *int   `json:"seasons,omitempty"`
+	Episodes *int   `json:"episodes,omitempty"`
 }
 
 // serveCandidate answers GET /api/candidate with the TMDB ID and the season
