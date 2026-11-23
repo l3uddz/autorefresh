@@ -3,12 +3,14 @@ package refresher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"testing"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
+	"github.com/l3uddz/autorefresh/internal/tmdb"
 )
 
 func seq(n int, skip ...int) []int {
@@ -268,5 +270,209 @@ func TestMovieYearConflictSkipsEpisodeLookup(t *testing.T) {
 	wantCalls(t, ft.calls, "Year 77 false")
 	if slices.Contains(fp.calls, "EpisodeNumbers 101") {
 		t.Error("read Plex episodes for a movie")
+	}
+}
+
+func TestEpisodeGroupsFallback(t *testing.T) {
+	tests := []struct {
+		name           string
+		local          map[int][]int
+		defaultSeasons map[string][]int
+		groups         []tmdb.EpisodeGroup
+		groupSeasons   map[string]map[int][]int
+		groupListErr   error
+		groupDetailErr map[string]error
+		wantSend       []string
+		wantCount      float64
+		wantDiff       store.EpisodeDiff
+		wantGroupCalls []string
+		wantDecision   store.DecisionOutcome
+	}{
+		{
+			name:           "confirms via original air date group when default seasons differ",
+			local:          map[int][]int{1: seq(49)},
+			defaultSeasons: map[string][]int{"77 1": seq(25)},
+			groups: []tmdb.EpisodeGroup{
+				{ID: "aaaa", Name: "Aired Order", Type: tmdb.EpisodeGroupOriginalAirDate, EpisodeCount: 49},
+			},
+			groupSeasons:   map[string]map[int][]int{"aaaa": {1: seq(49)}},
+			wantSend:       []string{"Match 201 plex://show/right", "Refresh 201"},
+			wantCount:      49,
+			wantGroupCalls: []string{"EpisodeGroups 77", "EpisodeGroupSeasons aaaa"},
+			wantDecision:   store.DecisionMatched,
+		},
+		{
+			name:           "tries TVDB-aligned types in priority order and stops at first match",
+			local:          map[int][]int{1: seq(14)},
+			defaultSeasons: map[string][]int{"77 1": seq(11)},
+			groups: []tmdb.EpisodeGroup{
+				{ID: "tv01", Name: "TV Order", Type: tmdb.EpisodeGroupTV, EpisodeCount: 14},
+				{ID: "abs1", Name: "Absolute", Type: tmdb.EpisodeGroupAbsolute, EpisodeCount: 14},
+				{ID: "dvd1", Name: "DVD Order", Type: tmdb.EpisodeGroupDVD, EpisodeCount: 14},
+				{ID: "air1", Name: "Aired Order", Type: tmdb.EpisodeGroupOriginalAirDate, EpisodeCount: 14},
+			},
+			groupSeasons: map[string]map[int][]int{
+				"air1": {1: seq(12)},
+				"dvd1": {1: seq(14)},
+				"abs1": {1: seq(14)},
+				"tv01": {1: seq(14)},
+			},
+			wantSend:       []string{"Match 201 plex://show/right", "Refresh 201"},
+			wantCount:      14,
+			wantGroupCalls: []string{"EpisodeGroups 77", "EpisodeGroupSeasons air1", "EpisodeGroupSeasons dvd1"},
+			wantDecision:   store.DecisionMatched,
+		},
+		{
+			name:           "ignores non-TVDB group types and undersized groups",
+			local:          map[int][]int{1: seq(14)},
+			defaultSeasons: map[string][]int{"77 1": seq(11)},
+			groups: []tmdb.EpisodeGroup{
+				{ID: "dig1", Name: "Netflix", Type: tmdb.EpisodeGroupDigital, EpisodeCount: 14},
+				{ID: "arc1", Name: "Story Arc", Type: tmdb.EpisodeGroupStoryArc, EpisodeCount: 14},
+				{ID: "prd1", Name: "Production", Type: tmdb.EpisodeGroupProduction, EpisodeCount: 14},
+				{ID: "sml1", Name: "Short Aired", Type: tmdb.EpisodeGroupOriginalAirDate, EpisodeCount: 10},
+				{ID: "emp1", Name: "Empty DVD", Type: tmdb.EpisodeGroupDVD, EpisodeCount: 0},
+			},
+			groupSeasons: map[string]map[int][]int{
+				"dig1": {1: seq(14)},
+				"arc1": {1: seq(14)},
+				"prd1": {1: seq(14)},
+			},
+			wantSend:       []string{"Refresh 201"},
+			wantDiff:       store.EpisodeDiff{Season: 1, Plex: 14, TMDB: 11, Extra: []int{12, 13, 14}},
+			wantGroupCalls: []string{"EpisodeGroups 77"},
+			wantDecision:   store.DecisionNoMatch,
+		},
+		{
+			name:           "keeps default season diff when no group confirms",
+			local:          map[int][]int{1: seq(14)},
+			defaultSeasons: map[string][]int{"77 1": seq(11)},
+			groups: []tmdb.EpisodeGroup{
+				{ID: "dvd1", Name: "DVD Order", Type: tmdb.EpisodeGroupDVD, EpisodeCount: 20},
+			},
+			groupSeasons:   map[string]map[int][]int{"dvd1": {1: seq(20)}},
+			wantSend:       []string{"Refresh 201"},
+			wantDiff:       store.EpisodeDiff{Season: 1, Plex: 14, TMDB: 11, Extra: []int{12, 13, 14}},
+			wantGroupCalls: []string{"EpisodeGroups 77", "EpisodeGroupSeasons dvd1"},
+			wantDecision:   store.DecisionNoMatch,
+		},
+		{
+			name:           "skips episode groups when local numbers have duplicates",
+			local:          map[int][]int{1: {1, 1, 2}},
+			defaultSeasons: map[string][]int{"77 1": {1, 2, 3}},
+			groups: []tmdb.EpisodeGroup{
+				{ID: "air1", Name: "Aired Order", Type: tmdb.EpisodeGroupOriginalAirDate, EpisodeCount: 3},
+			},
+			wantSend:     []string{"Refresh 201"},
+			wantDecision: store.DecisionNoMatch,
+		},
+		{
+			name:           "TMDB error listing episode groups falls back to refresh",
+			local:          map[int][]int{1: seq(14)},
+			defaultSeasons: map[string][]int{"77 1": seq(11)},
+			groupListErr:   errors.New("500 internal error"),
+			wantSend:       []string{"Refresh 201"},
+			wantGroupCalls: []string{"EpisodeGroups 77"},
+			wantDecision:   store.DecisionFailed,
+		},
+		{
+			name:           "TMDB error reading group details falls back to refresh",
+			local:          map[int][]int{1: seq(14)},
+			defaultSeasons: map[string][]int{"77 1": seq(11)},
+			groups: []tmdb.EpisodeGroup{
+				{ID: "air1", Name: "Aired Order", Type: tmdb.EpisodeGroupOriginalAirDate, EpisodeCount: 14},
+			},
+			groupDetailErr: map[string]error{"air1": errors.New("500 internal error")},
+			wantSend:       []string{"Refresh 201"},
+			wantGroupCalls: []string{"EpisodeGroups 77", "EpisodeGroupSeasons air1"},
+			wantDecision:   store.DecisionFailed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fp := newFakePlex(showsLib)
+			fp.paths["201"] = []string{"/tv/Show (2003) {tmdb-77}"}
+			fp.candidates["201 tmdb-77"] = []plex.Candidate{{GUID: "plex://show/right", Name: "Show", Year: 2011}}
+			fp.episodeNumbers = map[string]map[int][]int{"201": tt.local}
+			f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+			ft := &fakeTMDB{
+				years:           map[string]int{"77 true": 2011},
+				seasons:         tt.defaultSeasons,
+				episodeGroups:   map[string][]tmdb.EpisodeGroup{"77": tt.groups},
+				groupListErrs:   map[string]error{"77": tt.groupListErr},
+				groupSeasons:    tt.groupSeasons,
+				groupSeasonErrs: tt.groupDetailErr,
+			}
+			f.r.opts.TMDB = ft
+			item := unmatchedItem("201")
+			item.Year = 2003
+			f.seed(testServer, showsLib, item, store.Unmatched, 1)
+
+			f.run(t0)
+
+			wantCalls(t, sends(fp.calls), tt.wantSend...)
+			var gotGroupCalls []string
+			for _, c := range ft.calls {
+				if len(c) >= 12 && c[:12] == "EpisodeGroup" {
+					gotGroupCalls = append(gotGroupCalls, c)
+				}
+			}
+			wantCalls(t, gotGroupCalls, tt.wantGroupCalls...)
+			e := f.decision("201")
+			if store.DecisionOutcome(e.Outcome) != tt.wantDecision {
+				t.Errorf("decision outcome = %q, want %q", e.Outcome, tt.wantDecision)
+			}
+			if tt.wantCount > 0 {
+				sent := f.logLines("info", "Sent request")
+				if len(sent) != 2 {
+					t.Fatalf("sent %d requests, want 2", len(sent))
+				}
+				wantField(t, sent[0], "episode_count", tt.wantCount)
+			}
+			if tt.wantDiff.Season > 0 && !reflect.DeepEqual(e.EpisodeDiff, tt.wantDiff) {
+				t.Errorf("episode diff = %+v, want %+v", e.EpisodeDiff, tt.wantDiff)
+			}
+		})
+	}
+}
+
+func TestEpisodeGroupsCappedAtMax(t *testing.T) {
+	groups := make([]tmdb.EpisodeGroup, 0, maxEpisodeGroups+3)
+	groupSeasons := make(map[string]map[int][]int, maxEpisodeGroups+3)
+	for i := range maxEpisodeGroups + 3 {
+		id := fmt.Sprintf("aa%02d", i)
+		groups = append(groups, tmdb.EpisodeGroup{
+			ID: id, Name: "Aired", Type: tmdb.EpisodeGroupOriginalAirDate, EpisodeCount: 20,
+		})
+		groupSeasons[id] = map[int][]int{1: seq(20)}
+	}
+	fp := newFakePlex(showsLib)
+	fp.paths["201"] = []string{"/tv/Show (2003) {tmdb-77}"}
+	fp.candidates["201 tmdb-77"] = []plex.Candidate{{GUID: "plex://show/right", Name: "Show", Year: 2011}}
+	fp.episodeNumbers = map[string]map[int][]int{"201": {1: seq(14)}}
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	ft := &fakeTMDB{
+		years:         map[string]int{"77 true": 2011},
+		seasons:       map[string][]int{"77 1": seq(11)},
+		episodeGroups: map[string][]tmdb.EpisodeGroup{"77": groups},
+		groupSeasons:  groupSeasons,
+	}
+	f.r.opts.TMDB = ft
+	item := unmatchedItem("201")
+	item.Year = 2003
+	f.seed(testServer, showsLib, item, store.Unmatched, 1)
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 201")
+	detailCalls := 0
+	for _, c := range ft.calls {
+		if len(c) >= 19 && c[:19] == "EpisodeGroupSeasons" {
+			detailCalls++
+		}
+	}
+	if detailCalls != maxEpisodeGroups {
+		t.Fatalf("detail calls = %d, want cap %d", detailCalls, maxEpisodeGroups)
 	}
 }

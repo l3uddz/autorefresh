@@ -105,6 +105,26 @@ func TestTitleMatchAllowsMissingEpisodesAtCoverage(t *testing.T) {
 	wantEvidence(t, e, store.MatchEvidence{TMDBID: "88"})
 }
 
+func TestTitleMatchConfirmsViaEpisodeGroup(t *testing.T) {
+	f, fp, ft := titleFixture(t)
+	fp.episodeNumbers["201"] = map[int][]int{1: seq(49)}
+	ft.seasons = map[string][]int{"88 1": seq(25)}
+	ft.episodeGroups = map[string][]tmdb.EpisodeGroup{
+		"88": {{ID: "5e9077d2e640d600151f32bd", Name: "Aired Order", Type: tmdb.EpisodeGroupOriginalAirDate, EpisodeCount: 49}},
+	}
+	ft.groupSeasons = map[string]map[int][]int{
+		"5e9077d2e640d600151f32bd": {1: seq(49)},
+	}
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Match 201 plex://show/t", "Refresh 201")
+	e := f.decision("201")
+	wantDecision(t, e, store.DecisionMatched, "", titleVerdicts)
+	wantYears(t, e, 2020, 0, 49)
+	wantEvidence(t, e, store.MatchEvidence{TMDBID: "88"})
+}
+
 func TestTitleMatchSeveralWithTheSameTitle(t *testing.T) {
 	f, fp, _ := titleFixture(t)
 	fp.candidates[titleSearch] = append(titleCandidates(), plex.Candidate{GUID: "plex://show/u", Name: "Title 201", Year: 2021})

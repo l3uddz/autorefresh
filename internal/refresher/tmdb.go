@@ -19,6 +19,8 @@ type TMDB interface {
 	Find(ctx context.Context, source, id string, show bool) (tmdbID string, ok bool, err error)
 	Year(ctx context.Context, id string, show bool) (year int, ok bool, err error)
 	SeasonEpisodes(ctx context.Context, id string, season int) ([]int, error)
+	EpisodeGroups(ctx context.Context, id string) ([]tmdb.EpisodeGroup, error)
+	EpisodeGroupSeasons(ctx context.Context, groupID string) (map[int][]int, error)
 }
 
 var (

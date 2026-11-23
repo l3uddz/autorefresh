@@ -36,6 +36,18 @@ func (h tmdbHealth) SeasonEpisodes(ctx context.Context, id string, season int) (
 	return episodes, err
 }
 
+func (h tmdbHealth) EpisodeGroups(ctx context.Context, id string) ([]tmdb.EpisodeGroup, error) {
+	groups, err := h.tmdb.EpisodeGroups(ctx, id)
+	h.report(ctx, err)
+	return groups, err
+}
+
+func (h tmdbHealth) EpisodeGroupSeasons(ctx context.Context, groupID string) (map[int][]int, error) {
+	seasons, err := h.tmdb.EpisodeGroupSeasons(ctx, groupID)
+	h.report(ctx, err)
+	return seasons, err
+}
+
 func (h tmdbHealth) report(ctx context.Context, err error) {
 	if ctx.Err() == nil {
 		h.rec.TMDBChecked(err)
