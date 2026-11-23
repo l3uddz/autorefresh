@@ -47,6 +47,9 @@ func TestTitleMatchWithoutFolderIDs(t *testing.T) {
 
 	wantCalls(t, sends(fp.calls), "Match 201 plex://show/t", "Refresh 201")
 	wantCalls(t, ft.calls, "SeasonEpisodes 88 1")
+	if year := fp.searchYears[titleSearch]; year != 2020 {
+		t.Errorf("title search year = %d, want the item year 2020", year)
+	}
 	e := f.decision("201")
 	wantDecision(t, e, store.DecisionMatched, "", titleVerdicts)
 	wantYears(t, e, 2020, 0, 3)
@@ -375,4 +378,28 @@ func TestTitleFallbackSkipsFoldersWithDifferentYears(t *testing.T) {
 	wantCalls(t, sends(fp.calls), "Refresh 201")
 	wantCalls(t, matchReads(fp.calls), "ItemPaths 201")
 	wantDecision(t, f.decision("201"), store.DecisionNoIDs, "")
+}
+
+// A failed episode read of the title fallback, such as a 504 for a large
+// series, is a handled failure too.
+func TestTitleEpisodeReadFailureSendsPlainRefresh(t *testing.T) {
+	f, fp, _ := titleFixture(t)
+	fp.episodeReadErr = fmt.Errorf("504 Gateway Timeout: %w", plex.ErrUnavailable)
+	second := unmatchedItem("202")
+	second.AddedAt = addedAt.Add(time.Hour)
+	f.seed(testServer, showsLib, second, store.Unmatched, 1)
+	fp.candidates["202 Title 202"] = []plex.Candidate{{GUID: "plex://show/t2", Name: "Title 202", Year: 2020}}
+	fp.series["plex://show/t2"] = plex.Series{TMDBID: "89"}
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 201", "Refresh 202")
+	for _, key := range []string{"201", "202"} {
+		if e := f.decision(key); store.DecisionOutcome(e.Outcome) != store.DecisionFailed || !strings.Contains(e.Error, "504") {
+			t.Errorf("decision of %s = %q (%q), want failed with the read error", key, e.Outcome, e.Error)
+		}
+	}
+	if run := f.onlyRun(); run.Status != store.RunFinished || run.Failed != 2 {
+		t.Errorf("run = %+v, want a finished run with 2 failures", run)
+	}
 }

@@ -34,23 +34,14 @@ func (r *Refresher) titleFallback(run *serverRun, it store.Item, paths []string,
 // metadata provider gives the TMDB ID of that candidate, which must equal
 // every TMDB ID of the folder names (folderTMDBIDs), and every local season
 // must have the episode numbers of TMDB. err is the error of the title
-// search that says that the item is gone or of the episode read, or a store
-// error. Another failed title search is a handled failure: before the title
-// fallback, the item got a plain refresh without it.
+// search or the episode read that says that the item is gone, or a store
+// error. Other failed requests are handled failures (titleRequestFailed).
 func (r *Refresher) titleMatch(ctx context.Context, run *serverRun, mc matchContext) (evaluation, error) {
 	srv := run.server
 	cands, err := srv.Plex.SearchMatches(ctx, mc.it.RatingKey, mc.it.Title, mc.lib.Agent, mc.lib.Language, mc.it.Year)
 	mc.d.addSearch(mc.it.Title, searchTitle, "", cands, err != nil)
-	switch {
-	case ctx.Err() != nil:
-		return evaluation{}, ctx.Err()
-	case errors.Is(err, plex.ErrNotFound):
-		return evaluation{}, err
-	case err != nil:
-		mc.d.fail(err)
-		run.failures++
-		itemEvent(log.Warn(), srv.Name, mc.lib, mc.it).Err(err).Msg("Match title search failed")
-		return evaluation{}, nil
+	if err != nil {
+		return evaluation{}, r.titleRequestFailed(ctx, run, mc, err, "Match title search failed")
 	}
 	itemEvent(log.Debug(), srv.Name, mc.lib, mc.it).Int("candidates", len(cands)).Msg("Match title search result")
 	pos := len(mc.d.searches) - 1
@@ -80,9 +71,9 @@ func (r *Refresher) titleMatch(ctx context.Context, run *serverRun, mc matchCont
 // confirmTitle confirms the candidate of a title search with the TMDB ID
 // that the Plex metadata provider gives for it and with the TMDB episode
 // numbers. It returns the number of episodes that confirmed the candidate,
-// or 0 and the conflict. A failed provider or TMDB request is a handled
-// failure of the decision, with no conflict: the item gets a plain refresh,
-// and the run goes on.
+// or 0 and the conflict. A failed provider, episode, or TMDB request is a
+// handled failure of the decision, with no conflict: the item gets a plain
+// refresh, and the run goes on.
 func (r *Refresher) confirmTitle(ctx context.Context, run *serverRun, mc matchContext, cand plex.Candidate) (int, string, error) {
 	series, err := run.server.Plex.ProviderSeries(ctx, cand.GUID)
 	switch {
@@ -91,10 +82,7 @@ func (r *Refresher) confirmTitle(ctx context.Context, run *serverRun, mc matchCo
 	case errors.Is(err, plex.ErrNotFound) || errors.Is(err, plex.ErrInvalidGUID):
 		return 0, conflictUnconfirmed, nil
 	case err != nil:
-		mc.d.fail(err)
-		run.failures++
-		itemEvent(log.Warn(), run.server.Name, mc.lib, mc.it).Err(err).Msg("Plex metadata provider lookup failed")
-		return 0, "", nil
+		return 0, "", r.titleRequestFailed(ctx, run, mc, err, "Plex metadata provider lookup failed")
 	case series.TMDBID == "":
 		return 0, conflictUnconfirmed, nil
 	}
@@ -107,10 +95,31 @@ func (r *Refresher) confirmTitle(ctx context.Context, run *serverRun, mc matchCo
 		return 0, conflictFolderID, nil
 	}
 	count, err := r.confirmEpisodeNumbers(ctx, run, mc, series.TMDBID)
-	if err != nil || count > 0 || mc.d.err != nil {
-		return count, "", err
+	if err != nil {
+		return 0, "", r.titleRequestFailed(ctx, run, mc, err, "Match episode read failed")
+	}
+	if count > 0 || mc.d.err != nil {
+		return count, "", nil
 	}
 	return 0, conflictUnconfirmed, nil
+}
+
+// titleRequestFailed handles a failed Plex request of the title fallback
+// and returns the error that ends the fix match: the end of the run, or a
+// 404 answer, which says that the item is gone. Any other failure is a
+// failed decision, and the item gets the plain refresh that it got before
+// the title fallback, so the run goes on.
+func (r *Refresher) titleRequestFailed(ctx context.Context, run *serverRun, mc matchContext, err error, msg string) error {
+	switch {
+	case ctx.Err() != nil:
+		return ctx.Err()
+	case errors.Is(err, plex.ErrNotFound):
+		return err
+	}
+	mc.d.fail(err)
+	run.failures++
+	itemEvent(log.Warn(), run.server.Name, mc.lib, mc.it).Err(err).Msg(msg)
+	return nil
 }
 
 // sameTitle returns the candidates whose title and year agree with the item

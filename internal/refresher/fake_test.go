@@ -26,6 +26,7 @@ type fakePlex struct {
 	pathErrs       map[string]error            // by rating key
 	candidates     map[string][]plex.Candidate // by "<rating key> <search title>"
 	searchErrs     map[string]error            // by "<rating key> <search title>", else by rating key
+	searchYears    map[string]int              // the year of the last search, by "<rating key> <search title>"
 	refreshErrs    map[string]error            // by rating key
 	matchErrs      map[string]error            // by rating key
 	series         map[string]plex.Series      // the provider series by GUID; a missing GUID is ErrNotFound
@@ -136,6 +137,10 @@ func (f *fakePlex) SearchMatches(ctx context.Context, ratingKey, title, agent, l
 		return nil, err
 	}
 	f.record(strings.Join([]string{"SearchMatches", ratingKey, title, agent, language}, " "))
+	if f.searchYears == nil {
+		f.searchYears = map[string]int{}
+	}
+	f.searchYears[ratingKey+" "+title] = year
 	if err := f.searchErrs[ratingKey+" "+title]; err != nil {
 		return nil, err
 	}

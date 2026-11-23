@@ -225,11 +225,13 @@ series, the first local season whose episode numbers differ from TMDB,
 with the episode count of Plex and of TMDB and the episode numbers that
 only one of them has. The Fix match dialog shows them.
 
-If no match applies, autorefresh sends a plain refresh. If the IDs disagree,
+If no match applies, autorefresh sends a plain refresh. A series can first
+get the [title fallback](#title-fallback). If the IDs disagree,
 it also logs a `Match conflict` warning. The warning has the reason, the
 year of the item, `tmdb_year` if TMDB was checked, and each candidate with
-its year and the web page of the ID that found it. If a match search fails,
-autorefresh sends no request for that item in this run. A match request
+its year and the web page of the ID that found it. If a match search of an
+ID fails, autorefresh sends no request for that item in this run. A failed
+request of the title fallback still gives the item a plain refresh. A match request
 counts as a refresh for the wait.
 
 After Plex accepts a match, the run follows it up as a manual **Match** in
@@ -282,7 +284,8 @@ Plex once for each TMDB ID, for example `tmdb-1396`, with the same rules for
 the candidates.
 
 - If TMDB has no single entry for an ID (none, or several), autorefresh
-  skips that ID. If no ID gives a match, the item gets a plain refresh.
+  skips that ID. If no ID gives a match, the item gets a plain refresh, or
+  a series first gets the [title fallback](#title-fallback).
   Autorefresh does not remember that TMDB had no single entry, because
   TMDB can change, so it asks again at the next attempt of the item.
 - Autorefresh keeps each TMDB ID that it finds in the cache of the item, so
@@ -344,9 +347,10 @@ nothing. Autorefresh applies a match only if all of these are true:
    differs.
 
 The match request has the action `title-match`. A failed title search,
-provider request, or TMDB request is a failed decision: the item gets a
-plain refresh, and the run goes on. Only a `404 Not Found` answer of the
-title search keeps its meaning: the item is gone.
+provider request, episode read, or TMDB request is a failed decision: the
+item gets a plain refresh, and the run goes on. Only a `404 Not Found`
+answer of the title search or of the episode read keeps its meaning: the
+item is gone.
 
 ### History
 
