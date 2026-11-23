@@ -42,8 +42,10 @@ refresher checks an item after Plex accepts a manual match.
   recorded, and does not show an empty "nothing happened" state.
 - A match check that keeps failing or that Plex answers with 404: the match
   request still answers 202, and the item shows the recorded match.
-- A `nextRun` in the past (a skipped scheduled start while a manual run is
-  busy): the page shows "starting", not a negative time.
+- A `nextRun` that the page clock passed before the scheduler published the
+  next time: the page shows "starting", not a negative time. A scheduled
+  start that a busy run skips does not run, so the scheduler publishes the
+  following time at once, and the page shows that time.
 - A deep link to `#/runs/<id>` of a removed or unknown run: the drawer shows
   "This run no longer exists", and closing returns to `#/runs`.
 
