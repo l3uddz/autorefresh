@@ -147,9 +147,11 @@ func skipDecision(ctx context.Context, err error) bool {
 }
 
 // decision returns the outcome of the evaluation ev, which ended with err,
-// with the logged searches.
+// with the logged searches and evidence. The years that the evaluation
+// compared stay also when a later step failed.
 func (d *decisionLog) decision(ev evaluation, err error) store.MatchDecision {
 	dec := store.MatchDecision{Searches: d.searches, MatchEvidence: d.evidence}
+	dec.PathYear, dec.TMDBYear, dec.EpisodeCount = ev.years.folderYear, ev.years.tmdbYear, ev.years.episodeCount
 	switch {
 	case err != nil:
 		dec.Outcome, dec.Error = store.DecisionFailed, err.Error()
@@ -162,7 +164,6 @@ func (d *decisionLog) decision(ev evaluation, err error) store.MatchDecision {
 		if ev.fm != nil {
 			dec.Outcome = store.DecisionMatched
 		}
-		dec.PathYear, dec.TMDBYear, dec.EpisodeCount = ev.years.folderYear, ev.years.tmdbYear, ev.years.episodeCount
 	}
 	return dec
 }

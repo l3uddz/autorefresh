@@ -389,8 +389,32 @@ func TestSwallowedTMDBFailureRecordsFailedAndRefreshes(t *testing.T) {
 		if want := "tmdb lookup: tmdb-77: GET /3/tv/77: 500 Internal Server Error"; e.Error != want {
 			t.Errorf("error = %q, want %q", e.Error, want)
 		}
-		wantYears(t, e, 0, 0, 0)
+		// The folder year stays with the failure.
+		wantYears(t, e, 2022, 0, 0)
 		wantCalls(t, sends(fp.calls), "Refresh 201")
+	})
+	t.Run("TMDB episode lookup", func(t *testing.T) {
+		fp := newFakePlex(showsLib)
+		cand := []plex.Candidate{{GUID: "plex://show/a", Name: "Show", Year: 2017}}
+		fp.candidates["201 tvdb-5"] = cand
+		fp.candidates["201 tmdb-77"] = cand
+		fp.episodeNumbers = map[string]map[int][]int{"201": {1: {1, 2}}}
+		ft := &fakeTMDB{
+			ids:        map[string]string{"tvdb 5 true": "77"},
+			years:      map[string]int{"77 true": 2017},
+			seasonErrs: map[string]error{"77 1": errors.New("GET /3/tv/77/season/1: 500 Internal Server Error")},
+		}
+		f := yearConflictFixture(t, fp, ft)
+
+		f.run(t0)
+
+		e := f.decision("201")
+		if e.Outcome != string(store.DecisionFailed) {
+			t.Fatalf("outcome = %q, want failed", e.Outcome)
+		}
+		// The years that the evaluation compared stay with the failure.
+		wantYears(t, e, 2022, 2017, 0)
+		wantEvidence(t, e, store.MatchEvidence{TMDBID: "77"})
 	})
 }
 

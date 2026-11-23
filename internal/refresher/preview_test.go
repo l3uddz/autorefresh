@@ -3,6 +3,7 @@ package refresher
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
@@ -115,10 +116,15 @@ func TestPreviewMatchKeepsTheEvidence(t *testing.T) {
 	}
 	f := yearConflictFixture(t, fp, ft)
 	f.saveLibrary(showsLib)
+	f.now = t0.Add(800 * time.Millisecond)
 
 	dec, err := f.r.PreviewMatch(t.Context(), testServer, "201")
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The store keeps whole seconds, and so does the preview.
+	if !dec.At.Equal(t0.Truncate(time.Second)) {
+		t.Errorf("at = %v, want %v", dec.At, t0.Truncate(time.Second))
 	}
 	if dec.ItemYear != 2022 || dec.PathYear != 2022 || dec.TMDBYear != 1978 {
 		t.Errorf("years = item %d, path %d, tmdb %d, want 2022, 2022, 1978", dec.ItemYear, dec.PathYear, dec.TMDBYear)

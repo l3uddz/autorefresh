@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
@@ -40,6 +41,8 @@ func (r *Refresher) PreviewMatch(ctx context.Context, server, key string) (store
 		}
 		return store.MatchDecision{}, err
 	}
-	dec.Server, dec.RatingKey, dec.At, dec.Source = server, key, r.now(), store.SourceAuto
+	// The store keeps whole seconds, so the preview does too: the dashboard
+	// compares its time with the time of a recorded decision.
+	dec.Server, dec.RatingKey, dec.At, dec.Source = server, key, r.now().Truncate(time.Second), store.SourceAuto
 	return dec, nil
 }
