@@ -63,21 +63,24 @@ function TopRow({ item, isWorking, nextAt, withReasons }: { item: NowItem; isWor
           )}
         </VStack>
       </StackItem>
-      <VStack gap={1} hAlign="end">
-        {isWorking ? (
-          <HStack gap={1.5} vAlign="center">
-            <StatusDot variant="accent" isPulsing label="Working" />
-            <Text type="supporting" weight="medium" color="primary">
-              Working
+      {/* The state and the countdown keep their width, and the title truncates. */}
+      <StackItem size="static">
+        <VStack gap={1} hAlign="end">
+          {isWorking ? (
+            <HStack gap={1.5} vAlign="center">
+              <StatusDot variant="accent" isPulsing label="Working" />
+              <Text type="supporting" weight="medium" color="primary" textWrap="nowrap">
+                Working
+              </Text>
+            </HStack>
+          ) : (
+            <Text type="supporting" weight="medium" color="primary" textWrap="nowrap">
+              Up next
             </Text>
-          </HStack>
-        ) : (
-          <Text type="supporting" weight="medium" color="primary">
-            Up next
-          </Text>
-        )}
-        {!isWorking && nextAt && <Countdown key={nextAt} at={nextAt} />}
-      </VStack>
+          )}
+          {!isWorking && nextAt && <Countdown key={nextAt} at={nextAt} />}
+        </VStack>
+      </StackItem>
     </HStack>
   );
 }
@@ -98,7 +101,11 @@ function LastRow({ item }: { item: NowItem }) {
           {detail ? ` · ${detail}` : ''}
         </Text>
       </StackItem>
-      {item.finishedAt && <Ago key={item.finishedAt} at={item.finishedAt} />}
+      {item.finishedAt && (
+        <StackItem size="static">
+          <Ago key={item.finishedAt} at={item.finishedAt} />
+        </StackItem>
+      )}
     </HStack>
   );
 }
@@ -111,7 +118,7 @@ function LastRow({ item }: { item: NowItem }) {
 export function Countdown({ at }: { at: string }) {
   const now = useSecondClock();
   return (
-    <Text type="supporting" hasTabularNumbers>
+    <Text type="supporting" hasTabularNumbers textWrap="nowrap">
       {countdown(at, now)}
     </Text>
   );
@@ -121,7 +128,7 @@ export function Countdown({ at }: { at: string }) {
 export function Ago({ at }: { at: string }) {
   const now = useSecondClock();
   return (
-    <Text type="supporting" hasTabularNumbers>
+    <Text type="supporting" hasTabularNumbers textWrap="nowrap">
       {since(at, now)}
     </Text>
   );
