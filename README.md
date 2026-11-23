@@ -228,8 +228,8 @@ after waits of 1, 2, and 4 seconds, while Plex loads the new metadata. A
 check that finds the item complete moves it to the Fixed tab at once and
 counts it in the summary of the run. A check that finds it still
 incomplete updates its metadata, and the next run reads it again. The
-follow-up refresh and the checks belong to the run, so they show in its
-details.
+follow-up refresh, and a completion or a removal that a check finds,
+belong to the run, so they show in its details.
 
 The `Sent request` line of a match, and its `Dry run` line, has these
 fields, so you can check each match in the log:
@@ -675,8 +675,10 @@ its searches, their candidates, and why it picked one or none. When the
 history holds no automatic fix match of the item, **Try automatic fix
 match** runs one now as a preview. The preview uses the same code as a
 run, also for an item that a run would not try, and shows its decision in
-the same way. It marks the candidate that it picked, which you can then
-apply with **Match**. The preview records nothing, saves nothing to the
+the same way. It asks TMDB even when a TMDB lookup failed earlier in a
+run, as the next run does. It marks the candidate that it picked, which
+you can then apply with **Match**. The pick gets a card even when the
+opening search of its folder ID failed. The preview records nothing, saves nothing to the
 cache, and sends no match to Plex. Searches in the dialog call Plex but
 record nothing. An applied match is recorded in the history of the item.
 
