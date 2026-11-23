@@ -37,12 +37,15 @@ type Series struct {
 // Summary. Each declared field has its exact key, which wins over a
 // case-insensitive match, and undeclared keys are skipped.
 type providerSeries struct {
-	GUID  string `json:"guid"`
-	Guids []struct {
-		ID string `json:"id"`
-	} `json:"Guid"`
-	ChildCount *int `json:"childCount"`
-	LeafCount  *int `json:"leafCount"`
+	GUID       string         `json:"guid"`
+	Guids      []providerGUID `json:"Guid"`
+	ChildCount *int           `json:"childCount"`
+	LeafCount  *int           `json:"leafCount"`
+}
+
+// providerGUID is one external ID of a series, such as "tmdb://1396".
+type providerGUID struct {
+	ID string `json:"id"`
 }
 
 // count returns n, or nil for an absent or negative count.
@@ -76,11 +79,24 @@ func (c *Client) ProviderSeries(ctx context.Context, guid string) (Series, error
 		return Series{}, fmt.Errorf("provider series: %w", ErrNotFound)
 	}
 	s := Series{Seasons: count(items[0].ChildCount), Episodes: count(items[0].LeafCount)}
-	for _, g := range items[0].Guids {
-		if id := tmdbGUID.FindStringSubmatch(strings.TrimSpace(g.ID)); id != nil {
-			s.TMDBID = id[1]
-			break
-		}
-	}
+	s.TMDBID = singleTMDBID(items[0].Guids)
 	return s, nil
+}
+
+// singleTMDBID returns the TMDB ID of the external IDs guids, or "" when
+// they hold none or several different ones: then the series has no single
+// TMDB entry.
+func singleTMDBID(guids []providerGUID) string {
+	found := ""
+	for _, g := range guids {
+		id := tmdbGUID.FindStringSubmatch(strings.TrimSpace(g.ID))
+		switch {
+		case id == nil:
+			continue
+		case found != "" && found != id[1]:
+			return ""
+		}
+		found = id[1]
+	}
+	return found
 }
