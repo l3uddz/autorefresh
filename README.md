@@ -156,7 +156,8 @@ fails with 1 refresh takes the first place for 4 runs before an item with 5
 refreshes gets it.
 
 Autorefresh handles one due item at a time on each server, and each item
-gets at most one refresh or match request. It waits `refresh-delay` between
+gets at most one refresh or match request. A match that Plex accepts also
+gets the refresh that follows it (see Fix match). It waits `refresh-delay` between
 two items. A run handles at most `max-refreshes-per-run` due items on each
 server. An item whose match search fails also counts, although it gets no
 request. If you set `max-refreshes-per-run` to 0, a run has no limit.
@@ -219,6 +220,16 @@ year of the item, `tmdb_year` if TMDB was checked, and each candidate with
 its year and the web page of the ID that found it. If a match search fails,
 autorefresh sends no request for that item in this run. A match request
 counts as a refresh for the wait.
+
+After Plex accepts a match, the run follows it up as a manual **Match** in
+the dashboard does. It requests a refresh of the item, which counts as one
+more attempt and one more refresh for the wait. Then it checks the item
+after waits of 1, 2, and 4 seconds, while Plex loads the new metadata. A
+check that finds the item complete moves it to the Fixed tab at once and
+counts it in the summary of the run. A check that finds it still
+incomplete updates its metadata, and the next run reads it again. The
+follow-up refresh and the checks belong to the run, so they show in its
+details.
 
 The `Sent request` line of a match, and its `Dry run` line, has these
 fields, so you can check each match in the log:
@@ -800,7 +811,7 @@ summary line:
 - You stop the run.
 
 Before the summary, autorefresh logs one `Item complete` line for each item
-that the reads of the run found complete. The line has the server, the
+that the reads of the run, or the checks after its matches, found complete. The line has the server, the
 library, the title, and the number of refreshes. These lines come after the
 refresh step, so they stay next to the summary in the log. A run without a
 summary line also logs them.
@@ -825,14 +836,14 @@ The summary line has these fields:
 | --- | --- |
 | `full_read_items` | The movies and series that the full reads of the run listed. If the run did no full read, the value is 0. |
 | `incremental_read_items` | The movies and series that the incremental reads of the run listed. If the run did only full reads, the value is 0. |
-| `incomplete_items` | The incomplete items in the cache after the run, without the items whose reasons are all ignored. An item that the run refreshed stays in this count until a later read finds it complete. |
+| `incomplete_items` | The incomplete items in the cache after the run, without the items whose reasons are all ignored. An item that the run refreshed stays in this count until a later read finds it complete, unless a check after its match found it complete. |
 | `due_items` | The incomplete items that were due for a request |
 | `refresh_requests` | The refresh requests that the run sent, also failed ones |
 | `match_requests` | The fix match requests that the run sent, also failed ones |
 | `failed_requests` | The failed requests, match searches, and TMDB lookups. A `404 Not Found` answer of Plex is not a failure. |
 | `remaining_items` | The due items that the run did not reach, because of `max-refreshes-per-run` or because the server became unavailable. They stay due for later runs. |
-| `completed_items` | The items in the cache that the reads of the run found complete. The run removes them from the cache. Each one also has an `Item complete` line. |
-| `completed_after_request` | The items in `completed_items` that had at least one request from autorefresh that Plex accepted. Plex runs a refresh in the background, so the effect of a request shows in a later run. |
+| `completed_items` | The items in the cache that the reads of the run, or the checks after its matches, found complete. The run removes them from the cache. Each one also has an `Item complete` line. |
+| `completed_after_request` | The items in `completed_items` that had at least one request from autorefresh that Plex accepted. Plex runs a refresh in the background, so the effect of a refresh usually shows in a later run. A match can show in the same run, through the checks after it. |
 | `completed_after_match` | The items in `completed_items` that had a match request that Plex accepted. Each one has a `last_match` field on its `Item complete` line. |
 | `duration` | The time of the run of the server, with the reads, rounded to milliseconds, such as `11m3.814s` |
 
