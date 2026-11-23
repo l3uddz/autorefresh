@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { afterExit, closeAction, nextShown, selects } from './presence';
+import { afterExit, isForcedClose, nextShown } from './presence';
 
 describe('drawer presence', () => {
   const key = (value: { id: number }) => String(value.id);
@@ -24,23 +24,14 @@ describe('drawer presence', () => {
     expect(afterExit(one, one)).toBe(one);
   });
 
-  it('dismisses a selection whose dialog the browser closed without asking the page', () => {
-    // A close request that the drawer did not pass on leaves the route on the
-    // item, so the page must close it too, or the hidden content keeps loading.
-    expect(closeAction(false, true)).toBe('dismiss');
-    // The exit slide of a closed selection ended.
-    expect(closeAction(false, false)).toBe('drop');
-    // A close event queued before the drawer opened again is stale.
-    expect(closeAction(true, true)).toBe('ignore');
-    expect(closeAction(true, false)).toBe('ignore');
-  });
-
-  it('dismisses only while the live route still selects the value that closed', () => {
-    const one = { id: 1 };
-    expect(selects({ id: 1 }, one, key)).toBe(true);
-    // The route already moved to another item, so a late close must not undo it.
-    expect(selects({ id: 2 }, one, key)).toBe(false);
-    expect(selects(undefined, one, key)).toBe(false);
-    expect(selects(one, undefined, key)).toBe(false);
+  it('treats only a close request that the page cannot refuse as forced', () => {
+    // The browser closes the dialog after a cancel event that cannot be
+    // canceled, whatever the drawer decides, so the page must dismiss it.
+    expect(isForcedClose({ cancelable: false, fromDialog: true })).toBe(true);
+    // The drawer decides about a cancelable request itself.
+    expect(isForcedClose({ cancelable: true, fromDialog: true })).toBe(false);
+    // A cancel that bubbled up from inside, such as a dismissed file picker,
+    // is no close request.
+    expect(isForcedClose({ cancelable: false, fromDialog: false })).toBe(false);
   });
 });

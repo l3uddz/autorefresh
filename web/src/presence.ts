@@ -18,68 +18,58 @@ export function afterExit<T>(shown: T | undefined, value: T | undefined): T | un
   return value === undefined ? undefined : shown;
 }
 
-/** Returns what a close event of the dialog asks for. A close event while
- * the dialog is open again is stale: it was queued before the drawer opened
- * again. Otherwise a selection that is still open closed without the page:
- * the browser closed the dialog, but the drawer did not pass the close
- * request on, so the page must dismiss the selection. Without a selection,
- * the exit slide ended and the drawer drops its value. */
-export function closeAction(isDialogOpen: boolean, isSelected: boolean): 'ignore' | 'dismiss' | 'drop' {
-  if (isDialogOpen) return 'ignore';
-  return isSelected ? 'dismiss' : 'drop';
-}
-
-/** Reports whether live, the selection of the current location, is the
- * closed value. A close event can come after the location moved on, and
- * then dismissing would undo the newer navigation. */
-export function selects<T>(live: T | undefined, closed: T | undefined, key: (value: T) => string): boolean {
-  return live !== undefined && closed !== undefined && key(live) === key(closed);
+/** Reports whether a cancel event of the dialog forces it closed. The
+ * browser closes the dialog after a close request that cannot be canceled,
+ * such as some Back gestures, also when the drawer does not pass it on, for
+ * example while a nested layer is on top. A cancel that bubbles up from
+ * inside is no close request. */
+export function isForcedClose({ cancelable, fromDialog }: { cancelable: boolean; fromDialog: boolean }): boolean {
+  return fromDialog && !cancelable;
 }
 
 /** Returns the value that a drawer shows, as nextShown decides, and a ref
- * for the Drawer. The ref listens for the close event of its dialog and
- * acts as closeAction decides: the event comes when the exit slide ends,
- * or when the browser closes the dialog by itself, as a Back gesture does,
- * and then onDismiss closes the selection if readLive, which reads the
- * selection of the current location, still selects the closed value. The value can also close before
- * the dialog opened. Then no slide runs, so a dialog that is closed after a
+ * for the Drawer. The ref listens on its dialog:
+ * - A cancel event that forces the dialog closed calls onDismiss at once, in
+ *   the task of the request, so the page closes the selection before
+ *   anything else can change the location.
+ * - The close event comes when the exit slide ends, and drops the value as
+ *   afterExit decides. A close event while the dialog is open again is
+ *   stale: it was queued before the drawer opened again.
+ * The value can also close before the dialog opened, or the browser can
+ * close the dialog without a slide. Then a dialog that is closed after a
  * render drops the value too. */
 export function useShown<T>(
   value: T | undefined,
   key: (value: T) => string,
   onDismiss: () => void,
-  readLive: () => T | undefined,
 ): [shown: T | undefined, ref: (dialog: HTMLDialogElement | null) => (() => void) | undefined] {
   const [shown, setShown] = useState(value);
   const next = nextShown(shown, value, key);
   if (next !== shown) setShown(next);
-  // The close event reads the values and callbacks of the latest render.
+  // The listeners read the value and the callback of the latest render.
   const latest = useRef(value);
-  const shownRef = useRef(next);
   const dismiss = useRef(onDismiss);
-  const live = useRef(readLive);
-  const keyRef = useRef(key);
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   // This effect runs after the effect of the Drawer, which starts the slide.
   useEffect(() => {
     latest.current = value;
-    shownRef.current = next;
     dismiss.current = onDismiss;
-    live.current = readLive;
-    keyRef.current = key;
     const dialog = dialogRef.current;
     if (dialog && !dialog.open) setShown(current => afterExit(current, value));
   });
   const ref = useCallback((dialog: HTMLDialogElement | null) => {
     dialogRef.current = dialog;
     if (!dialog) return undefined;
-    const onClose = () => {
-      const action = closeAction(dialog.open, selects(live.current(), shownRef.current, keyRef.current));
-      if (action === 'dismiss') dismiss.current();
-      if (action === 'drop') setShown(current => afterExit(current, latest.current));
+    const onCancel = (event: Event) => {
+      if (isForcedClose({ cancelable: event.cancelable, fromDialog: event.target === dialog })) dismiss.current();
     };
+    const onClose = () => {
+      if (!dialog.open) setShown(current => afterExit(current, latest.current));
+    };
+    dialog.addEventListener('cancel', onCancel);
     dialog.addEventListener('close', onClose);
     return () => {
+      dialog.removeEventListener('cancel', onCancel);
       dialog.removeEventListener('close', onClose);
       dialogRef.current = null;
     };

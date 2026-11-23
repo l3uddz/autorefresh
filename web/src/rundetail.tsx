@@ -17,7 +17,7 @@ import { useQuery } from '@tanstack/react-query';
 import { ApiError, api, type RunDetail, type RunRecord } from './api';
 import { dateTime, label, plural, runDuration, runTitle, titleYear } from './format';
 import { Poster } from './media';
-import { itemHash, parseRoute } from './route';
+import { itemHash } from './route';
 import { useShown } from './presence';
 import { noEntries, runCounts, runGroups, runPollInterval, type RunEntry, type RunGroup } from './runs';
 import { statusDots } from './status';
@@ -37,18 +37,12 @@ interface Props {
 export function RunDrawer({ id, isMulti, srv, onClose }: Props) {
   // The drawer keeps the run while it slides out, and drops it once the
   // slide ends. A new run starts at the top of its items.
-  const [shown, drawerRef] = useShown(id, String, onClose, liveRun);
+  const [shown, drawerRef] = useShown(id, String, onClose);
   return (
     <Drawer isOpen={id !== undefined} onOpenChange={open => !open && onClose()} ref={drawerRef} label="Run details" width={600} padding={0}>
       {shown !== undefined ? <RunDetails key={shown} id={shown} isMulti={isMulti} srv={srv} onClose={onClose} isPinned /> : null}
     </Drawer>
   );
-}
-
-/** Returns the run that the current location selects. */
-function liveRun(): number | undefined {
-  const route = parseRoute(window.location.hash);
-  return route.page === 'runs' ? route.run : undefined;
 }
 
 /** What the run id was, its counts, and its items grouped by outcome. In a
