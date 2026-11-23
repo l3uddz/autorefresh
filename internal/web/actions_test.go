@@ -338,7 +338,7 @@ func TestEpisodeCheckAnswersTheDiff(t *testing.T) {
 	}{
 		{"match", refresher.EpisodeResult{Match: true, Episodes: 10}, `{"match":true,"episodes":10}`},
 		{"no episodes", refresher.EpisodeResult{}, `{"match":false,"episodes":0}`},
-		{"differs", refresher.EpisodeResult{Diff: store.EpisodeDiff{Season: 3, Plex: 8, TMDB: 10}, Missing: []int{9, 10}},
+		{"differs", refresher.EpisodeResult{Diff: store.EpisodeDiff{Season: 3, Plex: 8, TMDB: 10, Missing: []int{9, 10}}},
 			`{"match":false,"episodes":0,"diff":{"season":3,"plex":8,"tmdb":10,"missing":[9,10]}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

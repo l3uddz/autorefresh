@@ -71,8 +71,8 @@ func TestEpisodeCheckComparesNumbers(t *testing.T) {
 		want EpisodeResult
 	}{
 		{"77", EpisodeResult{Match: true, Episodes: 2}},
-		{"78", EpisodeResult{Diff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 3}, Missing: []int{3, 4}, Extra: []int{2}}},
-		{"79", EpisodeResult{Diff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 2}, Missing: []int{3}, Extra: []int{2}}},
+		{"78", EpisodeResult{Diff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 3, Missing: []int{3, 4}, Extra: []int{2}}}},
+		{"79", EpisodeResult{Diff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 2, Missing: []int{3}, Extra: []int{2}}}},
 	} {
 		if got, err := f.r.EpisodeCheck(t.Context(), "home", "1", tc.id); err != nil || !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s: got %+v, %v, want %+v", tc.id, got, err, tc.want)

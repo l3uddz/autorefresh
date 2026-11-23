@@ -289,9 +289,6 @@ func (s *Server) serveEpisodeCheck(w http.ResponseWriter, r *http.Request) {
 		Episodes int              `json:"episodes"`
 		Diff     *episodeDiffJSON `json:"diff,omitempty"`
 	}{Match: result.Match, Episodes: result.Episodes, Diff: toEpisodeDiffJSON(result.Diff)}
-	if out.Diff != nil {
-		out.Diff.Missing, out.Diff.Extra = result.Missing, result.Extra
-	}
 	writeJSON(w, http.StatusOK, out)
 }
 

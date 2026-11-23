@@ -228,7 +228,7 @@ func TestDecisionYearDiffers(t *testing.T) {
 			"path tvdb-5: plex://show/old=year differs",
 			"tie tmdb-77: plex://show/old=confirms")
 		wantYears(t, e, 2022, 1978, 0)
-		wantEvidence(t, e, store.MatchEvidence{TMDBID: "77", EpisodeDiff: store.EpisodeDiff{Season: 2, Plex: 2, TMDB: 4}})
+		wantEvidence(t, e, store.MatchEvidence{TMDBID: "77", EpisodeDiff: store.EpisodeDiff{Season: 2, Plex: 2, TMDB: 4, Missing: []int{3, 4}}})
 	})
 	t.Run("no TMDB", func(t *testing.T) {
 		fp := newFakePlex(showsLib)

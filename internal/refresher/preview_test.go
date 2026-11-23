@@ -129,6 +129,6 @@ func TestPreviewMatchKeepsTheEvidence(t *testing.T) {
 	if dec.ItemYear != 2022 || dec.PathYear != 2022 || dec.TMDBYear != 1978 {
 		t.Errorf("years = item %d, path %d, tmdb %d, want 2022, 2022, 1978", dec.ItemYear, dec.PathYear, dec.TMDBYear)
 	}
-	want := store.MatchEvidence{TMDBID: "77", EpisodeDiff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 3}}
+	want := store.MatchEvidence{TMDBID: "77", EpisodeDiff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 3, Missing: []int{3}}}
 	wantEvidence(t, store.Event{MatchEvidence: dec.MatchEvidence}, want)
 }

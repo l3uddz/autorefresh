@@ -66,7 +66,7 @@ func toEpisodeDiffJSON(d store.EpisodeDiff) *episodeDiffJSON {
 	if d.Season == 0 {
 		return nil
 	}
-	return &episodeDiffJSON{Season: d.Season, Plex: d.Plex, TMDB: d.TMDB}
+	return &episodeDiffJSON{Season: d.Season, Plex: d.Plex, TMDB: d.TMDB, Missing: d.Missing, Extra: d.Extra}
 }
 
 // matchJSON is the candidate of a match request.

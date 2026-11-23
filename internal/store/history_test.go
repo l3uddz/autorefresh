@@ -417,7 +417,7 @@ func TestRecordMatchDecisionRoundTrips(t *testing.T) {
 		{Query: "tmdb-2", Source: "tmdb", FromID: "tvdb-9", Failed: true},
 	}
 	evidence := MatchEvidence{TMDBID: "77", TMDBSkip: TMDBFailed, TMDBMissing: []string{"tvdb-9", "imdb-tt1"},
-		EpisodeDiff: EpisodeDiff{Season: 3, Plex: 8, TMDB: 10}}
+		EpisodeDiff: EpisodeDiff{Season: 3, Plex: 8, TMDB: 10, Missing: []int{9, 10}, Extra: []int{11}}}
 	err := s.RecordMatchDecision(MatchDecision{
 		Server: srv, RatingKey: "a", At: at, Source: SourceManual, Outcome: DecisionMatched,
 		Conflict: "c", Error: "e", PathYear: 2020, TMDBYear: 2021, EpisodeCount: 8, Searches: searches,

@@ -131,7 +131,7 @@ func TestItemTimelineDropsUnsafeCandidateThumbs(t *testing.T) {
 		Server: "Home", RatingKey: "101", At: testNow.Add(-time.Minute), Source: store.SourceAuto,
 		Outcome: store.DecisionNoMatch, Conflict: "years differ", PathYear: 1979, TMDBYear: 1980, EpisodeCount: 3,
 		MatchEvidence: store.MatchEvidence{TMDBID: "348", TMDBSkip: store.TMDBFailed, TMDBMissing: []string{"imdb-tt1"},
-			EpisodeDiff: store.EpisodeDiff{Season: 2, Plex: 8, TMDB: 10}},
+			EpisodeDiff: store.EpisodeDiff{Season: 2, Plex: 8, TMDB: 10, Missing: []int{9, 10}}},
 		Searches: []store.MatchSearch{
 			{Query: "tmdb-348", Source: "path", Candidates: []store.MatchCandidate{
 				{GUID: "plex://movie/a", Name: "Alien", Year: 1979, Type: "movie", Summary: "In space.",
@@ -157,7 +157,7 @@ func TestItemTimelineDropsUnsafeCandidateThumbs(t *testing.T) {
 	}
 	evidence := map[string]any{
 		"tmdbId": "348", "tmdbSkip": "failed", "tmdbMissing": []any{"imdb-tt1"},
-		"episodeDiff": map[string]any{"season": 2.0, "plex": 8.0, "tmdb": 10.0},
+		"episodeDiff": map[string]any{"season": 2.0, "plex": 8.0, "tmdb": 10.0, "missing": []any{9.0, 10.0}},
 	}
 	for field, w := range evidence {
 		if !reflect.DeepEqual(e[field], w) {

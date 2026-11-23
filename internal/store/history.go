@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -77,10 +78,12 @@ const (
 )
 
 // EpisodeDiff is the first local season whose regular episode numbers
-// differ from TMDB, with the episode count of Plex and of TMDB. Season 0
-// means none.
+// differ from TMDB, with the episode count of Plex and of TMDB, and the
+// sorted episode numbers of the season that only TMDB (Missing), or only
+// Plex (Extra), has. Season 0 means none.
 type EpisodeDiff struct {
 	Season, Plex, TMDB int
+	Missing, Extra     []int
 }
 
 // MatchEvidence is what a fix match decision learned beyond its searches.
@@ -119,7 +122,7 @@ type Event struct {
 const eventColumns = `id, server, section, rating_key, at, kind, source, title, year, type, thumb, art, path,
 	action, accepted, outcome, error, match_guid, match_title, match_year, conflict, path_year, tmdb_year,
 	episode_count, links, fixed_action, fixed_match, fixed_match_event_id, run_id, tmdb_id, tmdb_skip, tmdb_missing,
-	episode_season, episode_plex, episode_tmdb`
+	episode_season, episode_plex, episode_tmdb, episode_missing, episode_extra`
 
 // Outcome is the outcome of the request: the action, with "-failed" when
 // Plex did not accept it, or "search-failed" without an action.
@@ -386,14 +389,14 @@ func insertEvent(tx *sql.Tx, e Event) (int64, error) {
 	res, err := tx.Exec(`INSERT INTO event (server, section, rating_key, at, kind, source, title, year, type, thumb, art, path,
 		action, accepted, outcome, error, match_guid, match_title, match_year, conflict, path_year, tmdb_year,
 		episode_count, links, fixed_action, fixed_match, fixed_match_event_id, run_id, tmdb_id, tmdb_skip, tmdb_missing,
-		episode_season, episode_plex, episode_tmdb)
+		episode_season, episode_plex, episode_tmdb, episode_missing, episode_extra)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT id FROM event WHERE id = ?),
-		(SELECT id FROM run WHERE id = ?), ?, ?, ?, ?, ?, ?)`,
+		(SELECT id FROM run WHERE id = ?), ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.Server, e.Section, e.RatingKey, e.At.Unix(), e.Kind, e.Source, e.Title, e.Year, e.Type, e.Thumb, e.Art, e.Path,
 		e.Action, e.Accepted, e.Outcome, e.Error, e.MatchGUID, e.MatchTitle, e.MatchYear, e.Conflict,
 		e.PathYear, e.TMDBYear, e.EpisodeCount, strings.Join(e.Links, "\n"), e.FixedAction, e.FixedMatch, e.FixedMatchEventID,
 		e.RunID, e.TMDBID, e.TMDBSkip, strings.Join(e.TMDBMissing, "\n"), e.EpisodeDiff.Season, e.EpisodeDiff.Plex,
-		e.EpisodeDiff.TMDB)
+		e.EpisodeDiff.TMDB, joinNumbers(e.EpisodeDiff.Missing), joinNumbers(e.EpisodeDiff.Extra))
 	if err != nil {
 		return 0, fmt.Errorf("write event: %w", err)
 	}
@@ -537,20 +540,55 @@ func scanEvent(row scanner) (Event, error) {
 		at      int64
 		links   string
 		missing string
+		onlyIn  [2]string // the episode numbers that only TMDB, and only Plex, has
 		fixedID sql.NullInt64
 		runID   sql.NullInt64
 	)
 	err := row.Scan(&e.ID, &e.Server, &e.Section, &e.RatingKey, &at, &e.Kind, &e.Source, &e.Title, &e.Year, &e.Type,
 		&e.Thumb, &e.Art, &e.Path, &e.Action, &e.Accepted, &e.Outcome, &e.Error, &e.MatchGUID, &e.MatchTitle,
 		&e.MatchYear, &e.Conflict, &e.PathYear, &e.TMDBYear, &e.EpisodeCount, &links, &e.FixedAction, &e.FixedMatch,
-		&fixedID, &runID, &e.TMDBID, &e.TMDBSkip, &missing, &e.EpisodeDiff.Season, &e.EpisodeDiff.Plex, &e.EpisodeDiff.TMDB)
+		&fixedID, &runID, &e.TMDBID, &e.TMDBSkip, &missing, &e.EpisodeDiff.Season, &e.EpisodeDiff.Plex, &e.EpisodeDiff.TMDB,
+		&onlyIn[0], &onlyIn[1])
 	if err != nil {
+		return Event{}, err
+	}
+	if e.EpisodeDiff.Missing, err = splitNumbers(onlyIn[0]); err != nil {
+		return Event{}, err
+	}
+	if e.EpisodeDiff.Extra, err = splitNumbers(onlyIn[1]); err != nil {
 		return Event{}, err
 	}
 	e.At = time.Unix(at, 0)
 	e.FixedMatchEventID, e.RunID = fixedID.Int64, runID.Int64
 	e.Links, e.TMDBMissing = lines(links), lines(missing)
 	return e, nil
+}
+
+// joinNumbers joins episode numbers with commas for a text column.
+func joinNumbers(numbers []int) string {
+	text := make([]string, len(numbers))
+	for i, n := range numbers {
+		text[i] = strconv.Itoa(n)
+	}
+	return strings.Join(text, ",")
+}
+
+// splitNumbers reads a text column of joinNumbers, and returns nil for an
+// empty one.
+func splitNumbers(text string) ([]int, error) {
+	if text == "" {
+		return nil, nil
+	}
+	fields := strings.Split(text, ",")
+	numbers := make([]int, len(fields))
+	for i, field := range fields {
+		n, err := strconv.Atoi(field)
+		if err != nil {
+			return nil, fmt.Errorf("read episode numbers: %w", err)
+		}
+		numbers[i] = n
+	}
+	return numbers, nil
 }
 
 // lines splits a text column of lines, and returns nil for an empty one.

@@ -37,13 +37,11 @@ func (r *Refresher) confirmEpisodeNumbers(ctx context.Context, run *serverRun, m
 
 // episodeComparison is the result of compareEpisodes. count is the number
 // of regular episodes when every local season matched. Otherwise diff is the
-// first season that differs, and missing and extra are the episode numbers
-// of that season that only TMDB, or only Plex, has. Both are zero when Plex
-// lists no complete regular episodes.
+// first season that differs. Both are zero when Plex lists no complete
+// regular episodes.
 type episodeComparison struct {
-	count          int
-	diff           store.EpisodeDiff
-	missing, extra []int
+	count int
+	diff  store.EpisodeDiff
 }
 
 // compareEpisodes compares the regular episode numbers of the series key in
@@ -62,10 +60,10 @@ func compareEpisodes(ctx context.Context, p Plex, t TMDB, key, id string) (episo
 		}
 		numbers := local[season]
 		if !sameEpisodeNumbers(numbers, catalog) {
-			return episodeComparison{
-				diff:    store.EpisodeDiff{Season: season, Plex: len(numbers), TMDB: len(catalog)},
-				missing: onlyIn(catalog, numbers), extra: onlyIn(numbers, catalog),
-			}, nil
+			return episodeComparison{diff: store.EpisodeDiff{
+				Season: season, Plex: len(numbers), TMDB: len(catalog),
+				Missing: onlyIn(catalog, numbers), Extra: onlyIn(numbers, catalog),
+			}}, nil
 		}
 		count += len(catalog)
 	}

@@ -222,8 +222,8 @@ search that returned the same candidate with an agreeing year gets "year
 agrees", and one without a year "not compared". A decision that failed
 after a year conflict keeps the conflict. It also keeps the TMDB ID that it checked and, for a
 series, the first local season whose episode numbers differ from TMDB,
-with the episode count of Plex and of TMDB. The Fix match dialog shows
-them.
+with the episode count of Plex and of TMDB and the episode numbers that
+only one of them has. The Fix match dialog shows them.
 
 If no match applies, autorefresh sends a plain refresh. If the IDs disagree,
 it also logs a `Match conflict` warning. The warning has the reason, the
@@ -709,7 +709,8 @@ stops checking.
 Beside the candidates, the dialog explains the last automatic fix match:
 its searches, their candidates, and why it picked one or none. A year
 conflict lists the years that it compared and the season whose episode
-numbers differ from TMDB. The TMDB search of the year check says "same
+numbers differ from TMDB, with the episode numbers that only Plex or only
+TMDB has. The TMDB search of the year check says "same
 item as `tmdb-<id>`" when Plex resolves that TMDB ID to the same
 candidate, which does not yet confirm the year. The panel also names the
 IDs that TMDB has no single entry for, and why TMDB was not asked. When the
