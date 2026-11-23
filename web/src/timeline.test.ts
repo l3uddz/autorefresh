@@ -166,20 +166,23 @@ describe('decision evidence', () => {
     const titleSearch = { query: 'Show', source: 'title', failed: false, candidates: [] };
     const title = (fields: Partial<TimelineEvent>) => event(1, 'match-decision', { searches: [titleSearch], itemYear: 2020, ...fields });
     expect(decisionView(title({ outcome: 'matched', episodeCount: 6, tmdbId: '88' })).detail).toBe(
-      'The title search found one series with the same title and year, and the episode numbers of 6 episodes from tmdb-88 confirmed it.',
+      'The title search found one series with the same title and a year within 1, and the episode numbers of 6 episodes from tmdb-88 confirmed it.',
     );
     expect(decisionView(title({ outcome: 'no-match', conflict: 'not confirmed', tmdbId: '88', episodeDiff: { season: 1, plex: 3, tmdb: 2, extra: [3] } })).detail).toBe(
-      'The title search found one series with the same title and year, but nothing confirmed it. The episode numbers differ from tmdb-88 in season 1: Plex has 3 episodes, and TMDB has 2. Only Plex has episode 3.',
+      'The title search found one series with the same title and a year within 1, but nothing confirmed it. The episode numbers differ from tmdb-88 in season 1: Plex has 3 episodes, and TMDB has 2. Only Plex has episode 3.',
     );
     expect(decisionView(title({ outcome: 'no-match', conflict: 'not confirmed' })).detail).toBe(
-      'The title search found one series with the same title and year, but nothing confirmed it. The Plex metadata provider has no TMDB ID for it.',
+      'The title search found one series with the same title and a year within 1, but nothing confirmed it. The Plex metadata provider has no TMDB ID for it.',
     );
     expect(decisionView(title({ outcome: 'no-match', conflict: 'folder id differs', tmdbId: '88' })).detail).toBe(
       'The Plex metadata provider gives tmdb-88 for the series that the title search found, but the folder names give another TMDB ID, or an ID that TMDB has several entries for.',
     );
     const otherTitle = { ...titleSearch, candidates: [{ guid: 'plex://show/o', year: 2015, score: 0, verdict: 'other title' }] };
     expect(decisionView(title({ outcome: 'no-match', searches: [otherTitle] })).detail).toBe(
-      'No result of the title search had the title and the year of the item, and of its folder.',
+      'No result of the title search had the title of the item and a year within 1 of the year of the item.',
+    );
+    expect(decisionView(title({ outcome: 'no-match', searches: [otherTitle], pathYear: 2012 })).detail).toBe(
+      'No result of the title search had the title of the item and a year within 1 of the year 2020 of the item and 2012 of its folder.',
     );
     expect(decisionView(title({ outcome: 'no-match' })).detail).toBe('No search found a candidate.');
     expect(decisionView(title({ outcome: 'failed', error: 'tmdb lookup: 500', tmdbId: '88' })).detail).toBe('tmdb lookup: 500');

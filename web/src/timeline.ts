@@ -218,7 +218,8 @@ function noMatchDetail(event: TimelineEvent): string {
   }
   if (event.conflict) return conflictText[event.conflict] ?? event.conflict;
   if (event.searches.some(s => s.source === 'title' && s.candidates.length > 0)) {
-    return 'No result of the title search had the title and the year of the item, and of its folder.';
+    const years = event.pathYear ? `the year ${event.itemYear ?? '?'} of the item and ${event.pathYear} of its folder` : 'the year of the item';
+    return `No result of the title search had the title of the item and a year within 1 of ${years}.`;
   }
   return 'No search found a candidate.';
 }
@@ -226,7 +227,7 @@ function noMatchDetail(event: TimelineEvent): string {
 /** Explains why the TMDB episode numbers did not confirm the series that
  * a title search found. */
 function titleUnconfirmed(event: TimelineEvent): string {
-  const found = 'The title search found one series with the same title and year, but nothing confirmed it.';
+  const found = 'The title search found one series with the same title and a year within 1, but nothing confirmed it.';
   if (event.episodeDiff) return `${found} ${episodeDiffText(event.episodeDiff, event.tmdbId)}`;
   if (event.tmdbId) return `${found} Plex lists no regular episodes to compare with tmdb-${event.tmdbId}.`;
   return `${found} The Plex metadata provider has no TMDB ID for it.`;
@@ -272,7 +273,7 @@ function outcomeView(event: TimelineEvent): EventView {
 /** Returns how the years of a decision confirmed its match, if they did. */
 function confirmation(event: TimelineEvent): string | undefined {
   if (event.episodeCount && searchedTitle(event)) {
-    return `The title search found one series with the same title and year, and the episode numbers of ${event.episodeCount} episodes from tmdb-${event.tmdbId ?? '?'} confirmed it.`;
+    return `The title search found one series with the same title and a year within 1, and the episode numbers of ${event.episodeCount} episodes from tmdb-${event.tmdbId ?? '?'} confirmed it.`;
   }
   if (event.episodeCount) return `The episode numbers of ${event.episodeCount} episodes confirmed the candidate.`;
   if (event.tmdbYear) return `TMDB confirmed the year ${event.tmdbYear}.`;
