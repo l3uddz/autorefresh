@@ -353,7 +353,7 @@ func TestApplyMatchStopsWhenRowLeavesCache(t *testing.T) {
 	if *checks != 0 || len(f.sleeps) != 1 {
 		t.Errorf("checks %d, sleeps %v; want no check after 1 wait", *checks, f.sleeps)
 	}
-	if strings.Contains(buf.String(), "Following up a manual match failed") {
+	if strings.Contains(buf.String(), "Following up a match failed") {
 		t.Errorf("log warns about a row that a run removed: %s", buf)
 	}
 }
