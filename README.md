@@ -567,7 +567,9 @@ address keeps the choice, so a link or a reload shows the same server.
   Its **Sort** menu sorts by the same columns as Table mode, such as tries
   or next due. A new sort starts in its natural direction, for example the
   most tries first, and the arrow button beside it reverses it. Both modes
-  share the sort of each tab.
+  share the sort of each tab. **Default order** lists the items with the
+  most tries first on Attention, the most recently stopped first on
+  Stopped, and the most recently fixed first on Fixed.
   **Table** mode shows the items as text rows. It renders only the rows on
   screen, so it stays fast with many items. It can sort the items and
   select several items, or every item that matches the filters, for a bulk
@@ -658,9 +660,14 @@ checks the item as **Check now** does, after waits of 1, 2, and 4 seconds,
 while Plex loads the new metadata. An item that a check finds complete
 moves to the Fixed tab at once. Otherwise the next run reads it again.
 Beside the candidates, the dialog explains the last automatic fix match:
-its searches, their candidates, and why it picked one or none. Searches in
-the dialog call Plex but record nothing. An applied match is recorded in
-the history of the item.
+its searches, their candidates, and why it picked one or none. When the
+history holds no automatic fix match of the item, **Try automatic fix
+match** runs one now as a preview. The preview uses the same code as a
+run, also for an item that a run would not try, and shows its decision in
+the same way. It marks the candidate that it picked, which you can then
+apply with **Match**. The preview records nothing, saves nothing to the
+cache, and sends no match to Plex. Searches in the dialog call Plex but
+record nothing. An applied match is recorded in the history of the item.
 
 The dashboard asks before it stops work on an item, applies a match, or
 refreshes items in bulk. It updates live while the event stream is
