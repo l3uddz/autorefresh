@@ -79,9 +79,20 @@ describe('run groups', () => {
       event('1', 'match-decision', { outcome: 'no-ids' }),
     ]));
     expect(groups).toEqual([['Not sent', [
-      ['1', 'Fix match: matched', 'The run ended before the request', 'attention'],
+      ['1', 'Fix match: matched', 'A later decision replaced it', 'attention'],
       ['1', 'Fix match: no folder IDs', 'The run ended before the request', 'attention'],
     ]]]);
+  });
+
+  it('does not say that a running run ended for a replaced decision', () => {
+    const groups = shape(detail([
+      event('1', 'match-decision', { outcome: 'matched' }),
+      event('1', 'match-decision', { outcome: 'no-ids' }),
+    ], { status: 'running' }));
+    expect(groups).toEqual([
+      ['In progress', [['1', 'Fix match: no folder IDs', 'Its request is not sent yet', 'attention']]],
+      ['Not sent', [['1', 'Fix match: matched', 'A later decision replaced it', 'attention']]],
+    ]);
   });
 
   it('joins a match decision to the removal of its item', () => {

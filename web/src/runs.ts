@@ -163,7 +163,7 @@ function eventEntries(events: RunEvent[], isRunning: boolean): [string, RunEntry
   for (const event of events) {
     if (event.kind === 'match-decision') {
       const earlier = decisions.get(event.key);
-      if (earlier) entries.push(pendingEntry(earlier, false));
+      if (earlier) entries.push(replacedEntry(earlier));
       decisions.set(event.key, event);
       continue;
     }
@@ -187,6 +187,13 @@ function pendingEntry(decision: RunEvent, isWaiting: boolean): [string, RunEntry
   if (decision.outcome === 'failed') return ['failed', eventEntry(decision)];
   if (isWaiting) return ['in-progress', { ...eventEntry(decision), detail: 'Its request is not sent yet' }];
   return ['not-sent', { ...eventEntry(decision), detail: 'The run ended before the request' }];
+}
+
+/** Returns the entry of a decision that a later decision of its item
+ * replaced before a request. A failed search keeps its error. */
+function replacedEntry(decision: RunEvent): [string, RunEntry] {
+  if (decision.outcome === 'failed') return ['failed', eventEntry(decision)];
+  return ['not-sent', { ...eventEntry(decision), detail: 'A later decision replaced it' }];
 }
 
 /** How often the details of a running run reload. */
