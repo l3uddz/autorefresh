@@ -420,3 +420,17 @@ func TestBulkReportsLibraryOfItem(t *testing.T) {
 		t.Errorf("next calls = %q, want one for item 2", got)
 	}
 }
+
+func TestBulkReportsKeyOfUnknownItem(t *testing.T) {
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: newFakePlex(moviesLib)})
+	p := withProgress(f)
+	jobs := NewJobs(f.r)
+	t.Cleanup(jobs.Close)
+	if _, err := jobs.BulkRefresh(testServer, []string{"9"}); err != nil {
+		t.Fatal(err)
+	}
+	jobs.wg.Wait()
+	if items := p.startedItems(); len(items) != 1 || items[0].RatingKey != "9" {
+		t.Errorf("started items = %+v, want item 9", items)
+	}
+}
