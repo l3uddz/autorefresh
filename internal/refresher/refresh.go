@@ -343,7 +343,9 @@ func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Libr
 func (r *Refresher) autoMatch(ctx context.Context, run *serverRun, lib plex.Library, it store.Item) (evaluation, store.MatchDecision, error) {
 	d := &decisionLog{}
 	ev, err := r.evaluateMatch(ctx, run, lib, it, d)
-	return ev, d.decision(ev, err), err
+	dec := d.decision(ev, err)
+	dec.ItemYear = it.Year
+	return ev, dec, err
 }
 
 // evaluateMatch searches the fix match of the item and logs each search in
@@ -364,7 +366,9 @@ func (r *Refresher) evaluateMatch(ctx context.Context, run *serverRun, lib plex.
 	}
 
 	action := store.ActionMatch
-	if !run.tmdbFailed && r.useTMDB(ids, results) {
+	skip, reason := r.skipFallback(run, it, ids, results)
+	d.skipTMDB(reason)
+	if !skip {
 		if results, err = r.tmdbFallback(ctx, run, lib, it, ids, d); err != nil {
 			return evaluation{}, err
 		}
@@ -384,7 +388,9 @@ func (r *Refresher) resolveMatch(ctx context.Context, run *serverRun, mc matchCo
 	if conflict == conflictYear {
 		var err error
 		if yr, err = r.confirmYear(ctx, run, mc); err != nil {
-			return evaluation{}, err
+			// The decision keeps the conflict and the years compared before
+			// the failure.
+			return evaluation{conflict: conflict, years: yr}, err
 		}
 		if yr.ok {
 			cand, match, conflict = yr.cand, true, ""
@@ -397,7 +403,7 @@ func (r *Refresher) resolveMatch(ctx context.Context, run *serverRun, mc matchCo
 		}
 		ev.Strs("candidates", describeCandidates(mc.results, show)).Msg("Match conflict")
 	}
-	mc.d.judge(mc.results, cand, conflict)
+	mc.d.judge(mc.results, cand, conflict, mc.it.Year)
 	result := evaluation{conflict: conflict, years: yr}
 	if !match {
 		return result, nil

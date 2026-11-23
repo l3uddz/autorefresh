@@ -16,7 +16,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { ApiError, api, invalidateLists, itemParams, post, type ItemDetail as Detail, type ItemRecord, type LiveItem, type ServerInfo, type TimelineEvent } from './api';
 import { useNow } from './clock';
-import { dateTime, fixedBy, label, lastAction, plural, queueState, relative, titleYear, typeName } from './format';
+import { dateTime, fixedBy, label, lastAction, plexCounts, plural, queueState, relative, titleYear, typeName } from './format';
 import { askThen } from './confirm';
 import { Backdrop, Poster, Reasons } from './media';
 import { actionError } from './errors';
@@ -107,8 +107,7 @@ function DetailBody({ detail, server, ignored, params }: BodyProps) {
   const facts = [
     typeName(item.type),
     item.year,
-    live.data?.seasons !== undefined ? plural(live.data.seasons, 'season') : undefined,
-    live.data?.episodes !== undefined ? plural(live.data.episodes, 'episode') : undefined,
+    ...plexCounts(live.data),
     item.library,
   ].filter(Boolean);
   const path = live.data?.path || item.path;
@@ -155,7 +154,7 @@ function DetailBody({ detail, server, ignored, params }: BodyProps) {
         )}
         {match && <MetadataListItem label="Match">{match}</MetadataListItem>}
       </MetadataList>
-      <DetailActions item={item} server={server} params={params} timeline={timeline} liveGuid={live.data?.guid} />
+      <DetailActions item={item} server={server} params={params} timeline={timeline} live={live.data} />
       <ItemTimeline timeline={timeline} />
     </>
   );
@@ -187,10 +186,11 @@ interface ActionProps {
   server?: ServerInfo;
   params: string;
   timeline: TimelineEvent[];
-  liveGuid?: string;
+  /** What Plex tells about the item now, from the live view. */
+  live?: LiveItem;
 }
 
-function DetailActions({ item, server, params, timeline, liveGuid }: ActionProps) {
+function DetailActions({ item, server, params, timeline, live }: ActionProps) {
   const [isMatching, setIsMatching] = useState(false);
   const client = useQueryClient();
   const showToast = useToast();
@@ -274,7 +274,7 @@ function DetailActions({ item, server, params, timeline, liveGuid }: ActionProps
         </Text>
       )}
       {confirm.element}
-      <FixMatchDialog isOpen={isMatching} onClose={() => setIsMatching(false)} item={item} params={params} timeline={timeline} liveGuid={liveGuid} />
+      <FixMatchDialog isOpen={isMatching} onClose={() => setIsMatching(false)} item={item} params={params} timeline={timeline} live={live} />
     </VStack>
   );
 }

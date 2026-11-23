@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -285,7 +286,9 @@ func TestAutoMatchAnswersTheDecisionRedacted(t *testing.T) {
 	const secret = "fake-private-token"
 	at := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 	actions := fakeAutoMatch{decision: store.MatchDecision{
-		At: at, Source: store.SourceAuto, Outcome: store.DecisionMatched, PathYear: 2018,
+		At: at, Source: store.SourceAuto, Outcome: store.DecisionMatched, PathYear: 2018, ItemYear: 2016,
+		MatchEvidence: store.MatchEvidence{TMDBID: "1", TMDBMissing: []string{"tvdb-5"},
+			EpisodeDiff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 3}},
 		Error: "search failed at " + secret,
 		Searches: []store.MatchSearch{{Query: "tmdb-1", Source: "path", Candidates: []store.MatchCandidate{
 			{GUID: "plex://movie/1", Verdict: "picked", Thumb: "https://example.invalid/1?sig=" + secret},
@@ -300,6 +303,10 @@ func TestAutoMatchAnswersTheDecisionRedacted(t *testing.T) {
 	if got.Kind != "match-decision" || got.Source != "auto" || got.Outcome != "matched" || !got.At.Equal(at) || got.PathYear != 2018 {
 		t.Errorf("decision = %+v", got)
 	}
+	if got.ItemYear != 2016 || got.TMDBID != "1" || !reflect.DeepEqual(got.TMDBMissing, []string{"tvdb-5"}) ||
+		!reflect.DeepEqual(got.EpisodeDiff, &episodeDiffJSON{Season: 1, Plex: 2, TMDB: 3}) {
+		t.Errorf("evidence = %+v", got)
+	}
 	if len(got.Searches) != 1 || len(got.Searches[0].Candidates) != 1 ||
 		got.Searches[0].Candidates[0].Verdict != "picked" || got.Searches[0].Candidates[0].Thumb != "" {
 		t.Errorf("searches = %+v", got.Searches)
@@ -311,5 +318,37 @@ func TestAutoMatchOfGoneItemAnswers404(t *testing.T) {
 	rec := serve(server, httptest.NewRequest(http.MethodGet, "/api/item/auto-match?srv=0&key=1", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+}
+
+type fakeEpisodeCheck struct {
+	Actions
+	result refresher.EpisodeResult
+}
+
+func (a fakeEpisodeCheck) EpisodeCheck(context.Context, string, string, string) (refresher.EpisodeResult, error) {
+	return a.result, nil
+}
+
+func TestEpisodeCheckAnswersTheDiff(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result refresher.EpisodeResult
+		want   string
+	}{
+		{"match", refresher.EpisodeResult{Match: true, Episodes: 10}, `{"match":true,"episodes":10}`},
+		{"no episodes", refresher.EpisodeResult{}, `{"match":false,"episodes":0}`},
+		{"differs", refresher.EpisodeResult{Diff: store.EpisodeDiff{Season: 3, Plex: 8, TMDB: 10, Missing: []int{9, 10}}},
+			`{"match":false,"episodes":0,"diff":{"season":3,"plex":8,"tmdb":10,"missing":[9,10]}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(Options{Actions: fakeEpisodeCheck{result: tc.result}, Servers: []PlexServer{{Name: "home"}}})
+			req := httptest.NewRequest(http.MethodPost, "/api/item/episode-check?srv=0&key=1&tmdb=77", nil)
+			req.Header.Set("Content-Type", "application/json")
+			rec := serve(s, req)
+			if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != tc.want {
+				t.Errorf("status %d, body %s, want %s", rec.Code, rec.Body, tc.want)
+			}
+		})
 	}
 }

@@ -1,6 +1,7 @@
-import type { Candidate, MatchSearch, TimelineEvent } from './api';
+import { queryOptions } from '@tanstack/react-query';
+import { api, type Candidate, type CandidateSeries, type MatchSearch, type TimelineEvent } from './api';
 import { maxSearchBytes } from './bulk';
-import { verdictName } from './timeline';
+import { rowVerdict, verdictName } from './timeline';
 
 // The evidence of the Fix match dialog: candidates grouped by Plex GUID,
 // with the searches that found each one. Every Plex field stays text.
@@ -25,7 +26,7 @@ export interface CandidateGroup {
   candidate: Candidate;
   foundBy: Evidence[];
   /** The one TMDB ID that a search tied to this candidate, if exactly one
-   * did. Only such a candidate offers the episode check. */
+   * did. It wins over the TMDB ID of the metadata provider. */
   tmdbId?: string;
 }
 
@@ -140,13 +141,64 @@ export function isCurrentMatch(group: CandidateGroup, liveGuid: string | undefin
   return Boolean(liveGuid && group.guid && group.guid === liveGuid);
 }
 
-/** Reports whether group offers the TMDB episode check: a candidate of a
- * series, tied to one TMDB ID, while autorefresh has a TMDB token. A
+/** Reports whether group is a series candidate of a series item. A
  * candidate without a type counts as a series, because the search of a
  * series item uses the series agent; a candidate of another type does not. */
-export function offersEpisodeCheck(group: CandidateGroup, itemType: string | undefined, isTMDBOn: boolean): boolean {
+function isSeriesCandidate(group: CandidateGroup, itemType: string | undefined): boolean {
   const type = group.candidate.type;
-  return isTMDBOn && itemType === 'show' && (!type || type === 'show') && group.guid !== '' && group.tmdbId !== undefined;
+  return itemType === 'show' && (!type || type === 'show') && group.guid !== '';
+}
+
+// The plex:// GUID of a series, which the metadata provider describes.
+const providerGuid = /^plex:\/\/show\/[0-9a-f]{24}$/;
+
+/** Reports whether the dialog asks the metadata provider about group: a
+ * series candidate of a series item with a plex:// series GUID, once the
+ * live status names boot, the process of the service. Before that, the
+ * cache key of the answer would change under the request. */
+export function asksProvider(group: CandidateGroup, itemType: string | undefined, boot: string | undefined): boolean {
+  return boot !== undefined && isSeriesCandidate(group, itemType) && providerGuid.test(group.guid);
+}
+
+/** Returns the TMDB ID of the episode check of group, if it offers one: a
+ * series candidate with a TMDB ID, while autorefresh has a TMDB token. A
+ * search that tied the candidate to an ID wins over providerId, the TMDB ID
+ * of the metadata provider. */
+export function episodeCheckId(group: CandidateGroup, itemType: string | undefined, isTMDBOn: boolean, providerId?: string): string | undefined {
+  return isTMDBOn && isSeriesCandidate(group, itemType) ? group.tmdbId ?? providerId : undefined;
+}
+
+/** The series of a candidate from the metadata provider, asked with the
+ * token of the server of the item params. boot is the process of the
+ * service: a restart can renumber the servers, so the cache starts again. The answer depends on the server
+ * and the GUID only, so items share it. The provider is a remote service,
+ * so each GUID is asked once while the page is open: no refetch, no retry,
+ * also not when the dialog opens again after a failure, and the answer
+ * stays in the cache.
+ * The request takes no abort signal, so closing the dialog lets it finish
+ * into the cache instead of starting it again on the next open. Its key is
+ * outside the item prefix. */
+export function candidateQuery(params: string, guid: string, boot: string | undefined) {
+  const srv = new URLSearchParams(params).get('srv') ?? '';
+  return queryOptions({
+    queryKey: ['candidate', boot, srv, guid],
+    queryFn: () => api<CandidateSeries>(`candidate?${new URLSearchParams({ srv, guid })}`),
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    retryOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+}
+
+export type EpisodeCountCheck = { kind: 'same' | 'differs'; episodes: number; yours: number } | { kind: 'unknown' };
+
+/** Compares the episode count of a candidate with the count that Plex has
+ * for the item. Only an absent count is unknown; 0 is a count. */
+export function compareEpisodeCount(itemEpisodes: number | undefined, candidateEpisodes: number | undefined): EpisodeCountCheck {
+  if (itemEpisodes === undefined || candidateEpisodes === undefined) return { kind: 'unknown' };
+  return { kind: itemEpisodes === candidateEpisodes ? 'same' : 'differs', episodes: candidateEpisodes, yours: itemEpisodes };
 }
 
 export type YearCheck = { kind: 'same' | 'off' | 'differs'; year: number; diff: number } | { kind: 'unknown' };
@@ -170,7 +222,7 @@ export interface AutoEvidence {
 export function autoEvidence(decision: TimelineEvent | undefined, guid: string): AutoEvidence[] {
   if (!decision || !guid) return [];
   return decision.searches.flatMap(search =>
-    search.candidates.filter(c => c.guid === guid).map(c => ({ query: search.query, verdict: c.verdict })),
+    search.candidates.filter(c => c.guid === guid).map(c => ({ query: search.query, verdict: rowVerdict(c, decision.itemYear) })),
   );
 }
 
@@ -187,7 +239,7 @@ export function previewSearches(decision: TimelineEvent | undefined): MatchSearc
  * fix match, or of a preview. */
 export function autoEvidenceText(evidence: AutoEvidence, isPreview: boolean): string {
   const by = isPreview ? 'The automatic fix match preview' : 'The last automatic fix match';
-  const verdict = verdictName(evidence.verdict);
+  const verdict = verdictName(evidence.verdict, evidence);
   return `${by} found it via ${evidence.query}${verdict ? `: ${verdict}` : ''}`;
 }
 
@@ -257,6 +309,36 @@ export function matchesPath(params: string, search?: TypedSearch): string {
  * preview of the item params. */
 export function autoMatchPath(params: string): string {
   return `item/auto-match?${new URLSearchParams(params)}`;
+}
+
+/** The automatic fix match preview of the item params. It calls Plex and
+ * maybe TMDB, so it runs only on request (refetch), never by itself: not
+ * on mount, focus, or a reconnect, and with no retry. Its answer stays in
+ * the cache while the page is open, so the Fix match dialog shows it again
+ * when it reopens for the item. boot is the process of the service: a
+ * restart can renumber the servers, so params can name another item, and
+ * the cache starts again. Its key is outside the item prefix, which
+ * invalidateLists refreshes. */
+export function previewQuery(params: string, boot: string | undefined) {
+  return queryOptions({
+    queryKey: ['auto-match', boot, params],
+    queryFn: ({ signal }) => api<TimelineEvent>(autoMatchPath(params), { signal }),
+    enabled: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+}
+
+/** Returns the newer of the preview and the last automatic decision, so a
+ * run that decided after the preview replaces it. Both times have whole
+ * seconds, so a decision of the same second as the preview cannot be
+ * ordered; the recorded decision then wins. */
+export function newerDecision(preview: TimelineEvent | undefined, last: TimelineEvent | undefined): TimelineEvent | undefined {
+  if (!preview || !last) return preview ?? last;
+  return Date.parse(last.at ?? '') >= Date.parse(preview.at ?? '') ? last : preview;
 }
 
 /** The body of POST /api/item/match: exactly the fields that the API

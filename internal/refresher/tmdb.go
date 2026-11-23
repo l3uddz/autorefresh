@@ -27,42 +27,58 @@ var (
 	errCache = errors.New("cache")
 )
 
-// useTMDB reports whether a fix match asks TMDB for the TMDB IDs of the path
-// IDs: a TMDB client is set, no search found a candidate, and the paths
-// hold no tmdb ID that Plex already searched.
-func (r *Refresher) useTMDB(ids []pathID, results []searchResult) bool {
-	if r.opts.TMDB == nil {
-		return false
-	}
-	for _, id := range ids {
-		if id.Source == "tmdb" {
-			return false
-		}
-	}
+// skipFallback reports whether a fix match skips the TMDB fallback, which
+// asks TMDB for the TMDB IDs of the path IDs. reason says why TMDB could
+// have helped but is not asked: the paths hold a tmdb ID that Plex already
+// searched, they hold no ID that TMDB translates, TMDB is off, or an earlier
+// TMDB failure of the run turned it off. The reasons of the paths come
+// first, because a token or a later run does not change them. A search that
+// found a candidate needs no fallback, so it skips without a reason.
+func (r *Refresher) skipFallback(run *serverRun, it store.Item, ids []pathID, results []searchResult) (skip bool, reason string) {
 	for _, res := range results {
 		if len(res.candidates) > 0 {
-			return false
+			return true, ""
 		}
 	}
-	return true
+	switch {
+	case slices.ContainsFunc(ids, func(id pathID) bool { return id.Source == "tmdb" }):
+		return true, store.TMDBHasID
+	case !slices.ContainsFunc(ids, func(id pathID) bool { return tmdbSource(id, it.Type) }):
+		return true, store.TMDBNoSource
+	case r.opts.TMDB == nil:
+		return true, store.TMDBOff
+	case run.tmdbFailed:
+		return true, store.TMDBFailed
+	}
+	return false, ""
+}
+
+// tmdbSource reports whether TMDB translates the path ID of an item of the
+// type itemType: an imdb ID, or the tvdb ID of a series.
+func tmdbSource(id pathID, itemType string) bool {
+	return id.Source == "imdb" || (id.Source == "tvdb" && itemType == plex.ShowLibrary)
 }
 
 // tmdbResults translates the imdb path IDs, and the tvdb path IDs of a
 // series, to TMDB IDs and searches Plex once for each different TMDB ID. It
-// logs each search in d.
+// logs each search, and each ID that TMDB has no single entry for, in d.
 func (r *Refresher) tmdbResults(ctx context.Context, run *serverRun, lib plex.Library, it store.Item, ids []pathID, d *decisionLog) ([]searchResult, error) {
 	srv := run.server
 	var results []searchResult
 	searched := map[string]bool{}
 	for _, from := range ids {
-		if from.Source != "imdb" && (from.Source != "tvdb" || it.Type != plex.ShowLibrary) {
+		if !tmdbSource(from, it.Type) {
 			continue
 		}
 		tmdbID, ok, err := r.tmdbID(ctx, srv.Name, it, from, !run.preview)
 		if err != nil {
 			return nil, err
 		}
-		if !ok || searched[tmdbID] {
+		if !ok {
+			d.noTMDBEntry(from)
+			continue
+		}
+		if searched[tmdbID] {
 			continue
 		}
 		searched[tmdbID] = true
@@ -119,6 +135,7 @@ type matchContext struct {
 type yearResolution struct {
 	cand         plex.Candidate
 	ok           bool
+	folderYear   int    // the (YYYY) release year of the paths, if they have one
 	pathYear     int    // >0 when the path's (YYYY) confirmed the candidate
 	tmdbYear     int    // >0 when TMDB returned a canonical year
 	episodeCount int    // number of regular episodes that confirmed a series
@@ -130,17 +147,28 @@ type yearResolution struct {
 //     Plex misparsed a bare year in the title), and
 //  2. TMDB's canonical year or regular episode numbers, after confirming
 //     Plex resolves the TMDB ID to the same GUID.
+//
+// The resolution keeps the year of the paths, also when it confirmed
+// nothing. mc.d logs why TMDB was not asked.
 func (r *Refresher) confirmYear(ctx context.Context, run *serverRun, mc matchContext) (yearResolution, error) {
 	pathYear := parsePathYear(mc.paths, mc.it.Type == plex.ShowLibrary)
 	if pathYear != 0 && pathYear != mc.it.Year {
 		if cand, ok, _ := chooseMatch(pathYear, mc.results); ok {
-			return yearResolution{cand: cand, ok: true, pathYear: pathYear}, nil
+			return yearResolution{cand: cand, ok: true, folderYear: pathYear, pathYear: pathYear}, nil
 		}
 	}
-	if r.opts.TMDB == nil || run.tmdbFailed {
-		return yearResolution{}, nil
+	var res yearResolution
+	var err error
+	switch {
+	case r.opts.TMDB == nil:
+		mc.d.skipTMDB(store.TMDBOff)
+	case run.tmdbFailed:
+		mc.d.skipTMDB(store.TMDBFailed)
+	default:
+		res, err = r.confirmWithTMDB(ctx, run, mc, pathYear)
 	}
-	return r.confirmWithTMDB(ctx, run, mc, pathYear)
+	res.folderYear = pathYear
+	return res, err
 }
 
 // confirmWithTMDB resolves the item to a single TMDB ID, verifies Plex
@@ -174,12 +202,17 @@ func (r *Refresher) confirmWithTMDB(ctx context.Context, run *serverRun, mc matc
 	return resolution, nil
 }
 
+// compareTMDBEvidence compares the years, and for a series then the
+// regular episode numbers, with those of the TMDB ID tmdbID. It logs the ID
+// in mc.d once TMDB answered the year request, so a failed request records
+// no TMDB answer.
 func (r *Refresher) compareTMDBEvidence(ctx context.Context, run *serverRun, mc matchContext, tmdbID string, pathYear int) (yearResolution, error) {
 	show := mc.it.Type == plex.ShowLibrary
 	year, ok, err := r.opts.TMDB.Year(ctx, tmdbID, show)
 	if err != nil {
 		return yearResolution{}, r.confirmationLookupFailed(ctx, run, mc, tmdbID, err)
 	}
+	mc.d.evidence.TMDBID = tmdbID
 	result := yearResolution{tmdbYear: year, ok: ok && yearConfirms(mc.it.Year, pathYear, year)}
 	if result.ok || !show {
 		return result, nil
@@ -221,10 +254,11 @@ func (r *Refresher) resolveOneTMDBID(ctx context.Context, run *serverRun, mc mat
 }
 
 // singlePathTMDBID checks that the item's translated path IDs agree with
-// each other and with only, the TMDB ID already found, if any.
+// each other and with only, the TMDB ID already found, if any. It logs each
+// ID that TMDB has no single entry for in mc.d.
 func (r *Refresher) singlePathTMDBID(ctx context.Context, run *serverRun, mc matchContext, only string) (string, error) {
 	for _, id := range mc.ids {
-		if id.Source != "imdb" && (id.Source != "tvdb" || mc.it.Type != plex.ShowLibrary) {
+		if !tmdbSource(id, mc.it.Type) {
 			continue
 		}
 		tmdbID, ok, err := r.tmdbID(ctx, run.server.Name, mc.it, id, !run.preview)
@@ -232,6 +266,7 @@ func (r *Refresher) singlePathTMDBID(ctx context.Context, run *serverRun, mc mat
 			return "", err
 		}
 		if !ok {
+			mc.d.noTMDBEntry(id)
 			continue
 		}
 		if only != "" && only != tmdbID {

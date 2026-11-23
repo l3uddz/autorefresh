@@ -3,8 +3,10 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -70,7 +72,8 @@ func TestItemFromRowAndHistory(t *testing.T) {
 		t.Errorf("request id = %v", req["id"])
 	}
 	assertTime(t, req, "at", requested.Truncate(time.Second))
-	assertAbsent(t, req, "error", "conflict", "episodeCount", "fixedAction", "fixedMatch", "fixedMatchEventId")
+	assertAbsent(t, req, "error", "conflict", "episodeCount", "fixedAction", "fixedMatch", "fixedMatchEventId",
+		"itemYear", "tmdbId", "tmdbSkip", "tmdbMissing", "episodeDiff")
 	if !strings.Contains(body, `"searches":[]`) {
 		t.Errorf("body has no empty searches: %s", body)
 	}
@@ -121,10 +124,14 @@ func TestItemFromRowAndHistory(t *testing.T) {
 
 func TestItemTimelineDropsUnsafeCandidateThumbs(t *testing.T) {
 	st := openStore(t)
-	readLibrary(t, st, "Home", "1", testNow, movie("101", "Alien", store.Unmatched, time.Time{}))
+	alien := movie("101", "Alien", store.Unmatched, time.Time{})
+	alien.Year = 1978
+	readLibrary(t, st, "Home", "1", testNow, alien)
 	err := st.RecordMatchDecision(store.MatchDecision{
 		Server: "Home", RatingKey: "101", At: testNow.Add(-time.Minute), Source: store.SourceAuto,
 		Outcome: store.DecisionNoMatch, Conflict: "years differ", PathYear: 1979, TMDBYear: 1980, EpisodeCount: 3,
+		MatchEvidence: store.MatchEvidence{TMDBID: "348", TMDBSkip: store.TMDBFailed, TMDBMissing: []string{"imdb-tt1"},
+			EpisodeDiff: store.EpisodeDiff{Season: 2, Plex: 8, TMDB: 10, Missing: []int{9, 10}}},
 		Searches: []store.MatchSearch{
 			{Query: "tmdb-348", Source: "path", Candidates: []store.MatchCandidate{
 				{GUID: "plex://movie/a", Name: "Alien", Year: 1979, Type: "movie", Summary: "In space.",
@@ -147,6 +154,18 @@ func TestItemTimelineDropsUnsafeCandidateThumbs(t *testing.T) {
 	if e["kind"] != "match-decision" || e["outcome"] != "no-match" || e["conflict"] != "years differ" ||
 		e["pathYear"] != 1979.0 || e["tmdbYear"] != 1980.0 || e["episodeCount"] != 3.0 || e["accepted"] != false {
 		t.Errorf("event = %v", e)
+	}
+	evidence := map[string]any{
+		"tmdbId": "348", "tmdbSkip": "failed", "tmdbMissing": []any{"imdb-tt1"},
+		"episodeDiff": map[string]any{"season": 2.0, "plex": 8.0, "tmdb": 10.0, "missing": []any{9.0, 10.0}},
+	}
+	for field, w := range evidence {
+		if !reflect.DeepEqual(e[field], w) {
+			t.Errorf("decision %s = %#v, want %#v", field, e[field], w)
+		}
+	}
+	if e["itemYear"] != 1978.0 {
+		t.Errorf("decision itemYear = %v, want the year of the row", e["itemYear"])
 	}
 	assertAbsent(t, e, "match", "action", "links")
 	searches, _ := e["searches"].([]any)
@@ -564,5 +583,79 @@ func TestItemLiveTimesOut(t *testing.T) {
 	assertJSONError(t, rec, http.StatusBadGateway, "Plex unavailable")
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Errorf("answer took %v, want about 50ms", elapsed)
+	}
+}
+
+func candidateServer(t *testing.T, series func(context.Context, string) (plex.Series, error)) *Server {
+	t.Helper()
+	return newServerWith(openStore(t), 0, []PlexServer{{Name: "Home", Plex: &fakePlex{series: series}}})
+}
+
+func TestItemCandidate(t *testing.T) {
+	const guid = "plex://show/000000000000000000000001"
+	var asked []string
+	s := candidateServer(t, func(_ context.Context, g string) (plex.Series, error) {
+		asked = append(asked, g)
+		if g != guid {
+			return plex.Series{}, fmt.Errorf("provider series: %w", plex.ErrNotFound)
+		}
+		seasons, episodes := 1, 0
+		return plex.Series{TMDBID: "48213", Seasons: &seasons, Episodes: &episodes}, nil
+	})
+	query := url.Values{"srv": {"0"}, "guid": {guid}}
+	var got map[string]any
+	getJSON(t, s, "/api/candidate?"+query.Encode(), &got)
+	// A known count of 0 stays in the answer.
+	if !reflect.DeepEqual(got, map[string]any{"tmdbId": "48213", "seasons": 1.0, "episodes": 0.0}) {
+		t.Errorf("candidate = %v", got)
+	}
+	query.Set("guid", "plex://show/000000000000000000000002")
+	got = nil
+	getJSON(t, s, "/api/candidate?"+query.Encode(), &got)
+	if len(got) != 0 {
+		t.Errorf("unknown candidate = %v, want no field", got)
+	}
+	if len(asked) != 2 {
+		t.Errorf("provider requests = %v", asked)
+	}
+}
+
+func TestItemCandidateErrors(t *testing.T) {
+	for _, tt := range []struct {
+		err    error
+		status int
+		msg    string
+	}{
+		{fmt.Errorf("provider series: %w", plex.ErrInvalidGUID), http.StatusBadRequest, "invalid guid"},
+		{errors.Join(errors.New("401 at http://secret-host"), plex.ErrUnauthorized, plex.ErrUnavailable),
+			http.StatusBadGateway, "the Plex metadata provider rejected the token"},
+		{errors.Join(errors.New("503 at http://secret-host"), plex.ErrUnavailable), http.StatusBadGateway, "Plex metadata provider unavailable"},
+	} {
+		t.Run(tt.msg, func(t *testing.T) {
+			s := candidateServer(t, func(context.Context, string) (plex.Series, error) { return plex.Series{}, tt.err })
+			rec := serve(s, httptest.NewRequest(http.MethodGet, "/api/candidate?srv=0&guid=x", nil))
+			assertJSONError(t, rec, tt.status, tt.msg)
+		})
+	}
+
+	calls := 0
+	s := candidateServer(t, func(context.Context, string) (plex.Series, error) {
+		calls++
+		return plex.Series{}, nil
+	})
+	for _, tt := range []struct {
+		query  string
+		status int
+		msg    string
+	}{
+		{"guid=x", http.StatusBadRequest, "invalid srv"},
+		{"srv=3&guid=x", http.StatusBadRequest, "invalid srv"},
+		{"srv=0&guid=%zz", http.StatusBadRequest, "invalid query"},
+	} {
+		rec := serve(s, httptest.NewRequest(http.MethodGet, "/api/candidate?"+tt.query, nil))
+		assertJSONError(t, rec, tt.status, tt.msg)
+	}
+	if calls != 0 {
+		t.Errorf("provider requests = %d, want none", calls)
 	}
 }

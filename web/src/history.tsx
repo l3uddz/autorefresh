@@ -11,7 +11,7 @@ import type { ReactNode } from 'react';
 import type { MatchSearch, TimelineEvent } from './api';
 import { useNow } from './clock';
 import { dateTime, plural, relative } from './format';
-import { decisionView, eventView, searchSource, verdictName, type EventView, type Tone } from './timeline';
+import { decisionView, eventView, rowVerdict, searchSource, verdictName, type EventView, type Tone } from './timeline';
 
 // The history of an item: the full timeline of its detail, and the panel
 // of the Fix match dialog that explains the last automatic decision. Both
@@ -60,8 +60,9 @@ function EntryHead({ view, at }: { view: EventView; at?: string }) {
   );
 }
 
-/** The searches of a decision, each with its candidates and verdicts. */
-export function DecisionSearches({ searches }: { searches: MatchSearch[] }) {
+/** The searches of a decision about an item of the year itemYear, each with
+ * its candidates and verdicts. */
+export function DecisionSearches({ searches, itemYear }: { searches: MatchSearch[]; itemYear?: number }) {
   if (!searches.length) return <Text type="supporting" color="secondary">No search was made.</Text>;
   return (
     <VStack gap={3}>
@@ -72,12 +73,15 @@ export function DecisionSearches({ searches }: { searches: MatchSearch[] }) {
             {` · ${searchSource(search)} · `}
             {search.failed ? 'search failed' : plural(search.candidates.length, 'candidate')}
           </Text>
-          {search.candidates.map((candidate, position) => (
-            <Text key={`${position}-${candidate.guid}`} type="supporting" color="secondary" wordBreak="break-word">
-              {`${candidate.name || candidate.guid || 'Candidate without a GUID'}${candidate.year ? ` (${candidate.year})` : ''}`}
-              {verdictName(candidate.verdict) ? ` · ${verdictName(candidate.verdict)}` : ''}
-            </Text>
-          ))}
+          {search.candidates.map((candidate, position) => {
+            const verdict = verdictName(rowVerdict(candidate, itemYear), search);
+            return (
+              <Text key={`${position}-${candidate.guid}`} type="supporting" color="secondary" wordBreak="break-word">
+                {`${candidate.name || candidate.guid || 'Candidate without a GUID'}${candidate.year ? ` (${candidate.year})` : ''}`}
+                {verdict ? ` · ${verdict}` : ''}
+              </Text>
+            );
+          })}
         </VStack>
       ))}
     </VStack>
@@ -101,7 +105,7 @@ function TimelineEntry({ event, isLast }: { event: TimelineEvent; isLast: boolea
           {event.kind === 'match-decision' && event.searches.length > 0 && (
             <Collapsible defaultIsOpen={false} chevronPosition="start" trigger={<Text type="supporting">{plural(event.searches.length, 'search', 'searches')}</Text>}>
               <VStack paddingBlockStart={2}>
-                <DecisionSearches searches={event.searches} />
+                <DecisionSearches searches={event.searches} itemYear={event.itemYear} />
               </VStack>
             </Collapsible>
           )}
@@ -157,7 +161,7 @@ export function DecisionPanel({ decision, hasHeading = true, emptyAction }: Deci
     <VStack gap={4}>
       {hasHeading && <Heading level={3} accessibilityLevel={3}>Last automatic fix match</Heading>}
       <EntryHead view={{ ...view, detail: undefined }} at={decision.at} />
-      <DecisionSearches searches={decision.searches} />
+      <DecisionSearches searches={decision.searches} itemYear={decision.itemYear} />
       {view.detail && <Text wordBreak="break-word">{view.detail}</Text>}
     </VStack>
   );

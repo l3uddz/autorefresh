@@ -25,6 +25,7 @@ type Plex interface {
 	Identity(ctx context.Context) (string, error)
 	ItemDetails(ctx context.Context, ratingKey string) (plex.Details, error)
 	Photo(ctx context.Context, ratingKey, imagePath string, width, height int) ([]byte, error)
+	ProviderSeries(ctx context.Context, guid string) (plex.Series, error)
 }
 
 // Store is the part of store.Store that the web server uses.
@@ -96,7 +97,8 @@ type Server struct {
 	credentials []string
 	// cacheRefresh is the schedule of full library reads, or nil.
 	cacheRefresh Schedule
-	// liveTimeout bounds the Plex request of GET /api/item/live.
+	// liveTimeout bounds the Plex request of GET /api/item/live, and the
+	// request to the metadata provider of GET /api/candidate.
 	liveTimeout   time.Duration
 	actionTimeout time.Duration
 
@@ -190,6 +192,7 @@ func New(opts Options) *Server {
 	s.api("POST /api/item/resume", s.serveResume)
 	s.api("GET /api/item/matches", s.serveMatches)
 	s.api("GET /api/item/auto-match", s.serveAutoMatch)
+	s.api("GET /api/candidate", s.serveCandidate)
 	s.api("POST /api/item/episode-check", s.serveEpisodeCheck)
 
 	s.api("POST /api/runs", s.serveRunNow)

@@ -42,6 +42,31 @@ type eventJSON struct {
 	FixedMatch        store.Action `json:"fixedMatch,omitempty"`
 	FixedMatchEventID int64        `json:"fixedMatchEventId,omitempty"`
 	Searches          []searchJSON `json:"searches"`
+	// The evidence of a match decision beyond its searches.
+	ItemYear    int              `json:"itemYear,omitempty"`
+	TMDBID      string           `json:"tmdbId,omitempty"`
+	TMDBSkip    string           `json:"tmdbSkip,omitempty"`
+	TMDBMissing []string         `json:"tmdbMissing,omitempty"`
+	EpisodeDiff *episodeDiffJSON `json:"episodeDiff,omitempty"`
+}
+
+// episodeDiffJSON is the first season whose regular episode numbers differ
+// from TMDB, with the episode count of Plex and of TMDB, and the episode
+// numbers of the season that only TMDB, or only Plex, has.
+type episodeDiffJSON struct {
+	Season  int   `json:"season"`
+	Plex    int   `json:"plex"`
+	TMDB    int   `json:"tmdb"`
+	Missing []int `json:"missing,omitempty"`
+	Extra   []int `json:"extra,omitempty"`
+}
+
+// toEpisodeDiffJSON returns d, or nil when no season differs.
+func toEpisodeDiffJSON(d store.EpisodeDiff) *episodeDiffJSON {
+	if d.Season == 0 {
+		return nil
+	}
+	return &episodeDiffJSON{Season: d.Season, Plex: d.Plex, TMDB: d.TMDB, Missing: d.Missing, Extra: d.Extra}
 }
 
 // matchJSON is the candidate of a match request.
@@ -158,6 +183,10 @@ func (s *Server) toEventJSON(e store.Event) eventJSON {
 		FixedAction: e.FixedAction, FixedMatch: e.FixedMatch, FixedMatchEventID: e.FixedMatchEventID,
 		Searches: make([]searchJSON, 0, len(e.Searches)),
 	}
+	if e.Kind == store.EventMatchDecision {
+		out.ItemYear, out.TMDBID, out.TMDBSkip, out.TMDBMissing = e.Year, e.TMDBID, e.TMDBSkip, e.TMDBMissing
+		out.EpisodeDiff = toEpisodeDiffJSON(e.EpisodeDiff)
+	}
 	if e.MatchGUID != "" {
 		out.Match = &matchJSON{GUID: e.MatchGUID, Title: e.MatchTitle, Year: e.MatchYear}
 	}
@@ -244,6 +273,63 @@ func (s *Server) livePath(ctx context.Context, it store.ListItem, paths plex.Pat
 		return "", err
 	}
 	return cmp.Or(kept, path), nil
+}
+
+// seriesJSON is what the metadata provider tells about a series candidate.
+// A count is absent when the provider does not give it.
+type seriesJSON struct {
+	TMDBID   string `json:"tmdbId,omitempty"`
+	Seasons  *int   `json:"seasons,omitempty"`
+	Episodes *int   `json:"episodes,omitempty"`
+}
+
+// serveCandidate answers GET /api/candidate with the TMDB ID and the season
+// and episode counts of the series candidate guid, from the Plex metadata
+// provider, with the token of the server srv. The answer depends on the
+// server and the GUID only, so the dashboard shares it between items. A
+// GUID that the provider does not know answers no field.
+func (s *Server) serveCandidate(w http.ResponseWriter, r *http.Request) {
+	v, err := queryParams(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	srv, err := s.srvParam(v)
+	if err == nil && srv == noSrv {
+		err = errInvalidSrv
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), s.liveTimeout)
+	series, err := s.servers[srv].Plex.ProviderSeries(ctx, v.Get("guid"))
+	cancel()
+	switch {
+	case errors.Is(err, plex.ErrInvalidGUID):
+		writeError(w, http.StatusBadRequest, "invalid guid")
+	case errors.Is(err, plex.ErrNotFound):
+		writeJSON(w, http.StatusOK, seriesJSON{})
+	case err != nil:
+		s.writeProviderError(w, r, err)
+	default:
+		writeJSON(w, http.StatusOK, seriesJSON{TMDBID: series.TMDBID, Seasons: series.Seasons, Episodes: series.Episodes})
+	}
+}
+
+// writeProviderError answers a failed request to the metadata provider with
+// a fixed message.
+func (s *Server) writeProviderError(w http.ResponseWriter, r *http.Request, err error) {
+	if r.Context().Err() != nil {
+		log.Debug().Str("error", s.redact(err.Error())).Str("path", r.URL.Path).Msg("Metadata provider request failed")
+		return
+	}
+	log.Warn().Str("error", s.redact(err.Error())).Str("path", r.URL.Path).Msg("Metadata provider request failed")
+	if errors.Is(err, plex.ErrUnauthorized) {
+		writeError(w, http.StatusBadGateway, "the Plex metadata provider rejected the token")
+		return
+	}
+	writeError(w, http.StatusBadGateway, "Plex metadata provider unavailable")
 }
 
 // writePlexError answers a failed Plex request with a fixed message, so no

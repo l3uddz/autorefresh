@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
@@ -22,12 +23,29 @@ const (
 	verdictConfirms    = "confirms"
 	verdictDifferent   = "different candidate"
 	verdictNotCompared = "not compared"
+	verdictYearAgrees  = "year agrees" // of a year conflict that another search's year caused
 )
 
 // decisionLog collects one fix match evaluation as it happens.
 type decisionLog struct {
 	searches []store.MatchSearch
+	evidence store.MatchEvidence
 	err      error // a failure that the code handled (a swallowed TMDB or confirmation failure)
+}
+
+// skipTMDB keeps the first reason why the evaluation asked TMDB nothing. An
+// empty reason changes nothing.
+func (d *decisionLog) skipTMDB(reason string) {
+	if d.evidence.TMDBSkip == "" {
+		d.evidence.TMDBSkip = reason
+	}
+}
+
+// noTMDBEntry logs that TMDB has no single entry for the path ID from.
+func (d *decisionLog) noTMDBEntry(from pathID) {
+	if !slices.Contains(d.evidence.TMDBMissing, from.title()) {
+		d.evidence.TMDBMissing = append(d.evidence.TMDBMissing, from.title())
+	}
 }
 
 // add logs the search for id and its candidates, with no verdict.
@@ -50,9 +68,9 @@ func (d *decisionLog) fail(err error) {
 
 // judge sets the verdict of each candidate of results, the searches that
 // resolveMatch evaluated, and of the tie searches. picked is the candidate
-// of a match, and conflict the conflict of no match. A handled failure
-// leaves every verdict empty.
-func (d *decisionLog) judge(results []searchResult, picked plex.Candidate, conflict string) {
+// of a match, conflict the conflict of no match, and itemYear the year of
+// the item. A handled failure leaves every verdict empty.
+func (d *decisionLog) judge(results []searchResult, picked plex.Candidate, conflict string, itemYear int) {
 	if d.err != nil {
 		return
 	}
@@ -64,24 +82,26 @@ func (d *decisionLog) judge(results []searchResult, picked plex.Candidate, confl
 		guid = cand.GUID
 	}
 	for _, res := range results {
-		d.judgeSearch(&d.searches[res.pos], guid, conflict)
+		d.judgeSearch(&d.searches[res.pos], guid, conflict, itemYear)
 	}
 	for i := range d.searches {
 		if d.searches[i].Source == searchTie {
-			d.judgeSearch(&d.searches[i], guid, conflict)
+			d.judgeSearch(&d.searches[i], guid, conflict, itemYear)
 		}
 	}
 }
 
-func (d *decisionLog) judgeSearch(m *store.MatchSearch, guid, conflict string) {
+func (d *decisionLog) judgeSearch(m *store.MatchSearch, guid, conflict string, itemYear int) {
 	for i := range m.Candidates {
-		m.Candidates[i].Verdict = verdict(*m, m.Candidates[i], guid, conflict)
+		m.Candidates[i].Verdict = verdict(*m, m.Candidates[i], guid, conflict, itemYear)
 	}
 }
 
 // verdict returns the verdict of the candidate c of the search m, by the
-// first rule that applies. guid is the GUID of the evaluated candidate.
-func verdict(m store.MatchSearch, c store.MatchCandidate, guid, conflict string) string {
+// first rule that applies. guid is the GUID of the evaluated candidate. Of
+// a year conflict, only a candidate whose year differs from itemYear gets
+// the conflict: a search can return the same candidate with another year.
+func verdict(m store.MatchSearch, c store.MatchCandidate, guid, conflict string, itemYear int) string {
 	switch {
 	case len(m.Candidates) > 1:
 		return conflictSeveral
@@ -91,6 +111,10 @@ func verdict(m store.MatchSearch, c store.MatchCandidate, guid, conflict string)
 		return sameGUID(c.GUID, guid, verdictConfirms)
 	case conflict == "":
 		return sameGUID(c.GUID, guid, verdictPicked)
+	case conflict == conflictYear && c.Year == 0:
+		return verdictNotCompared
+	case conflict == conflictYear && !yearDiffers(itemYear, c.Year):
+		return verdictYearAgrees
 	case conflict == conflictDifferent || conflict == conflictYear:
 		return conflict
 	default: // another search has several candidates or one without a GUID
@@ -130,9 +154,11 @@ func skipDecision(ctx context.Context, err error) bool {
 }
 
 // decision returns the outcome of the evaluation ev, which ended with err,
-// with the logged searches.
+// with the logged searches and evidence. The conflict and the years that
+// the evaluation compared stay also when a later step failed.
 func (d *decisionLog) decision(ev evaluation, err error) store.MatchDecision {
-	dec := store.MatchDecision{Searches: d.searches}
+	dec := store.MatchDecision{Searches: d.searches, MatchEvidence: d.evidence, Conflict: ev.conflict}
+	dec.PathYear, dec.TMDBYear, dec.EpisodeCount = ev.years.folderYear, ev.years.tmdbYear, ev.years.episodeCount
 	switch {
 	case err != nil:
 		dec.Outcome, dec.Error = store.DecisionFailed, err.Error()
@@ -141,11 +167,10 @@ func (d *decisionLog) decision(ev evaluation, err error) store.MatchDecision {
 	case ev.noIDs:
 		dec.Outcome = store.DecisionNoIDs
 	default:
-		dec.Outcome, dec.Conflict = store.DecisionNoMatch, ev.conflict
+		dec.Outcome = store.DecisionNoMatch
 		if ev.fm != nil {
 			dec.Outcome = store.DecisionMatched
 		}
-		dec.PathYear, dec.TMDBYear, dec.EpisodeCount = ev.years.pathYear, ev.years.tmdbYear, ev.years.episodeCount
 	}
 	return dec
 }

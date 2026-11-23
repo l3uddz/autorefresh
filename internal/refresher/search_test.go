@@ -2,6 +2,7 @@ package refresher
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
@@ -64,15 +65,16 @@ func TestEpisodeCheckComparesNumbers(t *testing.T) {
 	p.episodeNumbers = map[string]map[int][]int{"1": {1: {1, 2}}}
 	f := newRefreshFixture(t, Server{Name: "home", Plex: p})
 	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
-	f.r.opts.TMDB = &fakeTMDB{seasons: map[string][]int{"77 1": {1, 2}, "78 1": {1, 3}}}
+	f.r.opts.TMDB = &fakeTMDB{seasons: map[string][]int{"77 1": {1, 2}, "78 1": {1, 3, 4}, "79 1": {1, 3}}}
 	for _, tc := range []struct {
 		id   string
 		want EpisodeResult
 	}{
 		{"77", EpisodeResult{Match: true, Episodes: 2}},
-		{"78", EpisodeResult{}},
+		{"78", EpisodeResult{Diff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 3, Missing: []int{3, 4}, Extra: []int{2}}}},
+		{"79", EpisodeResult{Diff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 2, Missing: []int{3}, Extra: []int{2}}}},
 	} {
-		if got, err := f.r.EpisodeCheck(t.Context(), "home", "1", tc.id); err != nil || got != tc.want {
+		if got, err := f.r.EpisodeCheck(t.Context(), "home", "1", tc.id); err != nil || !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s: got %+v, %v, want %+v", tc.id, got, err, tc.want)
 		}
 	}

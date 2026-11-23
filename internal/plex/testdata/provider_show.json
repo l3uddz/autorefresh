@@ -1,0 +1,29 @@
+{
+  "MediaContainer": {
+    "offset": 0,
+    "totalSize": 1,
+    "identifier": "tv.plex.provider.metadata",
+    "size": 1,
+    "Metadata": [
+      {
+        "guid": "plex://show/000000000000000000000001",
+        "key": "/library/metadata/000000000000000000000001/children",
+        "ratingKey": "000000000000000000000001",
+        "type": "show",
+        "title": "Fixture Show",
+        "year": 2013,
+        "summary": "A neutral summary.",
+        "Summary": [{"tag": "neutral"}],
+        "studio": "Fixture Studio",
+        "Studio": [{"tag": "Fixture Studio"}],
+        "childCount": 1,
+        "leafCount": 10,
+        "Guid": [
+          {"id": "imdb://tt0000001"},
+          {"id": "tmdb://48213"},
+          {"id": "tvdb://300001"}
+        ]
+      }
+    ]
+  }
+}

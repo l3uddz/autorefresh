@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Candidate, MatchSearch, TimelineEvent } from './api';
-import { autoEvidence, autoEvidenceText, autoMatchPath, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isIDSearch, listView, matchBody, matchesPath, offersEpisodeCheck, sameSearch, tmdbIdOf } from './match';
+import { autoEvidence, autoEvidenceText, autoMatchPath, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isIDSearch, listView, matchBody, matchesPath, asksProvider, candidateQuery, compareEpisodeCount, episodeCheckId, sameSearch, tmdbIdOf } from './match';
 
 const cand = (guid: string, change: Partial<Candidate> = {}): Candidate => ({ guid, score: 0, ...change });
 const search = (query: string, candidates: Candidate[], change: Partial<MatchSearch> = {}): MatchSearch => ({ query, failed: false, candidates, ...change });
@@ -76,7 +76,7 @@ describe('groupCandidates', () => {
   it('does not tie a title search whose title looks like a TMDB ID', () => {
     const [group] = groupCandidates([search('tmdb-5', [cand('plex://x', { type: 'show' })], { source: 'title' })]);
     expect(group.tmdbId).toBeUndefined();
-    expect(offersEpisodeCheck(group, 'show', true)).toBe(false);
+    expect(episodeCheckId(group, 'show', true)).toBeUndefined();
   });
 
   it('keeps typed evidence and its rank when the typed search repeats the opening title', () => {
@@ -119,17 +119,41 @@ describe('match helpers', () => {
     expect(isCurrentMatch(loose, '')).toBe(false);
   });
 
-  it('offers the episode check only for a tied series candidate of a series with TMDB on', () => {
+  it('offers the episode check for a series candidate with a TMDB ID while TMDB is on', () => {
     const [show] = groupCandidates([search('tmdb-1', [cand('plex://s', { type: 'show' })], { source: 'path' })]);
-    expect(offersEpisodeCheck(show, 'show', true)).toBe(true);
-    expect(offersEpisodeCheck(show, 'show', false)).toBe(false);
-    expect(offersEpisodeCheck(show, 'movie', true)).toBe(false);
+    expect(episodeCheckId(show, 'show', true)).toBe('1');
+    expect(episodeCheckId(show, 'show', true, '9')).toBe('1');
+    expect(episodeCheckId(show, 'show', false)).toBeUndefined();
+    expect(episodeCheckId(show, 'movie', true)).toBeUndefined();
     const [movie] = groupCandidates([search('tmdb-1', [cand('plex://m', { type: 'movie' })], { source: 'path' })]);
-    expect(offersEpisodeCheck(movie, 'show', true)).toBe(false);
+    expect(episodeCheckId(movie, 'show', true)).toBeUndefined();
     const [untyped] = groupCandidates([search('tmdb-1', [cand('plex://u')], { source: 'path' })]);
-    expect(offersEpisodeCheck(untyped, 'show', true)).toBe(true);
+    expect(episodeCheckId(untyped, 'show', true)).toBe('1');
     const [untied] = groupCandidates([search('Title', [cand('plex://s', { type: 'show' })])]);
-    expect(offersEpisodeCheck(untied, 'show', true)).toBe(false);
+    expect(episodeCheckId(untied, 'show', true)).toBeUndefined();
+    // The metadata provider gives a title search candidate its TMDB ID.
+    expect(episodeCheckId(untied, 'show', true, '9')).toBe('9');
+  });
+
+  it('asks the metadata provider only about plex:// series candidates of a series', () => {
+    const group = (guid: string, type?: string) => groupCandidates([search('Title', [cand(guid, { type })])])[0];
+    expect(asksProvider(group('plex://show/5d9c086c46115600200aa2fe', 'show'), 'show', 'b1')).toBe(true);
+    expect(asksProvider(group('plex://show/5d9c086c46115600200aa2fe'), 'show', 'b1')).toBe(true);
+    expect(asksProvider(group('plex://show/5d9c086c46115600200aa2fe', 'show'), 'movie', 'b1')).toBe(false);
+    expect(asksProvider(group('plex://movie/5d9c086c46115600200aa2fe', 'movie'), 'show', 'b1')).toBe(false);
+    expect(asksProvider(group('com.plexapp.agents.thetvdb://5', 'show'), 'show', 'b1')).toBe(false);
+    // Before the status names the process, the dialog asks nothing.
+    expect(asksProvider(group('plex://show/5d9c086c46115600200aa2fe', 'show'), 'show', undefined)).toBe(false);
+    const query = candidateQuery('srv=1&key=7', 'plex://show/5d9c086c46115600200aa2fe', 'b1');
+    expect(query.queryKey).toEqual(['candidate', 'b1', '1', 'plex://show/5d9c086c46115600200aa2fe']);
+  });
+
+  it('compares the episode counts of a candidate and the item', () => {
+    expect(compareEpisodeCount(10, 10)).toEqual({ kind: 'same', episodes: 10, yours: 10 });
+    expect(compareEpisodeCount(10, 12)).toEqual({ kind: 'differs', episodes: 12, yours: 10 });
+    expect(compareEpisodeCount(undefined, 12)).toEqual({ kind: 'unknown' });
+    expect(compareEpisodeCount(10, undefined)).toEqual({ kind: 'unknown' });
+    expect(compareEpisodeCount(10, 0)).toEqual({ kind: 'differs', episodes: 0, yours: 10 });
   });
 
   it('reads TMDB IDs and ID searches like the API', () => {
@@ -164,6 +188,7 @@ describe('match helpers', () => {
     expect(autoEvidenceText({ query: 'tmdb-1', verdict: 'picked' }, false)).toBe('The last automatic fix match found it via tmdb-1: picked');
     expect(autoEvidenceText({ query: 'tmdb-1', verdict: 'picked' }, true)).toBe('The automatic fix match preview found it via tmdb-1: picked');
     expect(autoEvidenceText({ query: 'imdb-tt2' }, true)).toBe('The automatic fix match preview found it via imdb-tt2');
+    expect(autoEvidenceText({ query: 'tmdb-7', verdict: 'confirms' }, false)).toBe('The last automatic fix match found it via tmdb-7: same item as tmdb-7');
   });
 });
 

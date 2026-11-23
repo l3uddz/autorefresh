@@ -416,9 +416,12 @@ func TestRecordMatchDecisionRoundTrips(t *testing.T) {
 		}},
 		{Query: "tmdb-2", Source: "tmdb", FromID: "tvdb-9", Failed: true},
 	}
+	evidence := MatchEvidence{TMDBID: "77", TMDBSkip: TMDBFailed, TMDBMissing: []string{"tvdb-9", "imdb-tt1"},
+		EpisodeDiff: EpisodeDiff{Season: 3, Plex: 8, TMDB: 10, Missing: []int{9, 10}, Extra: []int{11}}}
 	err := s.RecordMatchDecision(MatchDecision{
 		Server: srv, RatingKey: "a", At: at, Source: SourceManual, Outcome: DecisionMatched,
 		Conflict: "c", Error: "e", PathYear: 2020, TMDBYear: 2021, EpisodeCount: 8, Searches: searches,
+		MatchEvidence: evidence,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -435,6 +438,9 @@ func TestRecordMatchDecisionRoundTrips(t *testing.T) {
 	if !reflect.DeepEqual(e.Searches, searches) {
 		t.Fatalf("searches = %+v, want %+v", e.Searches, searches)
 	}
+	if !reflect.DeepEqual(e.MatchEvidence, evidence) {
+		t.Fatalf("evidence = %+v, want %+v", e.MatchEvidence, evidence)
+	}
 	if got := rows(t, s)["a"]; got.LastMatchOutcome != "matched" {
 		t.Fatalf("row = %+v", got)
 	}
@@ -448,7 +454,8 @@ func TestRecordMatchDecisionNoIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	events, err := s.Timeline(srv, "a")
-	if err != nil || len(events) != 1 || events[0].Outcome != "no-ids" || events[0].Searches != nil {
+	if err != nil || len(events) != 1 || events[0].Outcome != "no-ids" || events[0].Searches != nil ||
+		events[0].TMDBMissing != nil {
 		t.Fatalf("events = %+v, %v", events, err)
 	}
 	if err := s.RecordMatchDecision(MatchDecision{Server: srv, RatingKey: "zz", At: base, Source: SourceAuto, Outcome: DecisionNoIDs}); err != nil {
@@ -568,5 +575,37 @@ func TestRecordManualUsesAdmissionSnapshotAcrossRowChanges(t *testing.T) {
 				t.Fatalf("events = %+v, %v", events, err)
 			}
 		})
+	}
+}
+
+// A decision from before migration 14 reads with empty evidence.
+func TestEvidenceMigrationKeepsOldDecisions(t *testing.T) {
+	file := openAtVersion(t, 13)
+	db, err := sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO library (server, section) VALUES ('` + srv + `', '` + sec + `')`,
+		`INSERT INTO event (server, section, rating_key, at, kind, outcome, conflict, path_year)
+			VALUES ('` + srv + `', '` + sec + `', 'old', 100, 'match-decision', 'no-match', 'year differs', 2020)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	s, err := Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	events, err := s.Timeline(srv, "old")
+	if err != nil || len(events) != 1 {
+		t.Fatalf("Timeline = %+v, %v", events, err)
+	}
+	if e := events[0]; e.PathYear != 2020 || !reflect.DeepEqual(e.MatchEvidence, MatchEvidence{}) {
+		t.Fatalf("event = %+v, want the old fields and empty evidence", e)
 	}
 }

@@ -260,10 +260,7 @@ func (s *Server) serveAutoMatch(w http.ResponseWriter, r *http.Request) {
 		s.writeActionError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.toEventJSON(store.Event{
-		At: d.At, Kind: store.EventMatchDecision, Source: d.Source, Outcome: string(d.Outcome), Error: d.Error,
-		Conflict: d.Conflict, PathYear: d.PathYear, TMDBYear: d.TMDBYear, EpisodeCount: d.EpisodeCount, Searches: d.Searches,
-	}))
+	writeJSON(w, http.StatusOK, s.toEventJSON(d.Event()))
 }
 
 func digits(s string) bool {
@@ -287,10 +284,12 @@ func (s *Server) serveEpisodeCheck(w http.ResponseWriter, r *http.Request) {
 		s.writeActionError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, struct {
-		Match    bool `json:"match"`
-		Episodes int  `json:"episodes"`
-	}{result.Match, result.Episodes})
+	out := struct {
+		Match    bool             `json:"match"`
+		Episodes int              `json:"episodes"`
+		Diff     *episodeDiffJSON `json:"diff,omitempty"`
+	}{Match: result.Match, Episodes: result.Episodes, Diff: toEpisodeDiffJSON(result.Diff)}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) writeActionError(w http.ResponseWriter, r *http.Request, err error) {

@@ -16,20 +16,20 @@ import { useToast } from '@astryxdesign/core/Toast';
 import { Token } from '@astryxdesign/core/Token';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useState } from 'react';
-import { ApiError, api, invalidateLists, post, useStatus, type Candidate, type EpisodeCheck, type ItemRecord, type Matches, type MatchSearch, type TimelineEvent } from './api';
+import { ApiError, api, invalidateLists, post, useStatus, type Candidate, type EpisodeCheck, type ItemRecord, type LiveItem, type Matches, type MatchSearch, type TimelineEvent } from './api';
 import { askThen } from './confirm';
 import { actionError } from './errors';
-import { plural, titleYear, typeName } from './format';
+import { plexCounts, plural, titleYear, typeName } from './format';
 import { DecisionPanel } from './history';
-import { autoEvidence, autoEvidenceText, autoMatchPath, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isFolderEvidence, listView, matchBody, matchesPath, offersEpisodeCheck, sameSearch, type CandidateGroup, type Evidence, type TypedSearch, type YearCheck } from './match';
+import { autoEvidence, autoEvidenceText, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isFolderEvidence, listView, matchBody, matchesPath, newerDecision, previewQuery, sameSearch, asksProvider, candidateQuery, compareEpisodeCount, episodeCheckId, type CandidateGroup, type EpisodeCountCheck, type Evidence, type TypedSearch, type YearCheck } from './match';
 import { RemotePoster } from './media';
-import { lastDecision } from './timeline';
+import { episodeDiffText, lastDecision } from './timeline';
 
 // The Fix match dialog of one item: candidates with their evidence on the
-// left, the last automatic fix match on the right. Without a last one, a
-// preview runs the automatic fix match on request and marks its pick. The
-// dialog never applies a match without a confirmation that names the item
-// and the candidate.
+// left, the newer of the last automatic fix match and the preview on the
+// right. Without a last one, a preview runs the automatic fix match on
+// request and marks its pick. The dialog never applies a match without a
+// confirmation that names the item and the candidate.
 
 const wideQuery = `(min-width: ${DEFAULT_WIDTH_BREAKPOINTS.lg}px)`;
 
@@ -43,8 +43,8 @@ interface Props {
   item: ItemRecord;
   params: string;
   timeline: TimelineEvent[];
-  /** The current Plex GUID of the item, from the live view. */
-  liveGuid?: string;
+  /** What Plex tells about the item now: its GUID and counts. */
+  live?: LiveItem;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -54,7 +54,8 @@ export function FixMatchDialog({ isOpen, onClose, ...props }: Props) {
   return (
     <Dialog isOpen={isOpen} onOpenChange={open => !open && onClose()} width={1120} maxHeight="90dvh" variant={isWide ? 'standard' : 'fullscreen'} purpose="form" padding={0}>
       {/* The body mounts only while the dialog is open, so closing it
-          aborts its searches and forgets their answers. */}
+          aborts its searches and forgets their answers. Only the
+          preview stays in the cache. */}
       {/* Another item gets a new body, so no search or episode check of
           the previous item carries over. */}
       {isOpen && <FixMatchBody key={props.params} {...props} isWide={isWide} onClose={onClose} />}
@@ -81,13 +82,13 @@ function candidateTitle(candidate: Candidate): string {
   return titleYear(candidate.name || candidate.guid, candidate.year);
 }
 
-function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: BodyProps) {
+function FixMatchBody({ item, params, timeline, live, isWide, onClose }: BodyProps) {
   const client = useQueryClient();
   const showToast = useToast();
   const confirm = useImperativeAlertDialog();
-  const isTMDBOn = (useStatus().data?.tmdb ?? 'off') !== 'off';
+  const status = useStatus().data;
+  const isTMDBOn = (status?.tmdb ?? 'off') !== 'off';
   const [typed, setTyped] = useState<TypedSearch>();
-  const [isPreviewAsked, setPreviewAsked] = useState(false);
 
   const opening = useQuery({
     queryKey: ['matches', params],
@@ -100,16 +101,14 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
     enabled: typed !== undefined,
     ...searchOptions,
   });
-  // The preview searches like a run, so it runs only on request.
-  const preview = useQuery({
-    queryKey: ['auto-match', params],
-    queryFn: ({ signal }) => api<TimelineEvent>(autoMatchPath(params), { signal }),
-    enabled: isPreviewAsked,
-    ...searchOptions,
-  });
+  // The preview searches like a run, so it runs only on request. A
+  // preview that still runs is joined, not restarted.
+  const preview = useQuery(previewQuery(params, status?.boot));
+  // Until the live status names the process, the cache key of the preview
+  // would change under a running preview, so the preview waits for it.
+  const canPreview = status?.boot !== undefined;
   const runPreview = () => {
-    if (isPreviewAsked) void preview.refetch({ cancelRefetch: false });
-    else setPreviewAsked(true);
+    if (canPreview) void preview.refetch({ cancelRefetch: false });
   };
 
   const apply = useMutation({
@@ -123,16 +122,18 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
     onSettled: () => invalidateLists(client),
   });
 
-  // A preview exists only without a last decision, and then marks the
-  // candidates instead.
-  const isPreview = preview.data !== undefined;
-  const decision = preview.data ?? lastDecision(timeline);
+  // The newer of the preview and the last decision explains the item and
+  // marks the candidates.
+  const decision = newerDecision(preview.data, lastDecision(timeline));
+  const isPreview = decision !== undefined && decision === preview.data;
   const decisionTitle = isPreview ? 'Automatic fix match preview' : 'Last automatic fix match';
   const decisionPanel = (hasHeading: boolean) => (
-    <AutoMatchPanel decision={decision} title={decisionTitle} hasHeading={hasHeading} preview={preview} onRun={runPreview} />
+    <AutoMatchPanel decision={decision} isPreview={isPreview} title={decisionTitle} hasHeading={hasHeading} preview={preview} canRun={canPreview} onRun={runPreview} />
   );
-  const groups = groupCandidates([...(opening.data?.searches ?? []), ...previewSearches(preview.data)], typed ? search.data?.searches : [], typed?.year);
+  const groups = groupCandidates([...(opening.data?.searches ?? []), ...previewSearches(isPreview ? decision : undefined)], typed ? search.data?.searches : [], typed?.year);
   const title = titleYear(item.title ?? `Item ${item.key}`, item.year);
+  const counts = plexCounts(live);
+  const subtitle = [item.library, counts.length ? `${counts.join(' · ')} in Plex` : undefined].filter(Boolean).join(' · ');
   const isTypedPending = typed !== undefined && search.isPending;
   const view = listView(groups.length, opening.isPending || isTypedPending, opening.isSuccess || (typed !== undefined && search.isSuccess));
 
@@ -184,8 +185,10 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
               params={params}
               decision={decision}
               isPreview={isPreview}
-              isCurrent={isCurrentMatch(group, liveGuid)}
-              hasEpisodeCheck={offersEpisodeCheck(group, item.type, isTMDBOn)}
+              isCurrent={isCurrentMatch(group, live?.guid)}
+              itemEpisodes={live?.episodes}
+              isTMDBOn={isTMDBOn}
+              boot={status?.boot}
               isApplying={apply.isPending}
               isCompact={!isWide}
               onChoose={() => choose(group)}
@@ -203,7 +206,7 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
       height="fill"
       padding={5}
       defaultHasDividers
-      header={<DialogHeader title={`Fix match · ${title}`} subtitle={item.library} onOpenChange={open => !open && onClose()} hasDivider={false} />}
+      header={<DialogHeader title={`Fix match · ${title}`} subtitle={subtitle} onOpenChange={open => !open && onClose()} hasDivider={false} />}
       content={
         <LayoutContent isScrollable label="Candidates">
           {/* The inline end padding keeps the cards off the scrollbar. */}
@@ -344,6 +347,17 @@ function yearToken(check: YearCheck) {
   }
 }
 
+function episodeToken(check: EpisodeCountCheck) {
+  switch (check.kind) {
+    case 'same':
+      return <Token size="sm" color="green" label={`${plural(check.episodes, 'episode')}, same as yours`} />;
+    case 'differs':
+      return <Token size="sm" color="yellow" label={`${plural(check.episodes, 'episode')}, yours has ${check.yours.toLocaleString()}`} />;
+    default:
+      return null;
+  }
+}
+
 function foundLabel(evidence: Evidence): string {
   const year = evidence.year ? ` (${evidence.year})` : '';
   return `Found by ${evidence.isTyped ? 'your' : 'the'} ${evidence.source === 'id' ? 'ID' : 'title'} search “${evidence.query}”${year}`;
@@ -355,28 +369,33 @@ function evidenceLabel(evidence: Evidence): string {
 }
 
 interface AutoMatchProps {
-  /** The preview, or else the last automatic decision. */
+  /** The newer of the preview and the last automatic decision. */
   decision?: TimelineEvent;
+  /** The decision is the preview. */
+  isPreview: boolean;
   title: string;
   hasHeading: boolean;
   preview: UseQueryResult<TimelineEvent>;
+  /** The preview can run: the live status names the process. */
+  canRun: boolean;
   onRun: () => void;
 }
 
 /** The last automatic fix match, or the preview that runs it now. The
  * preview records nothing and sends nothing to Plex. */
-function AutoMatchPanel({ decision, title, hasHeading, preview, onRun }: AutoMatchProps) {
+function AutoMatchPanel({ decision, isPreview, title, hasHeading, preview, canRun, onRun }: AutoMatchProps) {
   const run = (label: string, variant: 'primary' | 'secondary') => (
-    <Button label={label} variant={variant} size="sm" isLoading={preview.isFetching} onClick={onRun} />
+    <Button label={label} variant={variant} size="sm" isLoading={preview.isFetching} isDisabled={!canRun} tooltip={canRun ? undefined : 'Waiting for the status of autorefresh'} onClick={onRun} />
   );
   const failure = preview.error && (
     <Banner status="error" title="The preview failed" description={actionError(preview.error)} />
   );
-  if (!preview.data) {
+  if (!isPreview) {
     return (
       <VStack gap={4}>
         <DecisionPanel decision={decision} hasHeading={hasHeading} emptyAction={run('Try automatic fix match', 'primary')} />
-        {failure}
+        {/* A recorded decision replaces a preview, also one that failed. */}
+        {!decision && failure}
       </VStack>
     );
   }
@@ -401,19 +420,27 @@ interface CardProps {
   /** The decision is a preview, not the last automatic fix match. */
   isPreview: boolean;
   isCurrent: boolean;
-  hasEpisodeCheck: boolean;
+  /** The episodes that Plex has for the item, from the live view. */
+  itemEpisodes?: number;
+  isTMDBOn: boolean;
+  /** The process of the service, which scopes the provider cache. */
+  boot?: string;
   isApplying: boolean;
   /** Puts the score and the button below the details, for a phone. */
   isCompact: boolean;
   onChoose: () => void;
 }
 
-function CandidateCard({ group, item, params, decision, isPreview, isCurrent, hasEpisodeCheck, isApplying, isCompact, onChoose }: CardProps) {
+function CandidateCard({ group, item, params, decision, isPreview, isCurrent, itemEpisodes, isTMDBOn, boot, isApplying, isCompact, onChoose }: CardProps) {
   const { candidate } = group;
+  // The metadata provider gives a series candidate its counts and TMDB ID.
+  // A failed or unknown answer adds nothing to the card.
+  const series = useQuery({ ...candidateQuery(params, group.guid, boot), enabled: asksProvider(group, item.type, boot) });
+  const tmdbId = episodeCheckId(group, item.type, isTMDBOn, series.data?.tmdbId);
   const folder = group.foundBy.filter(isFolderEvidence);
   const found = group.foundBy.filter(e => !isFolderEvidence(e));
   const auto = autoEvidence(decision, group.guid);
-  const facts = [typeName(candidate.type), candidate.year].filter(Boolean).join(' · ');
+  const facts = [typeName(candidate.type), candidate.year, ...plexCounts(series.data)].filter(Boolean).join(' · ');
   const reason = !group.guid ? 'Plex gave this candidate no GUID, so it cannot be applied' : isCurrent ? 'This is the current match' : undefined;
   const score = candidate.score > 0 && (
     <VStack gap={0} hAlign={isCompact ? 'start' : 'end'}>
@@ -437,6 +464,7 @@ function CandidateCard({ group, item, params, decision, isPreview, isCurrent, ha
             <HStack gap={1} wrap="wrap">
               {folder.map((e, index) => <Token key={`${index}-${e.query}`} size="sm" color="green" label={evidenceLabel(e)} />)}
               {yearToken(compareYear(item.year, candidate.year))}
+              {episodeToken(compareEpisodeCount(itemEpisodes, series.data?.episodes))}
             </HStack>
             {/* Longer evidence is text, so it wraps instead of being cut. */}
             {found.map((e, index) => (
@@ -453,7 +481,7 @@ function CandidateCard({ group, item, params, decision, isPreview, isCurrent, ha
             {/* The key ties the check to the item and the TMDB ID: when a
                 search ties the candidate to another ID, the row starts
                 again and drops the answer of the previous ID. */}
-            {hasEpisodeCheck && group.tmdbId && <EpisodeCheckRow key={`${params}|${group.tmdbId}`} params={params} tmdbId={group.tmdbId} />}
+            {tmdbId && <EpisodeCheckRow key={`${params}|${tmdbId}`} params={params} tmdbId={tmdbId} />}
           </VStack>
         </StackItem>
         {!isCompact && <VStack gap={2} hAlign="end">{score}{match}</VStack>}
@@ -468,6 +496,15 @@ function CandidateCard({ group, item, params, decision, isPreview, isCurrent, ha
   );
 }
 
+/** Returns the result of the episode check of the TMDB ID tmdbId. */
+function episodeCheckText(check: EpisodeCheck, tmdbId: string): string {
+  if (check.match) return `The episode numbers match tmdb-${tmdbId} (${plural(check.episodes, 'episode')} compared).`;
+  if (check.diff) return episodeDiffText(check.diff, tmdbId);
+  // The API does not say why: Plex listed no regular episode, an entry
+  // lacked a file or a number, or the listing changed while it was read.
+  return `The episodes of this item could not be compared with tmdb-${tmdbId}: the episode listing of Plex is empty, incomplete, or has an entry without a file or number.`;
+}
+
 /** Compares the episode numbers of the item with the TMDB series tmdbId.
  * It applies nothing. Its parent keys it by item and TMDB ID, and it shows
  * only an answer for the ID that it sent. */
@@ -479,11 +516,7 @@ function EpisodeCheckRow({ params, tmdbId }: { params: string; tmdbId: string })
   return (
     <HStack gap={3} wrap="wrap" vAlign="center">
       <Button label="Compare episodes" size="sm" variant="secondary" isLoading={check.isPending} onClick={() => check.mutate(tmdbId)} tooltip={`Compare the episode numbers of this item with TMDB tmdb-${tmdbId}`} />
-      {isThisID && check.data && (
-        <Text type="supporting">
-          {check.data.match ? `The episode numbers match tmdb-${check.variables} (${plural(check.data.episodes, 'episode')} compared).` : `The episode numbers do not match tmdb-${check.variables}.`}
-        </Text>
-      )}
+      {isThisID && check.data && <Text type="supporting">{episodeCheckText(check.data, tmdbId)}</Text>}
       {isThisID && check.error && <Text type="supporting">{`The episode check failed: ${actionError(check.error)}`}</Text>}
     </HStack>
   );

@@ -3,6 +3,7 @@ package refresher
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
@@ -98,4 +99,36 @@ func TestPreviewMatchErrors(t *testing.T) {
 			t.Errorf("err = %v, want ErrClosed", err)
 		}
 	})
+}
+
+// A preview keeps the evidence of a run: the item year, the folder year,
+// the TMDB ID of the year check, and the season whose episodes differ.
+func TestPreviewMatchKeepsTheEvidence(t *testing.T) {
+	fp := newFakePlex(showsLib)
+	old := []plex.Candidate{{GUID: "plex://show/old", Name: "Show", Year: 1978}}
+	fp.candidates["201 tvdb-5"] = old
+	fp.candidates["201 tmdb-77"] = old
+	fp.episodeNumbers = map[string]map[int][]int{"201": {1: {1, 2}}}
+	ft := &fakeTMDB{
+		ids:     map[string]string{"tvdb 5 true": "77"},
+		years:   map[string]int{"77 true": 1978},
+		seasons: map[string][]int{"77 1": {1, 2, 3}},
+	}
+	f := yearConflictFixture(t, fp, ft)
+	f.saveLibrary(showsLib)
+	f.now = t0.Add(800 * time.Millisecond)
+
+	dec, err := f.r.PreviewMatch(t.Context(), testServer, "201")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The store keeps whole seconds, and so does the preview.
+	if !dec.At.Equal(t0.Truncate(time.Second)) {
+		t.Errorf("at = %v, want %v", dec.At, t0.Truncate(time.Second))
+	}
+	if dec.ItemYear != 2022 || dec.PathYear != 2022 || dec.TMDBYear != 1978 {
+		t.Errorf("years = item %d, path %d, tmdb %d, want 2022, 2022, 1978", dec.ItemYear, dec.PathYear, dec.TMDBYear)
+	}
+	want := store.MatchEvidence{TMDBID: "77", EpisodeDiff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 3, Missing: []int{3}}}
+	wantEvidence(t, store.Event{MatchEvidence: dec.MatchEvidence}, want)
 }
