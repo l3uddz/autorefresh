@@ -410,14 +410,15 @@ type RunItem struct {
 }
 
 // runItemsQuery reads the bulk outcomes of a run in selection order, each
-// with the newest snapshot of its item.
+// with the newest snapshot of its item: the cached row, or else the newest
+// event, which it looks up only for an item without a cached row.
 const runItemsQuery = `SELECT ri.position, ri.rating_key, ri.title, ri.outcome, ri.error,
 	COALESCE(i.section, e.section, ''), COALESCE(i.type, e.type, ''), COALESCE(i.thumb, e.thumb, ''), COALESCE(i.year, e.year, 0)
   FROM run_item ri
   JOIN run r ON r.id = ri.run_id
   LEFT JOIN item i ON i.server = r.server AND i.rating_key = ri.rating_key
-  LEFT JOIN event e ON e.id = (SELECT id FROM event WHERE server = r.server AND rating_key = ri.rating_key
-    ORDER BY at DESC, id DESC LIMIT 1)
+  LEFT JOIN event e ON i.rating_key IS NULL AND e.id = (SELECT id FROM event
+    WHERE server = r.server AND rating_key = ri.rating_key ORDER BY at DESC, id DESC LIMIT 1)
   WHERE ri.run_id = ? ORDER BY ri.position`
 
 // RunItems returns the bulk outcomes in selection order.
