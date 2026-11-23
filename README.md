@@ -586,8 +586,10 @@ address keeps the choice, so a link or a reload shows the same server.
   Below the actions, the history of the item lists each event, newest
   first: requests by autorefresh or by hand and whether Plex accepted them,
   fix match decisions with their searches, stops and resumes, and when
-  the item was fixed or removed. On a phone, the list fills the screen and
-  an item opens on its own screen.
+  the item was fixed or removed. An item that autorefresh no longer knows,
+  because its history expired, says so without its old details, and other
+  load errors offer **Try again**. On a phone, the list fills the screen
+  and an item opens on its own screen.
 - **Runs** lists the runs of every server, or of the chosen server, newest
   first: the start, the duration, the server, the source (schedule or
   manual), the kind, the status, and the items read,
@@ -604,8 +606,9 @@ address keeps the choice, so a link or a reload shows the same server.
   is one row with its summary.
 - A click on a run opens its details in a drawer, also from **Recent
   runs** on the Status page. In the table, Enter or Space on a row opens
-  it too. On a narrow screen, the details replace the list, as on the
-  Items page. The details show the kind, the status, the start, the
+  it too. The head of the drawer, with its close button, stays in view
+  while the items scroll. On a narrow screen, the details replace the
+  list, as on the Items page. The details show the kind, the status, the start, the
   duration, the libraries read, the error, and the counts. The counts of
   refreshes and matches are the requests sent, so they include the
   requests that failed. Below, the details list the items of the run by
@@ -616,7 +619,8 @@ address keeps the choice, so a link or a reload shows the same server.
   stopped. Each item shows its library and what happened to it, such as
   the fix match decision before a request, and opens its item details. A
   bulk refresh lists its selected items as **Refreshed**, **Failed**,
-  **Removed**, **Skipped**, and **Not reached**. Runs from before this
+  **Removed**, **Skipped**, and **Not reached**, each with its poster and
+  library when autorefresh still knows the item. Runs from before this
   version recorded no items, so their details say that the item details
   were not recorded. The read and due counts stay numbers. A running run
   shows its counts when it ends, and reloads its items every 5 seconds. A
