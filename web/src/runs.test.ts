@@ -53,6 +53,11 @@ describe('run groups', () => {
     expect(groups).toEqual([['Not sent', [['1', 'Fix match: matched', 'The run ended before the request', 'attention']]]]);
   });
 
+  it('lists a match decision of a running run that waits for its request as in progress', () => {
+    const groups = shape(detail([event('1', 'match-decision', { outcome: 'matched' })], { status: 'running' }));
+    expect(groups).toEqual([['In progress', [['1', 'Fix match: matched', 'Its request is not sent yet', 'attention']]]]);
+  });
+
   it('lists a failed fix match search with its error as failed', () => {
     // A failed search sends no request and writes no request event.
     const groups = shape(detail([event('1', 'match-decision', { outcome: 'failed', error: 'Plex answered 500' })]));
