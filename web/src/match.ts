@@ -226,13 +226,18 @@ export function autoEvidence(decision: TimelineEvent | undefined, guid: string):
   );
 }
 
-/** Returns the folder ID searches of a preview decision: the kinds of
- * search that the opening search also makes. Grouped with the opening
- * searches, they give the pick of the preview a card, also when the
- * opening search of its folder ID failed. A tie search only confirms a
- * pick that a folder ID search found. */
+/** Returns the folder ID searches of a preview decision, the kinds of
+ * search that the opening search also makes, and the pick of its title
+ * search. Grouped with the opening searches, they give the pick of the
+ * preview a card, also when the opening search of its folder ID failed or,
+ * without the year of the preview, did not return it. A tie search only
+ * confirms a pick that a folder ID search found. */
 export function previewSearches(decision: TimelineEvent | undefined): MatchSearch[] {
-  return decision?.searches.filter(search => search.source === 'path' || search.source === 'tmdb') ?? [];
+  return decision?.searches.flatMap(search => {
+    if (search.source === 'path' || search.source === 'tmdb') return [search];
+    const picked = search.source === 'title' ? search.candidates.filter(c => c.verdict === 'picked') : [];
+    return picked.length ? [{ ...search, candidates: picked }] : [];
+  }) ?? [];
 }
 
 /** Returns the line of a candidate for one search of the last automatic
