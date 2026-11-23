@@ -214,6 +214,13 @@ tries a fix match.
      An incomplete season or differences in episode numbering still prevent
      confirmation by episode numbers.
 
+The decision of a year conflict keeps the years that autorefresh compared:
+the year of the item, the year of its folder, if any, and the TMDB year, if
+TMDB was asked. It also keeps the TMDB ID that it checked and, for a
+series, the first local season whose episode numbers differ from TMDB,
+with the episode count of Plex and of TMDB. The Fix match dialog shows
+them.
+
 If no match applies, autorefresh sends a plain refresh. If the IDs disagree,
 it also logs a `Match conflict` warning. The warning has the reason, the
 year of the item, `tmdb_year` if TMDB was checked, and each candidate with
@@ -285,6 +292,15 @@ the candidates.
 
 The debug line of each second pass search has a `from` field with the ID
 that TMDB translated, for example `tvdb-81189`.
+
+The decision of the fix match records what the TMDB steps did not do, and
+the Fix match dialog shows it:
+
+- each ID that TMDB has no entry for, for example `tvdb-357542`, in the
+  second pass or in the year check
+- why TMDB was not asked: no `tmdb-token` is set, an earlier TMDB failure
+  in the same run turned TMDB off, the paths hold a `tmdb` ID, or they hold
+  no ID that TMDB translates, such as a movie with only a `tvdb` ID
 
 ### History
 
@@ -662,10 +678,19 @@ search ignores the year. Each candidate shows its poster, title, year,
 type, summary, and Plex score (when Plex gives one), and how it was found:
 the folder IDs that found it, the year compared with the item, and the
 searches of the last automatic fix match that found it. The current match of the item in Plex
-is marked, and you cannot apply it again. For a series, a candidate that
-a search by one TMDB ID found as its only candidate can compare the
-episode numbers of the item with that TMDB series, if no search by that
-TMDB ID found another candidate. This needs a `tmdb-token`. The comparison changes nothing. **Match** asks before it
+is marked, and you cannot apply it again. For a series, the header shows
+the seasons and episodes that Plex has for the item, and each series
+candidate with a `plex://` GUID shows its seasons and episodes when the
+Plex metadata provider gives them, with a check of its episode count
+against the item. Autorefresh asks the provider once for each candidate
+while the page is open. A series candidate with a TMDB ID can compare the
+episode numbers of the item with that TMDB series. The TMDB ID comes from
+a search by one TMDB ID that found the candidate as its only candidate, if
+no search by that TMDB ID found another candidate, or else from the
+metadata provider, so a candidate of a title search can compare too. This
+needs a `tmdb-token`. When the numbers differ, the comparison names the
+first season that differs, the episode counts of Plex and TMDB, and the
+episode numbers that only one of them has. The comparison changes nothing. **Match** asks before it
 applies the candidate. After Plex accepts the match, autorefresh also
 requests a refresh of the item. The refresh counts as one more attempt of
 the item, and as an accepted refresh it lengthens the wait before the next
@@ -676,14 +701,23 @@ moves to the Fixed tab at once. Otherwise the next run reads it again.
 If the server is unavailable for the refresh or a check, autorefresh
 stops checking.
 Beside the candidates, the dialog explains the last automatic fix match:
-its searches, their candidates, and why it picked one or none. When the
+its searches, their candidates, and why it picked one or none. A year
+conflict lists the years that it compared and the season whose episode
+numbers differ from TMDB. The TMDB search of the year check says "same
+item as `tmdb-<id>`" when Plex resolves that TMDB ID to the same
+candidate, which does not yet confirm the year. The panel also names the
+IDs that TMDB has no entry for, and why TMDB was not asked. When the
 history holds no automatic fix match of the item, **Try automatic fix
 match** runs one now as a preview. The preview uses the same code as a
 run, also for an item that a run would not try, and shows its decision in
 the same way. It asks TMDB even when a TMDB lookup failed earlier in a
 run, as the next run does. It marks the candidate that it picked, which
 you can then apply with **Match**. The pick gets a card even when the
-opening search of its folder ID failed. The preview records nothing, saves nothing to the
+opening search of its folder ID failed. The dialog keeps the last preview
+of the item while the page is open, so it shows it again, with **Run
+again**, when you reopen the dialog. A reload of the page drops it. If a
+run records an automatic fix match after the preview, the dialog shows
+the newer of the two. The preview records nothing, saves nothing to the
 cache, and sends no match to Plex. Searches in the dialog call Plex but
 record nothing. An applied match is recorded in the history of the item.
 
@@ -748,6 +782,12 @@ password with `<redacted>`. It leaves out the poster of a match candidate
 when the poster URL holds a Plex token, the TMDB token, or the dashboard
 password, because the browser loads that poster from another site.
 
+To show the counts and the TMDB ID of a series candidate in the Fix match
+dialog, autorefresh sends the Plex token of the server to the Plex metadata
+provider, `metadata.provider.plex.tv`, in the `X-Plex-Token` header, with
+the `plex://` GUID of the candidate. It sends nothing else there, and it
+refuses a redirect to another host.
+
 ### Dashboard in Docker
 
 Set `listen: ":7380"` in `config.yml`, and publish the port:
@@ -781,13 +821,16 @@ The image declares port `7380`. Nothing listens on it until you set
 | `api/items` | One page of the items of a tab, `attention`, `fixed`, or `stopped`, with the count of each tab |
 | `api/item` | One item and its history, newest event first |
 | `api/item/live` | What Plex tells about one item now |
+| `api/item/candidate` | The TMDB ID and the season and episode counts that the Plex metadata provider gives for the `plex://` GUID of a series candidate, in the `guid` query parameter |
+| `api/item/auto-match` | The automatic fix match preview of one item, as a match decision event. A decision event also has `itemYear`, `tmdbId`, `tmdbSkip`, `tmdbMissing`, and `episodeDiff` |
+| `api/item/episode-check` | `POST`: compares the episode numbers of one series with the TMDB ID in the `tmdb` query parameter. `diff` names the first season that differs, with the counts and the episode numbers that only TMDB (`missing`) or only Plex (`extra`) has |
 | `api/items/thumb`, `api/items/art` | The poster and the background art of one item |
 | `api/runs` | One page of the runs, newest first |
 | `api/runs/detail` | One run with the events that it wrote, or the items of a bulk refresh |
 
 The API names a server by its position in the `plex` list, from 0, in the
 `srv` query parameter. On `api/items`, `api/item`, `api/item/live`,
-`api/items/thumb`, `api/items/art`, `api/runs`, and `api/runs/detail`, a
+`api/item/candidate`, `api/items/thumb`, `api/items/art`, `api/runs`, and `api/runs/detail`, a
 query string that does not decode, for example one with a bad percent
 escape, gets a 400 answer.
 
