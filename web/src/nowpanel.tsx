@@ -1,4 +1,3 @@
-import { Badge } from '@astryxdesign/core/Badge';
 import { Card } from '@astryxdesign/core/Card';
 import { Divider } from '@astryxdesign/core/Divider';
 import { Icon } from '@astryxdesign/core/Icon';
@@ -67,9 +66,16 @@ function TopRow({ item, isWorking, wait, withReasons }: { item: NowItem; isWorki
       </StackItem>
       <VStack gap={1} hAlign="end">
         {isWorking ? (
-          <Badge label="Working" variant="info" icon={<StatusDot variant="accent" isPulsing label="Working" />} />
+          <HStack gap={1.5} vAlign="center">
+            <StatusDot variant="accent" isPulsing label="Working" />
+            <Text type="supporting" weight="medium" color="primary">
+              Working
+            </Text>
+          </HStack>
         ) : (
-          <Badge label="Up next" />
+          <Text type="supporting" weight="medium" color="primary">
+            Up next
+          </Text>
         )}
         {!isWorking && wait && (
           <Text type="supporting" hasTabularNumbers>
