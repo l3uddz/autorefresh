@@ -394,7 +394,8 @@ function AutoMatchPanel({ decision, isPreview, title, hasHeading, preview, canRu
     return (
       <VStack gap={4}>
         <DecisionPanel decision={decision} hasHeading={hasHeading} emptyAction={run('Try automatic fix match', 'primary')} />
-        {failure}
+        {/* A recorded decision replaces a preview, also one that failed. */}
+        {!decision && failure}
       </VStack>
     );
   }
