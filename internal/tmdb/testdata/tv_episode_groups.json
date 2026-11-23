@@ -1,0 +1,21 @@
+{
+  "id": 77,
+  "results": [
+    {
+      "description": "Original broadcast order",
+      "episode_count": 49,
+      "group_count": 1,
+      "id": "5e9077d2e640d600151f32bd",
+      "name": "Aired Order",
+      "type": 1
+    },
+    {
+      "description": "DVD release",
+      "episode_count": 25,
+      "group_count": 1,
+      "id": "5acf93e60e0a26346d0000ce",
+      "name": "DVD Order",
+      "type": 3
+    }
+  ]
+}

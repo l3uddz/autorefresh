@@ -1,0 +1,35 @@
+{
+  "id": "5e9077d2e640d600151f32bd",
+  "name": "Aired Order",
+  "type": 1,
+  "episode_count": 5,
+  "group_count": 3,
+  "groups": [
+    {
+      "id": "600000000000000000000000",
+      "name": "Specials",
+      "order": 0,
+      "episodes": [
+        {"season_number": 0, "episode_number": 1, "order": 0}
+      ]
+    },
+    {
+      "id": "600000000000000000000001",
+      "name": "Season 1",
+      "order": 1,
+      "episodes": [
+        {"season_number": 2, "episode_number": 5, "order": 0},
+        {"season_number": 1, "episode_number": 1, "order": 1},
+        {"season_number": 1, "episode_number": 2, "order": 2}
+      ]
+    },
+    {
+      "id": "600000000000000000000002",
+      "name": "Season 2",
+      "order": 2,
+      "episodes": [
+        {"season_number": 1, "episode_number": 9, "order": 0}
+      ]
+    }
+  ]
+}

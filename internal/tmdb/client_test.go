@@ -402,6 +402,94 @@ func TestSeasonEpisodesRejectsInvalidParameters(t *testing.T) {
 	}
 }
 
+func TestEpisodeGroups(t *testing.T) {
+	fixture := file(t, "tv_episode_groups.json")
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/3/tv/77/episode_groups":
+			fixture(w, r)
+		case "/3/tv/78/episode_groups":
+			w.WriteHeader(http.StatusNotFound)
+		case "/3/tv/79/episode_groups":
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/3/tv/80/episode_groups":
+			w.Write([]byte(`{"results":[{"id":"../bad","name":"Bad","type":1,"episode_count":10},{"id":"5e9077d2e640d600151f32bd","name":"Good","type":1,"episode_count":10}]}`))
+		default:
+			t.Errorf("unexpected request %s", r.URL)
+		}
+	})
+
+	got, err := c.EpisodeGroups(context.Background(), "77")
+	want := []EpisodeGroup{
+		{ID: "5e9077d2e640d600151f32bd", Name: "Aired Order", Type: EpisodeGroupOriginalAirDate, EpisodeCount: 49},
+		{ID: "5acf93e60e0a26346d0000ce", Name: "DVD Order", Type: EpisodeGroupDVD, EpisodeCount: 25},
+	}
+	if err != nil || !slices.Equal(got, want) {
+		t.Fatalf("EpisodeGroups = %+v, %v, want %+v", got, err, want)
+	}
+	got, err = c.EpisodeGroups(context.Background(), "78")
+	if err != nil || len(got) != 0 {
+		t.Fatalf("EpisodeGroups on 404 = %+v, %v, want empty", got, err)
+	}
+	_, err = c.EpisodeGroups(context.Background(), "79")
+	checkError(t, err, true)
+	got, err = c.EpisodeGroups(context.Background(), "80")
+	if err != nil || len(got) != 1 || got[0].ID != "5e9077d2e640d600151f32bd" {
+		t.Fatalf("EpisodeGroups with bad id = %+v, %v, want only valid entry", got, err)
+	}
+}
+
+func TestEpisodeGroupsRejectsInvalidID(t *testing.T) {
+	c := serve(t, func(http.ResponseWriter, *http.Request) { t.Error("sent a request for invalid id") })
+	for _, id := range []string{"", "..", "1/2", "tt123"} {
+		if _, err := c.EpisodeGroups(context.Background(), id); err == nil {
+			t.Errorf("EpisodeGroups(%q) returned no error", id)
+		}
+	}
+}
+
+func TestEpisodeGroupSeasons(t *testing.T) {
+	fixture := file(t, "tv_episode_group_details.json")
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/3/tv/episode_group/5e9077d2e640d600151f32bd":
+			fixture(w, r)
+		case "/3/tv/episode_group/000000000000000000000404":
+			w.WriteHeader(http.StatusNotFound)
+		case "/3/tv/episode_group/000000000000000000000401":
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/3/tv/episode_group/000000000000000000000002":
+			w.Write([]byte(`{"groups":[{"order":1,"episodes":[{"order":0}]},{"order":1,"episodes":[{"order":0}]}]}`))
+		default:
+			t.Errorf("unexpected request %s", r.URL)
+		}
+	})
+
+	got, err := c.EpisodeGroupSeasons(context.Background(), "5e9077d2e640d600151f32bd")
+	if err != nil || len(got) != 2 || !slices.Equal(got[1], []int{1, 2, 3}) || !slices.Equal(got[2], []int{1}) {
+		t.Fatalf("EpisodeGroupSeasons = %+v, %v, want {1:[1 2 3], 2:[1]}", got, err)
+	}
+	got, err = c.EpisodeGroupSeasons(context.Background(), "000000000000000000000404")
+	if err != nil || len(got) != 0 {
+		t.Fatalf("EpisodeGroupSeasons on 404 = %+v, %v, want nil", got, err)
+	}
+	_, err = c.EpisodeGroupSeasons(context.Background(), "000000000000000000000401")
+	checkError(t, err, true)
+	got, err = c.EpisodeGroupSeasons(context.Background(), "000000000000000000000002")
+	if err != nil || len(got) != 0 {
+		t.Fatalf("EpisodeGroupSeasons with duplicate group order = %+v, %v, want nil", got, err)
+	}
+}
+
+func TestEpisodeGroupSeasonsRejectsInvalidID(t *testing.T) {
+	c := serve(t, func(http.ResponseWriter, *http.Request) { t.Error("sent a request for invalid group id") })
+	for _, id := range []string{"", "..", "5e90/bad", "not-hex"} {
+		if _, err := c.EpisodeGroupSeasons(context.Background(), id); err == nil {
+			t.Errorf("EpisodeGroupSeasons(%q) returned no error", id)
+		}
+	}
+}
+
 func TestYearNothing(t *testing.T) {
 	tests := []struct {
 		name string

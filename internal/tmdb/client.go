@@ -51,6 +51,29 @@ var externalSources = map[string]externalSource{
 // tmdbIDPattern validates a numeric TMDB ID before it becomes a path segment.
 var tmdbIDPattern = regexp.MustCompile(`^[0-9]+$`)
 
+// episodeGroupIDPattern validates a hex TMDB episode group ID before it
+// becomes a path segment.
+var episodeGroupIDPattern = regexp.MustCompile(`^[0-9a-fA-F]+$`)
+
+// Episode group types returned by TMDB's /3/tv/{series_id}/episode_groups.
+const (
+	EpisodeGroupOriginalAirDate = 1
+	EpisodeGroupAbsolute        = 2
+	EpisodeGroupDVD             = 3
+	EpisodeGroupDigital         = 4
+	EpisodeGroupStoryArc        = 5
+	EpisodeGroupProduction      = 6
+	EpisodeGroupTV              = 7
+)
+
+// EpisodeGroup is one alternate episode ordering of a TMDB series.
+type EpisodeGroup struct {
+	ID           string
+	Name         string
+	Type         int
+	EpisodeCount int
+}
+
 // Client sends requests to TMDB.
 type Client struct {
 	base  *url.URL
@@ -208,6 +231,80 @@ func (c *Client) SeasonEpisodes(ctx context.Context, id string, season int) ([]i
 		numbers = append(numbers, e.Number)
 	}
 	return numbers, nil
+}
+
+// EpisodeGroups returns the alternate episode groups of a TMDB series.
+// A missing series returns no groups.
+func (c *Client) EpisodeGroups(ctx context.Context, id string) ([]EpisodeGroup, error) {
+	if !tmdbIDPattern.MatchString(id) {
+		return nil, errors.New("episode groups: invalid tmdb id")
+	}
+	var resp struct {
+		Results []struct {
+			ID           string `json:"id"`
+			Name         string `json:"name"`
+			Type         int    `json:"type"`
+			EpisodeCount int    `json:"episode_count"`
+		} `json:"results"`
+	}
+	if err := c.get(ctx, []string{"3", "tv", id, "episode_groups"}, nil, &resp); err != nil {
+		if errors.Is(err, errNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	groups := make([]EpisodeGroup, 0, len(resp.Results))
+	for _, g := range resp.Results {
+		if !episodeGroupIDPattern.MatchString(g.ID) {
+			continue
+		}
+		groups = append(groups, EpisodeGroup{
+			ID:           g.ID,
+			Name:         g.Name,
+			Type:         g.Type,
+			EpisodeCount: g.EpisodeCount,
+		})
+	}
+	return groups, nil
+}
+
+// EpisodeGroupSeasons returns the regular season-to-episode-numbers map of
+// one TMDB episode group. Each group with order >= 1 maps to that season
+// number, and each episode's 0-based order maps to episode number order+1.
+// A missing or ambiguous group (duplicate positive group order) returns nil.
+func (c *Client) EpisodeGroupSeasons(ctx context.Context, groupID string) (map[int][]int, error) {
+	if !episodeGroupIDPattern.MatchString(groupID) {
+		return nil, errors.New("episode group: invalid group id")
+	}
+	var resp struct {
+		Groups []struct {
+			Order    int `json:"order"`
+			Episodes []struct {
+				Order int `json:"order"`
+			} `json:"episodes"`
+		} `json:"groups"`
+	}
+	if err := c.get(ctx, []string{"3", "tv", "episode_group", groupID}, nil, &resp); err != nil {
+		if errors.Is(err, errNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	seasons := make(map[int][]int, len(resp.Groups))
+	for _, g := range resp.Groups {
+		if g.Order < 1 {
+			continue
+		}
+		if _, dup := seasons[g.Order]; dup {
+			return nil, nil
+		}
+		nums := make([]int, 0, len(g.Episodes))
+		for _, ep := range g.Episodes {
+			nums = append(nums, ep.Order+1)
+		}
+		seasons[g.Order] = nums
+	}
+	return seasons, nil
 }
 
 func (c *Client) movieYear(ctx context.Context, id string) (int, bool, error) {
