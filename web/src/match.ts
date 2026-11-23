@@ -153,9 +153,11 @@ function isSeriesCandidate(group: CandidateGroup, itemType: string | undefined):
 const providerGuid = /^plex:\/\/show\/[0-9a-f]{24}$/;
 
 /** Reports whether the dialog asks the metadata provider about group: a
- * series candidate of a series item with a plex:// series GUID. */
-export function asksProvider(group: CandidateGroup, itemType: string | undefined): boolean {
-  return isSeriesCandidate(group, itemType) && providerGuid.test(group.guid);
+ * series candidate of a series item with a plex:// series GUID, once the
+ * live status names boot, the process of the service. Before that, the
+ * cache key of the answer would change under the request. */
+export function asksProvider(group: CandidateGroup, itemType: string | undefined, boot: string | undefined): boolean {
+  return boot !== undefined && isSeriesCandidate(group, itemType) && providerGuid.test(group.guid);
 }
 
 /** Returns the TMDB ID of the episode check of group, if it offers one: a

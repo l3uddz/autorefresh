@@ -104,7 +104,12 @@ function FixMatchBody({ item, params, timeline, live, isWide, onClose }: BodyPro
   // The preview searches like a run, so it runs only on request. A
   // preview that still runs is joined, not restarted.
   const preview = useQuery(previewQuery(params, status?.boot));
-  const runPreview = () => void preview.refetch({ cancelRefetch: false });
+  // Until the live status names the process, the cache key of the preview
+  // would change under a running preview, so the preview waits for it.
+  const canPreview = status?.boot !== undefined;
+  const runPreview = () => {
+    if (canPreview) void preview.refetch({ cancelRefetch: false });
+  };
 
   const apply = useMutation({
     mutationFn: (target: Applying) => post(`item/match?${target.params}`, matchBody(target.candidate)),
@@ -123,7 +128,7 @@ function FixMatchBody({ item, params, timeline, live, isWide, onClose }: BodyPro
   const isPreview = decision !== undefined && decision === preview.data;
   const decisionTitle = isPreview ? 'Automatic fix match preview' : 'Last automatic fix match';
   const decisionPanel = (hasHeading: boolean) => (
-    <AutoMatchPanel decision={decision} isPreview={isPreview} title={decisionTitle} hasHeading={hasHeading} preview={preview} onRun={runPreview} />
+    <AutoMatchPanel decision={decision} isPreview={isPreview} title={decisionTitle} hasHeading={hasHeading} preview={preview} canRun={canPreview} onRun={runPreview} />
   );
   const groups = groupCandidates([...(opening.data?.searches ?? []), ...previewSearches(isPreview ? decision : undefined)], typed ? search.data?.searches : [], typed?.year);
   const title = titleYear(item.title ?? `Item ${item.key}`, item.year);
@@ -371,14 +376,16 @@ interface AutoMatchProps {
   title: string;
   hasHeading: boolean;
   preview: UseQueryResult<TimelineEvent>;
+  /** The preview can run: the live status names the process. */
+  canRun: boolean;
   onRun: () => void;
 }
 
 /** The last automatic fix match, or the preview that runs it now. The
  * preview records nothing and sends nothing to Plex. */
-function AutoMatchPanel({ decision, isPreview, title, hasHeading, preview, onRun }: AutoMatchProps) {
+function AutoMatchPanel({ decision, isPreview, title, hasHeading, preview, canRun, onRun }: AutoMatchProps) {
   const run = (label: string, variant: 'primary' | 'secondary') => (
-    <Button label={label} variant={variant} size="sm" isLoading={preview.isFetching} onClick={onRun} />
+    <Button label={label} variant={variant} size="sm" isLoading={preview.isFetching} isDisabled={!canRun} tooltip={canRun ? undefined : 'Waiting for the status of autorefresh'} onClick={onRun} />
   );
   const failure = preview.error && (
     <Banner status="error" title="The preview failed" description={actionError(preview.error)} />
@@ -427,7 +434,7 @@ function CandidateCard({ group, item, params, decision, isPreview, isCurrent, it
   const { candidate } = group;
   // The metadata provider gives a series candidate its counts and TMDB ID.
   // A failed or unknown answer adds nothing to the card.
-  const series = useQuery({ ...candidateQuery(params, group.guid, boot), enabled: asksProvider(group, item.type) });
+  const series = useQuery({ ...candidateQuery(params, group.guid, boot), enabled: asksProvider(group, item.type, boot) });
   const tmdbId = episodeCheckId(group, item.type, isTMDBOn, series.data?.tmdbId);
   const folder = group.foundBy.filter(isFolderEvidence);
   const found = group.foundBy.filter(e => !isFolderEvidence(e));

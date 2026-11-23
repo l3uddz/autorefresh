@@ -137,11 +137,13 @@ describe('match helpers', () => {
 
   it('asks the metadata provider only about plex:// series candidates of a series', () => {
     const group = (guid: string, type?: string) => groupCandidates([search('Title', [cand(guid, { type })])])[0];
-    expect(asksProvider(group('plex://show/5d9c086c46115600200aa2fe', 'show'), 'show')).toBe(true);
-    expect(asksProvider(group('plex://show/5d9c086c46115600200aa2fe'), 'show')).toBe(true);
-    expect(asksProvider(group('plex://show/5d9c086c46115600200aa2fe', 'show'), 'movie')).toBe(false);
-    expect(asksProvider(group('plex://movie/5d9c086c46115600200aa2fe', 'movie'), 'show')).toBe(false);
-    expect(asksProvider(group('com.plexapp.agents.thetvdb://5', 'show'), 'show')).toBe(false);
+    expect(asksProvider(group('plex://show/5d9c086c46115600200aa2fe', 'show'), 'show', 'b1')).toBe(true);
+    expect(asksProvider(group('plex://show/5d9c086c46115600200aa2fe'), 'show', 'b1')).toBe(true);
+    expect(asksProvider(group('plex://show/5d9c086c46115600200aa2fe', 'show'), 'movie', 'b1')).toBe(false);
+    expect(asksProvider(group('plex://movie/5d9c086c46115600200aa2fe', 'movie'), 'show', 'b1')).toBe(false);
+    expect(asksProvider(group('com.plexapp.agents.thetvdb://5', 'show'), 'show', 'b1')).toBe(false);
+    // Before the status names the process, the dialog asks nothing.
+    expect(asksProvider(group('plex://show/5d9c086c46115600200aa2fe', 'show'), 'show', undefined)).toBe(false);
     const query = candidateQuery('srv=1&key=7', 'plex://show/5d9c086c46115600200aa2fe', 'b1');
     expect(query.queryKey).toEqual(['candidate', 'b1', '1', 'plex://show/5d9c086c46115600200aa2fe']);
   });
