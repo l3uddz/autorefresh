@@ -174,8 +174,8 @@ func (s *Store) Library(server, section string) (Library, error) {
 // number, and must not put a key in both r.Items and r.Gone. A row of the
 // same rating key in another section moves to r.Section and keeps its history
 // and its reasons that the read does not replace. It inserts no row for an
-// item that an event after r.Mark settled; the next read adds the row again
-// if Plex still lists the item as incomplete.
+// item that an event after r.Mark settled; a later read that lists the item
+// as incomplete adds the row again, at the latest the next full read.
 func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
