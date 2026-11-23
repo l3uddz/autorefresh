@@ -1,6 +1,7 @@
 import { Badge } from '@astryxdesign/core/Badge';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
+import { Card } from '@astryxdesign/core/Card';
 import { Drawer } from '@astryxdesign/core/Drawer';
 import { EmptyState } from '@astryxdesign/core/EmptyState';
 import { Grid } from '@astryxdesign/core/Grid';
@@ -8,7 +9,6 @@ import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, Layout, LayoutContent, LayoutHeader, StackItem, VStack } from '@astryxdesign/core/Layout';
 import { List, ListItem } from '@astryxdesign/core/List';
-import { Section } from '@astryxdesign/core/Section';
 import { Skeleton } from '@astryxdesign/core/Skeleton';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Heading, Text } from '@astryxdesign/core/Text';
@@ -177,12 +177,12 @@ function RunCounts({ run }: { run: RunRecord }) {
   return (
     <Grid columns={{ minWidth: 112, repeat: 'fit' }} gap={2}>
       {counts.map(([name, value]) => (
-        <Section key={name} variant="muted" paddingInline={3} paddingBlock={2}>
+        <Card key={name} variant="muted" padding={3}>
           <VStack gap={0.5}>
             <Text size="lg" weight="semibold" hasTabularNumbers>{value.toLocaleString()}</Text>
             <Text type="supporting" color="secondary">{name}</Text>
           </VStack>
-        </Section>
+        </Card>
       ))}
     </Grid>
   );
