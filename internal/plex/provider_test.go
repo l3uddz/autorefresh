@@ -46,6 +46,23 @@ func TestProviderSeriesWithoutCounts(t *testing.T) {
 
 func ptr(n int) *int { return &n }
 
+// Two different TMDB IDs name no single TMDB entry. The same ID twice does.
+func TestProviderSeriesTMDBIDs(t *testing.T) {
+	for guids, want := range map[string]string{
+		`{"id":"tmdb://88"},{"id":"tmdb://99"}`: "",
+		`{"id":"tmdb://88"},{"id":"tmdb://88"}`: "88",
+		`{"id":"tvdb://5"},{"id":"tmdb://88"}`:  "88",
+	} {
+		_, c := newProvider(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Write([]byte(`{"MediaContainer":{"Metadata":[{"guid":"` + fixtureShow + `","Guid":[` + guids + `]}]}}`))
+		})
+		got, err := c.ProviderSeries(context.Background(), fixtureShow)
+		if err != nil || got.TMDBID != want {
+			t.Errorf("ProviderSeries with %s = %+v, %v, want TMDB ID %q", guids, got, err, want)
+		}
+	}
+}
+
 func TestProviderSeriesNotFound(t *testing.T) {
 	for name, handle := range map[string]http.HandlerFunc{
 		"404":         func(w http.ResponseWriter, _ *http.Request) { http.NotFound(w, nil) },

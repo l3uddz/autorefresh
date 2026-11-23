@@ -7,6 +7,13 @@ const (
 	conflictNoGUID    = "candidate without guid"
 	conflictDifferent = "different candidates"
 	conflictYear      = "year differs"
+	// conflictUnconfirmed: the TMDB episode numbers did not confirm the
+	// candidate of a title search, or the metadata provider has no TMDB ID
+	// for it.
+	conflictUnconfirmed = "not confirmed"
+	// conflictFolderID: the metadata provider gives the candidate of a title
+	// search another TMDB ID than the folder names.
+	conflictFolderID = "folder id differs"
 )
 
 // searchResult holds the match candidates that one path ID found.

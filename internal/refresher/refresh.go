@@ -305,7 +305,7 @@ func (r *Refresher) warnAtLongestWait(server string, lib plex.Library, it store.
 type fixMatch struct {
 	cand         plex.Candidate
 	links        []string     // the web pages of the IDs that found or confirmed cand
-	action       store.Action // store.ActionMatch, or store.ActionTMDBMatch if TMDB gave the IDs
+	action       store.Action // store.ActionMatch, ActionTMDBMatch if TMDB gave the IDs, or ActionTitleMatch
 	pathYear     int          // >0 when the path (YYYY) confirmed a year gap
 	tmdbYear     int          // >0 when TMDB supplied a year for confirmation
 	episodeCount int          // >0 when regular episodes confirmed a series
@@ -314,7 +314,7 @@ type fixMatch struct {
 // evaluation is the result of the fix match search of an item.
 type evaluation struct {
 	fm       *fixMatch      // nil: no match
-	noIDs    bool           // the paths hold no ID, so nothing was searched
+	noIDs    bool           // the paths hold no ID, and no title search ran, so nothing was searched
 	conflict string         // the conflict that kept the searches from a match
 	years    yearResolution // the confirmation of a year conflict
 }
@@ -350,7 +350,7 @@ func (r *Refresher) autoMatch(ctx context.Context, run *serverRun, lib plex.Libr
 
 // evaluateMatch searches the fix match of the item and logs each search in
 // d. If no search found a candidate, a TMDB client gives a second pass with
-// TMDB IDs.
+// TMDB IDs, and then a series gets a title search (titleFallback).
 func (r *Refresher) evaluateMatch(ctx context.Context, run *serverRun, lib plex.Library, it store.Item, d *decisionLog) (evaluation, error) {
 	paths, err := r.itemPaths(ctx, run, it)
 	if err != nil {
@@ -358,6 +358,9 @@ func (r *Refresher) evaluateMatch(ctx context.Context, run *serverRun, lib plex.
 	}
 	ids := parseIDs(paths)
 	if len(ids) == 0 {
+		if r.titleFallback(run, it, paths, nil) {
+			return r.titleMatch(ctx, run, matchContext{lib: lib, it: it, paths: paths, d: d})
+		}
 		return evaluation{noIDs: true}, nil
 	}
 	results, err := searchIDs(ctx, run.server, lib, it, ids, d)
@@ -375,6 +378,9 @@ func (r *Refresher) evaluateMatch(ctx context.Context, run *serverRun, lib plex.
 		action = store.ActionTMDBMatch
 	}
 	mc := matchContext{lib: lib, it: it, paths: paths, ids: ids, results: results, d: d}
+	if r.titleFallback(run, it, paths, results) {
+		return r.titleMatch(ctx, run, mc)
+	}
 	return r.resolveMatch(ctx, run, mc, action)
 }
 

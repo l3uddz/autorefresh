@@ -44,6 +44,7 @@ describe('format', () => {
   it('names what fixed an item', () => {
     expect(fixedBy('refresh', undefined)).toBe('refresh');
     expect(fixedBy('tmdb-match', 'tmdb-match')).toBe('TMDB match');
+    expect(fixedBy('title-match', 'title-match')).toBe('title match');
     expect(fixedBy('refresh', 'match')).toBe('match · then refresh');
     expect(fixedBy(undefined, undefined)).toBe('Plex on its own');
   });

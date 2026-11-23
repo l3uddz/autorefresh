@@ -26,8 +26,11 @@ type fakePlex struct {
 	pathErrs       map[string]error            // by rating key
 	candidates     map[string][]plex.Candidate // by "<rating key> <search title>"
 	searchErrs     map[string]error            // by "<rating key> <search title>", else by rating key
+	searchYears    map[string]int              // the year of the last search, by "<rating key> <search title>"
 	refreshErrs    map[string]error            // by rating key
 	matchErrs      map[string]error            // by rating key
+	series         map[string]plex.Series      // the provider series by GUID; a missing GUID is ErrNotFound
+	seriesErrs     map[string]error            // by GUID
 	calls          []string
 	onCall         func(call string) // runs after each recorded call, if set
 }
@@ -134,6 +137,10 @@ func (f *fakePlex) SearchMatches(ctx context.Context, ratingKey, title, agent, l
 		return nil, err
 	}
 	f.record(strings.Join([]string{"SearchMatches", ratingKey, title, agent, language}, " "))
+	if f.searchYears == nil {
+		f.searchYears = map[string]int{}
+	}
+	f.searchYears[ratingKey+" "+title] = year
 	if err := f.searchErrs[ratingKey+" "+title]; err != nil {
 		return nil, err
 	}
@@ -141,6 +148,22 @@ func (f *fakePlex) SearchMatches(ctx context.Context, ratingKey, title, agent, l
 		return nil, err
 	}
 	return f.candidates[ratingKey+" "+title], nil
+}
+
+// ProviderSeries records "ProviderSeries <guid>".
+func (f *fakePlex) ProviderSeries(ctx context.Context, guid string) (plex.Series, error) {
+	if err := canceled(ctx); err != nil {
+		return plex.Series{}, err
+	}
+	f.record("ProviderSeries " + guid)
+	if err := f.seriesErrs[guid]; err != nil {
+		return plex.Series{}, err
+	}
+	s, ok := f.series[guid]
+	if !ok {
+		return plex.Series{}, plex.ErrNotFound
+	}
+	return s, nil
 }
 
 // Match records "Match <rating key> <candidate guid>".

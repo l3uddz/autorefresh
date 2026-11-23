@@ -12,9 +12,10 @@ import (
 
 // The sources of a search in a match decision.
 const (
-	searchPath = "path" // a path ID
-	searchTMDB = "tmdb" // the TMDB ID of a path ID, from the TMDB fallback
-	searchTie  = "tie"  // the TMDB ID that year confirmation checks
+	searchPath  = "path"  // a path ID
+	searchTMDB  = "tmdb"  // the TMDB ID of a path ID, from the TMDB fallback
+	searchTie   = "tie"   // the TMDB ID that year confirmation checks
+	searchTitle = "title" // the title and the year of a series whose IDs found nothing
 )
 
 // The verdicts of a candidate that are not a conflict.
@@ -24,6 +25,7 @@ const (
 	verdictDifferent   = "different candidate"
 	verdictNotCompared = "not compared"
 	verdictYearAgrees  = "year agrees" // of a year conflict that another search's year caused
+	verdictOtherTitle  = "other title" // a title search candidate with another title or year
 )
 
 // decisionLog collects one fix match evaluation as it happens.
@@ -31,6 +33,9 @@ type decisionLog struct {
 	searches []store.MatchSearch
 	evidence store.MatchEvidence
 	err      error // a failure that the code handled (a swallowed TMDB or confirmation failure)
+	// severalTMDB are the path IDs of TMDBMissing that TMDB has several
+	// entries for, so the folder names no single series.
+	severalTMDB []string
 }
 
 // skipTMDB keeps the first reason why the evaluation asked TMDB nothing. An
@@ -41,16 +46,25 @@ func (d *decisionLog) skipTMDB(reason string) {
 	}
 }
 
-// noTMDBEntry logs that TMDB has no single entry for the path ID from.
-func (d *decisionLog) noTMDBEntry(from pathID) {
+// noTMDBEntry logs that TMDB has no single entry for the path ID from: none,
+// or several.
+func (d *decisionLog) noTMDBEntry(from pathID, entries tmdbEntries) {
 	if !slices.Contains(d.evidence.TMDBMissing, from.title()) {
 		d.evidence.TMDBMissing = append(d.evidence.TMDBMissing, from.title())
+	}
+	if entries == tmdbSeveral && !slices.Contains(d.severalTMDB, from.title()) {
+		d.severalTMDB = append(d.severalTMDB, from.title())
 	}
 }
 
 // add logs the search for id and its candidates, with no verdict.
 func (d *decisionLog) add(id pathID, source, fromID string, cands []plex.Candidate, failed bool) {
-	m := store.MatchSearch{Query: id.title(), Source: source, FromID: fromID, Failed: failed}
+	d.addSearch(id.title(), source, fromID, cands, failed)
+}
+
+// addSearch logs the search query and its candidates, with no verdict.
+func (d *decisionLog) addSearch(query, source, fromID string, cands []plex.Candidate, failed bool) {
+	m := store.MatchSearch{Query: query, Source: source, FromID: fromID, Failed: failed}
 	for _, c := range cands {
 		m.Candidates = append(m.Candidates, store.MatchCandidate{
 			GUID: c.GUID, Name: c.Name, Year: c.Year, Type: c.Type, Summary: c.Summary, Thumb: c.Thumb, Score: c.Score,
@@ -119,6 +133,28 @@ func verdict(m store.MatchSearch, c store.MatchCandidate, guid, conflict string,
 		return conflict
 	default: // another search has several candidates or one without a GUID
 		return verdictNotCompared
+	}
+}
+
+// judgeTitle sets the verdict of each candidate of the title search at pos
+// of a series it with the folder year pathYear. A candidate with another
+// title or year gets "other title". Of the others, picked is the GUID of the
+// match, and conflict the conflict of no match. A handled failure leaves
+// every verdict empty.
+func (d *decisionLog) judgeTitle(pos int, it store.Item, pathYear int, picked, conflict string) {
+	if d.err != nil {
+		return
+	}
+	m := &d.searches[pos]
+	for i, c := range m.Candidates {
+		switch {
+		case !titleAgrees(it, pathYear, c.Name, c.Year):
+			m.Candidates[i].Verdict = verdictOtherTitle
+		case conflict != "":
+			m.Candidates[i].Verdict = conflict
+		default:
+			m.Candidates[i].Verdict = sameGUID(c.GUID, picked, verdictPicked)
+		}
 	}
 }
 

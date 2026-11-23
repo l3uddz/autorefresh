@@ -225,11 +225,13 @@ series, the first local season whose episode numbers differ from TMDB,
 with the episode count of Plex and of TMDB and the episode numbers that
 only one of them has. The Fix match dialog shows them.
 
-If no match applies, autorefresh sends a plain refresh. If the IDs disagree,
+If no match applies, autorefresh sends a plain refresh. A series can first
+get the [title fallback](#title-fallback). If the IDs disagree,
 it also logs a `Match conflict` warning. The warning has the reason, the
 year of the item, `tmdb_year` if TMDB was checked, and each candidate with
-its year and the web page of the ID that found it. If a match search fails,
-autorefresh sends no request for that item in this run. A match request
+its year and the web page of the ID that found it. If a match search of an
+ID fails, autorefresh sends no request for that item in this run. A failed
+request of the title fallback still gives the item a plain refresh. A match request
 counts as a refresh for the wait.
 
 After Plex accepts a match, the run follows it up as a manual **Match** in
@@ -250,7 +252,7 @@ fields, so you can check each match in the log:
 
 | Field | Content |
 | --- | --- |
-| `action` | `match`, or `tmdb-match` if the TMDB fallback below found the candidate |
+| `action` | `match`, `tmdb-match` if the TMDB fallback below found the candidate, or `title-match` if the title fallback below found it |
 | `item_year` | The year of the item in Plex, or 0 if it has none |
 | `path_year` | Set when an unambiguous `(YYYY)` year in the path confirmed a year gap |
 | `tmdb_year` | TMDB's canonical year, if available during confirmation |
@@ -282,7 +284,8 @@ Plex once for each TMDB ID, for example `tmdb-1396`, with the same rules for
 the candidates.
 
 - If TMDB has no single entry for an ID (none, or several), autorefresh
-  skips that ID. If no ID gives a match, the item gets a plain refresh.
+  skips that ID. If no ID gives a match, the item gets a plain refresh, or
+  a series first gets the [title fallback](#title-fallback).
   Autorefresh does not remember that TMDB had no single entry, because
   TMDB can change, so it asks again at the next attempt of the item.
 - Autorefresh keeps each TMDB ID that it finds in the cache of the item, so
@@ -306,6 +309,50 @@ the Fix match dialog shows it:
   TMDB translates, such as a movie with only a `tvdb` ID, no `tmdb-token` is
   set, or an earlier TMDB failure in the same run turned TMDB off. The first
   reason that applies, in this order, is recorded.
+
+#### Title fallback
+
+A folder name can hold a wrong ID, such as an IMDb ID with a missing digit,
+or no ID at all. Then no ID search finds the series. If you set
+`tmdb-token`, a series gets one more pass. All of these conditions must be
+true:
+
+- The item is a series. A movie has no episodes to confirm a title, so a
+  movie never gets this pass.
+- The item has a year in Plex.
+- The series folders do not hold different years, such as `(2012)` and
+  `(2020)`, which can mean that one item holds two series.
+- No search of the passes above found a candidate, or the paths hold no ID.
+- No TMDB failure in the same run turned TMDB off.
+
+Autorefresh then searches Plex with the title and the year of the item.
+Plex returns many series for a title search, so the search alone proves
+nothing. Autorefresh applies a match only if all of these are true:
+
+1. Exactly one candidate has the same title as the item, ignoring case,
+   spaces, and punctuation, and a year that differs by 1 or less from the
+   year of the item and from the year of the series folder, such as
+   `(2012)`, if it has one. Symbols such as `+` count, and a title without
+   letters or digits matches nothing. Other candidates get the verdict
+   "other title or year".
+2. The Plex metadata provider gives one TMDB ID for that candidate. If it
+   gives several different ones, nothing confirms the candidate. If the
+   folder names give TMDB IDs, each of them must be that ID: each `tmdb`
+   ID, and the TMDB ID that TMDB gives for each `imdb` ID and each `tvdb`
+   ID. An ID that TMDB has several entries for names no single series.
+   Otherwise the conflict is `folder id differs`.
+3. Every local regular season has the same episode count and numbers as
+   that season in TMDB, as in the year check above. Otherwise the conflict
+   is `not confirmed`, and the decision keeps the first season that
+   differs.
+
+The match request has the action `title-match`. If the provider does not
+know the candidate (`404 Not Found`), or gives it no TMDB ID, the conflict
+is `not confirmed`. A failed title search,
+provider request, episode read, or TMDB request is a failed decision: the
+item gets a plain refresh, and the run goes on. Only a `404 Not Found`
+answer of the title search or of the episode read keeps its meaning: the
+item is gone.
 
 ### History
 
@@ -510,10 +557,11 @@ run does these things:
 - It sends match searches, which are reads, to choose the action of each
   item.
 - With a `tmdb-token`, it sends the TMDB lookups of the fix match fallback
-  and caches the TMDB IDs that they find.
+  and caches the TMDB IDs that they find. For the title fallback, it also
+  asks the Plex metadata provider and TMDB, which are reads too.
 - It logs one `Dry run` line at info level for each due item. The line has
   the server, the library, the title, the reasons, and the action, which is
-  `refresh`, `match`, or `tmdb-match`.
+  `refresh`, `match`, `tmdb-match`, or `title-match`.
 - It applies `max-refreshes-per-run` to the due items.
 
 A dry run sends no refresh or match request and does not wait
@@ -792,9 +840,10 @@ when the poster URL holds a Plex token, the TMDB token, or the dashboard
 password, because the browser loads that poster from another site.
 
 To show the counts and the TMDB ID of a series candidate in the Fix match
-dialog, autorefresh sends the Plex token of the server to the Plex metadata
-provider, `metadata.provider.plex.tv`, in the `X-Plex-Token` header, with
-the `plex://` GUID of the candidate. It sends nothing else there, and it
+dialog, and for the [title fallback](#title-fallback) of a run, autorefresh
+sends the Plex token of the server to the Plex metadata provider,
+`metadata.provider.plex.tv`, in the `X-Plex-Token` header, with the
+`plex://` GUID of the candidate. It sends nothing else there, and it
 refuses a redirect to another host.
 
 ### Dashboard in Docker
@@ -878,9 +927,9 @@ summary line also logs them.
 If Plex accepted a request for the item, the line also has these fields:
 
 - `last_action`: the last request that Plex accepted, `refresh`, `match`,
-  or `tmdb-match`.
-- `last_match`: the last match request that Plex accepted, `match` or
-  `tmdb-match`. A later refresh does not replace it, so an item that a match
+  `tmdb-match`, or `title-match`.
+- `last_match`: the last match request that Plex accepted, `match`,
+  `tmdb-match`, or `title-match`. A later refresh does not replace it, so an item that a match
   linked and a refresh then completed still shows the match.
 
 These fields show the last requests before the read found the item

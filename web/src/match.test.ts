@@ -30,6 +30,17 @@ describe('groupCandidates', () => {
     expect(groups[0].foundBy).toEqual([{ query: 'tmdb-1', source: 'path', fromId: undefined, isTyped: false }]);
   });
 
+  it('gives the pick of a preview title search a card that the opening search did not return', () => {
+    const preview = { id: 0, kind: 'match-decision', accepted: false, searches: [
+      search('Show', [cand('plex://a', { verdict: 'picked' }), cand('plex://o', { verdict: 'other title' })], { source: 'title' }),
+    ] } satisfies TimelineEvent;
+    expect(previewSearches(preview).map(s => s.candidates.map(c => c.guid))).toEqual([['plex://a']]);
+    const groups = groupCandidates([search('Show', [cand('plex://o')], { source: 'title' }), ...previewSearches(preview)]);
+    expect(groups.map(g => g.guid).sort()).toEqual(['plex://a', 'plex://o']);
+    const unmatched = { ...preview, searches: [search('Show', [cand('plex://a', { verdict: 'not confirmed' })], { source: 'title' })] };
+    expect(previewSearches(unmatched)).toEqual([]);
+  });
+
   it('keeps candidates without a GUID apart and drops decision verdicts', () => {
     const groups = groupCandidates([search('x', [cand('', { name: 'One', verdict: 'picked' }), cand('', { name: 'Two' })])]);
     expect(groups).toHaveLength(2);

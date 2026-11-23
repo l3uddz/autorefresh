@@ -44,10 +44,15 @@ const (
 	// ActionTMDBMatch is a match whose candidate a search with a TMDB ID
 	// from TMDB found.
 	ActionTMDBMatch Action = "tmdb-match"
+	// ActionTitleMatch is a match whose candidate a search with the title and
+	// the year of a series found and TMDB episode numbers confirmed.
+	ActionTitleMatch Action = "title-match"
 )
 
 // isMatch reports whether a is a match request.
-func (a Action) isMatch() bool { return a == ActionMatch || a == ActionTMDBMatch }
+func (a Action) isMatch() bool {
+	return a == ActionMatch || a == ActionTMDBMatch || a == ActionTitleMatch
+}
 
 // Read is the staged result of all requests for one library.
 type Read struct {

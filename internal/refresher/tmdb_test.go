@@ -201,7 +201,7 @@ func TestTMDBFallbackFindsNothing(t *testing.T) {
 		t.Errorf("cached TMDB ID found = %v, %v, want none", ok, err)
 	}
 	e := f.decision("201")
-	wantDecision(t, e, store.DecisionNoMatch, "", "path tvdb-5:")
+	wantDecision(t, e, store.DecisionNoMatch, "", "path tvdb-5:", "title Title 201:")
 	wantEvidence(t, e, store.MatchEvidence{TMDBMissing: []string{"tvdb-5"}})
 }
 

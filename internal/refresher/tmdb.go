@@ -10,9 +10,11 @@ import (
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
+	"github.com/l3uddz/autorefresh/internal/tmdb"
 )
 
-// TMDB is the part of tmdb.Client that the refresher uses.
+// TMDB is the part of tmdb.Client that the refresher uses. Find returns
+// tmdb.ErrSeveral when TMDB has several entries for the ID.
 type TMDB interface {
 	Find(ctx context.Context, source, id string, show bool) (tmdbID string, ok bool, err error)
 	Year(ctx context.Context, id string, show bool) (year int, ok bool, err error)
@@ -70,12 +72,12 @@ func (r *Refresher) tmdbResults(ctx context.Context, run *serverRun, lib plex.Li
 		if !tmdbSource(from, it.Type) {
 			continue
 		}
-		tmdbID, ok, err := r.tmdbID(ctx, srv.Name, it, from, !run.preview)
+		tmdbID, entries, err := r.findTMDBID(ctx, srv.Name, it, from, !run.preview)
 		if err != nil {
 			return nil, err
 		}
-		if !ok {
-			d.noTMDBEntry(from)
+		if entries != tmdbOne {
+			d.noTMDBEntry(from, entries)
 			continue
 		}
 		if searched[tmdbID] {
@@ -97,27 +99,46 @@ func (r *Refresher) tmdbResults(ctx context.Context, run *serverRun, lib plex.Li
 }
 
 // tmdbID returns the TMDB ID of a path ID of the item, from the cache or from
-// TMDB. It caches each ID that TMDB found.
+// TMDB. ok is false when TMDB has no single entry for it. It caches each ID
+// that TMDB found.
 func (r *Refresher) tmdbID(ctx context.Context, server string, it store.Item, from pathID, save bool) (string, bool, error) {
+	tmdbID, entries, err := r.findTMDBID(ctx, server, it, from, save)
+	return tmdbID, entries == tmdbOne, err
+}
+
+// The number of TMDB entries of a path ID that findTMDBID tells apart.
+type tmdbEntries int
+
+const (
+	tmdbNone tmdbEntries = iota
+	tmdbOne
+	tmdbSeveral
+)
+
+// findTMDBID is tmdbID that also tells no entry from several.
+func (r *Refresher) findTMDBID(ctx context.Context, server string, it store.Item, from pathID, save bool) (string, tmdbEntries, error) {
 	tmdbID, ok, err := r.store.TMDBID(server, it.RatingKey, from.Source, from.Value)
 	if err != nil {
-		return "", false, fmt.Errorf("%w: %w", errCache, err)
+		return "", tmdbNone, fmt.Errorf("%w: %w", errCache, err)
 	}
 	if ok {
-		return tmdbID, true, nil
+		return tmdbID, tmdbOne, nil
 	}
 
 	tmdbID, ok, err = r.opts.TMDB.Find(ctx, from.Source, from.Value, it.Type == plex.ShowLibrary)
-	if err != nil {
-		return "", false, fmt.Errorf("%w: %s: %w", ErrTMDB, from.title(), err)
+	switch {
+	case errors.Is(err, tmdb.ErrSeveral):
+		return "", tmdbSeveral, nil
+	case err != nil:
+		return "", tmdbNone, fmt.Errorf("%w: %s: %w", ErrTMDB, from.title(), err)
+	case !ok:
+		return "", tmdbNone, nil
+	case save:
+		if err := r.store.SaveTMDBID(server, it.RatingKey, from.Source, from.Value, tmdbID); err != nil {
+			return "", tmdbNone, fmt.Errorf("%w: %w", errCache, err)
+		}
 	}
-	if !ok || !save {
-		return tmdbID, ok, nil
-	}
-	if err := r.store.SaveTMDBID(server, it.RatingKey, from.Source, from.Value, tmdbID); err != nil {
-		return "", false, fmt.Errorf("%w: %w", errCache, err)
-	}
-	return tmdbID, true, nil
+	return tmdbID, tmdbOne, nil
 }
 
 // matchContext bundles the state of an item's fix match search for year
@@ -261,12 +282,12 @@ func (r *Refresher) singlePathTMDBID(ctx context.Context, run *serverRun, mc mat
 		if !tmdbSource(id, mc.it.Type) {
 			continue
 		}
-		tmdbID, ok, err := r.tmdbID(ctx, run.server.Name, mc.it, id, !run.preview)
+		tmdbID, entries, err := r.findTMDBID(ctx, run.server.Name, mc.it, id, !run.preview)
 		if err != nil {
 			return "", err
 		}
-		if !ok {
-			mc.d.noTMDBEntry(id)
+		if entries != tmdbOne {
+			mc.d.noTMDBEntry(id, entries)
 			continue
 		}
 		if only != "" && only != tmdbID {
