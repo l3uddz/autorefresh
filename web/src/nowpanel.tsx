@@ -90,7 +90,7 @@ function LastRow({ item }: { item: NowItem }) {
   const detail = [itemDetail(item, false), outcome.text].filter(Boolean).join(' · ');
   return (
     <HStack gap={2} vAlign="center" padding={2}>
-      <Icon icon={toneIcons[outcome.tone]} size="sm" color={outcome.tone} label={outcome.text || undefined} />
+      <Icon icon={toneIcons[outcome.tone]} size="sm" color={outcome.tone} />
       <StackItem size="fill">
         <Text type="supporting" maxLines={1}>
           Last{' '}
