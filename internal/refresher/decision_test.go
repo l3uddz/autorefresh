@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -40,7 +41,7 @@ func (f *fixture) decision(key string) store.Event {
 func (f *fixture) matchRequest(key string) store.Event {
 	f.t.Helper()
 	for _, e := range f.timeline(key) {
-		if e.Kind == store.EventRequest && (e.Action == store.ActionMatch || e.Action == store.ActionTMDBMatch) {
+		if e.Kind == store.EventRequest && slices.Contains([]store.Action{store.ActionMatch, store.ActionTMDBMatch, store.ActionTitleMatch}, e.Action) {
 			return e
 		}
 	}
@@ -141,16 +142,31 @@ func TestDecisionMatched(t *testing.T) {
 	}
 }
 
+// Without TMDB, a series without folder IDs gets no title search, so
+// nothing is searched.
 func TestDecisionNoIDs(t *testing.T) {
+	fp := newFakePlex(showsLib)
+	f := newTMDBFixture(t, fp, nil)
+
+	f.run(t0)
+
+	wantDecision(t, f.decision("201"), store.DecisionNoIDs, "")
+	wantCalls(t, matchReads(fp.calls), "ItemPaths 201")
+	wantCalls(t, sends(fp.calls), "Refresh 201")
+}
+
+// With TMDB, a series without folder IDs gets a title search. One that
+// finds nothing is a decision without a match.
+func TestDecisionNoIDsTitleSearchFindsNothing(t *testing.T) {
 	fp := newFakePlex(showsLib)
 	ft := &fakeTMDB{}
 	f := newTMDBFixture(t, fp, ft)
 
 	f.run(t0)
 
-	wantDecision(t, f.decision("201"), store.DecisionNoIDs, "")
+	wantDecision(t, f.decision("201"), store.DecisionNoMatch, "", "title Title 201:")
 	wantCalls(t, ft.calls)
-	wantCalls(t, matchReads(fp.calls), "ItemPaths 201")
+	wantCalls(t, matchReads(fp.calls), "ItemPaths 201", "SearchMatches 201 Title 201 tv.plex.agents.series en-US")
 	wantCalls(t, sends(fp.calls), "Refresh 201")
 }
 
