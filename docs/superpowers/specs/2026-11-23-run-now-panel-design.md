@@ -20,9 +20,9 @@ sent and in which library, in a layout that looks good.
   under the progress bar:
   - **Top row:** a small poster, title, year, and a second line with the
     library icon and title and the reasons (for example
-    `TV Shows · missing summary`). On the right is a state badge.
-  - **In work:** the item that the run works on, with a "Working" badge.
-  - **Between items:** the next item, with an "Up next" badge and a
+    `TV Shows · missing summary`). On the right is a state label.
+  - **In work:** the item that the run works on, with a "Working" label and a pulsing status dot.
+  - **Between items:** the next item, with an "Up next" label and a
     countdown (`in 4s`) to the time it starts.
   - **Footer** (after a hairline): the last finished item, with an outcome
     icon, the title, year, library, and outcome, and a relative time on the
@@ -43,8 +43,10 @@ sent and in which library, in a layout that looks good.
 ## Constraints
 
 - Astryx components and tokens only (`web/AGENTS.md`). Reuse `Poster`
-  (`sm`) from `media.tsx`, `Badge`, `Text`, the layout stacks, and
-  `useNow` for the countdown and the relative time.
+  (`sm`) from `media.tsx`, `StatusDot`, `Text`, the layout stacks, and
+  `useSecondClock` for the countdown and the relative time: a clock that
+  ticks each second only while a panel shows a countdown or a last item,
+  and that each render reads afresh. `Badge` is for counts only.
 - Each production Go function has a cognitive complexity of 15 or less.
 - The poster goes through the existing proxy, `imageURL("thumb", srv, key,
   thumb)` in `internal/web/items.go`. The status never carries a raw Plex
@@ -116,7 +118,7 @@ wait (proposed by me, approved by the maintainer).
 
 ## My calls (check these)
 
-- **The in-work badge says "Working"**, not "Refreshing". The run chooses
+- **The in-work label says "Working"**, not "Refreshing". The run chooses
   between a refresh and a fix match only after the item starts. To name the
   action, another progress call is needed. Most items finish in
   milliseconds, so that call is not worth it now.

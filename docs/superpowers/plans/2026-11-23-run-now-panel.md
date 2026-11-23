@@ -23,7 +23,7 @@ Vitest.
 - Each production Go function: cognitive complexity ≤ 15 (`mise run lint`).
 - The status never carries a raw Plex image path: thumbs go through `imageURL("thumb", srv, key, thumb)` (`internal/web/items.go:353`).
 - `Snapshot` stays a deep copy: copy each item pointer too.
-- The in-work badge says "Working". Between items: "Up next" and `in Ns`.
+- The in-work label says "Working". Between items: "Up next" and `in Ns`.
 - Commit subjects: Conventional Commits, scope required, ≤ 72 chars, with the `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` trailer.
 
 ## Review Focus
@@ -172,7 +172,7 @@ Vitest.
 - [ ] **Step 2: Run** `pnpm exec vitest run src/now.test.ts` in `web/` — expect FAIL.
 
 - [ ] **Step 3: Implement** `now.ts`, `useSecondClock` (an interval of 1000 ms that runs only while `isActive` and at least one listener exists; do not change `useNow`), and `NowPanel({ run, srv }: { run: RunProgress; srv: number })` in `nowpanel.tsx`:
-  - Layout from the mockup: an inset container (muted background, border token, inner radius) with a top row — `Poster` `sm` (from `media.tsx`), title + year (`Text`), the `itemDetail` line with the library type icon (`FilmIcon`/`TvIcon`), and on the right a `Badge` ("Working", or "Up next" with the `countdown` under it) — and a footer after a divider: outcome icon in the tone colour, `Last` muted, title, year, `itemDetail(last, false)`, outcome text, and `relative`-style seconds on the right (`now`, `Ns ago`; use `useSecondClock`).
+  - Layout from the mockup: an inset container (muted background, border token, inner radius) with a top row — `Poster` `sm` (from `media.tsx`), title + year (`Text`), the `itemDetail` line with the library type icon (`FilmIcon`/`TvIcon`), and on the right a state label (`StatusDot` and "Working", or "Up next" with the `countdown` under it; `Badge` is for counts only) — and a footer after a divider: outcome icon in the tone colour, `Last` muted, title, year, `itemDetail(last, false)`, outcome text, and `relative`-style seconds on the right (`now`, `Ns ago`; use `useSecondClock`).
   - Top row shows `current`, else `next`; neither → top row hidden. No `last` → footer hidden. Neither → render nothing.
   - Reasons show only for `run.kind === 'run'`.
   - In `RunLive`: keep the reading-libraries text while `run.selected === 0`; otherwise render `<NowPanel>` instead of the `Now:` / "Waiting for the next item" text.
