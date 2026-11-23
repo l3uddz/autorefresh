@@ -73,6 +73,11 @@ type Read struct {
 	DryRun bool
 	// RunID is the run of the read, which its events name; 0: none.
 	RunID int64
+	// Mark is the newest event before the read listed its items. ApplyRead
+	// adds no row for an item with a completed or gone event after Mark: a
+	// check or a manual action settled the item during the read, so the
+	// listing can be older. The zero EventMark checks no event.
+	Mark EventMark
 }
 
 const itemColumns = `server, section, rating_key, type, title, year, added_at, reasons, last_refresh, last_attempt, refreshes,
@@ -168,7 +173,9 @@ func (s *Store) Library(server, section string) (Library, error) {
 // must set AddedAt on every item, because a zero time is stored as a negative
 // number, and must not put a key in both r.Items and r.Gone. A row of the
 // same rating key in another section moves to r.Section and keeps its history
-// and its reasons that the read does not replace.
+// and its reasons that the read does not replace. It inserts no row for an
+// item that an event after r.Mark settled; a later read that lists the item
+// as incomplete adds the row again, at the latest the next full read.
 func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -176,6 +183,11 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	}
 	defer tx.Rollback()
 
+	// The events of the read itself are not newer than the read.
+	settled, err := settledKeys(tx, r)
+	if err != nil {
+		return nil, err
+	}
 	// The item rows of the library need its library row first.
 	if err := writeReadTimes(tx, r); err != nil {
 		return nil, err
@@ -192,7 +204,7 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := insertNewRows(tx, r, old, incoming); err != nil {
+	if err := insertNewRows(tx, r, old, incoming, settled); err != nil {
 		return nil, err
 	}
 	if err := writeFolders(tx, r); err != nil {
@@ -203,6 +215,34 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 		return nil, fmt.Errorf("commit read: %w", err)
 	}
 	return fixed, nil
+}
+
+// settledKeys returns the rating keys of r.Server with a completed or gone
+// event after r.Mark, or none for the zero mark.
+func settledKeys(tx *sql.Tx, r Read) (map[string]bool, error) {
+	if !r.Mark.set {
+		return nil, nil
+	}
+	// NOT INDEXED keeps SQLite on the ID range, the few events after the
+	// mark, instead of the server's whole history in an index.
+	rows, err := tx.Query(`SELECT rating_key FROM event NOT INDEXED WHERE id > ? AND server = ? AND kind IN (?, ?)`,
+		r.Mark.id, r.Server, EventCompleted, EventGone)
+	if err != nil {
+		return nil, fmt.Errorf("read settled items: %w", err)
+	}
+	defer rows.Close()
+	settled := map[string]bool{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("read settled items: %w", err)
+		}
+		settled[key] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read settled items: %w", err)
+	}
+	return settled, nil
 }
 
 // deleteGone deletes the rows of r.Gone. Unless r.DryRun, it writes a gone
@@ -299,11 +339,11 @@ func writeExisting(tx *sql.Tx, r Read, prev Item, in readKey) (fixed bool, err e
 	return false, nil
 }
 
-// insertNewRows inserts rows for incoming items not in old that have at least
-// one incomplete reason.
-func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]readKey) error {
+// insertNewRows inserts rows for incoming items not in old or settled that
+// have at least one incomplete reason.
+func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]readKey, settled map[string]bool) error {
 	for key, in := range incoming {
-		if _, exists := old[key]; exists {
+		if _, exists := old[key]; exists || settled[key] {
 			continue
 		}
 		final := in.reasons(r, 0)

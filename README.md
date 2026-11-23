@@ -90,6 +90,12 @@ that Plex adds at the end of the listing do not make the read fail. If an
 item becomes complete, autorefresh logs it with the number of refreshes and
 removes it from the cache.
 
+A read saves its result when it ends. If **Refresh now**, a match, or the
+check after one of them completes an item or finds it removed while the
+read runs, the read does not add the item back to the cache. If Plex still
+lists the item as incomplete, a later read that lists it adds it again, at
+the latest the next full read.
+
 ### Cache cleanup
 
 At the start of each run, autorefresh removes the cache of each server that

@@ -118,6 +118,67 @@ func TestApplyReadReturnsFixedItem(t *testing.T) {
 	}
 }
 
+// A check or a manual action that completes a row or finds it gone after
+// the mark of a read is newer than the listing of the read, so the read does
+// not add the row back. The mark, not the event time, orders them: a check
+// in the first second of the read, or a manual 404 whose request started
+// before the read, still counts. A settlement before the mark, or a read
+// without a mark, adds the row again.
+func TestApplyReadKeepsNewerSettlement(t *testing.T) {
+	readAt := base.Add(time.Hour)
+	checked := func(t *testing.T, s *Store, at time.Time) {
+		if fixed, err := s.ApplyCheck(srv, item("a", 0), at, 0); err != nil || !fixed {
+			t.Fatalf("check = %v, %v", fixed, err)
+		}
+	}
+	gone := func(t *testing.T, s *Store, at time.Time) {
+		req := Request{Server: srv, RatingKey: "a", At: at, Source: SourceManual, Action: ActionRefresh}
+		if err := s.RecordManual(ManualRecord{Request: req, Snapshot: item("a", NoSummary), Cached: true, Gone: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name      string
+		settle    func(*testing.T, *Store, time.Time)
+		at        time.Time
+		afterMark bool
+		marked    bool
+		kept      bool
+	}{
+		{"check in the first second of the read", checked, readAt, true, true, false},
+		{"404 of a request that started before the read", gone, readAt.Add(-time.Minute), true, true, false},
+		{"check before the mark", checked, readAt, false, true, true},
+		{"read without a mark", checked, readAt, true, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := openTest(t)
+			apply(t, s, Read{Items: []Item{item("a", NoSummary), item("b", NoSummary)}})
+			if !tc.afterMark {
+				tc.settle(t, s, tc.at)
+			}
+			var mark EventMark
+			if tc.marked {
+				var err error
+				if mark, err = s.EventMark(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.afterMark {
+				tc.settle(t, s, tc.at)
+			}
+
+			fixed := apply(t, s, Read{At: readAt, Mark: mark, Items: []Item{item("a", NoSummary), item("b", NoSummary), item("c", NoPoster)}})
+			got := rows(t, s)
+			if _, ok := got["a"]; ok != tc.kept {
+				t.Errorf("row a stored = %v, want %v", ok, tc.kept)
+			}
+			if len(fixed) != 0 || got["b"].Reasons != NoSummary || got["c"].Reasons != NoPoster {
+				t.Errorf("fixed = %v, rows = %+v; want b and c unchanged by the settlement of a", keys(fixed), got)
+			}
+		})
+	}
+}
+
 func TestApplyReadCombinesReasons(t *testing.T) {
 	tests := []struct {
 		name  string

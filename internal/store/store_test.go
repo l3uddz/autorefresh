@@ -515,7 +515,8 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 	s.Close()
 
 	calls := map[string]func() error{
-		"Library": func() error { _, err := s.Library(srv, sec); return err },
+		"Library":   func() error { _, err := s.Library(srv, sec); return err },
+		"EventMark": func() error { _, err := s.EventMark(); return err },
 		"ApplyRead": func() error {
 			_, err := s.ApplyRead(Read{Server: srv, Section: sec, At: base})
 			return err
