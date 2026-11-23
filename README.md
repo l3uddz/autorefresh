@@ -346,7 +346,9 @@ nothing. Autorefresh applies a match only if all of these are true:
    is `not confirmed`, and the decision keeps the first season that
    differs.
 
-The match request has the action `title-match`. A failed title search,
+The match request has the action `title-match`. If the provider does not
+know the candidate (`404 Not Found`), or gives it no TMDB ID, the conflict
+is `not confirmed`. A failed title search,
 provider request, episode read, or TMDB request is a failed decision: the
 item gets a plain refresh, and the run goes on. Only a `404 Not Found`
 answer of the title search or of the episode read keeps its meaning: the
