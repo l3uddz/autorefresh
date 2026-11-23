@@ -63,7 +63,7 @@ type MatchCandidate struct {
 // MatchSearch is one Plex search of a match decision.
 type MatchSearch struct {
 	Query      string // for example "tmdb-48213"
-	Source     string // "path", "tmdb", or "tie"
+	Source     string // "path", "tmdb", "tie", or "title"
 	FromID     string // the path ID a tmdb search came from
 	Failed     bool
 	Candidates []MatchCandidate
@@ -88,7 +88,7 @@ type EpisodeDiff struct {
 
 // MatchEvidence is what a fix match decision learned beyond its searches.
 type MatchEvidence struct {
-	TMDBID      string      // the TMDB ID whose year and episodes the year check compared
+	TMDBID      string      // the TMDB ID whose year and episodes the year check compared, or that confirmed a title search
 	TMDBSkip    string      // why TMDB was not asked: TMDBOff, TMDBFailed, TMDBHasID, or TMDBNoSource
 	TMDBMissing []string    // the path IDs, such as tvdb-357542, that TMDB has no single entry for
 	EpisodeDiff EpisodeDiff // the episode comparison that did not confirm the candidate
