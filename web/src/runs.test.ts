@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { RunDetail, RunEvent, RunItem, RunRecord } from './api';
-import { noEntries, runCounts, runGroups } from './runs';
+import { ApiError, type RunDetail, type RunEvent, type RunItem, type RunRecord } from './api';
+import { noEntries, runCounts, runGroups, runPollInterval } from './runs';
 
 const record = (change: Partial<RunRecord> = {}): RunRecord => ({
   id: 9, srv: 0, server: 'Home', kind: 'run', source: 'schedule', status: 'finished',
@@ -119,6 +119,20 @@ describe('run groups', () => {
       ]],
       ['Not reached', [['2', 'The job ended before this item', undefined, 'attention']]],
     ]);
+  });
+});
+
+describe('run poll interval', () => {
+  const running = record({ status: 'running' });
+  it('polls a running run, also after a failed reload that kept its data', () => {
+    expect(runPollInterval(running, null)).toBe(5_000);
+    expect(runPollInterval(running, new ApiError(500, 'Plex answered 500'))).toBe(5_000);
+  });
+  it('stops for a removed run, an ended run, a bulk refresh, or no data', () => {
+    expect(runPollInterval(running, new ApiError(404, 'no such run'))).toBe(false);
+    expect(runPollInterval(record(), null)).toBe(false);
+    expect(runPollInterval(record({ status: 'running', kind: 'bulk-refresh' }), null)).toBe(false);
+    expect(runPollInterval(undefined, null)).toBe(false);
   });
 });
 

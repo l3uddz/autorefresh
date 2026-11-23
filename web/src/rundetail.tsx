@@ -18,12 +18,8 @@ import { ApiError, api, type RunDetail, type RunRecord } from './api';
 import { dateTime, label, plural, runDuration, runTitle, titleYear } from './format';
 import { Poster } from './media';
 import { itemHash } from './route';
-import { noEntries, runCounts, runGroups, type RunEntry, type RunGroup } from './runs';
+import { noEntries, runCounts, runGroups, runPollInterval, type RunEntry, type RunGroup } from './runs';
 import { statusDots } from './status';
-
-/** How often the events of a running run reload. A bulk refresh records
- * its items when it ends, so it does not reload. */
-const runningInterval = 5_000;
 
 interface Props {
   /** The open run, or undefined for a closed drawer. */
@@ -52,10 +48,7 @@ export function RunDetails({ id, isMulti, srv, onClose }: Props & { id: number }
     queryKey: ['runs', 'detail', id],
     queryFn: ({ signal }) => api<RunDetail>(`runs/detail?${new URLSearchParams({ id: String(id) })}`, { signal }),
     retry: (count, error) => !(error instanceof ApiError && error.status === 404) && count < 1,
-    refetchInterval: query => {
-      const run = query.state.status === 'success' ? query.state.data?.run : undefined;
-      return run?.status === 'running' && run.kind !== 'bulk-refresh' ? runningInterval : false;
-    },
+    refetchInterval: query => runPollInterval(query.state.data?.run, query.state.error),
   });
   const isGone = detail.error instanceof ApiError && detail.error.status === 404;
   // A run that retention removed while the drawer was open is gone: its

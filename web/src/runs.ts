@@ -171,6 +171,18 @@ function pendingEntry(decision: RunEvent): [string, RunEntry] {
   return ['not-sent', { ...eventEntry(decision), detail: 'The run ended before the request' }];
 }
 
+/** How often the details of a running run reload. */
+const runningInterval = 5_000;
+
+/** Returns how often the details of run reload, or false for no reload. A
+ * running run reloads, also after a failed reload that kept its data. A
+ * removed run, an ended run, and a bulk refresh, which records its items
+ * when it ends, do not. */
+export function runPollInterval(run: RunRecord | undefined, error: Error | null): number | false {
+  if (error instanceof ApiError && error.status === 404) return false;
+  return run?.status === 'running' && run.kind !== 'bulk-refresh' ? runningInterval : false;
+}
+
 function eventGroup(event: RunEvent): string | undefined {
   switch (event.kind) {
     case 'request':
