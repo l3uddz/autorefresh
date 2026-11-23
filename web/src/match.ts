@@ -163,6 +163,15 @@ export function autoEvidence(decision: TimelineEvent | undefined, guid: string):
   );
 }
 
+/** Returns the folder ID searches of a preview decision: the kinds of
+ * search that the opening search also makes. Grouped with the opening
+ * searches, they give the pick of the preview a card, also when the
+ * opening search of its folder ID failed. A tie search only confirms a
+ * pick that a folder ID search found. */
+export function previewSearches(decision: TimelineEvent | undefined): MatchSearch[] {
+  return decision?.searches.filter(search => search.source === 'path' || search.source === 'tmdb') ?? [];
+}
+
 /** Returns the line of a candidate for one search of the last automatic
  * fix match, or of a preview. */
 export function autoEvidenceText(evidence: AutoEvidence, isPreview: boolean): string {

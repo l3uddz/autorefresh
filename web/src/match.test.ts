@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Candidate, MatchSearch, TimelineEvent } from './api';
-import { autoEvidence, autoEvidenceText, autoMatchPath, checkSearch, compareYear, groupCandidates, isCurrentMatch, isIDSearch, listView, matchBody, matchesPath, offersEpisodeCheck, sameSearch, tmdbIdOf } from './match';
+import { autoEvidence, autoEvidenceText, autoMatchPath, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isIDSearch, listView, matchBody, matchesPath, offersEpisodeCheck, sameSearch, tmdbIdOf } from './match';
 
 const cand = (guid: string, change: Partial<Candidate> = {}): Candidate => ({ guid, score: 0, ...change });
 const search = (query: string, candidates: Candidate[], change: Partial<MatchSearch> = {}): MatchSearch => ({ query, failed: false, candidates, ...change });
@@ -15,6 +15,19 @@ describe('groupCandidates', () => {
     expect(groups.map(g => g.guid)).toEqual(['plex://a', 'plex://b']);
     expect(groups[0].candidate).toMatchObject({ name: 'A', summary: 'From the ID search', score: 98 });
     expect(groups[0].foundBy.map(e => e.query)).toEqual(['The Quiet Harbor', 'tmdb-48213', 'imdb-tt1']);
+  });
+
+  it('gives the pick of a preview a card when the opening folder search failed', () => {
+    const preview = { id: 0, kind: 'match-decision', accepted: false, searches: [
+      search('tmdb-1', [cand('plex://a', { verdict: 'picked' })], { source: 'path' }),
+      search('tmdb-7', [cand('plex://a', { verdict: 'confirms' })], { source: 'tie' }),
+    ] } satisfies TimelineEvent;
+    const opening = [search('Title', [cand('plex://b')], { source: 'title' }), search('tmdb-1', [], { source: 'path', failed: true })];
+    expect(previewSearches(preview).map(s => s.source)).toEqual(['path']);
+    expect(previewSearches(undefined)).toEqual([]);
+    const groups = groupCandidates([...opening, ...previewSearches(preview)]);
+    expect(groups.map(g => g.guid)).toEqual(['plex://a', 'plex://b']);
+    expect(groups[0].foundBy).toEqual([{ query: 'tmdb-1', source: 'path', fromId: undefined, isTyped: false }]);
   });
 
   it('keeps candidates without a GUID apart and drops decision verdicts', () => {

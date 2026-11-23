@@ -21,7 +21,7 @@ import { askThen } from './confirm';
 import { actionError } from './errors';
 import { plural, titleYear, typeName } from './format';
 import { DecisionPanel } from './history';
-import { autoEvidence, autoEvidenceText, autoMatchPath, checkSearch, compareYear, groupCandidates, isCurrentMatch, isFolderEvidence, listView, matchBody, matchesPath, offersEpisodeCheck, sameSearch, type CandidateGroup, type Evidence, type TypedSearch, type YearCheck } from './match';
+import { autoEvidence, autoEvidenceText, autoMatchPath, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isFolderEvidence, listView, matchBody, matchesPath, offersEpisodeCheck, sameSearch, type CandidateGroup, type Evidence, type TypedSearch, type YearCheck } from './match';
 import { RemotePoster } from './media';
 import { lastDecision } from './timeline';
 
@@ -34,10 +34,10 @@ import { lastDecision } from './timeline';
 const wideQuery = `(min-width: ${DEFAULT_WIDTH_BREAKPOINTS.lg}px)`;
 
 /** Match searches call Plex several times, so they run only when asked:
- * no refetch on focus or on a list refresh, no retry, and no cache after
- * the dialog closes. Their keys are outside the item prefix, which
- * invalidateLists refreshes. */
-const searchOptions = { staleTime: Infinity, gcTime: 0, retry: false, refetchOnWindowFocus: false } as const;
+ * no refetch on focus, on a reconnect, or on a list refresh, no retry, and
+ * no cache after the dialog closes. Their keys are outside the item
+ * prefix, which invalidateLists refreshes. */
+const searchOptions = { staleTime: Infinity, gcTime: 0, retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
 
 interface Props {
   item: ItemRecord;
@@ -131,7 +131,7 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
   const decisionPanel = (hasHeading: boolean) => (
     <AutoMatchPanel decision={decision} title={decisionTitle} hasHeading={hasHeading} preview={preview} onRun={runPreview} />
   );
-  const groups = groupCandidates(opening.data?.searches ?? [], typed ? search.data?.searches : [], typed?.year);
+  const groups = groupCandidates([...(opening.data?.searches ?? []), ...previewSearches(preview.data)], typed ? search.data?.searches : [], typed?.year);
   const title = titleYear(item.title ?? `Item ${item.key}`, item.year);
   const isTypedPending = typed !== undefined && search.isPending;
   const view = listView(groups.length, opening.isPending || isTypedPending, opening.isSuccess || (typed !== undefined && search.isSuccess));
