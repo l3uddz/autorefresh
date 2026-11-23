@@ -67,25 +67,28 @@ export function useShown<T>(
   key: (value: T) => string,
   onDismiss: () => void,
 ): DrawerPresence<T> {
-  const [shown, setShown] = useState(value);
-  const next = nextShown(shown, value, key);
-  if (next !== shown) setShown(next);
   const [forced, setForced] = useState<string>();
   const [generation, setGeneration] = useState(0);
   const nextForce = nextForced(forced, value, key);
   if (nextForce !== forced) setForced(nextForce);
+  // A force-closed value counts as closed, so nothing of it mounts again in
+  // the new dialog.
+  const open = nextForce === undefined ? value : undefined;
+  const [shown, setShown] = useState(open);
+  const next = nextShown(shown, open, key);
+  if (next !== shown) setShown(next);
   // The listeners read the value and the callback of the latest render.
-  const latest = useRef(value);
+  const latest = useRef(open);
   const dismiss = useRef(onDismiss);
   const keyRef = useRef(key);
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   // This effect runs after the effect of the Drawer, which starts the slide.
   useEffect(() => {
-    latest.current = value;
+    latest.current = open;
     dismiss.current = onDismiss;
     keyRef.current = key;
     const dialog = dialogRef.current;
-    if (dialog && !dialog.open) setShown(current => afterExit(current, value));
+    if (dialog && !dialog.open) setShown(current => afterExit(current, open));
   });
   const ref = useCallback((dialog: HTMLDialogElement | null) => {
     dialogRef.current = dialog;
@@ -93,8 +96,11 @@ export function useShown<T>(
     const onCancel = (event: Event) => {
       if (!isForcedClose({ cancelable: event.cancelable, fromDialog: event.target === dialog })) return;
       const closed = latest.current;
-      if (closed !== undefined) setForced(keyRef.current(closed));
+      setShown(undefined);
       setGeneration(current => current + 1);
+      // A drawer that was already closing has no selection to dismiss.
+      if (closed === undefined) return;
+      setForced(keyRef.current(closed));
       dismiss.current();
     };
     const onClose = () => {
@@ -108,5 +114,5 @@ export function useShown<T>(
       dialogRef.current = null;
     };
   }, []);
-  return { shown: next, ref, isOpen: value !== undefined && nextForce === undefined, generation };
+  return { shown: next, ref, isOpen: open !== undefined, generation };
 }
