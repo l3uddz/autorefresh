@@ -3,6 +3,7 @@ package refresher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -355,6 +356,31 @@ func TestApplyMatchStopsWhenRowLeavesCache(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "Following up a match failed") {
 		t.Errorf("log warns about a row that a run removed: %s", buf)
+	}
+}
+
+// An unavailable server ends the follow-up: no check asks it again. The
+// accepted match is no error.
+func TestApplyMatchRefreshUnavailableSkipsChecks(t *testing.T) {
+	f, fake, checks := matchCheckFixture(t, checkAnswer{item: completeItem("1")})
+	fake.refreshErrs["1"] = fmt.Errorf("refresh: %w", plex.ErrUnavailable)
+	cand := plex.Candidate{GUID: "plex://movie/1", Name: "Match", Year: 2020}
+	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {
+		t.Fatal(err)
+	}
+	if *checks != 0 || len(f.sleeps) != 0 {
+		t.Errorf("checks %d, sleeps %v; want none", *checks, f.sleeps)
+	}
+}
+
+func TestApplyMatchStopsCheckingWhenPlexIsUnavailable(t *testing.T) {
+	f, _, checks := matchCheckFixture(t, checkAnswer{err: fmt.Errorf("item 1: %w", plex.ErrUnavailable)}, checkAnswer{item: completeItem("1")})
+	cand := plex.Candidate{GUID: "plex://movie/1", Name: "Match", Year: 2020}
+	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {
+		t.Fatal(err)
+	}
+	if *checks != 1 {
+		t.Errorf("checks = %d, want 1", *checks)
 	}
 }
 

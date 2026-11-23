@@ -3,6 +3,7 @@ package refresher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -634,5 +635,25 @@ func TestRunMatchStopsSettlingWhenTheItemIsGone(t *testing.T) {
 	}
 	if e := f.timeline("101")[0]; e.Kind != store.EventGone || e.Source != store.SourceAuto || e.RunID == 0 {
 		t.Errorf("newest event = %+v, want a gone event of the run", e)
+	}
+}
+
+// A server that becomes unavailable after it accepted the match of a run
+// ends the run of that server, as a failed request does: the follow-up asks
+// it nothing more, and the run sends no other request.
+func TestRunMatchStopsTheServerWhenPlexBecomesUnavailable(t *testing.T) {
+	f, fp, checks := runMatchFixture(t, checkAnswer{item: completeItem("101")})
+	f.seed(testServer, moviesLib, incompleteItem("102"), store.NoSummary, 2)
+	fp.refreshErrs["101"] = fmt.Errorf("refresh: %w", plex.ErrUnavailable)
+	p := withProgress(f)
+
+	f.runUnavailable(t0)
+
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/m", "Refresh 101")
+	if *checks != 0 {
+		t.Errorf("checks = %d, want none", *checks)
+	}
+	if calls := p.itemCalls(); len(calls) != 2 || !strings.HasPrefix(calls[1], "ItemDone home 101 ") {
+		t.Errorf("item progress = %q, want 101 started and done", calls)
 	}
 }

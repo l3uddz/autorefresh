@@ -121,41 +121,61 @@ var matchCheckDelays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Se
 // lock: a manual match when run is nil, or else a match of run, which then
 // records the steps as its own. It requests a refresh, then checks a cached
 // item until the check completes it, Plex no longer has it, a run removed
-// its row, or the waits run out. It returns a store error (ErrStore). It
-// logs any other failure, because Plex accepted the match and the next run
-// reads the item again.
+// its row, the waits run out, or a failure ends it. It returns a store
+// error (ErrStore). It logs any other failure, because Plex accepted the
+// match and the next run reads the item again. An unavailable server or
+// the end of ctx (stopError) ends the follow-up; a run then also gets that
+// error, which ends the run of the server as a failed request does.
 func (r *Refresher) settleMatch(ctx context.Context, item manualItem, run *serverRun) error {
 	if err := r.followUpRefresh(ctx, item, run); err != nil {
-		if errors.Is(err, ErrStore) {
-			return err
-		}
-		r.logSettleFailure(item, "refresh", err)
-		if errors.Is(err, plex.ErrNotFound) || ctx.Err() != nil {
-			return nil
+		if end, stop := r.settleFailed(ctx, item, run, "refresh", err); end || errors.Is(err, plex.ErrNotFound) {
+			return stop
 		}
 	}
 	if !item.cached {
 		return nil
 	}
+	return r.checkMatched(ctx, item, run)
+}
+
+// checkMatched checks the cached item of settleMatch after each wait of
+// matchCheckDelays, until a check completes it, its row leaves the cache, or
+// a failure ends the follow-up. It returns the error of settleFailed.
+func (r *Refresher) checkMatched(ctx context.Context, item manualItem, run *serverRun) error {
 	for _, d := range matchCheckDelays {
 		if r.sleep(ctx, d) != nil {
 			return nil
 		}
 		settled, err := r.checkHeld(ctx, item, run)
-		switch {
-		case errors.Is(err, ErrNotCached):
+		if errors.Is(err, ErrNotCached) {
 			// A run read the item meanwhile and completed or removed it.
 			return nil
-		case errors.Is(err, ErrStore):
-			return err
-		case err != nil:
-			r.logSettleFailure(item, "check", err)
+		}
+		if err != nil {
+			if end, stop := r.settleFailed(ctx, item, run, "check", err); end {
+				return stop
+			}
 		}
 		if settled {
 			return nil
 		}
 	}
 	return nil
+}
+
+// settleFailed handles the failed step of settleMatch and reports whether
+// the follow-up ends, with the error that settleMatch then returns: a store
+// error, or the error of stopError for a run. It logs any other failure.
+func (r *Refresher) settleFailed(ctx context.Context, item manualItem, run *serverRun, step string, err error) (bool, error) {
+	if errors.Is(err, ErrStore) {
+		return true, err
+	}
+	r.logSettleFailure(item, step, err)
+	stop := stopError(ctx, err)
+	if stop == nil || run == nil {
+		return stop != nil, nil
+	}
+	return true, stop
 }
 
 // followUpRefresh sends and records the refresh after an accepted match:

@@ -229,7 +229,10 @@ check that finds the item complete moves it to the Fixed tab at once and
 counts it in the summary of the run. A check that finds it still
 incomplete updates its metadata, and the next run reads it again. The
 follow-up refresh, and a completion or a removal that a check finds,
-belong to the run, so they show in its details.
+belong to the run, so they show in its details. If the server is
+unavailable for the follow-up refresh or a check, the follow-up stops
+and the run of that server ends, as it does after any request that fails
+that way.
 
 The `Sent request` line of a match, and its `Dry run` line, has these
 fields, so you can check each match in the log:
@@ -670,6 +673,8 @@ automatic refresh, like any refresh. Then, for an item in the cache, autorefresh
 checks the item as **Check now** does, after waits of 1, 2, and 4 seconds,
 while Plex loads the new metadata. An item that a check finds complete
 moves to the Fixed tab at once. Otherwise the next run reads it again.
+If the server is unavailable for the refresh or a check, autorefresh
+stops checking.
 Beside the candidates, the dialog explains the last automatic fix match:
 its searches, their candidates, and why it picked one or none. When the
 history holds no automatic fix match of the item, **Try automatic fix

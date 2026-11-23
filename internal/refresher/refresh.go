@@ -155,13 +155,17 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	r.warnAtLongestWait(run.server.Name, lib, it)
 	// The run follows up its match as a manual match is followed up, so a
 	// match that fixed the item moves it to Fixed now.
+	var stop error
 	if fm != nil {
-		if err := r.settleMatch(ctx, manualItem{server: run.server, row: it, cached: true}, run); err != nil {
-			return err
+		stop = r.settleMatch(ctx, manualItem{server: run.server, row: it, cached: true}, run)
+		if errors.Is(stop, ErrStore) {
+			return stop
 		}
 	}
+	// Plex accepted the request, so the item is done also when the follow-up
+	// of its match ends the run of the server.
 	r.itemDone(run, it.RatingKey, req.Outcome())
-	return nil
+	return stop
 }
 
 // runRefresh sends the refresh after a match that Plex accepted in the run
