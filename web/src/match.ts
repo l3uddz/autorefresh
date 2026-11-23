@@ -1,7 +1,7 @@
 import { queryOptions } from '@tanstack/react-query';
 import { api, type Candidate, type CandidateSeries, type MatchSearch, type TimelineEvent } from './api';
 import { maxSearchBytes } from './bulk';
-import { verdictName } from './timeline';
+import { rowVerdict, verdictName } from './timeline';
 
 // The evidence of the Fix match dialog: candidates grouped by Plex GUID,
 // with the searches that found each one. Every Plex field stays text.
@@ -218,7 +218,7 @@ export interface AutoEvidence {
 export function autoEvidence(decision: TimelineEvent | undefined, guid: string): AutoEvidence[] {
   if (!decision || !guid) return [];
   return decision.searches.flatMap(search =>
-    search.candidates.filter(c => c.guid === guid).map(c => ({ query: search.query, verdict: c.verdict })),
+    search.candidates.filter(c => c.guid === guid).map(c => ({ query: search.query, verdict: rowVerdict(c, decision.itemYear) })),
   );
 }
 

@@ -1,4 +1,4 @@
-import type { EpisodeDiff, ItemDetail, MatchSearch, TimelineEvent } from './api';
+import type { Candidate, EpisodeDiff, ItemDetail, MatchSearch, TimelineEvent } from './api';
 import { actionText, fixedBy, plural, titleYear } from './format';
 import { compareYear } from './match';
 
@@ -124,15 +124,33 @@ function listText(words: string[]): string {
   return `${words.slice(0, -1).join(', ')}, and ${words[words.length - 1]}`;
 }
 
-/** Returns the year of the candidate that the year check rejected: its
- * verdict is "year differs", and its year differs from the item year. A
- * search can return the same candidate with another year. */
+/** Returns the verdict of a candidate of a decision about an item of the
+ * year itemYear. A search can return the same candidate with another year.
+ * Older decisions gave every row of a year conflict "year differs"; a row
+ * whose year does not differ from the item year reads "year agrees", as
+ * newer decisions store it. */
+export function rowVerdict(candidate: Pick<Candidate, 'verdict' | 'year'>, itemYear: number | undefined): string | undefined {
+  if (candidate.verdict === 'year differs' && itemYear && compareYear(itemYear, candidate.year).kind !== 'differs') return 'year agrees';
+  return candidate.verdict;
+}
+
+/** Returns the year of the candidate that the year check rejected. */
 function rejectedYear(event: TimelineEvent, itemYear: number): number | undefined {
   for (const search of event.searches) {
-    const candidate = search.candidates.find(c => c.verdict === 'year differs' && compareYear(itemYear, c.year).kind === 'differs');
+    const candidate = search.candidates.find(c => c.year && rowVerdict(c, itemYear) === 'year differs');
     if (candidate) return candidate.year;
   }
   return undefined;
+}
+
+/** Returns the years of the item, its folder, and TMDB that a decision
+ * compared, such as ["the item has 2009", "TMDB has 1978"]. */
+function comparedYears(event: TimelineEvent): string[] {
+  const years = event.itemYear ? [`the item has ${event.itemYear}`] : [];
+  if (event.pathYear) years.push(`the folder has ${event.pathYear}`);
+  if (event.tmdbYear) years.push(`TMDB has ${event.tmdbYear}`);
+  else if (event.tmdbId) years.push('TMDB has no year');
+  return years;
 }
 
 /** Explains a year conflict with the years that it compared and the
@@ -141,11 +159,7 @@ function rejectedYear(event: TimelineEvent, itemYear: number): number | undefine
 function yearConflict(event: TimelineEvent): string {
   const candidateYear = event.itemYear && rejectedYear(event, event.itemYear);
   if (!event.itemYear || !candidateYear) return conflictText['year differs'];
-  const years = [`Plex has ${candidateYear}`, `the item has ${event.itemYear}`];
-  if (event.pathYear) years.push(`the folder has ${event.pathYear}`);
-  if (event.tmdbYear) years.push(`TMDB has ${event.tmdbYear}`);
-  else if (event.tmdbId) years.push('TMDB has no year');
-  const sentences = [`${listText(years)}.`];
+  const sentences = [`${listText([`Plex has ${candidateYear}`, ...comparedYears(event)])}.`];
   if (event.episodeDiff) sentences.push(episodeDiffText(event.episodeDiff, event.tmdbId));
   sentences.push('So nothing confirmed the candidate.');
   const text = sentences.join(' ');
@@ -174,6 +188,16 @@ export function episodeDiffText(diff: EpisodeDiff, tmdbId?: string): string {
     numbersText(diff.extra) && `Only Plex has episode ${numbersText(diff.extra)}.`,
   ].filter(Boolean);
   return [`The episode numbers differ${from} in season ${diff.season}: ${counts}.`, ...only].join(' ');
+}
+
+/** Returns the error of a failed decision, with the years that it compared
+ * before the failure. */
+function failedDetail(event: TimelineEvent): string | undefined {
+  const years = comparedYears(event);
+  // The item year alone was not compared with anything.
+  if (years.length < 2) return event.error;
+  const compared = `Before the failure, it compared these years: ${listText(years)}.`;
+  return [event.error, compared].filter(Boolean).join(' ');
 }
 
 /** Returns why a decision found no match. */
@@ -207,7 +231,7 @@ function outcomeView(event: TimelineEvent): EventView {
         detail: 'The folder and file names hold no tmdb, tvdb, or imdb ID, so there was nothing to search. Add one, such as {tmdb-12345}, to the folder name.',
       };
     case 'failed':
-      return { title: 'Fix match: search failed', tone: 'error', detail: event.error };
+      return { title: 'Fix match: search failed', tone: 'error', detail: failedDetail(event) };
     default:
       return { title: 'Fix match', tone: 'neutral' };
   }

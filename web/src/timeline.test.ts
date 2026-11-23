@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ItemDetail, ItemRecord, TimelineEvent } from './api';
-import { checkResult, decisionView, disposition, episodeDiffText, eventView, lastDecision, searchSource, verdictName } from './timeline';
+import { checkResult, decisionView, disposition, episodeDiffText, eventView, lastDecision, rowVerdict, searchSource, verdictName } from './timeline';
 
 const item = (change: Partial<ItemRecord> = {}): ItemRecord => ({ srv: 0, key: '7', cached: false, attempts: 0, refreshes: 0, ...change });
 const event = (id: number, kind: string, change: Partial<TimelineEvent> = {}): TimelineEvent => ({ id, kind, accepted: false, at: `2026-11-${10 + id}T00:00:00Z`, searches: [], ...change });
@@ -115,6 +115,22 @@ describe('decision evidence', () => {
       { query: 'imdb-tt1', source: 'path', failed: false, candidates: [{ guid: 'plex://show/b', year: 1997, score: 0, verdict: 'year differs' }] },
     ] });
     expect(decisionView(twoYears).detail).toBe('Plex has 1997 and the item has 2009. So nothing confirmed the candidate.');
+  });
+
+  it('judges each row of a year conflict by its own year', () => {
+    expect(rowVerdict({ verdict: 'year differs', year: 2009 }, 2009)).toBe('year agrees');
+    expect(rowVerdict({ verdict: 'year differs', year: 2010 }, 2009)).toBe('year agrees');
+    expect(rowVerdict({ verdict: 'year differs', year: 1997 }, 2009)).toBe('year differs');
+    expect(rowVerdict({ verdict: 'year differs', year: 2009 }, undefined)).toBe('year differs');
+    expect(rowVerdict({ verdict: 'picked', year: 1997 }, 2009)).toBe('picked');
+  });
+
+  it('shows the years that a failed decision compared', () => {
+    const failed = (fields: Partial<TimelineEvent>) => decisionView(event(1, 'match-decision', { outcome: 'failed', error: 'tmdb lookup: tmdb-77: 500', ...fields })).detail;
+    expect(failed({ itemYear: 2022, pathYear: 2022, tmdbYear: 2017, tmdbId: '77' })).toBe(
+      'tmdb lookup: tmdb-77: 500 Before the failure, it compared these years: the item has 2022, the folder has 2022, and TMDB has 2017.',
+    );
+    expect(failed({ itemYear: 2022 })).toBe('tmdb lookup: tmdb-77: 500');
   });
 
   it('shows a stored TMDB year without the TMDB ID of older decisions', () => {
