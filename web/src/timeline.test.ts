@@ -175,8 +175,13 @@ describe('decision evidence', () => {
       'The title search found one series with the same title and year, but nothing confirmed it. The Plex metadata provider has no TMDB ID for it.',
     );
     expect(decisionView(title({ outcome: 'no-match', conflict: 'folder id differs', tmdbId: '88' })).detail).toBe(
-      'The Plex metadata provider gives tmdb-88 for the series that the title search found, but the folder names give another TMDB ID.',
+      'The Plex metadata provider gives tmdb-88 for the series that the title search found, but the folder names give another TMDB ID, or an ID that TMDB has several entries for.',
     );
+    const otherTitle = { ...titleSearch, candidates: [{ guid: 'plex://show/o', year: 2015, score: 0, verdict: 'other title' }] };
+    expect(decisionView(title({ outcome: 'no-match', searches: [otherTitle] })).detail).toBe(
+      'No result of the title search had the title and the year of the item, and of its folder.',
+    );
+    expect(decisionView(title({ outcome: 'no-match' })).detail).toBe('No search found a candidate.');
     expect(decisionView(title({ outcome: 'failed', error: 'tmdb lookup: 500', tmdbId: '88' })).detail).toBe('tmdb lookup: 500');
     expect(verdictName('other title', { query: 'Show' })).toBe('other title or year');
   });

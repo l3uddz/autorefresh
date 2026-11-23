@@ -214,9 +214,13 @@ function noMatchDetail(event: TimelineEvent): string {
   if (event.conflict === 'year differs') return yearConflict(event);
   if (event.conflict === 'not confirmed') return titleUnconfirmed(event);
   if (event.conflict === 'folder id differs') {
-    return `The Plex metadata provider gives tmdb-${event.tmdbId ?? '?'} for the series that the title search found, but the folder names give another TMDB ID.`;
+    return `The Plex metadata provider gives tmdb-${event.tmdbId ?? '?'} for the series that the title search found, but the folder names give another TMDB ID, or an ID that TMDB has several entries for.`;
   }
-  return (event.conflict && conflictText[event.conflict]) || 'No search found a candidate.';
+  if (event.conflict) return conflictText[event.conflict] ?? event.conflict;
+  if (event.searches.some(s => s.source === 'title' && s.candidates.length > 0)) {
+    return 'No result of the title search had the title and the year of the item, and of its folder.';
+  }
+  return 'No search found a candidate.';
 }
 
 /** Explains why the TMDB episode numbers did not confirm the series that
