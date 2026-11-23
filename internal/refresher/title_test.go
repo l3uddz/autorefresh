@@ -403,3 +403,84 @@ func TestTitleEpisodeReadFailureSendsPlainRefresh(t *testing.T) {
 		t.Errorf("run = %+v, want a finished run with 2 failures", run)
 	}
 }
+
+// A folder TMDB ID that agrees with the provider TMDB ID allows the match.
+func TestTitleMatchFolderTMDBIDAgrees(t *testing.T) {
+	for name, setup := range map[string]func(*fakeTMDB) string{
+		"tmdb ID":       func(*fakeTMDB) string { return "tmdb-88" },
+		"translated ID": func(ft *fakeTMDB) string { ft.ids = map[string]string{"imdb tt1 true": "88"}; return "imdb-tt1" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			fp := newFakePlex(showsLib)
+			fp.candidates[titleSearch] = titleCandidates()
+			fp.series = map[string]plex.Series{"plex://show/t": {TMDBID: "88"}}
+			fp.episodeNumbers = map[string]map[int][]int{"201": {1: {1, 2, 3}}}
+			ft := &fakeTMDB{seasons: map[string][]int{"88 1": {1, 2, 3}}}
+			f := newTMDBFixture(t, fp, ft, setup(ft))
+
+			f.run(t0)
+
+			wantCalls(t, sends(fp.calls), "Match 201 plex://show/t", "Refresh 201")
+			if e := f.decision("201"); store.DecisionOutcome(e.Outcome) != store.DecisionMatched {
+				t.Errorf("decision = %q · %q, want matched", e.Outcome, e.Conflict)
+			}
+		})
+	}
+}
+
+// Without local episode numbers, nothing confirms the title candidate.
+func TestTitleMatchWithoutLocalEpisodes(t *testing.T) {
+	f, fp, ft := titleFixture(t)
+	fp.episodeNumbers = map[string]map[int][]int{}
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 201")
+	wantCalls(t, ft.calls)
+	e := f.decision("201")
+	wantDecision(t, e, store.DecisionNoMatch, "not confirmed",
+		"title Title 201: plex://show/t=not confirmed plex://show/o=other title plex://show/y=other title")
+	wantEvidence(t, e, store.MatchEvidence{TMDBID: "88"})
+}
+
+// A TMDB failure while translating the folder IDs is a handled failure that
+// turns TMDB off for the run.
+func TestTitleMatchFolderIDLookupFailure(t *testing.T) {
+	f, fp, ft := titleFixture(t, "tmdb-88", "imdb-tt1")
+	ft.errs = map[string]error{"imdb tt1 true": fmt.Errorf("GET /3/find/tt1: 500 Internal Server Error")}
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 201")
+	wantCalls(t, ft.calls, "Find imdb tt1 true")
+	if e := f.decision("201"); store.DecisionOutcome(e.Outcome) != store.DecisionFailed || !strings.Contains(e.Error, "500") {
+		t.Errorf("decision = %q (%q), want failed with the TMDB error", e.Outcome, e.Error)
+	}
+	if warnings := f.logLines("warn", "TMDB lookup failed"); len(warnings) != 1 {
+		t.Errorf("got %d TMDB warnings, want 1", len(warnings))
+	}
+}
+
+// A 404 of the title search or of the episode read says that the item is
+// gone, as everywhere in the run.
+func TestTitleMatchNotFoundRemovesTheItem(t *testing.T) {
+	for name, setup := range map[string]func(*fakePlex){
+		"title search": func(fp *fakePlex) { fp.searchErrs[titleSearch] = plex.ErrNotFound },
+		"episode read": func(fp *fakePlex) { fp.episodeReadErr = plex.ErrNotFound },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, fp, _ := titleFixture(t)
+			setup(fp)
+
+			f.run(t0)
+
+			wantCalls(t, sends(fp.calls))
+			if _, cached := f.row(testServer, "2", "201"); cached {
+				t.Error("item still cached, want it gone")
+			}
+			if run := f.onlyRun(); run.Status != store.RunFinished {
+				t.Errorf("run = %+v, want a finished run", run)
+			}
+		})
+	}
+}
