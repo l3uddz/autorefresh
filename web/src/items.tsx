@@ -171,8 +171,6 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
   const detail = item && (
     <ItemDetail key={itemID(item)} target={item} server={server(item)} ignored={ignored} onClose={close} />
   );
-  // The table drawer keeps the item while it slides out.
-  const drawerItem = useShown(item, itemID);
 
   const changeMode = (value: string) => {
     setMode(value as Mode);
@@ -269,12 +267,19 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
   return (
     <>
       <Layout height="fill" header={item && !isTwoPane ? undefined : header} content={content} end={mode === 'list' && isTwoPane ? <DetailPane detail={detail} /> : undefined} />
-      {mode === 'table' && isTwoPane && (
-        <Drawer isOpen={Boolean(item)} onOpenChange={open => !open && close()} label="Item details" width={600} padding={0}>
-          {drawerItem ? <ItemDetail key={itemID(drawerItem)} target={drawerItem} server={server(drawerItem)} ignored={ignored} onClose={close} /> : null}
-        </Drawer>
-      )}
+      {mode === 'table' && isTwoPane && <ItemDrawer item={item} server={server} ignored={ignored} onClose={close} />}
     </>
+  );
+}
+
+/** The item details of table mode in a drawer. It keeps the item while it
+ * slides out, and drops it once the slide ends. */
+function ItemDrawer({ item, server, ignored, onClose }: { item?: ItemKey; server: (key: ItemKey) => ServerInfo | undefined; ignored: string[]; onClose: () => void }) {
+  const [shown, drawerRef] = useShown(item, itemID);
+  return (
+    <Drawer isOpen={Boolean(item)} onOpenChange={open => !open && onClose()} ref={drawerRef} label="Item details" width={600} padding={0}>
+      {shown ? <ItemDetail key={itemID(shown)} target={shown} server={server(shown)} ignored={ignored} onClose={onClose} /> : null}
+    </Drawer>
   );
 }
 

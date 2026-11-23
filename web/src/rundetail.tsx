@@ -39,11 +39,12 @@ interface Props {
  * A narrow screen shows RunDetails in place of the list instead, as the
  * Items page does. */
 export function RunDrawer({ id, isMulti, srv, onClose }: Props) {
-  // The drawer keeps the run while it slides out.
-  const shown = useShown(id, String);
+  // The drawer keeps the run while it slides out, and drops it once the
+  // slide ends. A new run starts at the top of its items.
+  const [shown, drawerRef] = useShown(id, String);
   return (
-    <Drawer isOpen={id !== undefined} onOpenChange={open => !open && onClose()} label="Run details" width={600} padding={0}>
-      {shown !== undefined ? <RunDetails id={shown} isMulti={isMulti} srv={srv} onClose={onClose} isPinned /> : null}
+    <Drawer isOpen={id !== undefined} onOpenChange={open => !open && onClose()} ref={drawerRef} label="Run details" width={600} padding={0}>
+      {shown !== undefined ? <RunDetails key={shown} id={shown} isMulti={isMulti} srv={srv} onClose={onClose} isPinned /> : null}
     </Drawer>
   );
 }
