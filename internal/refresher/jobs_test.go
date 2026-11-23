@@ -416,6 +416,9 @@ func TestBulkReportsLibraryOfItem(t *testing.T) {
 	if len(items) != 2 || items[0].Library != "Movies" || items[1].Library != "Movies" || items[0].Title != "Title 1" {
 		t.Errorf("started items = %+v, want 2 in Movies", items)
 	}
+	if items[0].Reasons != 0 || items[1].Reasons != 0 {
+		t.Errorf("started items = %+v, want no reasons in a bulk refresh", items)
+	}
 	if got := p.nextCalls(); len(got) != 1 || !strings.HasPrefix(got[0], "ItemNext home 2 ") {
 		t.Errorf("next calls = %q, want one for item 2", got)
 	}

@@ -195,9 +195,10 @@ func (j *Jobs) prepareBulk(server string, keys []string) (*serverRun, []bulkAdmi
 		if err != nil {
 			return nil, nil, fmt.Errorf("%w: %w", ErrStore, err)
 		}
-		// An item without a cache row or history has no key in row.
+		// An item without a cache row or history has no key in row. A bulk
+		// refresh selects its items by hand, so it shows no reasons.
 		shown := progressItem(row, library)
-		shown.RatingKey = key
+		shown.RatingKey, shown.Reasons = key, 0
 		items[i] = bulkAdmission{item: store.RunItem{Position: i, RatingKey: key, Title: row.Title, Outcome: store.ItemNotReached},
 			shown: shown, attempts: row.Attempts, cached: cached}
 	}
