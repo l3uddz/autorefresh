@@ -656,4 +656,11 @@ func TestRunMatchStopsTheServerWhenPlexBecomesUnavailable(t *testing.T) {
 	if calls := p.itemCalls(); len(calls) != 2 || !strings.HasPrefix(calls[1], "ItemDone home 101 ") {
 		t.Errorf("item progress = %q, want 101 started and done", calls)
 	}
+	runs := f.runs()
+	if len(runs) != 1 {
+		t.Fatalf("runs = %+v, want 1", runs)
+	}
+	if r := runs[0]; r.Status != store.RunFailed || r.Matched != 1 || r.Refreshed != 1 || r.Failed != 1 {
+		t.Errorf("run = %+v, want failed with 1 match, 1 refresh, and 1 failure", r)
+	}
 }
