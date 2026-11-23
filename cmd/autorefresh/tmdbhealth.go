@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 
 	"github.com/l3uddz/autorefresh/internal/refresher"
+	"github.com/l3uddz/autorefresh/internal/tmdb"
 )
 
 type tmdbHealth struct {
@@ -13,7 +15,12 @@ type tmdbHealth struct {
 
 func (h tmdbHealth) Find(ctx context.Context, source, id string, show bool) (string, bool, error) {
 	value, found, err := h.tmdb.Find(ctx, source, id, show)
-	h.report(ctx, err)
+	if errors.Is(err, tmdb.ErrSeveral) {
+		// TMDB answered: the ID has several entries.
+		h.report(ctx, nil)
+	} else {
+		h.report(ctx, err)
+	}
 	return value, found, err
 }
 

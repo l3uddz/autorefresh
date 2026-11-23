@@ -10,7 +10,10 @@ import (
 
 type healthLookup struct{ refresher.TMDB }
 
-func (healthLookup) Find(context.Context, string, string, bool) (string, bool, error) {
+func (healthLookup) Find(_ context.Context, _, id string, _ bool) (string, bool, error) {
+	if id == "tt2" {
+		return "", false, tmdb.ErrSeveral
+	}
 	return "", false, tmdb.ErrUnauthorized
 }
 
@@ -27,5 +30,18 @@ func TestTMDBUseReportsHealthUnlessCanceled(t *testing.T) {
 	_, _, _ = wrapped.Find(ctx, "imdb", "tt123", false)
 	if len(probe.reports) != 1 || probe.reports[0] != tmdb.ErrUnauthorized {
 		t.Fatalf("reports = %v", probe.reports)
+	}
+}
+
+// Several entries are an answer of TMDB, so TMDB is healthy, and the caller
+// still gets ErrSeveral.
+func TestTMDBSeveralEntriesReportHealthy(t *testing.T) {
+	probe := &tmdbHealthProbe{}
+	wrapped := tmdbHealth{tmdb: healthLookup{}, rec: probe}
+	if _, _, err := wrapped.Find(t.Context(), "imdb", "tt2", true); err != tmdb.ErrSeveral {
+		t.Fatalf("err = %v, want ErrSeveral", err)
+	}
+	if len(probe.reports) != 1 || probe.reports[0] != nil {
+		t.Fatalf("reports = %v, want one healthy report", probe.reports)
 	}
 }
