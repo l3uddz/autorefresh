@@ -14,15 +14,15 @@ import { ArrowTopRightOnSquareIcon, QuestionMarkCircleIcon, XMarkIcon } from '@h
 import * as stylex from '@stylexjs/stylex';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { ApiError, api, invalidateLists, itemParams, post, type ItemDetail as Detail, type ItemRecord, type LiveItem, type ServerInfo, type TimelineEvent } from './api';
+import { ApiError, api, invalidateLists, itemParams, post, type ItemDetail as Detail, type ItemRecord, type RefreshAnswer, type LiveItem, type ServerInfo, type TimelineEvent } from './api';
 import { useNow } from './clock';
-import { dateTime, fixedBy, label, lastAction, plexCounts, plural, queueState, relative, titleYear, typeName } from './format';
+import { dateTime, fixedBy, lastAction, plexCounts, plural, queueState, relative, titleYear, typeName } from './format';
 import { askThen } from './confirm';
 import { Backdrop, Poster, Reasons } from './media';
 import { actionError } from './errors';
 import { FixMatchDialog } from './fixmatch';
 import { ItemTimeline } from './history';
-import { checkResult, disposition } from './timeline';
+import { disposition, refreshText } from './timeline';
 import type { ItemKey } from './route';
 
 const styles = stylex.create({
@@ -40,7 +40,7 @@ interface Props {
   onClose?: () => void;
 }
 
-type Operation = 'refresh' | 'check' | 'stop' | 'resume';
+type Operation = 'refresh' | 'stop' | 'resume';
 
 export function ItemDetail({ target, server, ignored, onClose }: Props) {
   const params = itemParams(target);
@@ -199,14 +199,10 @@ function DetailActions({ item, server, params, timeline, live }: ActionProps) {
   const action = useMutation({
     mutationFn: async (operation: Operation) => ({ operation, result: await post<unknown>(`item/${operation}?${params}`) }),
     onSuccess: ({ operation, result }) => {
-      if (operation === 'check') {
-        client.setQueryData(['item', params], result);
-        const check = checkResult(result as Detail);
-        if (check.kind === 'gone') {
-          showToast({ body: `Plex no longer has ${title}. Autorefresh removed it from the queue.` });
-        } else {
-          showToast({ body: check.kind === 'missing' ? `Checked: ${check.reasons.map(label).join(', ')} still missing` : `Checked: ${title} is complete` });
-        }
+      if (operation === 'refresh') {
+        const answer = result as RefreshAnswer;
+        if (answer.item && answer.timeline) client.setQueryData<Detail>(['item', params], { item: answer.item, timeline: answer.timeline });
+        showToast({ body: refreshText(answer, title) });
       } else {
         showToast({ body: successText(operation, title) });
       }
@@ -240,17 +236,15 @@ function DetailActions({ item, server, params, timeline, live }: ActionProps) {
   return (
     <VStack gap={3}>
       <HStack gap={2} wrap="wrap" vAlign="center">
-        <Button label="Refresh now" variant="primary" isLoading={busy && running === 'refresh'} isDisabled={busy && running !== 'refresh'} onClick={() => action.mutate('refresh')} />
+        <Button
+          label="Refresh now"
+          variant="primary"
+          tooltip="Handle this item now as a scheduled run does: an unmatched item gets the automatic fix match, then Plex refreshes it and autorefresh checks it again"
+          isLoading={busy && running === 'refresh'}
+          isDisabled={busy && running !== 'refresh'}
+          onClick={() => action.mutate('refresh')}
+        />
         <Button label="Fix match" isDisabled={busy} onClick={() => setIsMatching(true)} />
-        {item.cached && (
-          <Button
-            label="Check now"
-            tooltip="Read this item from Plex again and update its reasons"
-            isLoading={busy && running === 'check'}
-            isDisabled={busy && running !== 'check'}
-            onClick={() => action.mutate('check')}
-          />
-        )}
         {item.cached &&
           (item.stoppedAt ? (
             <Button label="Resume" isLoading={busy && running === 'resume'} isDisabled={busy && running !== 'resume'} onClick={() => action.mutate('resume')} />
@@ -281,8 +275,6 @@ function DetailActions({ item, server, params, timeline, live }: ActionProps) {
 
 function successText(operation: Operation, title: string): string {
   switch (operation) {
-    case 'refresh':
-      return `Plex accepted the refresh of ${title}`;
     case 'stop':
       return `Stopped trying ${title}`;
     case 'resume':

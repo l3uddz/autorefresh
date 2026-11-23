@@ -17,7 +17,7 @@ func TestManualRefreshRecordsAttempt(t *testing.T) {
 	lib := plex.Library{ID: "1", Type: "movie"}
 	f := newRefreshFixture(t, Server{Name: "home", Plex: newFakePlex(lib)})
 	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
-	if err := f.r.RefreshItem(t.Context(), "home", "1"); err != nil {
+	if _, err := f.r.RefreshItem(t.Context(), "home", "1"); err != nil {
 		t.Fatal(err)
 	}
 	item, found := f.row("home", "1", "1")
@@ -35,14 +35,14 @@ func TestRunRechecksSameSecondManualAttempt(t *testing.T) {
 	f := newRefreshFixture(t, Server{Name: "home", Plex: newFakePlex(lib)})
 	f.now = t0
 	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
-	if err := f.r.RefreshItem(t.Context(), "home", "1"); err != nil {
+	if _, err := f.r.RefreshItem(t.Context(), "home", "1"); err != nil {
 		t.Fatal(err)
 	}
 	batch, found := f.row("home", "1", "1")
 	if !found {
 		t.Fatal("missing batch row")
 	}
-	if err := f.r.RefreshItem(t.Context(), "home", "1"); err != nil {
+	if _, err := f.r.RefreshItem(t.Context(), "home", "1"); err != nil {
 		t.Fatal(err)
 	}
 	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto}
@@ -65,7 +65,7 @@ func TestManualRefreshOfHistoryOnlyItem(t *testing.T) {
 	if _, err := f.store.ApplyCheck("home", row, t0, 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.r.RefreshItem(t.Context(), "home", "1"); err != nil {
+	if _, err := f.r.RefreshItem(t.Context(), "home", "1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, found := f.row("home", "1", "1"); found {
@@ -97,7 +97,10 @@ func TestCloseDrainsManualRecording(t *testing.T) {
 	barrier := recordingBarrier{Store: f.store, entered: make(chan struct{}), release: make(chan struct{})}
 	f.r.store = barrier
 	done := make(chan error, 1)
-	go func() { done <- f.r.RefreshItem(t.Context(), "home", "1") }()
+	go func() {
+		_, err := f.r.RefreshItem(t.Context(), "home", "1")
+		done <- err
+	}()
 	select {
 	case <-barrier.entered:
 	case <-time.After(5 * time.Second):
@@ -120,7 +123,7 @@ func TestCloseDrainsManualRecording(t *testing.T) {
 	defer ticker.Stop()
 waitForGate:
 	for {
-		err := f.r.RefreshItem(t.Context(), "home", "1")
+		_, err := f.r.RefreshItem(t.Context(), "home", "1")
 		if errors.Is(err, ErrClosed) {
 			break waitForGate
 		}
@@ -161,29 +164,32 @@ type manualMetadata struct {
 
 func (p manualMetadata) Item(context.Context, string) (plex.Item, error) { return p.live, p.err }
 
-func TestCheckItemValidatesImagesAgainstRequestedKey(t *testing.T) {
+// The check after a manual refresh keeps only images of the requested key.
+func TestManualRefreshCheckValidatesImagesAgainstRequestedKey(t *testing.T) {
 	lib := plex.Library{ID: "1", Type: "movie"}
 	const thumb = "/library/metadata/1/thumb/1700000050"
 	p := manualMetadata{fakePlex: newFakePlex(lib), live: plex.Item{RatingKey: "2", Title: "Updated", Thumb: thumb, Art: "/library/metadata/2/art/1700000050"}}
 	f := newRefreshFixture(t, Server{Name: "home", Plex: p})
 	f.now = t0
 	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
-	if err := f.r.CheckItem(t.Context(), "home", "1"); err != nil {
+	if _, err := f.r.RefreshItem(t.Context(), "home", "1"); err != nil {
 		t.Fatal(err)
 	}
 	row, found := f.row("home", "1", "1")
-	if !found || row.Thumb != thumb || row.Art != "" || row.Title != "Updated" || row.Attempts != 0 {
+	if !found || row.Thumb != thumb || row.Art != "" || row.Title != "Updated" || row.Attempts != 1 {
 		t.Fatalf("checked item = %+v, found %v", row, found)
 	}
 }
 
-func TestCheckGoneItemRemovesRowAndRecordsManualEvent(t *testing.T) {
+// A check after a manual refresh that Plex answers with 404 removes the
+// row; the refresh of the snapshot that remains sends no check.
+func TestManualRefreshCheckGoneRemovesRowAndRecordsManualEvent(t *testing.T) {
 	lib := plex.Library{ID: "1", Type: "movie"}
 	p := manualMetadata{fakePlex: newFakePlex(lib), err: plex.ErrNotFound}
 	f := newRefreshFixture(t, Server{Name: "home", Plex: p})
 	f.now = t0
 	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
-	if err := f.r.CheckItem(t.Context(), "home", "1"); err != nil {
+	if _, err := f.r.RefreshItem(t.Context(), "home", "1"); err != nil {
 		t.Fatal(err)
 	}
 	if _, found := f.row("home", "1", "1"); found {
@@ -192,8 +198,14 @@ func TestCheckGoneItemRemovesRowAndRecordsManualEvent(t *testing.T) {
 	if event := f.newestEvent("1"); event.Kind != store.EventGone || event.Source != store.SourceManual {
 		t.Fatalf("gone event = %+v", event)
 	}
-	if err := f.r.CheckItem(t.Context(), "home", "1"); !errors.Is(err, ErrNotCached) {
-		t.Fatalf("history check = %v", err)
+	if len(f.sleeps) != 1 {
+		t.Fatalf("sleeps = %v, want one wait before the check", f.sleeps)
+	}
+	if _, err := f.r.RefreshItem(t.Context(), "home", "1"); err != nil {
+		t.Fatalf("history refresh = %v", err)
+	}
+	if len(f.sleeps) != 1 {
+		t.Fatalf("sleeps = %v, want no check of the snapshot", f.sleeps)
 	}
 	if _, err := f.r.SetStopped(t.Context(), "home", "1", true); !errors.Is(err, ErrNotCached) {
 		t.Fatalf("history stop = %v", err)
@@ -354,7 +366,7 @@ func TestApplyMatchStopsWhenRowLeavesCache(t *testing.T) {
 	if *checks != 0 || len(f.sleeps) != 1 {
 		t.Errorf("checks %d, sleeps %v; want no check after 1 wait", *checks, f.sleeps)
 	}
-	if strings.Contains(buf.String(), "Following up a match failed") {
+	if strings.Contains(buf.String(), "Following up a request failed") {
 		t.Errorf("log warns about a row that a run removed: %s", buf)
 	}
 }
@@ -401,5 +413,206 @@ func TestApplyMatchRefreshGoneSkipsChecks(t *testing.T) {
 	}
 	if e := f.newestEvent("1"); e.Kind != store.EventGone {
 		t.Errorf("newest event = %+v, want gone", e)
+	}
+}
+
+// refreshNowFixture seeds the unmatched movie 101, which was never
+// refreshed, whose folder tmdb-1 finds one candidate. Plex first reads the
+// item unmatched, before the match, and then complete in each check.
+func refreshNowFixture(t *testing.T) (*fixture, *fakePlex) {
+	t.Helper()
+	fp := newFakePlex(moviesLib)
+	fp.paths["101"] = []string{"/m/Film (2020) {tmdb-1}/Film.mkv"}
+	fp.candidates["101 tmdb-1"] = []plex.Candidate{{GUID: "plex://movie/m", Name: "Film", Year: 2020}}
+	answers := []checkAnswer{{item: unmatchedItem("101")}, {item: completeItem("101")}}
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: checkedMetadata{fakePlex: fp, answers: answers, checks: new(int)}})
+	f.now = t0
+	f.seed(testServer, moviesLib, unmatchedItem("101"), store.Unmatched, 0)
+	f.saveLibrary(moviesLib)
+	return f, fp
+}
+
+// Refresh now runs the automatic fix match of an unmatched item, also
+// before its first refresh, applies the pick, and follows it up until the
+// check completes the item.
+func TestRefreshItemAppliesTheAutomaticMatch(t *testing.T) {
+	f, fp := refreshNowFixture(t)
+
+	res, err := f.r.RefreshItem(t.Context(), testServer, "101")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Match == nil || res.Match.GUID != "plex://movie/m" || res.Match.Title != "Film" || !res.Checked {
+		t.Errorf("result match = %+v, want plex://movie/m", res.Match)
+	}
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/m", "Refresh 101")
+	if _, found := f.row(testServer, "1", "101"); found {
+		t.Error("complete item still in the cache")
+	}
+	var decision, match store.Event
+	for _, e := range f.timeline("101") {
+		switch {
+		case e.Kind == store.EventMatchDecision:
+			decision = e
+		case e.Kind == store.EventRequest && e.Action == store.ActionMatch:
+			match = e
+		}
+	}
+	if decision.Outcome != string(store.DecisionMatched) || decision.Source != store.SourceAuto || decision.RunID != 0 {
+		t.Errorf("decision = %+v, want a matched automatic decision of no run", decision)
+	}
+	if match.Source != store.SourceManual || !match.Accepted || match.MatchGUID != "plex://movie/m" ||
+		len(match.Links) != 1 {
+		t.Errorf("match request = %+v, want an accepted manual match with the link of tmdb-1", match)
+	}
+}
+
+// With the unmatched reason ignored, Refresh now sends a plain refresh and
+// records no decision.
+func TestRefreshItemIgnoredUnmatchedOnlyRefreshes(t *testing.T) {
+	f, fp := refreshNowFixture(t)
+	f.r.opts.IgnoreReasons = store.Unmatched
+
+	res, err := f.r.RefreshItem(t.Context(), testServer, "101")
+	if err != nil || res.Match != nil {
+		t.Fatalf("refresh = %+v, %v", res, err)
+	}
+	wantCalls(t, matchReads(fp.calls))
+	wantCalls(t, sends(fp.calls), "Refresh 101")
+	for _, e := range f.timeline("101") {
+		if e.Kind == store.EventMatchDecision {
+			t.Errorf("decision recorded: %+v", e)
+		}
+	}
+}
+
+// A failed search records a failed decision, and the plain refresh still
+// goes to Plex.
+func TestRefreshItemFailedSearchStillRefreshes(t *testing.T) {
+	f, fp := refreshNowFixture(t)
+	fp.searchErrs["101"] = plex.ErrUnavailable
+
+	res, err := f.r.RefreshItem(t.Context(), testServer, "101")
+	if err != nil || res.Match != nil {
+		t.Fatalf("refresh = %+v, %v", res, err)
+	}
+	wantCalls(t, sends(fp.calls), "Refresh 101")
+	var outcome string
+	for _, e := range f.timeline("101") {
+		if e.Kind == store.EventMatchDecision {
+			outcome = e.Outcome
+		}
+	}
+	if outcome != string(store.DecisionFailed) {
+		t.Errorf("decision outcome = %q, want failed", outcome)
+	}
+}
+
+// When Plex no longer has the item, the search records no decision, and
+// the refresh records the item gone once.
+func TestRefreshItemGoneDuringSearchRecordsGoneOnce(t *testing.T) {
+	f, fp := refreshNowFixture(t)
+	fp.pathErrs["101"] = plex.ErrNotFound
+	fp.refreshErrs["101"] = plex.ErrNotFound
+
+	if _, err := f.r.RefreshItem(t.Context(), testServer, "101"); !errors.Is(err, plex.ErrNotFound) {
+		t.Fatalf("refresh = %v, want not found", err)
+	}
+	var kinds []store.EventKind
+	for _, e := range f.timeline("101") {
+		kinds = append(kinds, e.Kind)
+	}
+	if !reflect.DeepEqual(kinds, []store.EventKind{store.EventGone}) {
+		t.Errorf("events = %v, want one gone event", kinds)
+	}
+}
+
+// The end of ctx during the search sends nothing and records nothing.
+func TestRefreshItemCanceledDuringSearch(t *testing.T) {
+	f, fp := refreshNowFixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	fp.onCall = func(call string) {
+		if call == "ItemPaths 101" {
+			cancel()
+		}
+	}
+
+	if _, err := f.r.RefreshItem(ctx, testServer, "101"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("refresh = %v, want canceled", err)
+	}
+	wantCalls(t, sends(fp.calls))
+	if events := f.timeline("101"); len(events) != 0 {
+		t.Errorf("events = %+v, want none", events)
+	}
+}
+
+// Refresh now reports whether a check saved the reasons of the item: not
+// when Plex became unavailable after it accepted the refresh.
+func TestRefreshItemReportsWhetherTheCheckRan(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		answer  checkAnswer
+		checked bool
+	}{
+		{"check saved", checkAnswer{item: incompleteItem("1")}, true},
+		{"plex unavailable", checkAnswer{err: fmt.Errorf("item 1: %w", plex.ErrUnavailable)}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lib := plex.Library{ID: "1", Type: "movie"}
+			f := newRefreshFixture(t, Server{Name: "home", Plex: checkedMetadata{fakePlex: newFakePlex(lib), answers: []checkAnswer{tc.answer}, checks: new(int)}})
+			f.now = t0
+			f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
+			res, err := f.r.RefreshItem(t.Context(), "home", "1")
+			if err != nil || res.Checked != tc.checked {
+				t.Fatalf("refresh = %+v, %v; want checked %v", res, err, tc.checked)
+			}
+		})
+	}
+}
+
+// Plex tells the match state of the item just before the match: a match
+// that the item got during the search stays, and a state that Plex cannot
+// tell keeps the match too. Refresh now then sends only the refresh.
+func TestRefreshItemSendsNoMatchUnlessPlexStillHasTheItemUnmatched(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		live checkAnswer
+	}{
+		{"matched during the search", checkAnswer{item: completeItem("101")}},
+		{"plex unavailable", checkAnswer{err: fmt.Errorf("item 101: %w", plex.ErrUnavailable)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, fp := refreshNowFixture(t)
+			f.r.servers[0].Plex = checkedMetadata{fakePlex: fp, answers: []checkAnswer{tc.live}, checks: new(int)}
+
+			res, err := f.r.RefreshItem(t.Context(), testServer, "101")
+			if err != nil || res.Match != nil {
+				t.Fatalf("refresh = %+v, %v; want a plain refresh", res, err)
+			}
+			wantCalls(t, sends(fp.calls), "Refresh 101")
+		})
+	}
+}
+
+// A search that runs out of its time records a failed decision, and the
+// plain refresh still goes to Plex.
+func TestRefreshItemSlowSearchStillRefreshes(t *testing.T) {
+	f, fp := refreshNowFixture(t)
+	saved := manualSearchTimeout
+	manualSearchTimeout = 10 * time.Millisecond
+	t.Cleanup(func() { manualSearchTimeout = saved })
+	fp.onCall = func(call string) {
+		if call == "ItemPaths 101" {
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+
+	res, err := f.r.RefreshItem(t.Context(), testServer, "101")
+	if err != nil || res.Match != nil {
+		t.Fatalf("refresh = %+v, %v; want a plain refresh", res, err)
+	}
+	wantCalls(t, sends(fp.calls), "Refresh 101")
+	if e := f.decision("101"); e.Outcome != string(store.DecisionFailed) {
+		t.Errorf("decision = %+v, want failed", e)
 	}
 }

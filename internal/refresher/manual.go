@@ -88,29 +88,140 @@ func (r *Refresher) admitItem(server, key string, needsCache bool) (manualItem, 
 	return manualItem{server: srv, row: row, cached: cached}, done, nil
 }
 
-// RefreshItem requests a refresh and records its result.
-func (r *Refresher) RefreshItem(ctx context.Context, server, ratingKey string) error {
-	return r.manualRequest(ctx, server, ratingKey, store.ActionRefresh, nil)
+// RefreshResult tells what RefreshItem sent.
+type RefreshResult struct {
+	// Match is the fix match that the automatic decision applied; nil: a
+	// plain refresh.
+	Match *store.MatchTarget
+	// Checked is true when a check after the request read the item from
+	// Plex and saved it, or found that a run had completed or removed it,
+	// so the cached reasons are current.
+	Checked bool
+}
+
+// RefreshItem handles the item now as a run handles a due item, and
+// records each step as a manual action. A cached item that seeksMatch gets
+// the automatic fix match decision, also before its first refresh, and the
+// decision is recorded. With a pick, RefreshItem applies the match and
+// follows it up as settleMatch does. Otherwise, also when the decision
+// failed, it requests a refresh and then checks a cached item as
+// followUpCheck does. It returns the error of the Plex request, a store
+// error (ErrStore), or the error of ctx. It logs a failed follow-up,
+// because Plex accepted the request.
+func (r *Refresher) RefreshItem(ctx context.Context, server, key string) (RefreshResult, error) {
+	item, done, err := r.admitItem(server, key, false)
+	if err != nil {
+		return RefreshResult{}, err
+	}
+	defer done()
+	fm, err := r.manualMatch(ctx, item)
+	if err != nil {
+		return RefreshResult{}, err
+	}
+	if fm != nil {
+		checked, err := r.applyMatch(ctx, item, fm)
+		return RefreshResult{Match: target(fm), Checked: checked}, err
+	}
+	if _, err := r.sendManual(ctx, item.server, item.row, item.cached, nil); err != nil {
+		return RefreshResult{}, err
+	}
+	if !item.cached {
+		return RefreshResult{}, nil
+	}
+	checked, err := r.followUpCheck(ctx, item, nil)
+	if err != nil {
+		r.logSettleFailure(item, "record", err)
+	}
+	return RefreshResult{Checked: checked}, nil
+}
+
+// manualSearchTimeout bounds the fix match search of RefreshItem, so the
+// plain refresh after a slow search still gets time.
+var manualSearchTimeout = 45 * time.Second
+
+// manualMatch runs the automatic fix match of the item of RefreshItem and
+// records its decision, as a run does, if the item is cached and
+// seeksMatch. It returns the fix match of the decision, or nil for a plain
+// refresh. A failed search, also one that ran out of manualSearchTimeout,
+// gives nil too, so the refresh follows, and a 404 answer of that refresh
+// records the item as gone. It returns a store error (ErrStore) or the
+// error of ctx.
+func (r *Refresher) manualMatch(ctx context.Context, item manualItem) (*fixMatch, error) {
+	if !item.cached || !r.seeksMatch(item.row) {
+		return nil, nil
+	}
+	lib, err := r.itemLibrary(item.server.Name, item.row.Section)
+	if err != nil {
+		return nil, err
+	}
+	searchCtx, cancel := context.WithTimeout(ctx, manualSearchTimeout)
+	defer cancel()
+	run := &serverRun{server: item.server, source: store.SourceManual, files: map[string][]string{}}
+	ev, dec, err := r.autoMatch(searchCtx, run, lib, item.row)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
+	if recErr := r.recordDecision(ctx, run, item.row, dec, err); recErr != nil {
+		return nil, fmt.Errorf("%w: %w", ErrStore, recErr)
+	}
+	if errors.Is(err, errCache) {
+		return nil, fmt.Errorf("%w: %w", ErrStore, err)
+	}
+	if err != nil {
+		itemEvent(log.Warn(), item.server.Name, lib, item.row).Err(err).Msg("Match search failed")
+		return nil, nil
+	}
+	if ev.fm == nil {
+		return nil, nil
+	}
+	return r.keepMatch(ctx, item, lib, ev.fm), nil
+}
+
+// keepMatch returns the fix match fm of the item of manualMatch if Plex
+// still has the item unmatched, or else nil for a plain refresh. The item
+// lock does not hold off the library reads of a run, and a read saves what
+// it found only at its end, so it asks Plex: the item can have got a match
+// during the search, which then stays. If Plex cannot tell, it keeps no
+// match either.
+func (r *Refresher) keepMatch(ctx context.Context, item manualItem, lib plex.Library, fm *fixMatch) *fixMatch {
+	live, err := item.server.Plex.Item(ctx, item.row.RatingKey)
+	if err == nil && itemReasons(live)&store.Unmatched != 0 {
+		return fm
+	}
+	ev := itemEvent(log.Info(), item.server.Name, lib, item.row).Str("candidate", fm.cand.Name)
+	if err != nil {
+		ev = ev.Err(err).Str("reason", "match state unknown")
+	} else {
+		ev = ev.Str("reason", "no longer unmatched")
+	}
+	ev.Msg("Skipped fix match")
+	return nil
 }
 
 // ApplyMatch requests a selected Plex match and records its result.
 func (r *Refresher) ApplyMatch(ctx context.Context, server, ratingKey string, cand plex.Candidate) error {
-	return r.manualRequest(ctx, server, ratingKey, store.ActionMatch, &cand)
-}
-
-func (r *Refresher) manualRequest(ctx context.Context, server, key string, action store.Action, cand *plex.Candidate) error {
-	item, done, err := r.admitItem(server, key, false)
+	item, done, err := r.admitItem(server, ratingKey, false)
 	if err != nil {
 		return err
 	}
 	defer done()
-	_, err = r.sendManual(ctx, item.server, item.row, item.cached, action, cand)
-	if err == nil && action == store.ActionMatch {
-		if settleErr := r.settleMatch(ctx, item, nil); settleErr != nil {
-			r.logSettleFailure(item, "record", settleErr)
-		}
-	}
+	_, err = r.applyMatch(ctx, item, &fixMatch{cand: cand, action: store.ActionMatch})
 	return err
+}
+
+// applyMatch sends the match fm of the admitted item as a manual request
+// and follows up a match that Plex accepted with settleMatch, whose checked
+// it returns. It returns the error of the request. It logs a failed
+// follow-up, because Plex accepted the match.
+func (r *Refresher) applyMatch(ctx context.Context, item manualItem, fm *fixMatch) (checked bool, err error) {
+	if _, err := r.sendManual(ctx, item.server, item.row, item.cached, fm); err != nil {
+		return false, err
+	}
+	checked, err = r.settleMatch(ctx, item, nil)
+	if err != nil {
+		r.logSettleFailure(item, "record", err)
+	}
+	return checked, nil
 }
 
 // matchCheckDelays are the waits before each check after a match. Plex
@@ -126,45 +237,50 @@ var matchCheckDelays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Se
 // match and the next run reads the item again. An unavailable server or
 // the end of ctx (stopError) ends the follow-up; a run then also gets that
 // error, which ends the run of the server as a failed request does.
-func (r *Refresher) settleMatch(ctx context.Context, item manualItem, run *serverRun) error {
+// checked is the result of followUpCheck.
+func (r *Refresher) settleMatch(ctx context.Context, item manualItem, run *serverRun) (checked bool, err error) {
 	if err := r.followUpRefresh(ctx, item, run); err != nil {
 		if end, stop := r.settleFailed(ctx, item, run, "refresh", err); end || errors.Is(err, plex.ErrNotFound) {
-			return stop
+			return false, stop
 		}
 	}
 	if !item.cached {
-		return nil
+		return false, nil
 	}
-	return r.checkMatched(ctx, item, run)
+	return r.followUpCheck(ctx, item, run)
 }
 
-// checkMatched checks the cached item of settleMatch after each wait of
-// matchCheckDelays, until a check completes it, its row leaves the cache, or
-// a failure or the end of ctx ends the follow-up. It returns the error of
-// settleFailed, or for a run the error of ctx.
-func (r *Refresher) checkMatched(ctx context.Context, item manualItem, run *serverRun) error {
+// followUpCheck checks the cached item after its accepted request: after
+// each wait of matchCheckDelays, until a check completes it, its row leaves
+// the cache, or a failure or the end of ctx ends the follow-up. run is nil
+// for a manual request. checked is true when a check saved what it read, or
+// found that a run had completed or removed the row meanwhile. err is the
+// error of settleFailed, or for a run the error of ctx.
+func (r *Refresher) followUpCheck(ctx context.Context, item manualItem, run *serverRun) (checked bool, err error) {
 	for _, d := range matchCheckDelays {
 		if err := r.sleep(ctx, d); err != nil {
 			if run == nil {
-				return nil
+				return checked, nil
 			}
-			return err
+			return checked, err
 		}
 		settled, err := r.checkHeld(ctx, item, run)
 		if errors.Is(err, ErrNotCached) {
 			// A run read the item meanwhile and completed or removed it.
-			return nil
+			return true, nil
 		}
 		if err != nil {
 			if end, stop := r.settleFailed(ctx, item, run, "check", err); end {
-				return stop
+				return checked, stop
 			}
+			continue
 		}
+		checked = true
 		if settled {
-			return nil
+			return true, nil
 		}
 	}
-	return nil
+	return checked, nil
 }
 
 // settleFailed handles the failed step of settleMatch and reports whether
@@ -186,7 +302,7 @@ func (r *Refresher) settleFailed(ctx context.Context, item manualItem, run *serv
 // a manual request when run is nil, or else a request of run.
 func (r *Refresher) followUpRefresh(ctx context.Context, item manualItem, run *serverRun) error {
 	if run == nil {
-		_, err := r.sendManual(ctx, item.server, item.row, item.cached, store.ActionRefresh, nil)
+		_, err := r.sendManual(ctx, item.server, item.row, item.cached, nil)
 		return err
 	}
 	return r.runRefresh(ctx, run, item.row)
@@ -194,20 +310,26 @@ func (r *Refresher) followUpRefresh(ctx context.Context, item manualItem, run *s
 
 func (r *Refresher) logSettleFailure(item manualItem, step string, err error) {
 	log.Warn().Str("server", item.server.Name).Str("title", item.row.Title).Str("step", step).Err(err).
-		Msg("Following up a match failed")
+		Msg("Following up a request failed")
 }
 
-func (r *Refresher) sendManual(ctx context.Context, srv Server, it store.Item, cached bool, action store.Action, cand *plex.Candidate) (bool, error) {
+// sendManual sends the fix match fm of the item as a manual request, or a
+// refresh if fm is nil, and records the result. sent is false if ctx ended
+// before the request.
+func (r *Refresher) sendManual(ctx context.Context, srv Server, it store.Item, cached bool, fm *fixMatch) (sent bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	req := store.Request{Server: srv.Name, RatingKey: it.RatingKey, At: r.now(), Source: store.SourceManual, Action: action}
-	var err error
-	if cand == nil {
+	action := store.ActionRefresh
+	if fm != nil {
+		action = fm.action
+	}
+	req := store.Request{Server: srv.Name, RatingKey: it.RatingKey, At: r.now(), Source: store.SourceManual,
+		Action: action, Match: target(fm)}
+	if fm == nil {
 		err = srv.Plex.Refresh(ctx, it.RatingKey)
 	} else {
-		req.Match = &store.MatchTarget{GUID: cand.GUID, Title: cand.Name, Year: cand.Year}
-		err = srv.Plex.Match(ctx, it.RatingKey, *cand)
+		err = srv.Plex.Match(ctx, it.RatingKey, fm.cand)
 	}
 	req.Accepted = err == nil
 	if err != nil {
@@ -223,17 +345,6 @@ func (r *Refresher) sendManual(ctx context.Context, srv Server, it store.Item, c
 func (r *Refresher) logLibrary(row store.Item) plex.Library {
 	info, _, _ := r.store.LibraryInfo(row.Server, row.Section)
 	return plex.Library{Title: info.Title}
-}
-
-// CheckItem reads current metadata and updates a cached item without an attempt.
-func (r *Refresher) CheckItem(ctx context.Context, server, key string) error {
-	item, done, err := r.admitItem(server, key, true)
-	if err != nil {
-		return err
-	}
-	defer done()
-	_, err = r.checkHeld(ctx, item, nil)
-	return err
 }
 
 // checkHeld reads the current metadata of the cached item, whose item lock

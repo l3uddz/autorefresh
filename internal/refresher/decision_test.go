@@ -877,7 +877,7 @@ func TestRunMatchFollowUpServerErrorKeepsTheRunGoing(t *testing.T) {
 	if *checks != 1 {
 		t.Errorf("checks = %d, want 1", *checks)
 	}
-	warnings := f.logLines("warn", "Following up a match failed")
+	warnings := f.logLines("warn", "Following up a request failed")
 	if len(warnings) != 1 {
 		t.Fatalf("got %d follow-up warnings, want 1", len(warnings))
 	}

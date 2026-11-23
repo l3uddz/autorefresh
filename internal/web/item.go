@@ -132,9 +132,7 @@ func (s *Server) knownItem(w http.ResponseWriter, r *http.Request, v url.Values)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return 0, store.ListItem{}, false
 	}
-	rules := s.rules
-	rules.Now = s.now()
-	it, found, err := s.store.ItemDetail(r.Context(), s.servers[srv].Name, key, rules)
+	it, found, err := s.lookupItem(r.Context(), srv, key)
 	if err != nil {
 		writeStoreError(w, r, err)
 		return 0, store.ListItem{}, false
@@ -144,6 +142,14 @@ func (s *Server) knownItem(w http.ResponseWriter, r *http.Request, v url.Values)
 		return 0, store.ListItem{}, false
 	}
 	return srv, it, true
+}
+
+// lookupItem reads the item key of the server with index srv: its row, or
+// the snapshot of its newest event, with its queue state now.
+func (s *Server) lookupItem(ctx context.Context, srv int, key string) (store.ListItem, bool, error) {
+	rules := s.rules
+	rules.Now = s.now()
+	return s.store.ItemDetail(ctx, s.servers[srv].Name, key, rules)
 }
 
 // serveItem answers GET /api/item with an item and its timeline, newest
@@ -158,20 +164,26 @@ func (s *Server) serveItem(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.writeItemDetail(w, r, srv, it)
-}
-
-func (s *Server) writeItemDetail(w http.ResponseWriter, r *http.Request, srv int, it store.ListItem) {
-	events, err := s.store.TimelineContext(r.Context(), it.Server, it.RatingKey)
+	out, err := s.itemDetail(r.Context(), srv, it)
 	if err != nil {
 		writeStoreError(w, r, err)
 		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// itemDetail returns the item of the server with index srv with its
+// timeline.
+func (s *Server) itemDetail(ctx context.Context, srv int, it store.ListItem) (itemDetailJSON, error) {
+	events, err := s.store.TimelineContext(ctx, it.Server, it.RatingKey)
+	if err != nil {
+		return itemDetailJSON{}, err
 	}
 	out := itemDetailJSON{Item: toItemJSON(srv, it), Timeline: make([]eventJSON, 0, len(events))}
 	for _, e := range events {
 		out.Timeline = append(out.Timeline, s.toEventJSON(e))
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // toEventJSON returns e with its error text redacted.
