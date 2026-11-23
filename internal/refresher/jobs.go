@@ -160,6 +160,7 @@ func (j *Jobs) Close() {
 
 type bulkAdmission struct {
 	item     store.RunItem
+	shown    ProgressItem // the item as the live status shows it
 	attempts int
 	cached   bool
 }
@@ -184,13 +185,22 @@ func (j *Jobs) prepareBulk(server string, keys []string) (*serverRun, []bulkAdmi
 		return nil, nil, err
 	}
 	items := make([]bulkAdmission, len(keys))
+	titles := libraryTitles{store: j.r.store, server: server}
 	for i, key := range keys {
 		row, cached, _, err := j.r.store.KnownItem(server, key)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%w: %w", ErrStore, err)
 		}
+		library, err := titles.title(row.Section)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: %w", ErrStore, err)
+		}
+		// An item without a cache row or history has no key in row. A bulk
+		// refresh selects its items by hand, so it shows no reasons.
+		shown := progressItem(row, library)
+		shown.RatingKey, shown.Reasons = key, 0
 		items[i] = bulkAdmission{item: store.RunItem{Position: i, RatingKey: key, Title: row.Title, Outcome: store.ItemNotReached},
-			attempts: row.Attempts, cached: cached}
+			shown: shown, attempts: row.Attempts, cached: cached}
 	}
 	start := store.RunStart{Server: server, Kind: store.RunKindBulkRefresh, Source: store.RunSourceManual, StartedAt: j.r.now()}
 	id, err := j.r.store.StartRun(start)
@@ -198,6 +208,29 @@ func (j *Jobs) prepareBulk(server string, keys []string) (*serverRun, []bulkAdmi
 		return nil, nil, fmt.Errorf("%w: %w", ErrStore, err)
 	}
 	return &serverRun{server: srv, id: id, startInfo: start, began: start.StartedAt, selected: len(items), due: len(items), source: store.SourceManual}, items, nil
+}
+
+// libraryTitles reads the library titles of a server once for each section.
+type libraryTitles struct {
+	store  Store
+	server string
+	seen   map[string]string
+}
+
+// title returns the title of the library section, or "" if it is unknown.
+func (l *libraryTitles) title(section string) (string, error) {
+	if title, ok := l.seen[section]; ok {
+		return title, nil
+	}
+	info, _, err := l.store.LibraryInfo(l.server, section)
+	if err != nil {
+		return "", err
+	}
+	if l.seen == nil {
+		l.seen = map[string]string{}
+	}
+	l.seen[section] = info.Title
+	return info.Title, nil
 }
 
 func (r *Refresher) executeBulk(ctx context.Context, run *serverRun, admitted []bulkAdmission) {
@@ -219,13 +252,13 @@ func (r *Refresher) bulkBatch(ctx context.Context, run *serverRun, admitted []bu
 			return err
 		}
 		if a.cached && needPace {
-			if err := r.pace(ctx, 1); err != nil {
+			if err := r.pace(ctx, run, a.shown, false); err != nil {
 				return err
 			}
 			needPace = false
 		}
 		item := &items[i]
-		r.progress().ItemStarted(run.server.Name, item.RatingKey, item.Title)
+		r.progress().ItemStarted(run.server.Name, a.shown)
 		sent, err := r.bulkItem(ctx, run.server, a, item)
 		if sent {
 			run.refreshes++

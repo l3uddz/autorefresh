@@ -202,7 +202,26 @@ export interface RunProgress {
   matched: number;
   failed: number;
   skipped: number;
-  current?: string;
+  /** The item in work. */
+  current?: NowItem;
+  /** The item after the pace wait, which ends at nextAt. */
+  next?: NowItem;
+  nextAt?: string;
+  /** The last finished item, with its outcome and finish time. */
+  last?: NowItem;
+}
+
+/** An item of a run in the live status. thumb is the poster proxy URL. */
+export interface NowItem {
+  key: string;
+  title?: string;
+  year?: number;
+  type?: string;
+  library?: string;
+  reasons?: string[];
+  thumb?: string;
+  outcome?: string;
+  finishedAt?: string;
 }
 
 export type Health = 'unknown' | 'ok' | 'unreachable' | 'unauthorized';

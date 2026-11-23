@@ -397,3 +397,43 @@ func TestBulkRecheckFailureDoesNotReportItemDone(t *testing.T) {
 		t.Fatalf("reported %d item completions", len(p.counts))
 	}
 }
+
+// A bulk refresh reports each item with the title of its library, and the
+// next cached item before its pace wait.
+func TestBulkReportsLibraryOfItem(t *testing.T) {
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: newFakePlex(moviesLib)})
+	f.saveLibrary(moviesLib)
+	f.seed(testServer, moviesLib, incompleteItem("1"), store.NoSummary, 0)
+	f.seed(testServer, moviesLib, incompleteItem("2"), store.NoSummary, 0)
+	p := withProgress(f)
+	jobs := NewJobs(f.r)
+	t.Cleanup(jobs.Close)
+	if _, err := jobs.BulkRefresh(testServer, []string{"1", "2"}); err != nil {
+		t.Fatal(err)
+	}
+	jobs.wg.Wait()
+	items := p.startedItems()
+	if len(items) != 2 || items[0].Library != "Movies" || items[1].Library != "Movies" || items[0].Title != "Title 1" {
+		t.Errorf("started items = %+v, want 2 in Movies", items)
+	}
+	if items[0].Reasons != 0 || items[1].Reasons != 0 {
+		t.Errorf("started items = %+v, want no reasons in a bulk refresh", items)
+	}
+	if got := p.nextCalls(); len(got) != 1 || !strings.HasPrefix(got[0], "ItemNext home 2 ") {
+		t.Errorf("next calls = %q, want one for item 2", got)
+	}
+}
+
+func TestBulkReportsKeyOfUnknownItem(t *testing.T) {
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: newFakePlex(moviesLib)})
+	p := withProgress(f)
+	jobs := NewJobs(f.r)
+	t.Cleanup(jobs.Close)
+	if _, err := jobs.BulkRefresh(testServer, []string{"9"}); err != nil {
+		t.Fatal(err)
+	}
+	jobs.wg.Wait()
+	if items := p.startedItems(); len(items) != 1 || items[0].RatingKey != "9" {
+		t.Errorf("started items = %+v, want item 9", items)
+	}
+}

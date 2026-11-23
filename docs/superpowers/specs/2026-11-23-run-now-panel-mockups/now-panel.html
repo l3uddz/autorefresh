@@ -1,0 +1,114 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  :root{--card:#1F1F22;--body:#111112;--fg:#DFE2E5;--fg2:#AAAFB5;--fg3:#7d828a;--bd:rgba(242,244,246,.1);--muted:rgba(17,17,18,.5);
+    --green:#26A756;--greenbg:#24BB5E33;--blue:#2694FE;--bluebg:#0171E333;--purple:#9081FF;--purplebg:#7952FF33;--orange:#FB8C00;--orangebg:#F2790233;--graybg:#666A724C}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--fg);font-size:13px}
+  .lab{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--fg2);margin:18px 0 6px;font-weight:600}
+  .lab:first-child{margin-top:0}
+  .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px}
+  .hd{display:flex;align-items:center;gap:8px}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--green)}
+  .name{font-size:15px;font-weight:600;flex:1}
+  .rs{font-size:11.5px;color:var(--fg2);font-variant-numeric:tabular-nums}
+  .bar{height:5px;border-radius:3px;background:var(--graybg);overflow:hidden}
+  .bar i{display:block;height:100%;width:23%;background:var(--fg);border-radius:3px}
+  .sup{font-size:11.5px;color:var(--fg2);font-variant-numeric:tabular-nums}
+  .cnt{display:flex;gap:12px;align-items:baseline}.cnt a{color:var(--fg);text-decoration:none}
+  .badge{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;border-radius:6px;font-size:11px;font-weight:500;white-space:nowrap}
+  .b-gray{background:var(--graybg);color:var(--fg2)}
+  .b-blue{background:var(--bluebg);color:#AFD7FF}
+  .b-green{background:var(--greenbg);color:#8fe3ae}
+  .b-purple{background:var(--purplebg);color:#c8bfff}
+  .b-orange{background:var(--orangebg);color:#ffc58a}
+  .ttl{font-weight:600}.yr{color:var(--fg2);font-weight:400}
+  svg{flex-shrink:0}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(38,148,254,.6)}70%{box-shadow:0 0 0 6px rgba(38,148,254,0)}100%{box-shadow:0 0 0 0 rgba(38,148,254,0)}}
+  .live{width:7px;height:7px;border-radius:50%;background:var(--blue);animation:pulse 1.6s infinite}
+
+  /* A1 */
+  .a1{display:flex;flex-direction:column;gap:6px}
+  .row{display:flex;align-items:center;gap:8px;min-width:0}
+  .row .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lastrow{color:var(--fg2);font-size:12px}
+  .lastrow .ttl{font-weight:500;color:var(--fg)}
+
+  /* A2 */
+  .inset{background:var(--muted);border:1px solid var(--bd);border-radius:10px;padding:10px 12px;display:flex;gap:12px;align-items:center}
+  .poster{width:32px;height:48px;border-radius:5px;flex-shrink:0;background:linear-gradient(160deg,#3b4a5c,#1c232c);position:relative;overflow:hidden}
+  .poster.p2{background:linear-gradient(160deg,#6a4b2c,#2b1d12)}
+  .meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+  .t1{display:flex;gap:8px;align-items:center;font-size:13.5px}
+  .t2{font-size:11.5px;color:var(--fg2);display:flex;gap:6px;align-items:center}
+  .ring{position:relative;width:30px;height:30px;flex-shrink:0}
+  .ring span{position:absolute;inset:0;display:grid;place-items:center;font-size:10.5px;color:var(--fg2);font-variant-numeric:tabular-nums}
+  .side{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+
+  /* A3 */
+  .feed{display:flex;gap:6px;flex-wrap:nowrap;overflow:hidden;mask-image:linear-gradient(90deg,#000 75%,transparent)}
+  .chip{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:999px;border:1px solid var(--bd);font-size:11.5px;color:var(--fg2);white-space:nowrap}
+  .chip b{color:var(--fg);font-weight:500}
+  .ok{color:var(--green)}.mt{color:var(--purple)}.sk{color:var(--fg3)}
+</style><style>
+.inset2{background:var(--muted);border:1px solid var(--bd);border-radius:10px;overflow:hidden}
+.inset2 .top{padding:10px 12px;display:flex;gap:12px;align-items:center}
+.inset2 .foot{border-top:1px solid var(--bd);padding:7px 12px;display:flex;gap:8px;align-items:center;font-size:12px;color:var(--fg2)}
+.inset2 .foot .ttl{font-weight:500;color:var(--fg)}
+.inset2 .foot .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.b-blue .live{margin-right:2px}
+</style></head><body><div class="lab">1 · Sending a request</div>
+<div class="card">
+  <div class="hd"><span class="dot"></span><span class="name">plex2</span><span class="rs">Running · 16 / 69</span></div>
+  <div class="bar"><i></i></div>
+  <div class="inset2">
+    <div class="top">
+      <div class="poster "></div>
+      <div class="meta">
+        <div class="t1"><span class="ttl">The Expanse</span><span class="yr">2015</span></div>
+        <div class="t2"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8"/></svg>TV Shows · missing summary</div>
+      </div>
+      <div class="side"><span class="badge b-blue"><span class="live"></span>Refreshing</span><span class="sup">&nbsp;</span></div>
+    </div>
+    <div class="foot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#26A756" stroke-width="2.2"><path d="M5 13l4 4L19 7"/></svg><span class="grow"><span style="color:var(--fg3)">Last</span> <span class="ttl">Dune</span> 2021 · Movies · refreshed</span><span style="font-variant-numeric:tabular-nums">1s ago</span></div>
+  </div>
+  <div class="sup">69 of 69 due this run · 6 libraries read · 16 refreshed · 0 matched</div>
+  <div class="sup">Full cache refresh in 5d 13h · Sun 03:00</div>
+  <div class="cnt"><a href="#">2,476 items need attention</a><span class="sup">6 fixed recently · 0 stopped</span></div>
+</div><div class="lab">2 · Between items (most of the time)</div>
+<div class="card">
+  <div class="hd"><span class="dot"></span><span class="name">plex2</span><span class="rs">Running · 16 / 69</span></div>
+  <div class="bar"><i></i></div>
+  <div class="inset2">
+    <div class="top">
+      <div class="poster p2"></div>
+      <div class="meta">
+        <div class="t1"><span class="ttl">Arrival</span><span class="yr">2016</span></div>
+        <div class="t2"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/></svg>Movies · missing poster</div>
+      </div>
+      <div class="side"><span class="badge b-gray">Up next</span><span class="sup">in 4s</span></div>
+    </div>
+    <div class="foot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#26A756" stroke-width="2.2"><path d="M5 13l4 4L19 7"/></svg><span class="grow"><span style="color:var(--fg3)">Last</span> <span class="ttl">The Expanse</span> 2015 · TV Shows · refreshed</span><span style="font-variant-numeric:tabular-nums">2s ago</span></div>
+  </div>
+  <div class="sup">69 of 69 due this run · 6 libraries read · 16 refreshed · 0 matched</div>
+  <div class="sup">Full cache refresh in 5d 13h · Sun 03:00</div>
+  <div class="cnt"><a href="#">2,476 items need attention</a><span class="sup">6 fixed recently · 0 stopped</span></div>
+</div><div class="lab">3 · A fix match just went through</div>
+<div class="card">
+  <div class="hd"><span class="dot"></span><span class="name">plex2</span><span class="rs">Running · 16 / 69</span></div>
+  <div class="bar"><i></i></div>
+  <div class="inset2">
+    <div class="top">
+      <div class="poster p2"></div>
+      <div class="meta">
+        <div class="t1"><span class="ttl">Arrival</span><span class="yr">2016</span></div>
+        <div class="t2"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/></svg>Movies · missing poster</div>
+      </div>
+      <div class="side"><span class="badge b-gray">Up next</span><span class="sup">in 5s</span></div>
+    </div>
+    <div class="foot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9081FF" stroke-width="2"><path d="M7 7h11l-3-3M17 17H6l3 3"/></svg><span class="grow"><span style="color:var(--fg3)">Last</span> <span class="ttl">Andor</span> 2022 · TV Shows · matched</span><span style="font-variant-numeric:tabular-nums">now</span></div>
+  </div>
+  <div class="sup">69 of 69 due this run · 6 libraries read · 16 refreshed · 0 matched</div>
+  <div class="sup">Full cache refresh in 5d 13h · Sun 03:00</div>
+  <div class="cnt"><a href="#">2,476 items need attention</a><span class="sup">6 fixed recently · 0 stopped</span></div>
+</div></body></html>

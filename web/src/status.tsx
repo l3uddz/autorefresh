@@ -17,6 +17,7 @@ import { api, useRuns, useServers, useStatus, type Health, type ItemPage, type R
 import { useNow } from './clock';
 import { dateTime, fixedBy, fullReadText, label, nextRunText, plural, relative, runDuration, runTitle } from './format';
 import { Poster } from './media';
+import { NowPanel } from './nowpanel';
 import { cancelBulkQueue, isQueueActive, queueProgress, useBulkQueue } from './queue';
 import { itemHash, routeHash, runHash } from './route';
 import { useCancelRun, useRunNow } from './runs';
@@ -152,7 +153,7 @@ function runHeadline(run: RunProgress): string {
 
 function RunLive({ run }: { run: RunProgress }) {
   const reading = run.selected === 0;
-  const now = run.current ? `Now: ${run.current}` : reading && run.library ? `Read ${run.library}` : reading ? 'Reading libraries' : 'Waiting for the next item';
+  const readText = run.library ? `Read ${run.library}` : 'Reading libraries';
   return (
     <VStack gap={2}>
       <ProgressBar
@@ -162,7 +163,7 @@ function RunLive({ run }: { run: RunProgress }) {
         value={run.done}
         max={Math.max(run.selected, 1)}
       />
-      <Text maxLines={1}>{now}</Text>
+      {reading ? <Text maxLines={1}>{readText}</Text> : <NowPanel run={run} />}
       <Text type="supporting" color="secondary" hasTabularNumbers>
         {[
           run.kind === 'run' && run.due ? `${run.selected} of ${run.due} due this run` : undefined,

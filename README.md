@@ -625,7 +625,13 @@ the top bar limits every page to one server or shows all servers. The
 address keeps the choice, so a link or a reload shows the same server.
 
 - **Status** shows a card for each Plex server: its connection, the live
-  progress of a run, and the result of the last run. It also lists the
+  progress of a run, and the result of the last run. While a run or a bulk
+  refresh works on its items, a panel under the progress bar shows the
+  item in work with its poster and library, marked **Working**. For a run,
+  it also shows why the item is due.
+  During the wait between two items, it shows the next item, marked **Up
+  next**, with the seconds until its request. Under that, it shows the last
+  finished item, its outcome, and how long ago it finished. It also lists the
   items that were fixed recently and the recent runs. **Run now** starts a
   run. Its menu also has **Full cache refresh, then run**, which reads
   every library in full before it refreshes the due items. If it cannot
