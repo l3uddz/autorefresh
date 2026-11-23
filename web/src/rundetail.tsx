@@ -106,7 +106,7 @@ export function RunDetails({ id, isMulti, srv, onClose, isPinned = false }: Prop
           </LayoutHeader>
         }
         content={
-          <LayoutContent padding={6}>
+          <LayoutContent padding={6} label="Run items">
             <VStack gap={6}>{body}</VStack>
           </LayoutContent>
         }
