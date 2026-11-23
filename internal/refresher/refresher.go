@@ -32,7 +32,7 @@ type Plex interface {
 type Store interface {
 	FinishJob(int64, store.RunStart, store.RunResult, []store.RunItem) (bool, error)
 	SetStopped(context.Context, string, string, time.Time, bool) (bool, error)
-	ApplyCheck(string, store.Item, time.Time) (bool, error)
+	ApplyCheck(string, store.Item, time.Time, int64) (bool, error)
 	LibraryInfo(string, string) (store.LibraryInfo, bool, error)
 	RecordManual(store.ManualRecord) error
 	KnownItem(server, ratingKey string) (store.Item, bool, bool, error)

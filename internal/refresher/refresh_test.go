@@ -402,18 +402,19 @@ func TestFixMatchMovie(t *testing.T) {
 	f.run(t0)
 
 	wantCalls(t, matchReads(fp.calls), "SearchMatches 101 tmdb-1 tv.plex.agents.movie en-US")
-	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/a")
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/a", "Refresh 101")
 	row, _ := f.row(testServer, "1", "101")
-	if row.Refreshes != 2 || row.LastAction != store.ActionMatch || row.LastMatch != store.ActionMatch {
-		t.Errorf("row = %+v, want 2 refreshes and the match as both actions", row)
+	// The refresh that follows the accepted match is the last action.
+	if row.Refreshes != 3 || row.LastAction != store.ActionRefresh || row.LastMatch != store.ActionMatch {
+		t.Errorf("row = %+v, want 3 refreshes, the refresh as the last action, and the match as the last match", row)
 	}
 	summary := f.lastSummary(testServer)
 	wantField(t, summary, "match_requests", float64(1))
-	wantField(t, summary, "refresh_requests", float64(0))
+	wantField(t, summary, "refresh_requests", float64(1))
 	// A tmdb ID from the path is a plain match, not a TMDB match.
 	sent := f.logLines("info", "Sent request")
-	if len(sent) != 1 {
-		t.Fatalf("got %d sent lines, want 1", len(sent))
+	if len(sent) != 2 {
+		t.Fatalf("got %d sent lines, want 2: the match and the refresh after it", len(sent))
 	}
 	wantMatchFields(t, sent[0], "match", "Film", 2020, "https://www.themoviedb.org/movie/1")
 	results := f.logLines("debug", "Match search result")
@@ -453,7 +454,7 @@ func TestFixMatchMovieWithoutListingUsesItemPaths(t *testing.T) {
 	f.run(t0)
 
 	wantCalls(t, matchReads(fp.calls), "ItemPaths 101", "SearchMatches 101 tmdb-1 tv.plex.agents.movie en-US")
-	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/a")
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/a", "Refresh 101")
 }
 
 func TestFixMatchFileMapIsPerServer(t *testing.T) {
@@ -485,7 +486,7 @@ func TestFixMatchSeriesUsesItemPaths(t *testing.T) {
 	f.run(t0)
 
 	wantCalls(t, matchReads(fp.calls), "ItemPaths 201", "SearchMatches 201 tvdb-5 tv.plex.agents.series en-US")
-	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s")
+	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s", "Refresh 201")
 }
 
 func TestFixMatchConflictSendsPlainRefresh(t *testing.T) {
@@ -618,7 +619,7 @@ func TestFixMatchIMDbSearchErrorUsesOtherID(t *testing.T) {
 
 	f.run(t0)
 
-	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s")
+	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s", "Refresh 201")
 	if warnings := f.logLines("warn", "Match search failed"); len(warnings) != 0 {
 		t.Errorf("got search failure warnings %v, want none", warnings)
 	}
@@ -770,11 +771,11 @@ func TestSummaryLine(t *testing.T) {
 
 	f.run(t0)
 
-	wantCalls(t, sends(fp.calls), "Refresh 102", "Match 103 plex://movie/a")
+	wantCalls(t, sends(fp.calls), "Refresh 102", "Match 103 plex://movie/a", "Refresh 103")
 	summary := f.lastSummary(testServer)
 	for field, want := range map[string]float64{
 		"full_read_items": 2, "incremental_read_items": 1, "incomplete_items": 3, "due_items": 3,
-		"refresh_requests": 1, "match_requests": 1, "failed_requests": 1, "remaining_items": 0,
+		"refresh_requests": 2, "match_requests": 1, "failed_requests": 1, "remaining_items": 0,
 		"completed_items": 1, "completed_after_request": 1, "completed_after_match": 0,
 	} {
 		wantField(t, summary, field, want)

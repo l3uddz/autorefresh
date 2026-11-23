@@ -194,7 +194,8 @@ func TestProgressCountsEqualStoredRun(t *testing.T) {
 
 		f.run(t0)
 
-		p.wantStoredCounts(t, f, Counts{Matched: 1})
+		// The refresh that follows the match counts too.
+		p.wantStoredCounts(t, f, Counts{Refreshed: 1, Matched: 1})
 	})
 }
 

@@ -556,7 +556,7 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 		"KnownItem":     func() error { _, _, _, err := s.KnownItem(srv, "101"); return err },
 		"SetStopped":    func() error { _, err := s.SetStopped(context.Background(), srv, "101", base, true); return err },
 		"RecordManual":  func() error { return s.RecordManual(ManualRecord{Request: Request{Source: SourceManual}}) },
-		"ApplyCheck":    func() error { _, err := s.ApplyCheck(srv, item("101", NoSummary), base); return err },
+		"ApplyCheck":    func() error { _, err := s.ApplyCheck(srv, item("101", NoSummary), base, 0); return err },
 		"LibraryInfo":   func() error { _, _, err := s.LibraryInfo(srv, sec); return err },
 		"FinishJob":     func() error { _, err := s.FinishJob(1, RunStart{}, RunResult{}, nil); return err },
 		"RunItems":      func() error { _, err := s.RunItems(context.Background(), 1); return err },

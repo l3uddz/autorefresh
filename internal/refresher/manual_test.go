@@ -61,7 +61,7 @@ func TestManualRefreshOfHistoryOnlyItem(t *testing.T) {
 	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
 	row, _ := f.row("home", "1", "1")
 	row.Reasons = 0
-	if _, err := f.store.ApplyCheck("home", row, t0); err != nil {
+	if _, err := f.store.ApplyCheck("home", row, t0, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.r.RefreshItem(t.Context(), "home", "1"); err != nil {

@@ -162,7 +162,7 @@ func TestMatchRecordsTarget(t *testing.T) {
 
 	f.run(t0)
 
-	e := f.newestEvent("101")
+	e := f.matchRequest("101")
 	wantLinks := []string{"https://www.themoviedb.org/movie/1"}
 	if e.Kind != store.EventRequest || e.Source != store.SourceAuto || e.Action != store.ActionMatch || !e.Accepted ||
 		e.Outcome != "match" || e.MatchGUID != "plex://movie/m" || e.MatchTitle != "Film" || e.MatchYear != 2020 ||

@@ -91,8 +91,14 @@ func (f *fakePlex) List(ctx context.Context, section string, itemType int, filte
 	return f.lists[key], nil
 }
 
+// Item answers a check as if Plex had not loaded a new match yet: the item
+// is still unmatched. checkedMetadata gives other answers.
 func (f *fakePlex) Item(ctx context.Context, ratingKey string) (plex.Item, error) {
-	return plex.Item{}, plex.ErrNotFound
+	if err := canceled(ctx); err != nil {
+		return plex.Item{}, err
+	}
+	f.record("Item " + ratingKey)
+	return unmatchedItem(ratingKey), nil
 }
 
 func (f *fakePlex) ItemPaths(ctx context.Context, ratingKey string) (plex.Paths, error) {

@@ -95,6 +95,20 @@ describe('run groups', () => {
     ]);
   });
 
+  it('lists a match, the refresh after it, and the fix that its checks found', () => {
+    const groups = shape(detail([
+      event('1', 'match-decision', { outcome: 'matched' }),
+      event('1', 'request', { action: 'match', accepted: true, match: { guid: 'plex://movie/1', title: 'One', year: 2001 } }),
+      event('1', 'request', { action: 'refresh', accepted: true }),
+      event('1', 'completed', { fixedAction: 'refresh', fixedMatch: 'match' }),
+    ]));
+    expect(groups).toEqual([
+      ['Refreshed', [['1', 'Refresh accepted', undefined, 'attention']]],
+      ['Matched', [['1', 'Match accepted to One (2001)', 'Fix match: matched', 'attention']]],
+      ['Fixed', [['1', 'By match · then refresh', undefined, 'fixed']]],
+    ]);
+  });
+
   it('joins a match decision to the removal of its item', () => {
     // Plex answered 404 to the match request, so the item is gone.
     const groups = shape(detail([event('1', 'match-decision', { outcome: 'matched' }), event('1', 'gone')]));

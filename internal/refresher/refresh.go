@@ -151,9 +151,53 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	if err := r.store.RecordRequest(req); err != nil {
 		return err
 	}
-	r.itemDone(run, it.RatingKey, req.Outcome())
 	requestEvent(log.Info(), run.server.Name, lib, it, action, fm).Msg("Sent request")
 	r.warnAtLongestWait(run.server.Name, lib, it)
+	// The run follows up its match as a manual match is followed up, so a
+	// match that fixed the item moves it to Fixed now.
+	if fm != nil {
+		if err := r.settleMatch(ctx, manualItem{server: run.server, row: it, cached: true}, run); err != nil {
+			return err
+		}
+	}
+	r.itemDone(run, it.RatingKey, req.Outcome())
+	return nil
+}
+
+// runRefresh sends the refresh after a match that Plex accepted in the run
+// and records it as a request of the run. A 404 answer records the item as
+// gone. It returns the error of the request, or a store error (ErrStore).
+func (r *Refresher) runRefresh(ctx context.Context, run *serverRun, it store.Item) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	run.refreshes++
+	err := run.server.Plex.Refresh(ctx, it.RatingKey)
+	if errors.Is(err, plex.ErrNotFound) {
+		if recErr := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, run.id); recErr != nil {
+			return fmt.Errorf("%w: %w", ErrStore, recErr)
+		}
+		return err
+	}
+	req := r.request(run, it, store.ActionRefresh, nil)
+	req.Accepted = err == nil
+	if err != nil {
+		run.failures++
+		req.Error = err.Error()
+	}
+	if recErr := r.store.RecordRequest(req); recErr != nil {
+		return fmt.Errorf("%w: %w", ErrStore, recErr)
+	}
+	lib := run.library(it.Section)
+	if err != nil {
+		itemEvent(log.Warn(), run.server.Name, lib, it).Err(err).Str("action", string(store.ActionRefresh)).Msg("Request failed")
+		return err
+	}
+	requestEvent(log.Info(), run.server.Name, lib, it, store.ActionRefresh, nil).Msg("Sent request")
+	// The match counted one refresh already.
+	matched := it
+	matched.Refreshes++
+	r.warnAtLongestWait(run.server.Name, lib, matched)
 	return nil
 }
 

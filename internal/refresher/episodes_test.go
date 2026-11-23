@@ -15,44 +15,44 @@ func TestEpisodeNumbersConfirmSeriesYearConflict(t *testing.T) {
 		name     string
 		local    map[int][]int
 		catalog  map[string][]int
-		want     string
+		want     []string
 		directID bool
 	}{
 		{
 			name:    "complete local season matches despite a bad year and absent later season",
 			local:   map[int][]int{1: {3, 1, 2}},
 			catalog: map[string][]int{"77 1": {1, 2, 3}, "77 2": {1, 2}},
-			want:    "Match 201 plex://show/right",
+			want:    []string{"Match 201 plex://show/right", "Refresh 201"},
 		},
 		{
 			name:     "direct and translated IDs agree",
 			local:    map[int][]int{1: {1, 2, 3}},
 			catalog:  map[string][]int{"77 1": {1, 2, 3}},
-			want:     "Match 201 plex://show/right",
+			want:     []string{"Match 201 plex://show/right", "Refresh 201"},
 			directID: true,
 		},
 		{
 			name:    "same count with different numbering",
 			local:   map[int][]int{1: {1, 2, 4}},
 			catalog: map[string][]int{"77 1": {1, 2, 3}},
-			want:    "Refresh 201",
+			want:    []string{"Refresh 201"},
 		},
 		{
 			name:    "a second local season is incomplete",
 			local:   map[int][]int{1: {1, 2, 3}, 2: {1}},
 			catalog: map[string][]int{"77 1": {1, 2, 3}, "77 2": {1, 2}},
-			want:    "Refresh 201",
+			want:    []string{"Refresh 201"},
 		},
 		{
 			name:    "duplicate numbers cannot confirm a season",
 			local:   map[int][]int{1: {1, 1, 3}},
 			catalog: map[string][]int{"77 1": {1, 1, 3}},
-			want:    "Refresh 201",
+			want:    []string{"Refresh 201"},
 		},
 		{
 			name:  "missing catalog season",
 			local: map[int][]int{1: {1, 2, 3}},
-			want:  "Refresh 201",
+			want:  []string{"Refresh 201"},
 		},
 	}
 	for _, tt := range tests {
@@ -79,17 +79,18 @@ func TestEpisodeNumbersConfirmSeriesYearConflict(t *testing.T) {
 
 			f.run(t0)
 
-			wantCalls(t, sends(fp.calls), tt.want)
+			wantCalls(t, sends(fp.calls), tt.want...)
 			if tt.directID {
 				wantCalls(t, ft.calls, "Find tvdb 5 true", "Year 77 true", "SeasonEpisodes 77 1")
 				wantCalls(t, matchReads(fp.calls), "ItemPaths 201",
 					"SearchMatches 201 tvdb-5 tv.plex.agents.series en-US",
 					"SearchMatches 201 tmdb-77 tv.plex.agents.series en-US")
 			}
-			if tt.want == "Match 201 plex://show/right" {
+			if tt.want[0] == "Match 201 plex://show/right" {
+				// The match, then the refresh that follows it.
 				sent := f.logLines("info", "Sent request")
-				if len(sent) != 1 {
-					t.Fatalf("sent %d requests, want 1", len(sent))
+				if len(sent) != 2 {
+					t.Fatalf("sent %d requests, want 2", len(sent))
 				}
 				wantField(t, sent[0], "episode_count", float64(3))
 			}

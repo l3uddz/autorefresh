@@ -33,15 +33,16 @@ func (f *fixture) decision(key string) store.Event {
 	return found[0]
 }
 
-// matchRequest returns the newest request event of an item.
+// matchRequest returns the newest match request event of an item. The
+// refresh that follows an accepted match is newer.
 func (f *fixture) matchRequest(key string) store.Event {
 	f.t.Helper()
 	for _, e := range f.timeline(key) {
-		if e.Kind == store.EventRequest {
+		if e.Kind == store.EventRequest && (e.Action == store.ActionMatch || e.Action == store.ActionTMDBMatch) {
 			return e
 		}
 	}
-	f.t.Fatalf("item %s has no request event", key)
+	f.t.Fatalf("item %s has no match request event", key)
 	return store.Event{}
 }
 
@@ -125,7 +126,7 @@ func TestDecisionMatched(t *testing.T) {
 	if e.Error != "" {
 		t.Errorf("error = %q, want none", e.Error)
 	}
-	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/m")
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/m", "Refresh 101")
 	if row, _ := f.row(testServer, "1", "101"); row.LastMatchOutcome != "matched" {
 		t.Errorf("LastMatchOutcome = %q, want matched", row.LastMatchOutcome)
 	}
@@ -245,7 +246,7 @@ func TestDecisionConfirmedByTMDBYear(t *testing.T) {
 		"tie tmdb-77: plex://show/s=confirms")
 	wantYears(t, e, 0, 2022, 0)
 	wantYears(t, f.matchRequest("201"), 0, 2022, 0)
-	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s")
+	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s", "Refresh 201")
 }
 
 func TestDecisionConfirmedByEpisodes(t *testing.T) {
@@ -273,7 +274,7 @@ func TestDecisionConfirmedByEpisodes(t *testing.T) {
 		"tie tmdb-77: plex://show/right=confirms")
 	wantYears(t, e, 0, 2011, 3)
 	wantYears(t, f.matchRequest("201"), 0, 2011, 3)
-	wantCalls(t, sends(fp.calls), "Match 201 plex://show/right")
+	wantCalls(t, sends(fp.calls), "Match 201 plex://show/right", "Refresh 201")
 }
 
 func TestDecisionTieWithDifferentGUID(t *testing.T) {
@@ -476,7 +477,7 @@ func TestAcceptedSearchFailureOutcome(t *testing.T) {
 		wantDecision(t, f.decision("201"), store.DecisionMatched, "",
 			"path tvdb-5 failed:",
 			"path imdb-tt1: plex://show/s=picked")
-		wantCalls(t, sends(fp.calls), "Match 201 plex://show/s")
+		wantCalls(t, sends(fp.calls), "Match 201 plex://show/s", "Refresh 201")
 	})
 	t.Run("a tmdb search failure is not accepted", func(t *testing.T) {
 		fp := newFakePlex(showsLib)
@@ -506,7 +507,7 @@ func TestAcceptedSearchFailureThenTMDBMatch(t *testing.T) {
 	wantDecision(t, f.decision("201"), store.DecisionMatched, "",
 		"path tvdb-5 failed:",
 		"tmdb tmdb-77 from tvdb-5: plex://show/s=picked")
-	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s")
+	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s", "Refresh 201")
 }
 
 func TestMixedResultsVerdicts(t *testing.T) {
@@ -570,4 +571,68 @@ func TestFailedTMDBSearchRecordsFailed(t *testing.T) {
 		}
 		wantCalls(t, sends(fp.calls))
 	})
+}
+
+// runMatchFixture returns a refresh fixture whose run matches the unmatched
+// movie 101 to plex://movie/m. Each check of the item gets the next answer.
+func runMatchFixture(t *testing.T, answers ...checkAnswer) (*fixture, *fakePlex, *int) {
+	t.Helper()
+	fp := newFakePlex(moviesLib)
+	fp.paths["101"] = []string{"/m/Film (2020) {tmdb-1}/Film.mkv"}
+	fp.candidates["101 tmdb-1"] = []plex.Candidate{{GUID: "plex://movie/m", Name: "Film", Year: 2020}}
+	checks := new(int)
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: checkedMetadata{fakePlex: fp, answers: answers, checks: checks}})
+	f.seed(testServer, moviesLib, unmatchedItem("101"), store.Unmatched, 1)
+	return f, fp, checks
+}
+
+func TestRunMatchSettlesLikeAManualMatch(t *testing.T) {
+	f, fp, checks := runMatchFixture(t, checkAnswer{item: unmatchedItem("101")}, checkAnswer{item: completeItem("101")})
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/m", "Refresh 101")
+	if *checks != 2 {
+		t.Errorf("checks = %d, want 2", *checks)
+	}
+	if _, found := f.row(testServer, "1", "101"); found {
+		t.Error("complete item still in the cache")
+	}
+	var refresh, done store.Event
+	for _, e := range f.timeline("101") {
+		switch {
+		case e.Kind == store.EventRequest && refresh.ID == 0:
+			refresh = e
+		case e.Kind == store.EventCompleted:
+			done = e
+		}
+	}
+	if refresh.Action != store.ActionRefresh || !refresh.Accepted || refresh.Source != store.SourceAuto || refresh.RunID == 0 {
+		t.Errorf("newest request = %+v, want the accepted refresh of the run", refresh)
+	}
+	if done.FixedAction != store.ActionRefresh || done.FixedMatch != store.ActionMatch || done.RunID != refresh.RunID {
+		t.Errorf("completion = %+v, want one of run %d credited to the refresh after the match", done, refresh.RunID)
+	}
+	summary := f.lastSummary(testServer)
+	for field, want := range map[string]float64{"completed_items": 1, "completed_after_request": 1, "completed_after_match": 1, "refresh_requests": 1} {
+		wantField(t, summary, field, want)
+	}
+}
+
+func TestRunMatchStopsSettlingWhenTheItemIsGone(t *testing.T) {
+	f, fp, checks := runMatchFixture(t, checkAnswer{item: completeItem("101")})
+	fp.refreshErrs["101"] = plex.ErrNotFound
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/m", "Refresh 101")
+	if *checks != 0 {
+		t.Errorf("checks = %d, want none", *checks)
+	}
+	if _, found := f.row(testServer, "1", "101"); found {
+		t.Error("gone item still in the cache")
+	}
+	if e := f.timeline("101")[0]; e.Kind != store.EventGone || e.Source != store.SourceAuto || e.RunID == 0 {
+		t.Errorf("newest event = %+v, want a gone event of the run", e)
+	}
 }

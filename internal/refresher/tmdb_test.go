@@ -82,11 +82,11 @@ func TestTMDBFallbackMatchesSeries(t *testing.T) {
 
 	f.run(t0)
 
-	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s")
+	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s", "Refresh 201")
 	wantCalls(t, ft.calls, "Find tvdb 5 true")
 	sent := f.logLines("info", "Sent request")
-	if len(sent) != 1 {
-		t.Fatalf("got %d sent lines, want 1", len(sent))
+	if len(sent) != 2 {
+		t.Fatalf("got %d sent lines, want 2: the match and the refresh after it", len(sent))
 	}
 	wantMatchFields(t, sent[0], "tmdb-match", "Show", 2020, "https://www.themoviedb.org/tv/77")
 	if row, _ := f.row(testServer, "2", "201"); row.LastMatch != store.ActionTMDBMatch {
@@ -117,7 +117,7 @@ func TestTMDBFallbackUsesCache(t *testing.T) {
 
 	f.run(t0)
 
-	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s")
+	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s", "Refresh 201")
 	wantCalls(t, ft.calls)
 }
 
@@ -134,7 +134,7 @@ func TestTMDBFallbackMatchesMovieByIMDb(t *testing.T) {
 
 	f.run(t0)
 
-	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/a")
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/a", "Refresh 101")
 	wantCalls(t, ft.calls, "Find imdb tt1 false")
 }
 
@@ -151,7 +151,7 @@ func TestTMDBFallbackSkipped(t *testing.T) {
 		ft := &fakeTMDB{ids: map[string]string{"imdb tt1 true": "78"}}
 		f := newTMDBFixture(t, fp, ft, "tvdb-5", "imdb-tt1")
 		f.run(t0)
-		wantCalls(t, sends(fp.calls), "Match 201 plex://show/s")
+		wantCalls(t, sends(fp.calls), "Match 201 plex://show/s", "Refresh 201")
 		wantCalls(t, ft.calls)
 	})
 	t.Run("the path has a tmdb ID", func(t *testing.T) {
@@ -381,14 +381,14 @@ func TestYearConfirmSeriesViaTMDB(t *testing.T) {
 
 	f.run(t0)
 
-	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s")
+	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s", "Refresh 201")
 	wantCalls(t, ft.calls, "Find tvdb 5 true", "Year 77 true")
 	if slices.Contains(fp.calls, "EpisodeNumbers 201") {
 		t.Error("read Plex episodes after TMDB already confirmed the year")
 	}
 	sent := f.logLines("info", "Sent request")
-	if len(sent) != 1 {
-		t.Fatalf("got %d sent lines, want 1", len(sent))
+	if len(sent) != 2 {
+		t.Fatalf("got %d sent lines, want 2: the match and the refresh after it", len(sent))
 	}
 	wantField(t, sent[0], "action", "match")
 	wantField(t, sent[0], "item_year", float64(2022))
@@ -423,11 +423,11 @@ func TestYearConfirmMovieViaTMDBFallback(t *testing.T) {
 		"SearchMatches 101 imdb-tt1 tv.plex.agents.movie en-US",
 		"SearchMatches 101 tmdb-9 tv.plex.agents.movie en-US",
 	)
-	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/a")
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/a", "Refresh 101")
 	wantCalls(t, ft.calls, "Find imdb tt1 false", "Year 9 false")
 	sent := f.logLines("info", "Sent request")
-	if len(sent) != 1 {
-		t.Fatalf("got %d sent lines, want 1", len(sent))
+	if len(sent) != 2 {
+		t.Fatalf("got %d sent lines, want 2: the match and the refresh after it", len(sent))
 	}
 	wantField(t, sent[0], "action", "tmdb-match")
 	wantField(t, sent[0], "tmdb_year", float64(1984))
@@ -451,10 +451,10 @@ func TestYearConfirmViaPathYearWithoutTMDB(t *testing.T) {
 
 	f.run(t0)
 
-	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/a")
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/a", "Refresh 101")
 	sent := f.logLines("info", "Sent request")
-	if len(sent) != 1 {
-		t.Fatalf("got %d sent lines, want 1", len(sent))
+	if len(sent) != 2 {
+		t.Fatalf("got %d sent lines, want 2: the match and the refresh after it", len(sent))
 	}
 	wantField(t, sent[0], "action", "match")
 	wantField(t, sent[0], "item_year", float64(2000))
@@ -484,11 +484,11 @@ func TestYearConfirmPathYearMatchesTMDB(t *testing.T) {
 
 	f.run(t0)
 
-	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/a")
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/a", "Refresh 101")
 	wantCalls(t, ft.calls, "Find imdb tt1 false", "Year 9 false")
 	sent := f.logLines("info", "Sent request")
-	if len(sent) != 1 {
-		t.Fatalf("got %d sent lines, want 1", len(sent))
+	if len(sent) != 2 {
+		t.Fatalf("got %d sent lines, want 2: the match and the refresh after it", len(sent))
 	}
 	wantField(t, sent[0], "action", "match")
 	wantField(t, sent[0], "tmdb_year", float64(2018))
