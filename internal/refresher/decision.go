@@ -111,6 +111,8 @@ func verdict(m store.MatchSearch, c store.MatchCandidate, guid, conflict string,
 		return sameGUID(c.GUID, guid, verdictConfirms)
 	case conflict == "":
 		return sameGUID(c.GUID, guid, verdictPicked)
+	case conflict == conflictYear && c.Year == 0:
+		return verdictNotCompared
 	case conflict == conflictYear && !yearDiffers(itemYear, c.Year):
 		return verdictYearAgrees
 	case conflict == conflictDifferent || conflict == conflictYear:
@@ -152,10 +154,10 @@ func skipDecision(ctx context.Context, err error) bool {
 }
 
 // decision returns the outcome of the evaluation ev, which ended with err,
-// with the logged searches and evidence. The years that the evaluation
-// compared stay also when a later step failed.
+// with the logged searches and evidence. The conflict and the years that
+// the evaluation compared stay also when a later step failed.
 func (d *decisionLog) decision(ev evaluation, err error) store.MatchDecision {
-	dec := store.MatchDecision{Searches: d.searches, MatchEvidence: d.evidence}
+	dec := store.MatchDecision{Searches: d.searches, MatchEvidence: d.evidence, Conflict: ev.conflict}
 	dec.PathYear, dec.TMDBYear, dec.EpisodeCount = ev.years.folderYear, ev.years.tmdbYear, ev.years.episodeCount
 	switch {
 	case err != nil:
@@ -165,7 +167,7 @@ func (d *decisionLog) decision(ev evaluation, err error) store.MatchDecision {
 	case ev.noIDs:
 		dec.Outcome = store.DecisionNoIDs
 	default:
-		dec.Outcome, dec.Conflict = store.DecisionNoMatch, ev.conflict
+		dec.Outcome = store.DecisionNoMatch
 		if ev.fm != nil {
 			dec.Outcome = store.DecisionMatched
 		}

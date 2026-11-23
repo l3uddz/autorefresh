@@ -219,7 +219,8 @@ the year of the item, the year of its folder, if any, and the TMDB year, if
 TMDB was asked, also when a later step failed. Only a search whose
 candidate year differs from the item gets the verdict "year differs"; a
 search that returned the same candidate with an agreeing year gets "year
-agrees". It also keeps the TMDB ID that it checked and, for a
+agrees", and one without a year "not compared". A decision that failed
+after a year conflict keeps the conflict. It also keeps the TMDB ID that it checked and, for a
 series, the first local season whose episode numbers differ from TMDB,
 with the episode count of Plex and of TMDB. The Fix match dialog shows
 them.
@@ -827,7 +828,7 @@ The image declares port `7380`. Nothing listens on it until you set
 | `api/item` | One item and its history, newest event first |
 | `api/item/live` | What Plex tells about one item now |
 | `api/candidate` | The TMDB ID and the season and episode counts that the Plex metadata provider gives for the `plex://` GUID of a series candidate, in the `guid` query parameter, asked with the token of the server `srv` |
-| `api/item/auto-match` | The automatic fix match preview of one item, as a match decision event. A decision event also has `itemYear`, `tmdbId`, `tmdbSkip`, `tmdbMissing`, and `episodeDiff` |
+| `api/item/auto-match` | The automatic fix match preview of one item, as a match decision event. A decision event can also have the optional fields `itemYear`, `tmdbId`, `tmdbSkip`, `tmdbMissing`, and `episodeDiff`, which the API leaves out when they are empty |
 | `api/item/episode-check` | `POST`: compares the episode numbers of one series with the TMDB ID in the `tmdb` query parameter. `diff` names the first season that differs, with the counts and the episode numbers that only TMDB (`missing`) or only Plex (`extra`) has |
 | `api/items/thumb`, `api/items/art` | The poster and the background art of one item |
 | `api/runs` | One page of the runs, newest first |

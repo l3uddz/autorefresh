@@ -202,15 +202,16 @@ func (r *Refresher) confirmWithTMDB(ctx context.Context, run *serverRun, mc matc
 }
 
 // compareTMDBEvidence compares the years, and for a series then the
-// regular episode numbers, with those of the TMDB ID tmdbID, and logs the ID
-// in mc.d.
+// regular episode numbers, with those of the TMDB ID tmdbID. It logs the ID
+// in mc.d once TMDB answered the year request, so a failed request records
+// no TMDB answer.
 func (r *Refresher) compareTMDBEvidence(ctx context.Context, run *serverRun, mc matchContext, tmdbID string, pathYear int) (yearResolution, error) {
-	mc.d.evidence.TMDBID = tmdbID
 	show := mc.it.Type == plex.ShowLibrary
 	year, ok, err := r.opts.TMDB.Year(ctx, tmdbID, show)
 	if err != nil {
 		return yearResolution{}, r.confirmationLookupFailed(ctx, run, mc, tmdbID, err)
 	}
+	mc.d.evidence.TMDBID = tmdbID
 	result := yearResolution{tmdbYear: year, ok: ok && yearConfirms(mc.it.Year, pathYear, year)}
 	if result.ok || !show {
 		return result, nil
