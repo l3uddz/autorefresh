@@ -194,13 +194,16 @@ func TestListAttentionAndStoppedTabs(t *testing.T) {
 	}})
 	stopItem(t, s, srv, "s1", base.Add(time.Hour))
 	stopItem(t, s, srv, "s2", base.Add(2*time.Hour))
+	accept(t, s, "a", base, ActionRefresh)
 	rules := DueRules{Now: base.Add(1000 * time.Hour), RefreshInterval: time.Hour, Ignored: NoArt}
 
-	if got := listKeys(listAll(t, s, ListQuery{Tab: TabAttention, Rules: rules})); !reflect.DeepEqual(got, []string{"a", "b", "c"}) {
-		t.Errorf("Attention = %v, want [a b c]", got)
+	// The default order lists the most tries first. Equal tries follow the
+	// key, in the same direction.
+	if got := listKeys(listAll(t, s, ListQuery{Tab: TabAttention, Rules: rules})); !reflect.DeepEqual(got, []string{"a", "c", "b"}) {
+		t.Errorf("Attention = %v, want [a c b]", got)
 	}
-	if got := listKeys(listAll(t, s, ListQuery{Tab: TabAttention, WithIgnored: true, Rules: rules})); !reflect.DeepEqual(got, []string{"a", "b", "c", "ignored"}) {
-		t.Errorf("Attention with ignored = %v, want [a b c ignored]", got)
+	if got := listKeys(listAll(t, s, ListQuery{Tab: TabAttention, WithIgnored: true, Rules: rules})); !reflect.DeepEqual(got, []string{"a", "ignored", "c", "b"}) {
+		t.Errorf("Attention with ignored = %v, want [a ignored c b]", got)
 	}
 	stopped := listAll(t, s, ListQuery{Tab: TabStopped, Rules: rules})
 	if got := listKeys(stopped); !reflect.DeepEqual(got, []string{"s2", "s1"}) {
@@ -359,7 +362,7 @@ func TestDefaultSort(t *testing.T) {
 		key  SortKey
 		desc bool
 	}{
-		{TabAttention, SortDue, false},
+		{TabAttention, SortTries, true},
 		{TabStopped, SortStopped, true},
 		{TabFixed, SortCompleted, true},
 		{"x", "", false},

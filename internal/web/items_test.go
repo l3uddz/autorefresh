@@ -252,9 +252,9 @@ func TestItemsPages(t *testing.T) {
 	// The scope holds the default sort, so a cursor of the default order
 	// also fits the same order spelled out.
 	first, _ := getItems(t, s, "limit=2")
-	second, _ := getItems(t, s, "sort=due&limit=3&cursor="+first.Next)
+	second, _ := getItems(t, s, "sort=-tries&limit=3&cursor="+first.Next)
 	if len(second.Items) != 3 {
-		t.Errorf("cursor of the default sort with sort=due: %v", keysOf(second.Items))
+		t.Errorf("cursor of the default sort with sort=-tries: %v", keysOf(second.Items))
 	}
 }
 
