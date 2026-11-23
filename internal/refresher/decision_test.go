@@ -621,13 +621,16 @@ func TestRunMatchSettlesLikeAManualMatch(t *testing.T) {
 	}
 }
 
+// A 404 on the follow-up refresh records the matched item as gone, and the
+// run then refreshes its next item.
 func TestRunMatchStopsSettlingWhenTheItemIsGone(t *testing.T) {
 	f, fp, checks := runMatchFixture(t, checkAnswer{item: completeItem("101")})
+	f.seed(testServer, moviesLib, incompleteItem("102"), store.NoSummary, 2)
 	fp.refreshErrs["101"] = plex.ErrNotFound
 
 	f.run(t0)
 
-	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/m", "Refresh 101")
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/m", "Refresh 101", "Refresh 102")
 	if *checks != 0 {
 		t.Errorf("checks = %d, want none", *checks)
 	}
@@ -636,6 +639,9 @@ func TestRunMatchStopsSettlingWhenTheItemIsGone(t *testing.T) {
 	}
 	if e := f.timeline("101")[0]; e.Kind != store.EventGone || e.Source != store.SourceAuto || e.RunID == 0 {
 		t.Errorf("newest event = %+v, want a gone event of the run", e)
+	}
+	if got := f.onlyRun(); got.Status != store.RunFinished {
+		t.Errorf("run = %+v, want a finished run", got)
 	}
 }
 
@@ -666,26 +672,120 @@ func TestRunMatchStopsTheServerWhenPlexBecomesUnavailable(t *testing.T) {
 	}
 }
 
-// The end of the run during a wait between the checks of a follow-up
-// reaches the run, as the end of the run in a request does.
-func TestRunMatchFollowUpReturnsTheEndOfTheRun(t *testing.T) {
-	f, _, checks := runMatchFixture(t, checkAnswer{item: completeItem("101")})
-	row, _ := f.row(testServer, "1", "101")
-	// The configured server counts the checks that its Plex answers.
-	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto, files: map[string][]string{}}
+// The end of the run during the wait before the first check of a follow-up
+// ends the run as canceled, as the end of the run in a request does: the
+// matched item is done, and the run waits and sends nothing more.
+func TestRunMatchFollowUpCanceledEndsTheRun(t *testing.T) {
+	f, fp, checks := runMatchFixture(t, checkAnswer{item: completeItem("101")})
+	f.seed(testServer, moviesLib, incompleteItem("102"), store.NoSummary, 2)
+	p := withProgress(f)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	waits := 0
 	f.r.sleep = func(ctx context.Context, _ time.Duration) error {
+		waits++
 		cancel()
 		return ctx.Err()
 	}
 
-	err := f.r.settleMatch(ctx, manualItem{server: run.server, row: row, cached: true}, run)
-
-	if !errors.Is(err, context.Canceled) {
-		t.Errorf("settleMatch = %v, want context.Canceled", err)
+	f.now = t0
+	if err := f.r.Run(ctx); err != nil {
+		t.Fatalf("Run = %v, want nil", err)
 	}
-	if *checks != 0 {
-		t.Errorf("checks = %d, want none", *checks)
+
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/m", "Refresh 101")
+	// A run that went on after the follow-up would wait again before item 102.
+	if waits != 1 || *checks != 0 {
+		t.Errorf("waits = %d, checks = %d, want 1 wait and no check", waits, *checks)
+	}
+	wantProgress(t, p.itemCalls(), "ItemStarted home 101 Title 101", "ItemDone home 101 match")
+	if got := f.onlyRun(); got.Status != store.RunCanceled || got.Matched != 1 || got.Refreshed != 1 {
+		t.Errorf("run = %+v, want a canceled run with 1 match and 1 refresh", got)
+	}
+}
+
+// After a 500 on the follow-up refresh, the run logs the failure and still
+// checks the matched item. Then it refreshes its next item.
+func TestRunMatchFollowUpServerErrorKeepsTheRunGoing(t *testing.T) {
+	f, fp, checks := runMatchFixture(t, checkAnswer{item: completeItem("101")})
+	f.seed(testServer, moviesLib, incompleteItem("102"), store.NoSummary, 2)
+	fp.refreshErrs["101"] = errServer
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/m", "Refresh 101", "Refresh 102")
+	if *checks != 1 {
+		t.Errorf("checks = %d, want 1", *checks)
+	}
+	warnings := f.logLines("warn", "Following up a match failed")
+	if len(warnings) != 1 {
+		t.Fatalf("got %d follow-up warnings, want 1", len(warnings))
+	}
+	wantField(t, warnings[0], "step", "refresh")
+	wantField(t, warnings[0], "error", errServer.Error())
+	if _, found := f.row(testServer, "1", "101"); found {
+		t.Error("complete item still in the cache")
+	}
+	if got := f.onlyRun(); got.Status != store.RunFinished {
+		t.Errorf("run = %+v, want a finished run", got)
+	}
+}
+
+// failedFollowUp fails a store write of a match follow-up: the record of
+// the follow-up refresh, or the check that applies the metadata of the item.
+type failedFollowUp struct {
+	Store
+	refresh, check bool
+}
+
+func (s failedFollowUp) RecordRequest(r store.Request) error {
+	if s.refresh && r.Action == store.ActionRefresh {
+		return errDisk
+	}
+	return s.Store.RecordRequest(r)
+}
+
+func (s failedFollowUp) ApplyCheck(server string, it store.Item, at time.Time, runID int64) (bool, error) {
+	if s.check {
+		return false, errDisk
+	}
+	return s.Store.ApplyCheck(server, it, at, runID)
+}
+
+// A store error in the follow-up of a run's match ends the run as a store
+// error of the run does: the run reports no item done, sends no other
+// request, and records its failure.
+func TestRunMatchFollowUpStoreErrorEndsTheRun(t *testing.T) {
+	tests := []struct {
+		name   string
+		fail   failedFollowUp
+		checks int
+	}{
+		{"refresh record", failedFollowUp{refresh: true}, 0},
+		{"check", failedFollowUp{check: true}, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, fp, checks := runMatchFixture(t, checkAnswer{item: completeItem("101")})
+			f.seed(testServer, moviesLib, incompleteItem("102"), store.NoSummary, 2)
+			tt.fail.Store = f.store
+			f.r.store = tt.fail
+			p := withProgress(f)
+
+			f.now = t0
+			err := f.r.Run(t.Context())
+
+			if !errors.Is(err, ErrStore) || !errors.Is(err, errDisk) {
+				t.Errorf("Run = %v, want a store error with %v", err, errDisk)
+			}
+			wantCalls(t, sends(fp.calls), "Match 101 plex://movie/m", "Refresh 101")
+			if *checks != tt.checks {
+				t.Errorf("checks = %d, want %d", *checks, tt.checks)
+			}
+			wantProgress(t, p.itemCalls(), "ItemStarted home 101 Title 101")
+			if got := f.onlyRun(); got.Status != store.RunFailed || !strings.Contains(got.Error, errDisk.Error()) {
+				t.Errorf("run = %+v, want a failed run with %v", got, errDisk)
+			}
+		})
 	}
 }
