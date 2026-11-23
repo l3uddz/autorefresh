@@ -521,6 +521,21 @@ func TestRunWithoutDelayReportsNoNextItem(t *testing.T) {
 	}
 }
 
+func TestCanceledRunReportsNoNextItem(t *testing.T) {
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: newFakePlex(moviesLib)})
+	p := withProgress(f)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	run := &serverRun{server: Server{Name: testServer}}
+
+	if err := f.r.pace(ctx, run, ProgressItem{RatingKey: "102"}, false); !errors.Is(err, context.Canceled) {
+		t.Errorf("pace = %v, want context.Canceled", err)
+	}
+	if got := p.nextCalls(); len(got) != 0 {
+		t.Errorf("next calls = %q, want none", got)
+	}
+}
+
 func TestDryRunReportsNoNextItem(t *testing.T) {
 	fp := newFakePlex(moviesLib)
 	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102")}
