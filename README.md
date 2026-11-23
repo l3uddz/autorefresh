@@ -618,13 +618,15 @@ address keeps the choice, so a link or a reload shows the same server.
   accepted, **Failed** for rejected requests and failed fix match
   searches, **Fixed**, **Completed by Plex**, **Removed**, and **Not
   sent** for a fix match decision whose request the end of the run
-  stopped. Each item shows its library and what happened to it, such as
+  stopped. While the run works, a decision whose request is next is
+  **In progress**. Each item shows its library and what happened to it, such as
   the fix match decision before a request, and opens its item details. A
   bulk refresh lists its selected items as **Refreshed**, **Failed**,
   **Removed**, **Skipped**, and **Not reached**. Runs from before this
   version recorded no items, so their details say that the item details
   were not recorded. The read and due counts stay numbers. A running run
-  shows its counts when it ends, and reloads its items every 5 seconds. A
+  shows its counts when it ends, and reloads its items every 5 seconds,
+  also after a reload failed. A
   bulk refresh shows its items when it ends. Each run has its own link,
   `#/runs/<id>`.
 
