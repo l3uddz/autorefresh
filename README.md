@@ -546,8 +546,8 @@ address keeps the choice, so a link or a reload shows the same server.
   items that were fixed recently and the recent runs. **Run now** starts a
   run. Its menu also has **Full cache refresh, then run**, which reads
   every library in full before it refreshes the due items. If it cannot
-  read a library, the run of that server fails and refreshes no item.
-  With several servers, it can start either kind of run for one server or for all
+  read a library, the run of that server fails and refreshes no item. The
+  runs of the other servers continue. With several servers, it can start either kind of run for one server or for all
   servers. A manual run or bulk refresh has a **Cancel** button. The item
   count on a server card opens the items of that server. The header shows
   when the next scheduled run starts, for example "Next run in 33m ·
@@ -621,8 +621,8 @@ address keeps the choice, so a link or a reload shows the same server.
   accepted, **Failed** for rejected requests and failed fix match
   searches, **Fixed**, **Completed by Plex**, **Removed**, and **Not
   sent** for a fix match decision whose request the end of the run
-  stopped. While the run works, a decision whose request is next is
-  **In progress**. Each item shows its library and what happened to it, such as
+  stopped or that a later decision of the item replaced. While the run
+  works, a decision whose request is next is **In progress**. Each item shows its library and what happened to it, such as
   the fix match decision before a request, and opens its item details. A
   bulk refresh lists its selected items as **Refreshed**, **Failed**,
   **Removed**, **Skipped**, and **Not reached**, each with its poster and
