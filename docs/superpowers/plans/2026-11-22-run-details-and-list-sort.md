@@ -152,7 +152,7 @@ refresher checks an item after Plex accepts a manual match.
 ### Task 4 (#104): Link events to their run
 
 **Files:**
-- Create: `internal/store/migrations/11_event_run.sql`
+- Create: `internal/store/migrations/12_event_run.sql` (`11_run_reads.sql` of #107 holds version 11) and `13_run_events_linked.sql`
 - Modify: `internal/store/history.go`, `internal/store/item.go`
   (`Read.RunID`), `internal/store/run.go`
 - Modify: `internal/refresher/refresher.go` (store interface),
@@ -162,6 +162,7 @@ refresher checks an item after Plex accepts a manual match.
 
 **Interfaces:**
 - Migration: `ALTER TABLE event ADD COLUMN run_id INTEGER REFERENCES run (id) ON DELETE SET NULL;`
+- Migration: `ALTER TABLE run ADD COLUMN events_linked INTEGER NOT NULL DEFAULT 1;` and `UPDATE run SET events_linked = 0;`, so older runs say that they linked no events.
   `CREATE INDEX event_run ON event (run_id);`
 - Produces: `RunID int64` (0: none) on `store.Request`, `store.MatchDecision`,
   `store.Read`, and `store.Event`.
@@ -247,9 +248,10 @@ refresher checks an item after Plex accepts a manual match.
   section per group with `List` rows: `Poster` size `sm`, title and year,
   `eventView(...).detail`, and a link to `itemHash('attention' or 'fixed',
   …)`. A bulk job lists `items` grouped by outcome. Empty states: "Item
-  details were not recorded for this run" when counts are not zero and
-  there are no events, "No item changed in this run" otherwise, and "This
-  run no longer exists" on 404. Run table rows open with click, Enter, and
+  details were not recorded for this run" for a run from before runs
+  linked their events (`eventsLinked` false), also with zero counts, or
+  when counts are not zero and there are no events, "No item changed in
+  this run" otherwise, and "This run no longer exists" on 404. Run table rows open with click, Enter, and
   Space (the row plugin of `items.tsx`, moved to a shared module), and list
   rows link to `#/runs/<id>`.
 - [ ] **Step 4:** Run `mise run web-lint`, `mise run web-test`,

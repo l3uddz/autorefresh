@@ -100,9 +100,11 @@ Frontend:
   gone. A bulk job groups its `run_item` rows by their outcome. Each row
   shows a small poster, the title, the year, and the error text, and links
   to the item detail.
-- A run with counts but no recorded events says that its items were not
-  recorded, because the run is from before this version or its events were
-  removed. A run with no items says that nothing happened to an item.
+- A run from before this version says that its items were not recorded,
+  also when its counts are zero, because its counts leave out changes such
+  as removed items. A newer run with counts but no recorded events says
+  that its events were removed. A newer run with no items says that
+  nothing happened to an item.
 - A running run refreshes its events with the live status, like the runs
   list.
 
