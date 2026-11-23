@@ -223,7 +223,16 @@ match also before the first refresh. If `ignore-reasons` holds
      or a few episodes are missing (for example 9 of 10, or 39 of 41 across
      two seasons). Any extra episode number in Plex, or too many missing
      episodes (below 90% across the local seasons), still prevents
-     confirmation by episode numbers.
+     confirmation by default TMDB seasons.
+   - If TMDB's default seasons do not confirm valid local episode numbers,
+     autorefresh checks TMDB's alternate episode groups for the series that
+     align with TheTVDB's ordering formats, in priority order: **Original
+     air date**, **DVD**, **Absolute**, and **TV** (skipping Digital,
+     Story arc, and Production groups, groups with fewer episodes than Plex
+     has locally, and checking at most 10 groups). It stops at the first
+     group whose seasons confirm the local episodes under the same 90% and
+     zero-extra rule. If no group confirms, autorefresh keeps the diff from
+     TMDB's default seasons.
 
 The decision of a year conflict keeps the years that autorefresh compared:
 the year of the item, the year of its folder, if any, and the TMDB year, if
