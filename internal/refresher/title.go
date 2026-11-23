@@ -26,11 +26,11 @@ func (r *Refresher) titleFallback(run *serverRun, it store.Item, results []searc
 
 // titleMatch searches Plex for the title and the year of the item and picks
 // the one candidate with the same title and year (sameTitle). The Plex
-// metadata provider gives the TMDB ID of that candidate, which must agree
-// with each TMDB ID of the folder names (folderTMDB), and every local season
+// metadata provider gives the TMDB ID of that candidate, which must equal
+// every TMDB ID of the folder names (folderTMDBIDs), and every local season
 // must have the episode numbers of TMDB. err is the error of the title
 // search or of the episode read, or a store error.
-func (r *Refresher) titleMatch(ctx context.Context, run *serverRun, mc matchContext, folderTMDB []string) (evaluation, error) {
+func (r *Refresher) titleMatch(ctx context.Context, run *serverRun, mc matchContext) (evaluation, error) {
 	srv := run.server
 	cands, err := srv.Plex.SearchMatches(ctx, mc.it.RatingKey, mc.it.Title, mc.lib.Agent, mc.lib.Language, mc.it.Year)
 	mc.d.addSearch(mc.it.Title, searchTitle, "", cands, err != nil)
@@ -42,7 +42,7 @@ func (r *Refresher) titleMatch(ctx context.Context, run *serverRun, mc matchCont
 	cand, found, conflict := chooseCandidate([]searchResult{{candidates: sameTitle(mc.it, cands)}})
 	count := 0
 	if found && conflict == "" {
-		count, conflict, err = r.confirmTitle(ctx, run, mc, cand, folderTMDB)
+		count, conflict, err = r.confirmTitle(ctx, run, mc, cand)
 	}
 	ev := evaluation{conflict: conflict, years: yearResolution{episodeCount: count}}
 	if err != nil {
@@ -67,7 +67,7 @@ func (r *Refresher) titleMatch(ctx context.Context, run *serverRun, mc matchCont
 // or 0 and the conflict. A failed provider or TMDB request is a handled
 // failure of the decision, with no conflict: the item gets a plain refresh,
 // and the run goes on.
-func (r *Refresher) confirmTitle(ctx context.Context, run *serverRun, mc matchContext, cand plex.Candidate, folderTMDB []string) (int, string, error) {
+func (r *Refresher) confirmTitle(ctx context.Context, run *serverRun, mc matchContext, cand plex.Candidate) (int, string, error) {
 	series, err := run.server.Plex.ProviderSeries(ctx, cand.GUID)
 	switch {
 	case ctx.Err() != nil:
@@ -83,7 +83,11 @@ func (r *Refresher) confirmTitle(ctx context.Context, run *serverRun, mc matchCo
 		return 0, conflictUnconfirmed, nil
 	}
 	mc.d.evidence.TMDBID = series.TMDBID
-	if len(folderTMDB) > 0 && !slices.Contains(folderTMDB, series.TMDBID) {
+	folder, ok, err := r.folderTMDBIDs(ctx, run, mc)
+	if err != nil || !ok {
+		return 0, "", err
+	}
+	if slices.ContainsFunc(folder, func(id string) bool { return id != series.TMDBID }) {
 		return 0, conflictFolderID, nil
 	}
 	count, err := r.confirmEpisodeNumbers(ctx, run, mc, series.TMDBID)
@@ -107,16 +111,20 @@ func sameTitle(it store.Item, cands []plex.Candidate) []plex.Candidate {
 }
 
 // titleAgrees reports whether a candidate with the title name and the year
-// year has the title and the year of the item.
+// year has the title and the year of the item. A title without letters or
+// digits agrees with nothing.
 func titleAgrees(it store.Item, name string, year int) bool {
-	return year != 0 && !yearDiffers(it.Year, year) && foldTitle(name) == foldTitle(it.Title)
+	want := foldTitle(it.Title)
+	return want != "" && year != 0 && !yearDiffers(it.Year, year) && foldTitle(name) == want
 }
 
-// foldTitle returns the letters and digits of title in lower case.
+// foldTitle returns the letters, digits, and marks of title in lower case.
+// It drops spaces and punctuation but keeps marks, such as the vowel signs
+// of many scripts, which tell titles apart.
 func foldTitle(title string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(title) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) {
 			b.WriteRune(r)
 		}
 	}
@@ -124,18 +132,39 @@ func foldTitle(title string) string {
 }
 
 // folderTMDBIDs returns the TMDB IDs that the folder names give: each tmdb
-// path ID, and each TMDB ID that the TMDB fallback searched.
-func folderTMDBIDs(ids []pathID, results []searchResult) []string {
-	var out []string
-	for _, id := range ids {
-		if id.Source == "tmdb" && !slices.Contains(out, id.Value) {
-			out = append(out, id.Value)
+// path ID, and the TMDB ID of each path ID that TMDB translates. ok is false
+// after a handled TMDB failure.
+func (r *Refresher) folderTMDBIDs(ctx context.Context, run *serverRun, mc matchContext) (ids []string, ok bool, err error) {
+	for _, id := range mc.ids {
+		value, err := r.folderTMDBID(ctx, run, mc, id)
+		if errors.Is(err, ErrTMDB) && ctx.Err() == nil {
+			r.recordTMDBFailure(run, mc.lib, mc.it, mc.d, err)
+			return nil, false, nil
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		if value != "" && !slices.Contains(ids, value) {
+			ids = append(ids, value)
 		}
 	}
-	for _, res := range results {
-		if res.id.Source == "tmdb" && !slices.Contains(out, res.id.Value) {
-			out = append(out, res.id.Value)
-		}
+	return ids, true, nil
+}
+
+// folderTMDBID returns the TMDB ID of the path ID id, or "" for an ID that
+// TMDB does not translate or has no single entry for. It skips an ID that
+// TMDB already had no single entry for in this evaluation.
+func (r *Refresher) folderTMDBID(ctx context.Context, run *serverRun, mc matchContext, id pathID) (string, error) {
+	switch {
+	case id.Source == "tmdb":
+		return id.Value, nil
+	case !tmdbSource(id, mc.it.Type) || slices.Contains(mc.d.evidence.TMDBMissing, id.title()):
+		return "", nil
 	}
-	return out
+	value, found, err := r.tmdbID(ctx, run.server.Name, mc.it, id, !run.preview)
+	if err != nil || found {
+		return value, err
+	}
+	mc.d.noTMDBEntry(id)
+	return "", nil
 }

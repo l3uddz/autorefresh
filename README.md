@@ -325,11 +325,13 @@ Plex returns many series for a title search, so the search alone proves
 nothing. Autorefresh applies a match only if all of these are true:
 
 1. Exactly one candidate has the same title as the item, ignoring case,
-   spaces, and punctuation, and a year that differs by 1 or less. Other
+   spaces, and punctuation, and a year that differs by 1 or less. A title
+   without letters or digits matches nothing. Other
    candidates get the verdict "other title or year".
 2. The Plex metadata provider gives a TMDB ID for that candidate. If the
-   folder names give a TMDB ID, directly or through the TMDB fallback, the
-   two IDs must be the same. Otherwise the conflict is `folder id differs`.
+   folder names give TMDB IDs, each of them must be that ID: each `tmdb`
+   ID, and the TMDB ID that TMDB gives for each `imdb` ID and each `tvdb`
+   ID. Otherwise the conflict is `folder id differs`.
 3. Every local regular season has the same episode count and numbers as
    that season in TMDB, as in the year check above. Otherwise the conflict
    is `not confirmed`, and the decision keeps the first season that
@@ -912,9 +914,9 @@ summary line also logs them.
 If Plex accepted a request for the item, the line also has these fields:
 
 - `last_action`: the last request that Plex accepted, `refresh`, `match`,
-  or `tmdb-match`.
-- `last_match`: the last match request that Plex accepted, `match` or
-  `tmdb-match`. A later refresh does not replace it, so an item that a match
+  `tmdb-match`, or `title-match`.
+- `last_match`: the last match request that Plex accepted, `match`,
+  `tmdb-match`, or `title-match`. A later refresh does not replace it, so an item that a match
   linked and a refresh then completed still shows the match.
 
 These fields show the last requests before the read found the item

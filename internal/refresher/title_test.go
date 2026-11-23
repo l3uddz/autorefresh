@@ -3,7 +3,9 @@ package refresher
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
@@ -209,5 +211,84 @@ func TestPreviewTitleMatchRecordsNothing(t *testing.T) {
 	wantCalls(t, sends(fp.calls))
 	if events := f.timeline("201"); len(events) != before {
 		t.Errorf("events = %+v, want only the %d seeded", events, before)
+	}
+}
+
+// Every TMDB ID of the folder names must be the provider TMDB ID, also
+// when one of them is: the folder then names two series.
+func TestTitleMatchAnyFolderTMDBIDDiffers(t *testing.T) {
+	for name, setup := range map[string]func(*fakeTMDB) []string{
+		"two tmdb IDs": func(*fakeTMDB) []string { return []string{"tmdb-88", "tmdb-99"} },
+		"a tmdb ID and a translated ID": func(ft *fakeTMDB) []string {
+			ft.ids = map[string]string{"imdb tt1 true": "99"}
+			return []string{"tmdb-88", "imdb-tt1"}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fp := newFakePlex(showsLib)
+			fp.candidates[titleSearch] = titleCandidates()
+			fp.series = map[string]plex.Series{"plex://show/t": {TMDBID: "88"}}
+			fp.episodeNumbers = map[string]map[int][]int{"201": {1: {1, 2, 3}}}
+			ft := &fakeTMDB{seasons: map[string][]int{"88 1": {1, 2, 3}}}
+			f := newTMDBFixture(t, fp, ft, setup(ft)...)
+
+			f.run(t0)
+
+			wantCalls(t, sends(fp.calls), "Refresh 201")
+			if e := f.decision("201"); e.Conflict != "folder id differs" {
+				t.Errorf("conflict = %q, want folder id differs", e.Conflict)
+			}
+		})
+	}
+}
+
+func TestTitleAgrees(t *testing.T) {
+	it := store.Item{Title: "Limitless With Chris Hemsworth", Year: 2022}
+	for _, c := range []struct {
+		name string
+		year int
+		want bool
+	}{
+		{"Limitless with Chris Hemsworth", 2022, true},
+		{"Limitless: with Chris-Hemsworth!", 2023, true},
+		{"Limitless", 2022, false},
+		{"Limitless with Chris Hemsworth", 2025, false},
+		{"Limitless with Chris Hemsworth", 0, false},
+	} {
+		if got := titleAgrees(it, c.name, c.year); got != c.want {
+			t.Errorf("titleAgrees(%q, %d) = %v, want %v", c.name, c.year, got, c.want)
+		}
+	}
+	// Vowel signs are marks, and they tell these titles apart.
+	if titleAgrees(store.Item{Title: "कला", Year: 2020}, "कली", 2020) {
+		t.Error("titles that differ in a vowel sign agree")
+	}
+	if titleAgrees(store.Item{Title: "!!!", Year: 2020}, "???", 2020) {
+		t.Error("titles without letters or digits agree")
+	}
+}
+
+// A TMDB failure in the episode check is a failed decision with a plain
+// refresh. It turns TMDB off for the rest of the run, so the next series
+// gets no title search.
+func TestTitleMatchTMDBFailureTurnsTitleSearchOff(t *testing.T) {
+	f, fp, ft := titleFixture(t)
+	ft.seasonErrs = map[string]error{"88 1": fmt.Errorf("GET /3/tv/88/season/1: 500 Internal Server Error")}
+	second := unmatchedItem("202")
+	second.AddedAt = addedAt.Add(time.Hour)
+	f.seed(testServer, showsLib, second, store.Unmatched, 1)
+	fp.candidates["202 Title 202"] = []plex.Candidate{{GUID: "plex://show/t2", Name: "Title 202", Year: 2020}}
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 201", "Refresh 202")
+	if e := f.decision("201"); store.DecisionOutcome(e.Outcome) != store.DecisionFailed || e.Error == "" {
+		t.Errorf("decision of 201 = %q (%q), want failed with the error", e.Outcome, e.Error)
+	}
+	if slices.ContainsFunc(fp.calls, func(c string) bool { return strings.HasPrefix(c, "SearchMatches 202 Title 202") }) {
+		t.Errorf("calls = %q, want no title search of 202", fp.calls)
+	}
+	if run := f.onlyRun(); run.Status != store.RunFinished {
+		t.Errorf("run = %+v, want a finished run", run)
 	}
 }
