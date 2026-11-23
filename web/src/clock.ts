@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 
 // One shared clock for relative times ("in 2d", "3m ago"), so every label
 // on the page moves together and no component runs its own timer.
@@ -27,34 +27,20 @@ export function useNow(): number {
 }
 
 // A second clock for countdowns, such as the wait before the next item of
-// a run. It ticks only while a component that is active listens, so the
-// rest of the page keeps the slow clock above. Each render reads the time,
-// so a status event that brings a new countdown starts it from the time of
-// the event, not from the last tick.
+// a run. It ticks only while a component listens, so the rest of the page
+// keeps the slow clock above. The tick changes the time, so each render
+// reads one stored time, as useSyncExternalStore needs.
 
-/** freshAge is how long, in milliseconds, a read time stays the time of the
- * clock, so that all reads of one render get the same time, as
- * useSyncExternalStore needs. */
-const freshAge = 50;
-
-/** Returns a reader of the clock time. The reader gives the time of clock,
- * or the time of its last read if that is less than freshAge old. */
-export function freshReader(clock: () => number): () => number {
-  let last = -Infinity;
-  return () => {
-    const time = clock();
-    if (time - last >= freshAge) last = time;
-    return last;
-  };
-}
-
-const readSeconds = freshReader(Date.now);
 const secondListeners = new Set<() => void>();
+let secondNow = Date.now();
 let secondTimer: ReturnType<typeof setInterval> | undefined;
 
 function subscribeSeconds(listener: () => void) {
   secondListeners.add(listener);
-  secondTimer ??= setInterval(() => secondListeners.forEach(notify => notify()), 1000);
+  secondTimer ??= setInterval(() => {
+    secondNow = Date.now();
+    secondListeners.forEach(notify => notify());
+  }, 1000);
   return () => {
     secondListeners.delete(listener);
     if (secondListeners.size === 0) {
@@ -64,10 +50,14 @@ function subscribeSeconds(listener: () => void) {
   };
 }
 
-const subscribeNever = () => () => {};
+const readSeconds = () => secondNow;
 
-/** Returns the current time in milliseconds, updated every second while
- * isActive. */
-export function useSecondClock(isActive: boolean): number {
-  return useSyncExternalStore(isActive ? subscribeSeconds : subscribeNever, readSeconds);
+/** Returns the current time in milliseconds, updated every second. It is
+ * never earlier than the mount of the component, so a component that a
+ * status event mounts (give it the time it shows as key) starts from the
+ * time of the event, not from the last tick, which can be up to a second old,
+ * or older after the clock stood still. */
+export function useSecondClock(): number {
+  const [mounted] = useState(Date.now);
+  return Math.max(mounted, useSyncExternalStore(subscribeSeconds, readSeconds, readSeconds));
 }

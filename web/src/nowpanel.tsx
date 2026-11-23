@@ -24,7 +24,6 @@ const toneIcons: Record<OutcomeTone, typeof CheckIcon> = {
 /** Shows the now panel of run, or nothing before its first item. */
 export function NowPanel({ run }: { run: RunProgress }) {
   const top = run.current ?? run.next;
-  const now = useSecondClock(Boolean(run.next || run.last));
   if (!top && !run.last) return null;
   // A bulk refresh selects items by hand, so their reasons say little.
   const withReasons = run.kind === 'run';
@@ -32,16 +31,16 @@ export function NowPanel({ run }: { run: RunProgress }) {
     <Card variant="muted" padding={0}>
       <VStack>
         {top && (
-          <TopRow item={top} isWorking={Boolean(run.current)} wait={countdown(run.nextAt, now)} withReasons={withReasons} />
+          <TopRow item={top} isWorking={Boolean(run.current)} nextAt={run.nextAt} withReasons={withReasons} />
         )}
         {top && run.last && <Divider />}
-        {run.last && <LastRow item={run.last} ago={since(run.last.finishedAt, now)} />}
+        {run.last && <LastRow item={run.last} />}
       </VStack>
     </Card>
   );
 }
 
-function TopRow({ item, isWorking, wait, withReasons }: { item: NowItem; isWorking: boolean; wait: string; withReasons: boolean }) {
+function TopRow({ item, isWorking, nextAt, withReasons }: { item: NowItem; isWorking: boolean; nextAt?: string; withReasons: boolean }) {
   const detail = itemDetail(item, withReasons);
   return (
     <HStack gap={3} vAlign="center" padding={3}>
@@ -77,17 +76,13 @@ function TopRow({ item, isWorking, wait, withReasons }: { item: NowItem; isWorki
             Up next
           </Text>
         )}
-        {!isWorking && wait && (
-          <Text type="supporting" hasTabularNumbers>
-            {wait}
-          </Text>
-        )}
+        {!isWorking && nextAt && <Countdown key={nextAt} at={nextAt} />}
       </VStack>
     </HStack>
   );
 }
 
-function LastRow({ item, ago }: { item: NowItem; ago: string }) {
+function LastRow({ item }: { item: NowItem }) {
   const outcome = outcomeView(item.outcome);
   const detail = [itemDetail(item, false), outcome.text].filter(Boolean).join(' · ');
   return (
@@ -103,9 +98,31 @@ function LastRow({ item, ago }: { item: NowItem; ago: string }) {
           {detail ? ` · ${detail}` : ''}
         </Text>
       </StackItem>
-      <Text type="supporting" hasTabularNumbers>
-        {ago}
-      </Text>
+      {item.finishedAt && <Ago key={item.finishedAt} at={item.finishedAt} />}
     </HStack>
+  );
+}
+
+// Countdown and Ago each read the second clock, so only their text renders
+// each second. Their key is the time that they show: a new time mounts them
+// again, so they start from the time of its status event.
+
+/** Shows the seconds until at, such as "in 4s". Give it at as key. */
+export function Countdown({ at }: { at: string }) {
+  const now = useSecondClock();
+  return (
+    <Text type="supporting" hasTabularNumbers>
+      {countdown(at, now)}
+    </Text>
+  );
+}
+
+/** Shows how long ago at was, such as "2s ago". Give it at as key. */
+export function Ago({ at }: { at: string }) {
+  const now = useSecondClock();
+  return (
+    <Text type="supporting" hasTabularNumbers>
+      {since(at, now)}
+    </Text>
   );
 }
