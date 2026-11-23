@@ -338,9 +338,9 @@ func TestApplyMatchFailedSkipsRefreshAndCheck(t *testing.T) {
 }
 
 // A run that removes the row during a wait settles the match: the checks
-// stop without a warning.
+// stop without a warning and ask Plex nothing, also when Plex would fail.
 func TestApplyMatchStopsWhenRowLeavesCache(t *testing.T) {
-	f, _, checks := matchCheckFixture(t, checkAnswer{item: incompleteItem("1")})
+	f, _, checks := matchCheckFixture(t, checkAnswer{err: errors.New("item 1: Plex answered 500")})
 	buf := captureLogs(t)
 	f.r.sleep = func(context.Context, time.Duration) error {
 		f.sleeps = append(f.sleeps, time.Second)
@@ -350,8 +350,8 @@ func TestApplyMatchStopsWhenRowLeavesCache(t *testing.T) {
 	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {
 		t.Fatal(err)
 	}
-	if *checks != 1 || len(f.sleeps) != 1 {
-		t.Errorf("checks %d, sleeps %v; want 1 check after 1 wait", *checks, f.sleeps)
+	if *checks != 0 || len(f.sleeps) != 1 {
+		t.Errorf("checks %d, sleeps %v; want no check after 1 wait", *checks, f.sleeps)
 	}
 	if strings.Contains(buf.String(), "Following up a manual match failed") {
 		t.Errorf("log warns about a row that a run removed: %s", buf)

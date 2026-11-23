@@ -195,12 +195,18 @@ func (r *Refresher) CheckItem(ctx context.Context, server, key string) error {
 
 // checkHeld reads the current metadata of the cached item, whose item lock
 // the caller holds, and applies it to the row. settled is true when the
-// check completed the item or found it gone.
+// check completed the item or found it gone. A row that a run completed or
+// removed meanwhile gives ErrNotCached before any Plex request.
 func (r *Refresher) checkHeld(ctx context.Context, item manualItem) (settled bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 	server, key := item.server.Name, item.row.RatingKey
+	if _, cached, _, err := r.store.KnownItem(server, key); err != nil {
+		return false, manualStoreError(err)
+	} else if !cached {
+		return false, ErrNotCached
+	}
 	live, err := item.server.Plex.Item(ctx, key)
 	if errors.Is(err, plex.ErrNotFound) {
 		req := store.Request{Server: server, RatingKey: key, At: r.now(), Source: store.SourceManual}
