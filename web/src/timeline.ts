@@ -1,5 +1,5 @@
-import type { ItemDetail, MatchSearch, TimelineEvent } from './api';
-import { actionText, fixedBy, titleYear } from './format';
+import type { EpisodeDiff, ItemDetail, MatchSearch, TimelineEvent } from './api';
+import { actionText, fixedBy, plural, titleYear } from './format';
 
 // Facts of an item that come from its timeline, newest event first. The
 // item detail of the API has no completion fields: a fixed item has no
@@ -99,6 +99,85 @@ const conflictText: Record<string, string> = {
   'year differs': 'The candidate has another year than the folder or TMDB, and nothing confirmed it.',
 };
 
+/** Why a decision asked TMDB nothing, by its tmdbSkip. */
+const tmdbSkipText: Record<string, string> = {
+  off: 'TMDB was not asked, because no tmdb-token is set.',
+  failed: 'TMDB was not asked, because an earlier TMDB failure in the same run turned it off.',
+  'tmdb-id': 'The TMDB fallback did not run, because the folder names hold a tmdb ID, which Plex searched directly.',
+  'no-source': 'The TMDB fallback did not run, because it translates only imdb IDs and the tvdb IDs of series.',
+};
+
+/** Returns what the TMDB steps of a decision did not do: the folder IDs
+ * that TMDB has no entry for, and why TMDB was not asked. */
+function tmdbNotes(event: TimelineEvent): string[] {
+  const notes: string[] = [];
+  if (event.tmdbMissing?.length) notes.push(`TMDB has no entry for ${event.tmdbMissing.join(', ')}.`);
+  const skip = event.tmdbSkip && tmdbSkipText[event.tmdbSkip];
+  if (skip) notes.push(skip);
+  return notes;
+}
+
+/** Joins words as "a", "a and b", or "a, b, and c". */
+function listText(words: string[]): string {
+  if (words.length < 3) return words.join(' and ');
+  return `${words.slice(0, -1).join(', ')}, and ${words[words.length - 1]}`;
+}
+
+/** Returns the year of the candidate that the year check rejected. */
+function rejectedYear(event: TimelineEvent): number | undefined {
+  for (const search of event.searches) {
+    const candidate = search.candidates.find(c => c.verdict === 'year differs' && c.year);
+    if (candidate) return candidate.year;
+  }
+  return undefined;
+}
+
+/** Explains a year conflict with the years that it compared and the
+ * episode comparison. A decision from before autorefresh kept these
+ * values gets the general text. */
+function yearConflict(event: TimelineEvent): string {
+  const candidateYear = rejectedYear(event);
+  if (!event.itemYear || !candidateYear) return conflictText['year differs'];
+  const years = [`Plex has ${candidateYear}`, `the item has ${event.itemYear}`];
+  if (event.pathYear) years.push(`the folder has ${event.pathYear}`);
+  if (event.tmdbId) years.push(event.tmdbYear ? `TMDB has ${event.tmdbYear}` : 'TMDB has no year');
+  const sentences = [`${listText(years)}.`];
+  if (event.episodeDiff) sentences.push(episodeDiffText(event.episodeDiff, event.tmdbId));
+  sentences.push('So nothing confirmed the candidate.');
+  const text = sentences.join(' ');
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** The episode numbers that a text names at most. */
+const shownNumbers = 10;
+
+function numbersText(numbers: number[] | undefined): string | undefined {
+  if (!numbers?.length) return undefined;
+  const shown = numbers.slice(0, shownNumbers).join(', ');
+  return numbers.length > shownNumbers ? `${shown}, and ${numbers.length - shownNumbers} more` : shown;
+}
+
+/** Explains an episode comparison that differs from the TMDB ID tmdbId:
+ * the season, the counts of Plex and TMDB, and, when known, the episode
+ * numbers that only one of them has. */
+export function episodeDiffText(diff: EpisodeDiff, tmdbId?: string): string {
+  const from = tmdbId ? ` from tmdb-${tmdbId}` : '';
+  const counts = diff.plex === diff.tmdb
+    ? `Plex and TMDB both have ${plural(diff.plex, 'episode')}, but with other numbers`
+    : `Plex has ${plural(diff.plex, 'episode')}, and TMDB has ${diff.tmdb.toLocaleString()}`;
+  const only = [
+    numbersText(diff.missing) && `Only TMDB has episode ${numbersText(diff.missing)}.`,
+    numbersText(diff.extra) && `Only Plex has episode ${numbersText(diff.extra)}.`,
+  ].filter(Boolean);
+  return [`The episode numbers differ${from} in season ${diff.season}: ${counts}.`, ...only].join(' ');
+}
+
+/** Returns why a decision found no match. */
+function noMatchDetail(event: TimelineEvent): string {
+  if (event.conflict === 'year differs') return yearConflict(event);
+  return (event.conflict && conflictText[event.conflict]) || 'No search found a candidate.';
+}
+
 /** Returns the outcome of a fix match decision and why. */
 export function decisionView(event: TimelineEvent): EventView {
   switch (event.outcome) {
@@ -108,7 +187,7 @@ export function decisionView(event: TimelineEvent): EventView {
       return {
         title: `Fix match: not matched${event.conflict ? ` · ${event.conflict}` : ''}`,
         tone: 'error',
-        detail: (event.conflict && conflictText[event.conflict]) || 'No search found a candidate.',
+        detail: [noMatchDetail(event), ...tmdbNotes(event)].join(' '),
       };
     case 'no-ids':
       return {
@@ -151,13 +230,15 @@ export function searchSource(search: MatchSearch): string {
 
 const verdictText: Record<string, string> = {
   picked: 'picked',
-  confirms: 'confirms the pick',
   'different candidate': 'another candidate',
   'not compared': 'not compared',
 };
 
-/** Returns the verdict of a candidate for people. Conflicts read as they
- * are, such as "year differs". */
-export function verdictName(verdict?: string): string | undefined {
+/** Returns the verdict of a candidate of the search for people. Conflicts
+ * read as they are, such as "year differs". Only the tie search of the year
+ * check confirms: Plex resolves its TMDB ID to the same candidate, which
+ * says nothing about the year yet. */
+export function verdictName(verdict: string | undefined, search: Pick<MatchSearch, 'query'>): string | undefined {
+  if (verdict === 'confirms') return `same item as ${search.query}`;
   return verdict ? verdictText[verdict] ?? verdict : undefined;
 }

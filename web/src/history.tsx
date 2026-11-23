@@ -75,7 +75,7 @@ export function DecisionSearches({ searches }: { searches: MatchSearch[] }) {
           {search.candidates.map((candidate, position) => (
             <Text key={`${position}-${candidate.guid}`} type="supporting" color="secondary" wordBreak="break-word">
               {`${candidate.name || candidate.guid || 'Candidate without a GUID'}${candidate.year ? ` (${candidate.year})` : ''}`}
-              {verdictName(candidate.verdict) ? ` · ${verdictName(candidate.verdict)}` : ''}
+              {verdictName(candidate.verdict, search) ? ` · ${verdictName(candidate.verdict, search)}` : ''}
             </Text>
           ))}
         </VStack>

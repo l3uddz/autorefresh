@@ -65,6 +65,27 @@ export interface TimelineEvent {
   links?: string[];
   /** The searches of a match decision, in the order autorefresh made them. */
   searches: MatchSearch[];
+  /** The year of the item when autorefresh decided, on a match decision. */
+  itemYear?: number;
+  /** The TMDB ID whose year and episodes the year check compared. */
+  tmdbId?: string;
+  /** Why the decision asked TMDB nothing: off, failed, tmdb-id, or no-source. */
+  tmdbSkip?: string;
+  /** The folder IDs that TMDB has no entry for. */
+  tmdbMissing?: string[];
+  /** The first season whose episode numbers differ from TMDB. */
+  episodeDiff?: EpisodeDiff;
+}
+
+/** The first season whose regular episode numbers differ from TMDB, with
+ * the episode counts of Plex and TMDB. The episode check also names the
+ * episode numbers that only TMDB (missing) or only Plex (extra) has. */
+export interface EpisodeDiff {
+  season: number;
+  plex: number;
+  tmdb: number;
+  missing?: number[];
+  extra?: number[];
 }
 
 /** One Plex match search: of a match decision, or of the Fix match dialog.
@@ -112,6 +133,7 @@ export interface Matches {
 export interface EpisodeCheck {
   match: boolean;
   episodes: number;
+  diff?: EpisodeDiff;
 }
 
 export interface ItemDetail {

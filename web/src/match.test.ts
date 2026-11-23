@@ -164,6 +164,7 @@ describe('match helpers', () => {
     expect(autoEvidenceText({ query: 'tmdb-1', verdict: 'picked' }, false)).toBe('The last automatic fix match found it via tmdb-1: picked');
     expect(autoEvidenceText({ query: 'tmdb-1', verdict: 'picked' }, true)).toBe('The automatic fix match preview found it via tmdb-1: picked');
     expect(autoEvidenceText({ query: 'imdb-tt2' }, true)).toBe('The automatic fix match preview found it via imdb-tt2');
+    expect(autoEvidenceText({ query: 'tmdb-7', verdict: 'confirms' }, false)).toBe('The last automatic fix match found it via tmdb-7: same item as tmdb-7');
   });
 });
 

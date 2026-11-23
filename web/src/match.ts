@@ -187,7 +187,7 @@ export function previewSearches(decision: TimelineEvent | undefined): MatchSearc
  * fix match, or of a preview. */
 export function autoEvidenceText(evidence: AutoEvidence, isPreview: boolean): string {
   const by = isPreview ? 'The automatic fix match preview' : 'The last automatic fix match';
-  const verdict = verdictName(evidence.verdict);
+  const verdict = verdictName(evidence.verdict, evidence);
   return `${by} found it via ${evidence.query}${verdict ? `: ${verdict}` : ''}`;
 }
 

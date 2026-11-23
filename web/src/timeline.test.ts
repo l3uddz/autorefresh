@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ItemDetail, ItemRecord, TimelineEvent } from './api';
-import { checkResult, decisionView, disposition, eventView, lastDecision, searchSource, verdictName } from './timeline';
+import { checkResult, decisionView, disposition, episodeDiffText, eventView, lastDecision, searchSource, verdictName } from './timeline';
 
 const item = (change: Partial<ItemRecord> = {}): ItemRecord => ({ srv: 0, key: '7', cached: false, attempts: 0, refreshes: 0, ...change });
 const event = (id: number, kind: string, change: Partial<TimelineEvent> = {}): TimelineEvent => ({ id, kind, accepted: false, at: `2026-11-${10 + id}T00:00:00Z`, searches: [], ...change });
@@ -79,8 +79,56 @@ describe('event views', () => {
     expect(lastDecision([event(3, 'request'), decision, event(1, 'match-decision')])).toBe(decision);
     expect(lastDecision([event(3, 'request')])).toBeUndefined();
     expect(decision.searches.map(searchSource)).toEqual(['folder ID', 'folder ID', 'TMDB ID of imdb-tt2']);
-    expect(verdictName('confirms')).toBe('confirms the pick');
-    expect(verdictName('year differs')).toBe('year differs');
-    expect(verdictName(undefined)).toBeUndefined();
+    expect(verdictName('confirms', { query: 'tmdb-16817' })).toBe('same item as tmdb-16817');
+    expect(verdictName('year differs', { query: 'tvdb-1' })).toBe('year differs');
+    expect(verdictName(undefined, { query: 'tvdb-1' })).toBeUndefined();
+  });
+});
+
+describe('decision evidence', () => {
+  const beechgrove = (fields: Partial<TimelineEvent>) => event(1, 'match-decision', {
+    outcome: 'no-match',
+    conflict: 'year differs',
+    itemYear: 2009,
+    searches: [
+      { query: 'tvdb-248824', source: 'path', failed: false, candidates: [{ guid: 'plex://show/b', year: 1997, score: 0, verdict: 'year differs' }] },
+      { query: 'tmdb-16817', source: 'tie', failed: false, candidates: [{ guid: 'plex://show/b', year: 1997, score: 0, verdict: 'confirms' }] },
+    ],
+    ...fields,
+  });
+
+  it('lists the compared years and the episode comparison of a year conflict', () => {
+    expect(decisionView(beechgrove({ tmdbId: '16817', tmdbYear: 1978, episodeDiff: { season: 3, plex: 8, tmdb: 10 } })).detail).toBe(
+      'Plex has 1997, the item has 2009, and TMDB has 1978. The episode numbers differ from tmdb-16817 in season 3: Plex has 8 episodes, and TMDB has 10. So nothing confirmed the candidate.',
+    );
+    expect(decisionView(beechgrove({ pathYear: 2010, tmdbId: '16817' })).detail).toBe(
+      'Plex has 1997, the item has 2009, the folder has 2010, and TMDB has no year. So nothing confirmed the candidate.',
+    );
+    expect(decisionView(beechgrove({ tmdbSkip: 'off' })).detail).toBe(
+      'Plex has 1997 and the item has 2009. So nothing confirmed the candidate. TMDB was not asked, because no tmdb-token is set.',
+    );
+  });
+
+  it('keeps the general text of a year conflict without the item year', () => {
+    expect(decisionView(beechgrove({ itemYear: undefined })).detail).toBe('The candidate has another year than the folder or TMDB, and nothing confirmed it.');
+  });
+
+  it('says what the TMDB fallback did not do', () => {
+    const none = (fields: Partial<TimelineEvent>) => decisionView(event(1, 'match-decision', { outcome: 'no-match', ...fields })).detail;
+    expect(none({ tmdbMissing: ['tvdb-357542'] })).toBe('No search found a candidate. TMDB has no entry for tvdb-357542.');
+    expect(none({ tmdbSkip: 'failed' })).toBe('No search found a candidate. TMDB was not asked, because an earlier TMDB failure in the same run turned it off.');
+    expect(none({ tmdbSkip: 'tmdb-id' })).toContain('the folder names hold a tmdb ID');
+    expect(none({ tmdbSkip: 'no-source' })).toContain('translates only imdb IDs and the tvdb IDs of series');
+    expect(none({})).toBe('No search found a candidate.');
+  });
+
+  it('explains an episode comparison that differs', () => {
+    expect(episodeDiffText({ season: 1, plex: 10, tmdb: 10, missing: [11], extra: [0] }, '5')).toBe(
+      'The episode numbers differ from tmdb-5 in season 1: Plex and TMDB both have 10 episodes, but with other numbers. Only TMDB has episode 11. Only Plex has episode 0.',
+    );
+    const many = Array.from({ length: 12 }, (_, i) => i + 1);
+    expect(episodeDiffText({ season: 2, plex: 1, tmdb: 13, missing: many })).toBe(
+      'The episode numbers differ in season 2: Plex has 1 episode, and TMDB has 13. Only TMDB has episode 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, and 2 more.',
+    );
   });
 });

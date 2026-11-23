@@ -23,7 +23,7 @@ import { plural, titleYear, typeName } from './format';
 import { DecisionPanel } from './history';
 import { autoEvidence, autoEvidenceText, autoMatchPath, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isFolderEvidence, listView, matchBody, matchesPath, offersEpisodeCheck, sameSearch, type CandidateGroup, type Evidence, type TypedSearch, type YearCheck } from './match';
 import { RemotePoster } from './media';
-import { lastDecision } from './timeline';
+import { episodeDiffText, lastDecision } from './timeline';
 
 // The Fix match dialog of one item: candidates with their evidence on the
 // left, the last automatic fix match on the right. Without a last one, a
@@ -468,6 +468,13 @@ function CandidateCard({ group, item, params, decision, isPreview, isCurrent, ha
   );
 }
 
+/** Returns the result of the episode check of the TMDB ID tmdbId. */
+function episodeCheckText(check: EpisodeCheck, tmdbId: string): string {
+  if (check.match) return `The episode numbers match tmdb-${tmdbId} (${plural(check.episodes, 'episode')} compared).`;
+  if (check.diff) return episodeDiffText(check.diff, tmdbId);
+  return `Plex lists no complete regular episodes of this item, so there was nothing to compare with tmdb-${tmdbId}.`;
+}
+
 /** Compares the episode numbers of the item with the TMDB series tmdbId.
  * It applies nothing. Its parent keys it by item and TMDB ID, and it shows
  * only an answer for the ID that it sent. */
@@ -479,11 +486,7 @@ function EpisodeCheckRow({ params, tmdbId }: { params: string; tmdbId: string })
   return (
     <HStack gap={3} wrap="wrap" vAlign="center">
       <Button label="Compare episodes" size="sm" variant="secondary" isLoading={check.isPending} onClick={() => check.mutate(tmdbId)} tooltip={`Compare the episode numbers of this item with TMDB tmdb-${tmdbId}`} />
-      {isThisID && check.data && (
-        <Text type="supporting">
-          {check.data.match ? `The episode numbers match tmdb-${check.variables} (${plural(check.data.episodes, 'episode')} compared).` : `The episode numbers do not match tmdb-${check.variables}.`}
-        </Text>
-      )}
+      {isThisID && check.data && <Text type="supporting">{episodeCheckText(check.data, tmdbId)}</Text>}
       {isThisID && check.error && <Text type="supporting">{`The episode check failed: ${actionError(check.error)}`}</Text>}
     </HStack>
   );
