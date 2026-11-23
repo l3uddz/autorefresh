@@ -616,3 +616,60 @@ func TestRefreshItemSlowSearchStillRefreshes(t *testing.T) {
 		t.Errorf("decision = %+v, want failed", e)
 	}
 }
+
+// Refresh now can complete an item, or find it gone, while a run reads its
+// library, after the read listed it, also in the same second. The read does
+// not add the row back, so the run sends no request for the item. A later
+// read that lists the item as incomplete adds the row again.
+func TestReadKeepsRefreshNowSettlement(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		refreshErr error
+		kind       store.EventKind
+	}{
+		{"check completes", nil, store.EventCompleted},
+		{"refresh finds it gone", errNotFound, store.EventGone},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakePlex(moviesLib)
+			if tc.refreshErr != nil {
+				fake.refreshErrs["1"] = tc.refreshErr
+			}
+			f := newRefreshFixture(t, Server{Name: "home", Plex: checkedMetadata{fakePlex: fake,
+				answers: []checkAnswer{{item: completeItem("1")}}, checks: new(int)}})
+			f.seed("home", moviesLib, incompleteItem("1"), store.NoSummary, 0)
+			listing := "1?type=1&updatedAt>>=" + unixString(seedAt.Add(-oversample))
+			fake.lists[listing] = []plex.Item{incompleteItem("1")}
+			refreshed := false
+			fake.onCall = func(call string) {
+				if call != "List "+listing || refreshed {
+					return
+				}
+				refreshed = true
+				if _, err := f.r.RefreshItem(t.Context(), "home", "1"); !errors.Is(err, tc.refreshErr) {
+					t.Errorf("refresh now = %v, want %v", err, tc.refreshErr)
+				}
+			}
+			f.run(t0)
+
+			if !refreshed {
+				t.Fatal("the read did not list the item")
+			}
+			if row, found := f.row("home", "1", "1"); found {
+				t.Fatalf("row = %+v, want none after Refresh now", row)
+			}
+			wantCalls(t, sends(fake.calls), "Refresh 1")
+			if last := f.newestEvent("1"); last.Kind != tc.kind || last.RunID != 0 {
+				t.Errorf("newest event = %+v, want the %s event of Refresh now", last, tc.kind)
+			}
+
+			// The dry run keeps the row that its read adds.
+			f.r.opts.DryRun = true
+			fake.lists["1?type=1&updatedAt>>="+unixString(t0.Add(-oversample))] = []plex.Item{incompleteItem("1")}
+			f.run(t0.Add(time.Hour))
+			if row, found := f.row("home", "1", "1"); !found || row.Reasons != store.NoSummary || row.Attempts != 0 {
+				t.Fatalf("row = %+v, found %v; want the row again", row, found)
+			}
+		})
+	}
+}

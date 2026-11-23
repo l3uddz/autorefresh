@@ -148,6 +148,11 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 	if err != nil {
 		return err
 	}
+	// A check that settles an item after the mark settles it during the read.
+	mark, err := r.store.EventMark()
+	if err != nil {
+		return err
+	}
 	rd := store.Read{
 		Server:  name,
 		Section: lib.ID,
@@ -156,6 +161,7 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 		Shows:   lib.Type == plex.ShowLibrary,
 		DryRun:  r.opts.DryRun,
 		RunID:   run.id,
+		Mark:    mark,
 	}
 	itemType := plex.TypeMovie
 	if rd.Shows {

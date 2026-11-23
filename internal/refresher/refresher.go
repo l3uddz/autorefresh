@@ -38,6 +38,7 @@ type Store interface {
 	RecordManual(store.ManualRecord) error
 	KnownItem(server, ratingKey string) (store.Item, bool, bool, error)
 	Library(server, section string) (store.Library, error)
+	EventMark() (store.EventMark, error)
 	ApplyRead(r store.Read) (fixed []store.Item, err error)
 	Unseen(server, section string, seen []string) ([]store.Item, error)
 	Due(q store.DueQuery) (items []store.Item, total int, err error)
