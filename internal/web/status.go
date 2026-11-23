@@ -71,15 +71,15 @@ type RunProgress struct {
 	Matched       int             `json:"matched"`
 	Failed        int             `json:"failed"`
 	Skipped       int             `json:"skipped"`
-	Current       *LiveItem       `json:"current,omitempty"` // the item in work
-	Next          *LiveItem       `json:"next,omitempty"`    // the item after the pace wait
+	Current       *NowItem        `json:"current,omitempty"` // the item in work
+	Next          *NowItem        `json:"next,omitempty"`    // the item after the pace wait
 	NextAt        time.Time       `json:"nextAt,omitzero"`   // the end of the pace wait
-	Last          *LiveItem       `json:"last,omitempty"`    // the last finished item
+	Last          *NowItem        `json:"last,omitempty"`    // the last finished item
 }
 
-// LiveItem is an item of a run as the dashboard shows it. Thumb is the
+// NowItem is an item of a run as the dashboard shows it. Thumb is the
 // poster proxy URL. Outcome and FinishedAt are set on the last item only.
-type LiveItem struct {
+type NowItem struct {
 	Key        string    `json:"key"`
 	Title      string    `json:"title,omitempty"`
 	Year       int       `json:"year,omitempty"`
@@ -91,13 +91,13 @@ type LiveItem struct {
 	FinishedAt time.Time `json:"finishedAt,omitzero"`
 }
 
-// liveItem returns the LiveItem of item of the server at index srv.
-func liveItem(srv int, item refresher.ProgressItem) *LiveItem {
+// nowItem returns the NowItem of item of the server at index srv.
+func nowItem(srv int, item refresher.ProgressItem) *NowItem {
 	var reasons []string
 	if item.Reasons != 0 {
 		reasons = reasonNames(item.Reasons)
 	}
-	return &LiveItem{
+	return &NowItem{
 		Key: item.RatingKey, Title: item.Title, Year: item.Year, Type: item.Type, Library: item.Library,
 		Reasons: reasons, Thumb: imageURL("thumb", srv, item.RatingKey, item.Thumb),
 	}
@@ -110,7 +110,7 @@ func (run RunProgress) copy() *RunProgress {
 }
 
 // copy returns a deep copy of it, or nil for nil.
-func (it *LiveItem) copy() *LiveItem {
+func (it *NowItem) copy() *NowItem {
 	if it == nil {
 		return nil
 	}
@@ -237,14 +237,14 @@ func (s *Status) Batch(server string, selected, due int) {
 // pace wait, which ends at at.
 func (s *Status) ItemNext(server string, item refresher.ProgressItem, at time.Time) {
 	s.updateRun(server, func(srv int, run *RunProgress) {
-		run.Next, run.NextAt = liveItem(srv, item), at
+		run.Next, run.NextAt = nowItem(srv, item), at
 	})
 }
 
 // ItemStarted records the item that the run of server works on.
 func (s *Status) ItemStarted(server string, item refresher.ProgressItem) {
 	s.updateRun(server, func(srv int, run *RunProgress) {
-		run.Current, run.Next, run.NextAt = liveItem(srv, item), nil, time.Time{}
+		run.Current, run.Next, run.NextAt = nowItem(srv, item), nil, time.Time{}
 	})
 }
 
@@ -266,8 +266,8 @@ func (s *Status) ItemDone(server, ratingKey, outcome string, counts refresher.Co
 // finishedItem returns the last item of a run: current, the item in work,
 // with the outcome and the finish time at. An item that did not start, or
 // another one, keeps only its key.
-func finishedItem(current *LiveItem, key, outcome string, at time.Time) *LiveItem {
-	last := &LiveItem{Key: key}
+func finishedItem(current *NowItem, key, outcome string, at time.Time) *NowItem {
+	last := &NowItem{Key: key}
 	if current != nil && current.Key == key {
 		last = current.copy()
 	}

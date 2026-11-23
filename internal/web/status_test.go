@@ -262,7 +262,7 @@ func TestStatusShowsNextCurrentAndLast(t *testing.T) {
 	st := fixedStatus(now)
 	item := refresher.ProgressItem{RatingKey: "1", Title: "Alien", Type: "movie", Library: "Movies", Year: 1979,
 		Thumb: "/library/metadata/1/thumb/170", Reasons: store.NoSummary | store.NoPoster}
-	wantItem := LiveItem{Key: "1", Title: "Alien", Year: 1979, Type: "movie", Library: "Movies",
+	wantItem := NowItem{Key: "1", Title: "Alien", Year: 1979, Type: "movie", Library: "Movies",
 		Reasons: reasonNames(store.NoSummary | store.NoPoster), Thumb: imageURL("thumb", 1, "1", "/library/metadata/1/thumb/170")}
 	at := now.Add(5 * time.Second)
 
@@ -295,7 +295,7 @@ func TestStatusLastWithoutStart(t *testing.T) {
 
 	st.ItemDone("two", "5", refresher.OutcomeGone, refresher.Counts{})
 
-	want := LiveItem{Key: "5", Outcome: refresher.OutcomeGone, FinishedAt: now}
+	want := NowItem{Key: "5", Outcome: refresher.OutcomeGone, FinishedAt: now}
 	if last := st.Snapshot().Servers[1].Run.Last; last == nil || !reflect.DeepEqual(*last, want) {
 		t.Errorf("last = %+v, want %+v", last, want)
 	}

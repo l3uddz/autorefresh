@@ -25,3 +25,35 @@ function subscribe(listener: () => void) {
 export function useNow(): number {
   return useSyncExternalStore(subscribe, () => now);
 }
+
+// A second clock for countdowns, such as the wait before the next item of
+// a run. It ticks only while a component that is active listens, so the
+// rest of the page keeps the slow clock above.
+
+const secondListeners = new Set<() => void>();
+let secondNow = Date.now();
+let secondTimer: ReturnType<typeof setInterval> | undefined;
+
+function subscribeSeconds(listener: () => void) {
+  secondListeners.add(listener);
+  secondNow = Date.now();
+  secondTimer ??= setInterval(() => {
+    secondNow = Date.now();
+    secondListeners.forEach(notify => notify());
+  }, 1000);
+  return () => {
+    secondListeners.delete(listener);
+    if (secondListeners.size === 0) {
+      clearInterval(secondTimer);
+      secondTimer = undefined;
+    }
+  };
+}
+
+const subscribeNever = () => () => {};
+
+/** Returns the current time in milliseconds, updated every second while
+ * isActive. */
+export function useSecondClock(isActive: boolean): number {
+  return useSyncExternalStore(isActive ? subscribeSeconds : subscribeNever, () => secondNow);
+}
