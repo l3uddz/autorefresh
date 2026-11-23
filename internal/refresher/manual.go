@@ -140,11 +140,15 @@ func (r *Refresher) settleMatch(ctx context.Context, item manualItem, run *serve
 
 // checkMatched checks the cached item of settleMatch after each wait of
 // matchCheckDelays, until a check completes it, its row leaves the cache, or
-// a failure ends the follow-up. It returns the error of settleFailed.
+// a failure or the end of ctx ends the follow-up. It returns the error of
+// settleFailed, or for a run the error of ctx.
 func (r *Refresher) checkMatched(ctx context.Context, item manualItem, run *serverRun) error {
 	for _, d := range matchCheckDelays {
-		if r.sleep(ctx, d) != nil {
-			return nil
+		if err := r.sleep(ctx, d); err != nil {
+			if run == nil {
+				return nil
+			}
+			return err
 		}
 		settled, err := r.checkHeld(ctx, item, run)
 		if errors.Is(err, ErrNotCached) {

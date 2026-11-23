@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
@@ -662,5 +663,28 @@ func TestRunMatchStopsTheServerWhenPlexBecomesUnavailable(t *testing.T) {
 	}
 	if r := runs[0]; r.Status != store.RunFailed || r.Matched != 1 || r.Refreshed != 1 || r.Failed != 1 {
 		t.Errorf("run = %+v, want failed with 1 match, 1 refresh, and 1 failure", r)
+	}
+}
+
+// The end of the run during a wait between the checks of a follow-up
+// reaches the run, as the end of the run in a request does.
+func TestRunMatchFollowUpReturnsTheEndOfTheRun(t *testing.T) {
+	f, fp, checks := runMatchFixture(t, checkAnswer{item: completeItem("101")})
+	row, _ := f.row(testServer, "1", "101")
+	run := &serverRun{server: Server{Name: testServer, Plex: fp}, source: store.SourceAuto, files: map[string][]string{}}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	f.r.sleep = func(ctx context.Context, _ time.Duration) error {
+		cancel()
+		return ctx.Err()
+	}
+
+	err := f.r.settleMatch(ctx, manualItem{server: run.server, row: row, cached: true}, run)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("settleMatch = %v, want context.Canceled", err)
+	}
+	if *checks != 0 {
+		t.Errorf("checks = %d, want none", *checks)
 	}
 }
