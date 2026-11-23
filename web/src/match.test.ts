@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Candidate, MatchSearch, TimelineEvent } from './api';
-import { autoEvidence, checkSearch, compareYear, groupCandidates, isCurrentMatch, isIDSearch, listView, matchBody, matchesPath, offersEpisodeCheck, sameSearch, tmdbIdOf } from './match';
+import { autoEvidence, autoEvidenceText, autoMatchPath, checkSearch, compareYear, groupCandidates, isCurrentMatch, isIDSearch, listView, matchBody, matchesPath, offersEpisodeCheck, sameSearch, tmdbIdOf } from './match';
 
 const cand = (guid: string, change: Partial<Candidate> = {}): Candidate => ({ guid, score: 0, ...change });
 const search = (query: string, candidates: Candidate[], change: Partial<MatchSearch> = {}): MatchSearch => ({ query, failed: false, candidates, ...change });
@@ -138,6 +138,12 @@ describe('match helpers', () => {
     expect(autoEvidence(decision, '')).toEqual([]);
     expect(autoEvidence(undefined, 'plex://a')).toEqual([]);
   });
+
+  it('names the last decision or the preview in the automatic evidence', () => {
+    expect(autoEvidenceText({ query: 'tmdb-1', verdict: 'picked' }, false)).toBe('The last automatic fix match found it via tmdb-1: picked');
+    expect(autoEvidenceText({ query: 'tmdb-1', verdict: 'picked' }, true)).toBe('The automatic fix match preview found it via tmdb-1: picked');
+    expect(autoEvidenceText({ query: 'imdb-tt2' }, true)).toBe('The automatic fix match preview found it via imdb-tt2');
+  });
 });
 
 describe('dialog state', () => {
@@ -179,6 +185,7 @@ describe('checkSearch', () => {
 
   it('builds the request paths and the exact match body', () => {
     expect(matchesPath('srv=0&key=7')).toBe('item/matches?srv=0&key=7');
+    expect(autoMatchPath('srv=0&key=7')).toBe('item/auto-match?srv=0&key=7');
     expect(matchesPath('srv=0&key=7', { q: 'A & B', year: 2019 })).toBe('item/matches?srv=0&key=7&q=A+%26+B&year=2019');
     expect(matchBody(cand('plex://a', { name: 'A', year: 2019, summary: 'S', score: 9, verdict: 'picked' }))).toEqual({ guid: 'plex://a', name: 'A', year: 2019 });
     expect(matchBody(cand('plex://a'))).toEqual({ guid: 'plex://a', name: '', year: 0 });

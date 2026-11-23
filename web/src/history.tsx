@@ -7,6 +7,7 @@ import { Heading, Text } from '@astryxdesign/core/Text';
 import { borderVars, colorVars, spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { ClockIcon } from '@heroicons/react/24/outline';
 import * as stylex from '@stylexjs/stylex';
+import type { ReactNode } from 'react';
 import type { MatchSearch, TimelineEvent } from './api';
 import { useNow } from './clock';
 import { dateTime, plural, relative } from './format';
@@ -132,7 +133,14 @@ export function ItemTimeline({ timeline }: { timeline: TimelineEvent[] }) {
 /** Explains the last automatic fix match: its searches, its candidates, and
  * why it picked one or none. Under a heading of its own place, it has no
  * heading. */
-export function DecisionPanel({ decision, hasHeading = true }: { decision?: TimelineEvent; hasHeading?: boolean }) {
+interface DecisionPanelProps {
+  decision?: TimelineEvent;
+  hasHeading?: boolean;
+  /** The action of the empty state, when there is no decision. */
+  emptyAction?: ReactNode;
+}
+
+export function DecisionPanel({ decision, hasHeading = true, emptyAction }: DecisionPanelProps) {
   if (!decision) {
     return (
       <EmptyState
@@ -140,6 +148,7 @@ export function DecisionPanel({ decision, hasHeading = true }: { decision?: Time
         icon={<Icon icon={ClockIcon} size="lg" />}
         title="No automatic fix match to explain"
         description="Autorefresh has not tried a fix match on this item within the history it keeps. It tries one only for unmatched items with IDs in their folder or file names."
+        actions={emptyAction}
       />
     );
   }

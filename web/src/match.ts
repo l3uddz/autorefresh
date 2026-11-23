@@ -1,5 +1,6 @@
 import type { Candidate, MatchSearch, TimelineEvent } from './api';
 import { maxSearchBytes } from './bulk';
+import { verdictName } from './timeline';
 
 // The evidence of the Fix match dialog: candidates grouped by Plex GUID,
 // with the searches that found each one. Every Plex field stays text.
@@ -147,8 +148,8 @@ export function compareYear(itemYear: number | undefined, candidateYear: number 
   return { kind: diff === 0 ? 'same' : diff === 1 ? 'off' : 'differs', year: candidateYear, diff };
 }
 
-/** What the last automatic fix match did with a candidate: the searches
- * that found it and the verdict of each. */
+/** What an automatic fix match, the last one or a preview, did with a
+ * candidate: the searches that found it and the verdict of each. */
 export interface AutoEvidence {
   query: string;
   verdict?: string;
@@ -160,6 +161,14 @@ export function autoEvidence(decision: TimelineEvent | undefined, guid: string):
   return decision.searches.flatMap(search =>
     search.candidates.filter(c => c.guid === guid).map(c => ({ query: search.query, verdict: c.verdict })),
   );
+}
+
+/** Returns the line of a candidate for one search of the last automatic
+ * fix match, or of a preview. */
+export function autoEvidenceText(evidence: AutoEvidence, isPreview: boolean): string {
+  const by = isPreview ? 'The automatic fix match preview' : 'The last automatic fix match';
+  const verdict = verdictName(evidence.verdict);
+  return `${by} found it via ${evidence.query}${verdict ? `: ${verdict}` : ''}`;
 }
 
 const imdbValue = /^tt\d+$/i;
@@ -222,6 +231,12 @@ export function matchesPath(params: string, search?: TypedSearch): string {
     if (search.year) query.set('year', String(search.year));
   }
   return `item/matches?${query}`;
+}
+
+/** Returns the query of GET /api/item/auto-match, the automatic fix match
+ * preview of the item params. */
+export function autoMatchPath(params: string): string {
+  return `item/auto-match?${new URLSearchParams(params)}`;
 }
 
 /** The body of POST /api/item/match: exactly the fields that the API
