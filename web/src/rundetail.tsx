@@ -19,12 +19,8 @@ import { dateTime, label, plural, runDuration, runTitle, titleYear } from './for
 import { Poster } from './media';
 import { itemHash } from './route';
 import { useShown } from './presence';
-import { runCounts, runGroups, type RunEntry, type RunGroup } from './runs';
+import { noEntries, runCounts, runGroups, runPollInterval, type RunEntry, type RunGroup } from './runs';
 import { statusDots } from './status';
-
-/** How often the events of a running run reload. A bulk refresh records
- * its items when it ends, so it does not reload. */
-const runningInterval = 5_000;
 
 interface Props {
   /** The open run, or undefined for a closed drawer. */
@@ -58,10 +54,7 @@ export function RunDetails({ id, isMulti, srv, onClose, isPinned = false }: Prop
     queryKey: ['runs', 'detail', id],
     queryFn: ({ signal }) => api<RunDetail>(`runs/detail?${new URLSearchParams({ id: String(id) })}`, { signal }),
     retry: (count, error) => !(error instanceof ApiError && error.status === 404) && count < 1,
-    refetchInterval: query => {
-      const run = query.state.status === 'success' ? query.state.data?.run : undefined;
-      return run?.status === 'running' && run.kind !== 'bulk-refresh' ? runningInterval : false;
-    },
+    refetchInterval: query => runPollInterval(query.state.data?.run, query.state.error),
   });
   const isGone = detail.error instanceof ApiError && detail.error.status === 404;
   // A run that retention removed while the drawer was open is gone: its
@@ -224,25 +217,8 @@ function EntryRow({ entry, srv, scope }: { entry: RunEntry; srv: number; scope?:
   );
 }
 
-/** Says why a run lists no item: it is still at work, it changed none, or
- * its items were not recorded. */
+/** Says why a run lists no item. */
 function NoEntries({ run }: { run: RunRecord }) {
-  const icon = <Icon icon={InboxIcon} size="lg" />;
-  if (run.status === 'running' && run.kind === 'bulk-refresh') {
-    return <EmptyState isCompact title="The items show when the bulk refresh ends" description="A bulk refresh records the outcome of its items when it ends." icon={icon} />;
-  }
-  if (run.status === 'running') return <EmptyState isCompact title="No item changed yet" description="The items show here as the run works on them." icon={icon} />;
-  const changed = run.kind === 'bulk-refresh' ? run.selected : run.refreshed + run.matched + run.failed + run.completed;
-  if (changed > 0) {
-    return (
-      <EmptyState
-        isCompact
-        title="Item details were not recorded for this run"
-        description="The run is from before autorefresh recorded them, or its history expired."
-        icon={icon}
-      />
-    );
-  }
-  const description = run.status === 'finished' ? `It read ${plural(run.readItems, 'item')} and refreshed none.` : 'The run ended before it changed an item.';
-  return <EmptyState isCompact title="No item changed in this run" description={description} icon={icon} />;
+  const { title, description } = noEntries(run);
+  return <EmptyState isCompact title={title} description={description} icon={<Icon icon={InboxIcon} size="lg" />} />;
 }

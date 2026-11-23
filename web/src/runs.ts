@@ -1,7 +1,7 @@
 import { useToast } from '@astryxdesign/core/Toast';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ApiError, post, type RunDetail, type RunEvent, type RunItem, type RunRecord } from './api';
-import { fixedBy } from './format';
+import { fixedBy, plural } from './format';
 import { cancelQueueOfJob } from './queue';
 import type { TabName } from './route';
 import { decisionView, eventView, type EventView } from './timeline';
@@ -85,6 +85,7 @@ export interface RunGroup {
 }
 
 const eventGroups: [id: string, title: string][] = [
+  ['in-progress', 'In progress'],
   ['refreshed', 'Refreshed'],
   ['matched', 'Matched'],
   ['failed', 'Failed'],
@@ -123,10 +124,11 @@ export function runCounts(run: RunRecord): [name: string, value: number][] {
 /** Returns the items of a run grouped by outcome, in a fixed group order,
  * without empty groups. A bulk refresh groups its selected items. A run
  * groups its events: a match decision joins the request or the removal of
- * its item that followed it, or is not sent when neither followed. */
+ * its item that followed it. Without either, it is in progress while the
+ * run still works, or else not sent. */
 export function runGroups(detail: RunDetail): RunGroup[] {
   if (detail.run.kind === 'bulk-refresh') return grouped(itemGroups, detail.items.map(itemEntry));
-  return grouped(eventGroups, eventEntries(detail.events));
+  return grouped(eventGroups, eventEntries(detail.events, detail.run.status === 'running'));
 }
 
 function grouped(order: [string, string][], entries: [group: string, entry: RunEntry][]): RunGroup[] {
@@ -154,14 +156,14 @@ function itemEntry(item: RunItem, index: number): [string, RunEntry] {
   ];
 }
 
-function eventEntries(events: RunEvent[]): [string, RunEntry][] {
+function eventEntries(events: RunEvent[], isRunning: boolean): [string, RunEntry][] {
   const entries: [string, RunEntry][] = [];
   // The match decision of each item that waits for its request.
   const decisions = new Map<string, RunEvent>();
   for (const event of events) {
     if (event.kind === 'match-decision') {
       const earlier = decisions.get(event.key);
-      if (earlier) entries.push(pendingEntry(earlier));
+      if (earlier) entries.push(pendingEntry(earlier, false));
       decisions.set(event.key, event);
       continue;
     }
@@ -173,16 +175,30 @@ function eventEntries(events: RunEvent[]): [string, RunEntry][] {
     if (decision) decisions.delete(event.key);
     entries.push([group, eventEntry(event, decision)]);
   }
-  for (const decision of decisions.values()) entries.push(pendingEntry(decision));
+  for (const decision of decisions.values()) entries.push(pendingEntry(decision, isRunning));
   return entries;
 }
 
 /** Returns the entry of a decision that no request or removal followed. A
- * failed search sends no request. Otherwise the run ended before it sent
+ * failed search sends no request. A running run can still send the request
+ * of the last decision of an item. Otherwise the run ended before it sent
  * the request. */
-function pendingEntry(decision: RunEvent): [string, RunEntry] {
+function pendingEntry(decision: RunEvent, isWaiting: boolean): [string, RunEntry] {
   if (decision.outcome === 'failed') return ['failed', eventEntry(decision)];
+  if (isWaiting) return ['in-progress', { ...eventEntry(decision), detail: 'Its request is not sent yet' }];
   return ['not-sent', { ...eventEntry(decision), detail: 'The run ended before the request' }];
+}
+
+/** How often the details of a running run reload. */
+const runningInterval = 5_000;
+
+/** Returns how often the details of run reload, or false for no reload. A
+ * running run reloads, also after a failed reload that kept its data. A
+ * removed run, an ended run, and a bulk refresh, which records its items
+ * when it ends, do not. */
+export function runPollInterval(run: RunRecord | undefined, error: Error | null): number | false {
+  if (error instanceof ApiError && error.status === 404) return false;
+  return run?.status === 'running' && run.kind !== 'bulk-refresh' ? runningInterval : false;
 }
 
 function eventGroup(event: RunEvent): string | undefined {
@@ -232,4 +248,21 @@ function eventEntry(event: RunEvent, decision?: RunEvent): RunEntry {
     at: event.at,
     tab: event.kind === 'completed' ? 'fixed' : 'attention',
   };
+}
+
+/** Returns why a run lists no item: it is still at work, it is from before
+ * runs linked their events, its history expired, or it changed none. A run
+ * from before runs linked their events can have changed items that its
+ * counts leave out, such as removed items, so its counts do not decide. */
+export function noEntries(run: RunRecord): { title: string; description: string } {
+  if (run.status === 'running' && run.kind === 'bulk-refresh') {
+    return { title: 'The items show when the bulk refresh ends', description: 'A bulk refresh records the outcome of its items when it ends.' };
+  }
+  if (run.status === 'running') return { title: 'No item changed yet', description: 'The items show here as the run works on them.' };
+  const notRecorded = 'Item details were not recorded for this run';
+  if (run.kind !== 'bulk-refresh' && !run.eventsLinked) return { title: notRecorded, description: 'The run is from before autorefresh recorded them.' };
+  const changed = run.kind === 'bulk-refresh' ? run.selected : run.refreshed + run.matched + run.failed + run.completed;
+  if (changed > 0) return { title: notRecorded, description: 'Their history expired.' };
+  const description = run.status === 'finished' ? `It read ${plural(run.readItems, 'item')} and refreshed none.` : 'The run ended before it changed an item.';
+  return { title: 'No item changed in this run', description };
 }

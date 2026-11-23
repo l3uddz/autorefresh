@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { RunDetail, RunEvent, RunItem, RunRecord } from './api';
-import { runCounts, runGroups } from './runs';
+import { ApiError, type RunDetail, type RunEvent, type RunItem, type RunRecord } from './api';
+import { noEntries, runCounts, runGroups, runPollInterval } from './runs';
 
 const record = (change: Partial<RunRecord> = {}): RunRecord => ({
   id: 9, srv: 0, server: 'Home', kind: 'run', source: 'schedule', status: 'finished',
-  readItems: 0, refreshed: 0, matched: 0, failed: 0, completed: 0, fixed: 0, incomplete: 0, due: 0, selected: 0, skipped: 0,
+  readItems: 0, refreshed: 0, matched: 0, failed: 0, completed: 0, fixed: 0, incomplete: 0, due: 0, selected: 0, skipped: 0, eventsLinked: true,
   ...change,
 });
 let nextID = 1;
@@ -51,6 +51,11 @@ describe('run groups', () => {
     // The run ended between the decision and its request.
     const groups = shape(detail([event('1', 'match-decision', { outcome: 'matched' })]));
     expect(groups).toEqual([['Not sent', [['1', 'Fix match: matched', 'The run ended before the request', 'attention']]]]);
+  });
+
+  it('lists a match decision of a running run that waits for its request as in progress', () => {
+    const groups = shape(detail([event('1', 'match-decision', { outcome: 'matched' })], { status: 'running' }));
+    expect(groups).toEqual([['In progress', [['1', 'Fix match: matched', 'Its request is not sent yet', 'attention']]]]);
   });
 
   it('lists a failed fix match search with its error as failed', () => {
@@ -125,5 +130,39 @@ describe('run groups', () => {
       ]],
       ['Not reached', [['2', 'The job ended before this item', undefined, 'attention']]],
     ]);
+  });
+});
+
+describe('run poll interval', () => {
+  const running = record({ status: 'running' });
+  it('polls a running run, also after a failed reload that kept its data', () => {
+    expect(runPollInterval(running, null)).toBe(5_000);
+    expect(runPollInterval(running, new ApiError(500, 'Plex answered 500'))).toBe(5_000);
+  });
+  it('stops for a removed run, an ended run, a bulk refresh, or no data', () => {
+    expect(runPollInterval(running, new ApiError(404, 'no such run'))).toBe(false);
+    expect(runPollInterval(record(), null)).toBe(false);
+    expect(runPollInterval(record({ status: 'running', kind: 'bulk-refresh' }), null)).toBe(false);
+    expect(runPollInterval(undefined, null)).toBe(false);
+  });
+});
+
+describe('no entries', () => {
+  const notRecorded = 'Item details were not recorded for this run';
+  it('says that a run from before runs linked their events recorded no items, also with no counts', () => {
+    expect(noEntries(record({ eventsLinked: false }))).toEqual({ title: notRecorded, description: 'The run is from before autorefresh recorded them.' });
+    expect(noEntries(record({ eventsLinked: false, refreshed: 2 })).title).toBe(notRecorded);
+  });
+  it('says that the history of a newer run that changed items expired', () => {
+    expect(noEntries(record({ refreshed: 2 }))).toEqual({ title: notRecorded, description: 'Their history expired.' });
+    expect(noEntries(record({ kind: 'bulk-refresh', selected: 3, eventsLinked: false }))).toEqual({ title: notRecorded, description: 'Their history expired.' });
+  });
+  it('says that a newer run changed no item', () => {
+    expect(noEntries(record({ readItems: 12 }))).toEqual({ title: 'No item changed in this run', description: 'It read 12 items and refreshed none.' });
+    expect(noEntries(record({ status: 'canceled' }))).toEqual({ title: 'No item changed in this run', description: 'The run ended before it changed an item.' });
+  });
+  it('says that a running run shows its items as it works', () => {
+    expect(noEntries(record({ status: 'running' })).title).toBe('No item changed yet');
+    expect(noEntries(record({ status: 'running', kind: 'bulk-refresh' })).title).toBe('The items show when the bulk refresh ends');
   });
 });

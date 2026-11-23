@@ -131,6 +131,7 @@ func TestRunsEndpoint(t *testing.T) {
 		"id": float64(h5), "srv": 0.0, "server": "Home", "kind": "run", "source": "schedule", "status": "finished",
 		"readItems": 1.0, "refreshed": 2.0, "matched": 3.0, "failed": 4.0, "completed": 5.0, "fixed": 6.0,
 		"incomplete": 7.0, "due": 8.0, "selected": 9.0, "fullReads": 10.0, "incrementalReads": 11.0,
+		"eventsLinked": true,
 	}
 	for field, w := range want {
 		if !reflect.DeepEqual(finished[field], w) {

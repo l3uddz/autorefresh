@@ -19,7 +19,7 @@ func TestStartAndFinishRun(t *testing.T) {
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("Runs = %v, %v", runs, err)
 	}
-	want := Run{ID: id, Server: srv, Kind: RunKindRun, Source: RunSourceSchedule, Status: RunRunning, StartedAt: base}
+	want := Run{ID: id, Server: srv, Kind: RunKindRun, Source: RunSourceSchedule, Status: RunRunning, StartedAt: base, EventsLinked: true}
 	if !reflect.DeepEqual(runs[0], want) {
 		t.Fatalf("running = %+v, want %+v", runs[0], want)
 	}
@@ -41,7 +41,7 @@ func TestStartAndFinishRun(t *testing.T) {
 		ID: id, Server: srv, Kind: RunKindRun, Source: RunSourceSchedule, Status: RunFailed, StartedAt: base,
 		FinishedAt: end, Error: "boom",
 		ReadItems: 1, Refreshed: 2, Matched: 3, Failed: 4, Completed: 5, Fixed: 6, Incomplete: 7, Due: 8, Selected: 9,
-		FullReads: 10, IncrementalReads: 11,
+		FullReads: 10, IncrementalReads: 11, EventsLinked: true,
 	}
 	if !reflect.DeepEqual(runs[0], want) {
 		t.Fatalf("finished = %+v, want %+v", runs[0], want)
@@ -196,7 +196,7 @@ func TestFinishRunRestoresRemovedRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Run{ID: id, Server: srv, Kind: RunKindRun, Source: RunSourceManual, Status: RunFinished,
-		StartedAt: base, FinishedAt: end, Refreshed: 4, FullReads: 2}
+		StartedAt: base, FinishedAt: end, Refreshed: 4, FullReads: 2, EventsLinked: true}
 	if len(got) != 1 || !reflect.DeepEqual(got[0], want) {
 		t.Fatalf("runs = %+v, want %+v", got, want)
 	}
@@ -594,5 +594,42 @@ func TestRunLinkMigrationKeepsOldRows(t *testing.T) {
 	}
 	if events, err := s.Timeline(srv, "a"); err != nil || len(events) != 1 || events[0].RunID != 0 {
 		t.Fatalf("events = %+v, %v; want the event without its run", events, err)
+	}
+}
+
+// A run from before runs linked their events says so, and a new run links
+// its events, so the dashboard can tell an old run without recorded items
+// from a run that changed none.
+func TestRunEventsLinkedMarksOnlyNewRuns(t *testing.T) {
+	file := openAtVersion(t, 12)
+	old, err := sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(`INSERT INTO run (id, server, kind, source, status, started_at) VALUES (1, ?, 'run', 'schedule', 'finished', ?)`,
+		srv, base.Unix()); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+	s, err := Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	id, err := s.StartRun(RunStart{Server: srv, Kind: RunKindRun, Source: RunSourceManual, StartedAt: base.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		id   int64
+		want bool
+	}{{1, false}, {id, true}} {
+		detail, found, err := s.RunDetail(context.Background(), tt.id)
+		if err != nil || !found {
+			t.Fatalf("RunDetail(%d) = %v, %v", tt.id, found, err)
+		}
+		if run := detail.Run; run.EventsLinked != tt.want {
+			t.Errorf("run %d EventsLinked = %v, want %v", tt.id, run.EventsLinked, tt.want)
+		}
 	}
 }
