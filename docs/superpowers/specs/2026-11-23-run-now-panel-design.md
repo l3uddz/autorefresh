@@ -104,7 +104,7 @@ wait (proposed by me, approved by the maintainer).
   - The footer shows `last`, if there is one.
 - Outcome display (icon colour, text):
   - `refresh`, `accepted`: green check, "refreshed"
-  - `match`, `tmdb-match`: purple swap, "matched"
+  - `match`, `tmdb-match`, `title-match`: purple swap, "matched"
   - `*-failed`, `search-failed`, `failed`: red cross, "failed"
   - `skipped`, `stopped`, `changed`, `not-cached`: grey dash, "skipped"
   - `gone`: grey, "gone"

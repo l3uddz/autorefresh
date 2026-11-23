@@ -165,7 +165,7 @@ Vitest.
   ```
 
 - [ ] **Step 1: Write failing tests** in `now.test.ts`
-  - `outcomeView`: `refresh`, `accepted` → `{text: 'refreshed', tone: 'green'}`; `match`, `tmdb-match` → `matched`/`purple`; `refresh-failed`, `match-failed`, `search-failed`, `failed` → `failed`/`red`; `skipped`, `stopped`, `changed`, `not-cached` → `skipped`/`gray`; `gone` → `gone`/`gray`; `dry-run` → `dry run`/`gray`; `undefined` or unknown `x` → `{text: 'x' or '', tone: 'gray'}`.
+  - `outcomeView`: `refresh`, `accepted` → `{text: 'refreshed', tone: 'green'}`; `match`, `tmdb-match`, `title-match` → `matched`/`purple`; `refresh-failed`, `match-failed`, `tmdb-match-failed`, `title-match-failed`, `search-failed`, `failed` → `failed`/`red`; `skipped`, `stopped`, `changed`, `not-cached` → `skipped`/`gray`; `gone` → `gone`/`gray`; `dry-run` → `dry run`/`gray`; `undefined` or unknown `x` → `{text: 'x' or '', tone: 'gray'}`.
   - `countdown`: `nextAt` 4.2 s ahead → `in 5s` (ceil); 0 s or 3 s behind → `now`; `undefined` → `''`.
   - `itemDetail`: `{library: 'TV Shows', reasons: ['summary']}` → uses `label()` from `format.ts` the way the reason badges do → `'TV Shows · <label of summary>'`; no library and no reasons → `''`; `withReasons: false` drops reasons.
 
