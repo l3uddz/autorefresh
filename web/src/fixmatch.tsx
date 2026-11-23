@@ -499,7 +499,9 @@ function CandidateCard({ group, item, params, decision, isPreview, isCurrent, it
 function episodeCheckText(check: EpisodeCheck, tmdbId: string): string {
   if (check.match) return `The episode numbers match tmdb-${tmdbId} (${plural(check.episodes, 'episode')} compared).`;
   if (check.diff) return episodeDiffText(check.diff, tmdbId);
-  return `Plex lists no complete regular episodes of this item, so there was nothing to compare with tmdb-${tmdbId}.`;
+  // Plex gives no evidence when it lists no regular episode, or when one
+  // entry lacks a file or a number, which voids the whole listing.
+  return `The episodes of this item could not be compared with tmdb-${tmdbId}: Plex lists no regular episodes, or one of them has no file or number.`;
 }
 
 /** Compares the episode numbers of the item with the TMDB series tmdbId.
