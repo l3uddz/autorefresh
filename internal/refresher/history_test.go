@@ -512,7 +512,7 @@ func TestManualRefreshLinksNoRun(t *testing.T) {
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: newFakePlex(moviesLib)})
 	f.seed(testServer, moviesLib, incompleteItem("101"), store.NoSummary, 0)
 
-	if err := f.r.RefreshItem(t.Context(), testServer, "101"); err != nil {
+	if _, err := f.r.RefreshItem(t.Context(), testServer, "101"); err != nil {
 		t.Fatal(err)
 	}
 

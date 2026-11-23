@@ -23,14 +23,22 @@ import (
 const (
 	defaultActionTimeout = 30 * time.Second
 	searchTimeout        = 45 * time.Second
-	maxBodyBytes         = 1 << 20
+	// refreshTimeout bounds the Plex requests of POST /api/item/refresh:
+	// the fix match search, which the refresher bounds to 45 s, and then the
+	// match or refresh with its follow-up.
+	refreshTimeout = 90 * time.Second
+	// refreshWriteTimeout bounds its answer. Plex can accept a request at
+	// the end of refreshTimeout, and recording it can then wait for a store
+	// lock of another process (30 s at most). The answer must still reach
+	// the browser, so the user does not repeat a request that Plex accepted.
+	refreshWriteTimeout = 3 * time.Minute
+	maxBodyBytes        = 1 << 20
 )
 
 // Actions is the set of synchronous dashboard actions.
 type Actions interface {
-	RefreshItem(context.Context, string, string) error
+	RefreshItem(context.Context, string, string) (refresher.RefreshResult, error)
 	ApplyMatch(context.Context, string, string, plex.Candidate) error
-	CheckItem(context.Context, string, string) error
 	SetStopped(context.Context, string, string, bool) (bool, error)
 	SearchMatches(context.Context, string, string, refresher.MatchQuery) (refresher.MatchResult, error)
 	EpisodeCheck(context.Context, string, string, string) (refresher.EpisodeResult, error)
@@ -116,14 +124,59 @@ func (s *Server) actionParams(w http.ResponseWriter, r *http.Request) (itemActio
 	return itemAction{server: s.servers[srv].Name, key: key, params: v}, true
 }
 
+// refreshJSON answers POST /api/item/refresh: the item detail after the
+// refresh, the fix match that the refresh applied, if any, and whether a
+// check after the request saved the current reasons of the item. Plex
+// accepted the refresh, so a failed read of the detail only leaves it out.
+type refreshJSON struct {
+	*itemDetailJSON
+	Match   *matchJSON `json:"match,omitempty"`
+	Checked bool       `json:"checked"`
+}
+
+// serveRefresh answers POST /api/item/refresh. The refresh can run the
+// automatic fix match, so it gets refreshTimeout, and its answer gets
+// refreshWriteTimeout instead of the write timeout of the server.
 func (s *Server) serveRefresh(w http.ResponseWriter, r *http.Request) {
 	a, ok := s.actionParams(w, r)
 	if !ok || !noBody(w, r) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), s.actionTimeout)
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(refreshWriteTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		log.Warn().Err(err).Msg("Extending the write deadline of a refresh failed")
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), refreshTimeout)
 	defer cancel()
-	s.accepted(w, r, s.actions.RefreshItem(ctx, a.server, a.key))
+	res, err := s.actions.RefreshItem(ctx, a.server, a.key)
+	if err != nil {
+		s.writeActionError(w, r, err)
+		return
+	}
+	out := refreshJSON{itemDetailJSON: s.refreshedDetail(r, a), Checked: res.Checked}
+	if m := res.Match; m != nil {
+		out.Match = &matchJSON{GUID: m.GUID, Title: m.Title, Year: m.Year}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// refreshedDetail reads the detail of the item after its refresh, or
+// returns nil and logs why it could not.
+func (s *Server) refreshedDetail(r *http.Request, a itemAction) *itemDetailJSON {
+	srv, key, err := s.itemParams(a.params)
+	if err != nil {
+		return nil
+	}
+	it, found, err := s.lookupItem(r.Context(), srv, key)
+	if err == nil && found {
+		var detail itemDetailJSON
+		if detail, err = s.itemDetail(r.Context(), srv, it); err == nil {
+			return &detail
+		}
+	}
+	if err != nil {
+		log.Warn().Err(err).Str("path", r.URL.Path).Msg("Reading the item after a refresh failed")
+	}
+	return nil
 }
 
 func (s *Server) accepted(w http.ResponseWriter, r *http.Request, err error) {
@@ -159,22 +212,6 @@ func (s *Server) serveMatch(w http.ResponseWriter, r *http.Request) {
 
 func containsControl(s string) bool {
 	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
-}
-
-func (s *Server) serveCheck(w http.ResponseWriter, r *http.Request) {
-	a, ok := s.actionParams(w, r)
-	if !ok || !noBody(w, r) {
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), s.actionTimeout)
-	defer cancel()
-	if err := s.actions.CheckItem(ctx, a.server, a.key); err != nil {
-		s.writeActionError(w, r, err)
-		return
-	}
-	if srv, it, ok := s.knownItem(w, r, a.params); ok {
-		s.writeItemDetail(w, r, srv, it)
-	}
 }
 
 func (s *Server) serveStop(w http.ResponseWriter, r *http.Request)   { s.serveStopped(w, r, true) }

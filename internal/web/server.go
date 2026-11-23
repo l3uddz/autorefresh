@@ -187,7 +187,6 @@ func New(opts Options) *Server {
 
 	s.api("POST /api/item/refresh", s.serveRefresh)
 	s.api("POST /api/item/match", s.serveMatch)
-	s.api("POST /api/item/check", s.serveCheck)
 	s.api("POST /api/item/stop", s.serveStop)
 	s.api("POST /api/item/resume", s.serveResume)
 	s.api("GET /api/item/matches", s.serveMatches)

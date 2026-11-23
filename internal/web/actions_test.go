@@ -23,14 +23,16 @@ type refreshActions struct {
 	calls int
 }
 
-func (a *refreshActions) RefreshItem(context.Context, string, string) error {
+func (a *refreshActions) RefreshItem(context.Context, string, string) (refresher.RefreshResult, error) {
 	a.calls++
-	return nil
+	return refresher.RefreshResult{}, nil
 }
 
 func TestRefreshRequiresJSONAndEmptyBody(t *testing.T) {
+	db := openStore(t)
+	readLibrary(t, db, "home", "1", testNow.Add(-time.Hour), movie("1", "One", store.NoSummary, testNow.Add(-2*time.Hour)))
 	actions := &refreshActions{}
-	s := New(Options{Actions: actions, Servers: []PlexServer{{Name: "home"}}})
+	s := New(Options{Store: db, Actions: actions, Servers: []PlexServer{{Name: "home"}}})
 	for _, tc := range []struct {
 		contentType, body string
 		status            int
@@ -81,6 +83,11 @@ func TestMatchRejectsUnsafeOrInvalidRequests(t *testing.T) {
 type successfulPlexRefresh struct{ refresher.Plex }
 
 func (successfulPlexRefresh) Refresh(context.Context, string) error { return nil }
+
+// Item ends the check after the refresh at once.
+func (successfulPlexRefresh) Item(context.Context, string) (plex.Item, error) {
+	return plex.Item{}, plex.ErrUnavailable
+}
 
 type pendingManualRecord struct {
 	*store.Store
@@ -150,7 +157,9 @@ type rejectedRefresh struct {
 	err error
 }
 
-func (a rejectedRefresh) RefreshItem(context.Context, string, string) error { return a.err }
+func (a rejectedRefresh) RefreshItem(context.Context, string, string) (refresher.RefreshResult, error) {
+	return refresher.RefreshResult{}, a.err
+}
 
 func TestWriteActionErrorsMapToHTTP(t *testing.T) {
 	for _, tc := range []struct {
@@ -226,26 +235,29 @@ func TestServerErrorLogRedactsSecrets(t *testing.T) {
 	}
 }
 
-// goneActions records a check of an item that Plex no longer has, as the
-// refresher does after a 404.
+// goneActions records a refresh of an item that Plex no longer has, as the
+// refresher does after a 404 of its check, and reports match as applied.
 type goneActions struct {
 	Actions
-	db *store.Store
+	db    *store.Store
+	match *store.MatchTarget
 }
 
-func (a goneActions) CheckItem(_ context.Context, server, key string) error {
+func (a goneActions) RefreshItem(_ context.Context, server, key string) (refresher.RefreshResult, error) {
 	req := store.Request{Server: server, RatingKey: key, At: testNow, Source: store.SourceManual}
-	return a.db.RecordManual(store.ManualRecord{Request: req, Cached: true, Gone: true})
+	return refresher.RefreshResult{Match: a.match}, a.db.RecordManual(store.ManualRecord{Request: req, Cached: true, Gone: true})
 }
 
 // The dashboard tells a removed item from a complete one by this answer:
-// the item is no longer cached and its newest event is gone.
-func TestCheckOfGoneItemAnswersUncachedWithGoneEvent(t *testing.T) {
+// the item is no longer cached and its newest event is gone. The answer
+// names the fix match that the refresh applied.
+func TestRefreshAnswersTheDetailAndTheAppliedMatch(t *testing.T) {
 	db := openStore(t)
 	readLibrary(t, db, "home", "1", testNow.Add(-time.Hour), movie("7", "Harbor", store.NoSummary, testNow.Add(-2*time.Hour)))
-	s := New(Options{Store: db, Actions: goneActions{db: db}, Servers: []PlexServer{{Name: "home"}}})
+	match := &store.MatchTarget{GUID: "plex://movie/7", Title: "Harbor", Year: 2020}
+	s := New(Options{Store: db, Actions: goneActions{db: db, match: match}, Servers: []PlexServer{{Name: "home"}}})
 	s.now = func() time.Time { return testNow }
-	req := httptest.NewRequest(http.MethodPost, "/api/item/check?srv=0&key=7", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/item/refresh?srv=0&key=7", nil)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
@@ -254,12 +266,12 @@ func TestCheckOfGoneItemAnswersUncachedWithGoneEvent(t *testing.T) {
 	}
 	var got struct {
 		Item struct {
-			Cached  *bool    `json:"cached"`
-			Reasons []string `json:"reasons"`
+			Cached *bool `json:"cached"`
 		} `json:"item"`
 		Timeline []struct {
 			Kind string `json:"kind"`
 		} `json:"timeline"`
+		Match *matchJSON `json:"match"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
@@ -269,6 +281,9 @@ func TestCheckOfGoneItemAnswersUncachedWithGoneEvent(t *testing.T) {
 	}
 	if len(got.Timeline) == 0 || got.Timeline[0].Kind != "gone" {
 		t.Fatalf("expected newest event to be gone, timeline %+v", got.Timeline)
+	}
+	if want := (matchJSON{GUID: match.GUID, Title: match.Title, Year: match.Year}); got.Match == nil || *got.Match != want {
+		t.Fatalf("match = %+v, want %+v", got.Match, want)
 	}
 }
 
@@ -350,5 +365,73 @@ func TestEpisodeCheckAnswersTheDiff(t *testing.T) {
 				t.Errorf("status %d, body %s, want %s", rec.Code, rec.Body, tc.want)
 			}
 		})
+	}
+}
+
+// slowRefresh answers after the write timeout of the server has passed.
+type slowRefresh struct {
+	Actions
+	delay time.Duration
+}
+
+func (a slowRefresh) RefreshItem(context.Context, string, string) (refresher.RefreshResult, error) {
+	time.Sleep(a.delay)
+	return refresher.RefreshResult{Checked: true}, nil
+}
+
+// A refresh can outlast the write timeout of the server, and its answer
+// still reaches the browser, so the user does not repeat a request that
+// Plex accepted.
+func TestRefreshAnswerOutlastsTheServerWriteTimeout(t *testing.T) {
+	db := openStore(t)
+	readLibrary(t, db, "home", "1", testNow.Add(-time.Hour), movie("1", "One", store.NoSummary, testNow.Add(-2*time.Hour)))
+	s := New(Options{Store: db, Actions: slowRefresh{delay: 300 * time.Millisecond}, Servers: []PlexServer{{Name: "home"}}})
+	s.srv.WriteTimeout = 50 * time.Millisecond
+	base := startServer(t, s)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, base+"/api/item/refresh?srv=0&key=1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("refresh answer lost: %v", err)
+	}
+	defer resp.Body.Close()
+	var got struct {
+		Checked bool `json:"checked"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil || resp.StatusCode != http.StatusOK || !got.Checked {
+		t.Fatalf("status %d, checked %v, decode %v", resp.StatusCode, got.Checked, err)
+	}
+}
+
+// failingTimeline fails each timeline read.
+type failingTimeline struct{ *store.Store }
+
+func (failingTimeline) TimelineContext(context.Context, string, string) ([]store.Event, error) {
+	return nil, errors.New("database is locked")
+}
+
+// Plex accepted the refresh, so a failed read of the detail after it only
+// leaves the detail out of the answer.
+func TestRefreshAnswersWithoutDetailWhenTheReadFails(t *testing.T) {
+	db := openStore(t)
+	readLibrary(t, db, "home", "1", testNow.Add(-time.Hour), movie("7", "Harbor", store.NoSummary, testNow.Add(-2*time.Hour)))
+	match := &store.MatchTarget{GUID: "plex://movie/7", Title: "Harbor", Year: 2020}
+	s := New(Options{Store: failingTimeline{db}, Actions: goneActions{db: db, match: match}, Servers: []PlexServer{{Name: "home"}}})
+	req := httptest.NewRequest(http.MethodPost, "/api/item/refresh?srv=0&key=7", nil)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusOK {
+		t.Fatalf("status %d, body %s, decode %v", w.Code, w.Body, err)
+	}
+	if _, ok := got["item"]; ok {
+		t.Errorf("answer has an item: %s", w.Body)
+	}
+	if _, ok := got["match"]; !ok {
+		t.Errorf("answer lost the applied match: %s", w.Body)
 	}
 }

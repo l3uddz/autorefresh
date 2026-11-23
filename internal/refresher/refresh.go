@@ -174,7 +174,7 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	// match that fixed the item moves it to Fixed now.
 	var stop error
 	if fm != nil {
-		stop = r.settleMatch(ctx, manualItem{server: run.server, row: it, cached: true}, run)
+		_, stop = r.settleMatch(ctx, manualItem{server: run.server, row: it, cached: true}, run)
 		if errors.Is(stop, ErrStore) {
 			return stop
 		}
@@ -337,13 +337,12 @@ type evaluation struct {
 }
 
 // findMatch returns the fix match of the item, or nil for a plain refresh.
-// Only an unmatched item that was refreshed before gets a fix match, and
-// only if the unmatched reason is not ignored. It records the decision of
-// the search. err is the error of a failed ItemPaths, SearchMatches, or
-// EpisodeNumbers request, or a store error of the TMDB ID cache, the series
-// path, or the decision (errCache).
+// Only an item that seeksMatch and that was refreshed before gets a fix
+// match. It records the decision of the search. err is the error of a
+// failed ItemPaths, SearchMatches, or EpisodeNumbers request, or a store
+// error of the TMDB ID cache, the series path, or the decision (errCache).
 func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Library, it store.Item) (*fixMatch, error) {
-	if it.Reasons&store.Unmatched == 0 || r.opts.IgnoreReasons&store.Unmatched != 0 || it.Refreshes < 1 {
+	if !r.seeksMatch(it) || it.Refreshes < 1 {
 		return nil, nil
 	}
 	ev, dec, err := r.autoMatch(ctx, run, lib, it)
@@ -351,6 +350,12 @@ func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Libr
 		return nil, recErr
 	}
 	return ev.fm, err
+}
+
+// seeksMatch reports whether the item gets the automatic fix match: it is
+// unmatched, and the unmatched reason is not ignored.
+func (r *Refresher) seeksMatch(it store.Item) bool {
+	return it.Reasons&store.Unmatched != 0 && r.opts.IgnoreReasons&store.Unmatched == 0
 }
 
 // autoMatch runs the automatic fix match of the item and returns its

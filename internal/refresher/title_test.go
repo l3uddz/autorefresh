@@ -484,3 +484,35 @@ func TestTitleMatchNotFoundRemovesTheItem(t *testing.T) {
 		})
 	}
 }
+
+// Refresh now on a series whose folder imdb ID TMDB has no single entry
+// for: the title fallback matches it as a run would. The manual title match
+// keeps the evidence of a run's request, and the check credits it.
+func TestRefreshItemAppliesTheTitleMatch(t *testing.T) {
+	f, fp, _ := titleFixture(t, "imdb-tt1")
+	f.now = t0
+	f.saveLibrary(showsLib)
+	f.r.servers[0].Plex = checkedMetadata{fakePlex: fp, answers: []checkAnswer{{item: unmatchedItem("201")}, {item: completeItem("201")}}, checks: new(int)}
+
+	res, err := f.r.RefreshItem(t.Context(), testServer, "201")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Match == nil || res.Match.GUID != "plex://show/t" {
+		t.Errorf("result match = %+v, want plex://show/t", res.Match)
+	}
+	wantCalls(t, sends(fp.calls), "Match 201 plex://show/t", "Refresh 201")
+	dec := f.decision("201")
+	wantDecision(t, dec, store.DecisionMatched, "", "path imdb-tt1:", titleVerdicts)
+	if dec.Source != store.SourceAuto || dec.RunID != 0 {
+		t.Errorf("decision source %q, run %d; want an automatic decision of no run", dec.Source, dec.RunID)
+	}
+	req := f.matchRequest("201")
+	if req.Action != store.ActionTitleMatch || req.Source != store.SourceManual || !req.Accepted ||
+		req.EpisodeCount != 3 || !slices.Equal(req.Links, []string{"https://www.themoviedb.org/tv/88"}) {
+		t.Errorf("match request = %+v, want an accepted manual title-match with 3 episodes and the TMDB link", req)
+	}
+	if e := f.newestEvent("201"); e.Kind != store.EventCompleted || e.FixedMatch != store.ActionTitleMatch || e.FixedMatchEventID != req.ID {
+		t.Errorf("newest event = %+v, want a completion credited to title match %d", e, req.ID)
+	}
+}
