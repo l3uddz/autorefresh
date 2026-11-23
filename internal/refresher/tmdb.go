@@ -60,7 +60,7 @@ func tmdbSource(id pathID, itemType string) bool {
 
 // tmdbResults translates the imdb path IDs, and the tvdb path IDs of a
 // series, to TMDB IDs and searches Plex once for each different TMDB ID. It
-// logs each search, and each ID that TMDB has no entry for, in d.
+// logs each search, and each ID that TMDB has no single entry for, in d.
 func (r *Refresher) tmdbResults(ctx context.Context, run *serverRun, lib plex.Library, it store.Item, ids []pathID, d *decisionLog) ([]searchResult, error) {
 	srv := run.server
 	var results []searchResult
@@ -254,7 +254,7 @@ func (r *Refresher) resolveOneTMDBID(ctx context.Context, run *serverRun, mc mat
 
 // singlePathTMDBID checks that the item's translated path IDs agree with
 // each other and with only, the TMDB ID already found, if any. It logs each
-// ID that TMDB has no entry for in mc.d.
+// ID that TMDB has no single entry for in mc.d.
 func (r *Refresher) singlePathTMDBID(ctx context.Context, run *serverRun, mc matchContext, only string) (string, error) {
 	for _, id := range mc.ids {
 		if !tmdbSource(id, mc.it.Type) {

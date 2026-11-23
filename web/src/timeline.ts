@@ -109,10 +109,11 @@ const tmdbSkipText: Record<string, string> = {
 };
 
 /** Returns what the TMDB steps of a decision did not do: the folder IDs
- * that TMDB has no entry for, and why TMDB was not asked. */
+ * that TMDB has no single entry for (none, or several: the lookup does
+ * not tell them apart), and why TMDB was not asked. */
 function tmdbNotes(event: TimelineEvent): string[] {
   const notes: string[] = [];
-  if (event.tmdbMissing?.length) notes.push(`TMDB has no entry for ${event.tmdbMissing.join(', ')}.`);
+  if (event.tmdbMissing?.length) notes.push(`TMDB has no single entry for ${event.tmdbMissing.join(', ')}.`);
   const skip = event.tmdbSkip && tmdbSkipText[event.tmdbSkip];
   if (skip) notes.push(skip);
   return notes;

@@ -150,15 +150,15 @@ describe('decision evidence', () => {
 
   it('says what the TMDB fallback did not do', () => {
     const none = (fields: Partial<TimelineEvent>) => decisionView(event(1, 'match-decision', { outcome: 'no-match', ...fields })).detail;
-    expect(none({ tmdbMissing: ['tvdb-357542'] })).toBe('No search found a candidate. TMDB has no entry for tvdb-357542.');
+    expect(none({ tmdbMissing: ['tvdb-357542'] })).toBe('No search found a candidate. TMDB has no single entry for tvdb-357542.');
     expect(none({ tmdbSkip: 'failed' })).toBe('No search found a candidate. TMDB was not asked, because an earlier TMDB failure in the same run turned it off.');
     expect(none({ tmdbSkip: 'tmdb-id' })).toContain('the folder names hold a tmdb ID');
     expect(none({ tmdbSkip: 'no-source' })).toContain('translates only imdb IDs and the tvdb IDs of series');
     expect(none({})).toBe('No search found a candidate.');
     const outcome = (fields: Partial<TimelineEvent>) => decisionView(event(1, 'match-decision', fields)).detail;
-    expect(outcome({ outcome: 'matched', tmdbMissing: ['imdb-tt1'] })).toBe('The folder ID searches agreed on one candidate. TMDB has no entry for imdb-tt1.');
-    expect(outcome({ outcome: 'failed', error: 'tmdb lookup: tvdb-6: 500', tmdbMissing: ['tvdb-5'] })).toBe('tmdb lookup: tvdb-6: 500 TMDB has no entry for tvdb-5.');
-    expect(outcome({ outcome: 'failed', tmdbMissing: ['tvdb-5'] })).toBe('TMDB has no entry for tvdb-5.');
+    expect(outcome({ outcome: 'matched', tmdbMissing: ['imdb-tt1'] })).toBe('The folder ID searches agreed on one candidate. TMDB has no single entry for imdb-tt1.');
+    expect(outcome({ outcome: 'failed', error: 'tmdb lookup: tvdb-6: 500', tmdbMissing: ['tvdb-5'] })).toBe('tmdb lookup: tvdb-6: 500 TMDB has no single entry for tvdb-5.');
+    expect(outcome({ outcome: 'failed', tmdbMissing: ['tvdb-5'] })).toBe('TMDB has no single entry for tvdb-5.');
   });
 
   it('explains an episode comparison that differs', () => {

@@ -87,7 +87,7 @@ type EpisodeDiff struct {
 type MatchEvidence struct {
 	TMDBID      string      // the TMDB ID whose year and episodes the year check compared
 	TMDBSkip    string      // why TMDB was not asked: TMDBOff, TMDBFailed, TMDBHasID, or TMDBNoSource
-	TMDBMissing []string    // the path IDs, such as tvdb-357542, that TMDB has no entry for
+	TMDBMissing []string    // the path IDs, such as tvdb-357542, that TMDB has no single entry for
 	EpisodeDiff EpisodeDiff // the episode comparison that did not confirm the candidate
 }
 

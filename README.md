@@ -281,10 +281,10 @@ IDs, so a movie gets no lookup for a `tvdb` ID. Autorefresh then searches
 Plex once for each TMDB ID, for example `tmdb-1396`, with the same rules for
 the candidates.
 
-- If TMDB has no entry for an ID, autorefresh skips that ID. If no ID gives
-  a match, the item gets a plain refresh. Autorefresh does not remember
-  that TMDB had no entry, because TMDB can add it later, so it asks again
-  at the next attempt of the item.
+- If TMDB has no single entry for an ID (none, or several), autorefresh
+  skips that ID. If no ID gives a match, the item gets a plain refresh.
+  Autorefresh does not remember that TMDB had no single entry, because
+  TMDB can change, so it asks again at the next attempt of the item.
 - Autorefresh keeps each TMDB ID that it finds in the cache of the item, so
   it asks TMDB for an ID only once. The cache removes these IDs with the
   item.
@@ -300,8 +300,8 @@ that TMDB translated, for example `tvdb-81189`.
 The decision of the fix match records what the TMDB steps did not do, and
 the Fix match dialog shows it:
 
-- each ID that TMDB has no entry for, for example `tvdb-357542`, in the
-  second pass or in the year check
+- each ID that TMDB has no single entry for (none, or several), for
+  example `tvdb-357542`, in the second pass or in the year check
 - why TMDB was not asked: no `tmdb-token` is set, an earlier TMDB failure
   in the same run turned TMDB off, the paths hold a `tmdb` ID, or they hold
   no ID that TMDB translates, such as a movie with only a `tvdb` ID
@@ -711,7 +711,7 @@ conflict lists the years that it compared and the season whose episode
 numbers differ from TMDB. The TMDB search of the year check says "same
 item as `tmdb-<id>`" when Plex resolves that TMDB ID to the same
 candidate, which does not yet confirm the year. The panel also names the
-IDs that TMDB has no entry for, and why TMDB was not asked. When the
+IDs that TMDB has no single entry for, and why TMDB was not asked. When the
 history holds no automatic fix match of the item, **Try automatic fix
 match** runs one now as a preview. The preview uses the same code as a
 run, also for an item that a run would not try, and shows its decision in

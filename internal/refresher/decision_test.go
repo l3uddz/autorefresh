@@ -313,7 +313,7 @@ func TestDecisionKeepsYearsOfAPlexEpisodeFailure(t *testing.T) {
 	wantYears(t, e, 2022, 1978, 0)
 }
 
-// The year check logs a path ID that TMDB has no entry for.
+// The year check logs a path ID that TMDB has no single entry for.
 func TestDecisionYearCheckWithoutTMDBEntry(t *testing.T) {
 	fp := newFakePlex(showsLib)
 	fp.candidates["201 tvdb-5"] = []plex.Candidate{{GUID: "plex://show/old", Name: "Show", Year: 1978}}

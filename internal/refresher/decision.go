@@ -41,7 +41,7 @@ func (d *decisionLog) skipTMDB(reason string) {
 	}
 }
 
-// noTMDBEntry logs that TMDB has no entry for the path ID from.
+// noTMDBEntry logs that TMDB has no single entry for the path ID from.
 func (d *decisionLog) noTMDBEntry(from pathID) {
 	if !slices.Contains(d.evidence.TMDBMissing, from.title()) {
 		d.evidence.TMDBMissing = append(d.evidence.TMDBMissing, from.title())

@@ -71,7 +71,7 @@ export interface TimelineEvent {
   tmdbId?: string;
   /** Why the decision asked TMDB nothing: off, failed, tmdb-id, or no-source. */
   tmdbSkip?: string;
-  /** The folder IDs that TMDB has no entry for. */
+  /** The folder IDs that TMDB has no single entry for. */
   tmdbMissing?: string[];
   /** The first season whose episode numbers differ from TMDB. */
   episodeDiff?: EpisodeDiff;
