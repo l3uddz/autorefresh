@@ -229,7 +229,7 @@ function noMatchDetail(event: TimelineEvent): string {
 function titleUnconfirmed(event: TimelineEvent): string {
   const found = 'The title search found one series with the same title and a year within 1, but nothing confirmed it.';
   if (event.episodeDiff) return `${found} ${episodeDiffText(event.episodeDiff, event.tmdbId)}`;
-  if (event.tmdbId) return `${found} Plex lists no regular episodes to compare with tmdb-${event.tmdbId}.`;
+  if (event.tmdbId) return `${found} Plex returned no usable episode numbers to compare with tmdb-${event.tmdbId}.`;
   return `${found} The Plex metadata provider has no TMDB ID for it.`;
 }
 
