@@ -263,14 +263,18 @@ func TestRunNowReadFailure(t *testing.T) {
 			fp.listErrs["2?type=2"] = errors.New("listing section 2: decoding response: unexpected token")
 			f := newRefreshFixture(t, Server{Name: "home", Plex: fp})
 			f.now = t0
+			// TV has no full read yet, so each run reads it fully and gets
+			// the error.
 			f.seed("home", moviesLib, incompleteItem("101"), store.NoSummary, 0)
-			f.seed("home", showsLib, incompleteItem("201"), store.NoSummary, 0)
 			jobs := NewJobs(f.r)
 			t.Cleanup(jobs.Close)
 			if _, err := jobs.RunNow(nil, tt.full); err != nil {
 				t.Fatal(err)
 			}
 			jobs.wg.Wait()
+			if !slices.Contains(fp.calls, "List 2?type=2") {
+				t.Fatalf("calls = %v, want the failing TV listing", fp.calls)
+			}
 			if got := slices.Contains(fp.calls, "Refresh 101"); got != tt.wantSent {
 				t.Errorf("refresh sent = %v, want %v; calls %v", got, tt.wantSent, fp.calls)
 			}
