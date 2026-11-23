@@ -302,9 +302,10 @@ the Fix match dialog shows it:
 
 - each ID that TMDB has no single entry for (none, or several), for
   example `tvdb-357542`, in the second pass or in the year check
-- why TMDB was not asked: no `tmdb-token` is set, an earlier TMDB failure
-  in the same run turned TMDB off, the paths hold a `tmdb` ID, or they hold
-  no ID that TMDB translates, such as a movie with only a `tvdb` ID
+- why TMDB was not asked: the paths hold a `tmdb` ID, they hold no ID that
+  TMDB translates, such as a movie with only a `tvdb` ID, no `tmdb-token` is
+  set, or an earlier TMDB failure in the same run turned TMDB off. The first
+  reason that applies, in this order, is recorded.
 
 ### History
 

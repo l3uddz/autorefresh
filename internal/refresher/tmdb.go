@@ -29,10 +29,11 @@ var (
 
 // skipFallback reports whether a fix match skips the TMDB fallback, which
 // asks TMDB for the TMDB IDs of the path IDs. reason says why TMDB could
-// have helped but is not asked: TMDB is off, an earlier TMDB failure of the
-// run turned it off, the paths hold a tmdb ID that Plex already searched,
-// or they hold no ID that TMDB translates. A search that found a candidate
-// needs no fallback, so it skips without a reason.
+// have helped but is not asked: the paths hold a tmdb ID that Plex already
+// searched, they hold no ID that TMDB translates, TMDB is off, or an earlier
+// TMDB failure of the run turned it off. The reasons of the paths come
+// first, because a token or a later run does not change them. A search that
+// found a candidate needs no fallback, so it skips without a reason.
 func (r *Refresher) skipFallback(run *serverRun, it store.Item, ids []pathID, results []searchResult) (skip bool, reason string) {
 	for _, res := range results {
 		if len(res.candidates) > 0 {
@@ -40,14 +41,14 @@ func (r *Refresher) skipFallback(run *serverRun, it store.Item, ids []pathID, re
 		}
 	}
 	switch {
-	case r.opts.TMDB == nil:
-		return true, store.TMDBOff
-	case run.tmdbFailed:
-		return true, store.TMDBFailed
 	case slices.ContainsFunc(ids, func(id pathID) bool { return id.Source == "tmdb" }):
 		return true, store.TMDBHasID
 	case !slices.ContainsFunc(ids, func(id pathID) bool { return tmdbSource(id, it.Type) }):
 		return true, store.TMDBNoSource
+	case r.opts.TMDB == nil:
+		return true, store.TMDBOff
+	case run.tmdbFailed:
+		return true, store.TMDBFailed
 	}
 	return false, ""
 }

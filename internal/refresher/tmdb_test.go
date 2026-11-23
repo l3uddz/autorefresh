@@ -165,6 +165,13 @@ func TestTMDBFallbackSkipped(t *testing.T) {
 		wantCalls(t, ft.calls)
 		wantEvidence(t, f.decision("201"), store.MatchEvidence{TMDBSkip: store.TMDBHasID})
 	})
+	t.Run("a tmdb ID without a TMDB token", func(t *testing.T) {
+		fp := newFakePlex(showsLib)
+		f := newTMDBFixture(t, fp, nil, "tmdb-2")
+		f.run(t0)
+		wantCalls(t, sends(fp.calls), "Refresh 201")
+		wantEvidence(t, f.decision("201"), store.MatchEvidence{TMDBSkip: store.TMDBHasID})
+	})
 	t.Run("a tvdb ID of a movie", func(t *testing.T) {
 		fp := newFakePlex(moviesLib)
 		movie := unmatchedItem("101")
