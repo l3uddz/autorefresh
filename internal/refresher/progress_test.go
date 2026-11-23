@@ -507,6 +507,20 @@ func TestRunReportsNoIgnoredReasons(t *testing.T) {
 	}
 }
 
+func TestRunWithoutDelayReportsNoNextItem(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102")}
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.opts.RefreshDelay = 0
+	p := withProgress(f)
+
+	f.run(t0)
+
+	if got := p.nextCalls(); len(got) != 0 {
+		t.Errorf("next calls = %q, want none", got)
+	}
+}
+
 func TestDryRunReportsNoNextItem(t *testing.T) {
 	fp := newFakePlex(moviesLib)
 	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102")}

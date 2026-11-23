@@ -51,13 +51,15 @@ func (r *Refresher) refreshBatch(ctx context.Context, run *serverRun, items []st
 }
 
 // pace waits RefreshDelay before the item next, unless it is the first item
-// or the run is a dry run. It reports next as the next item before it
-// waits.
+// or the run is a dry run. It reports next as the next item before a wait
+// that is longer than zero.
 func (r *Refresher) pace(ctx context.Context, run *serverRun, next ProgressItem, first bool) error {
 	if first || r.opts.DryRun {
 		return nil
 	}
-	r.progress().ItemNext(run.server.Name, next, r.now().Add(r.opts.RefreshDelay))
+	if r.opts.RefreshDelay > 0 {
+		r.progress().ItemNext(run.server.Name, next, r.now().Add(r.opts.RefreshDelay))
+	}
 	return r.sleep(ctx, r.opts.RefreshDelay)
 }
 
