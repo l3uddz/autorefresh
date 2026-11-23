@@ -282,27 +282,27 @@ type seriesJSON struct {
 	Episodes int    `json:"episodes,omitempty"`
 }
 
-// serveCandidate answers GET /api/item/candidate with the TMDB ID and the
-// season and episode counts of the series candidate guid of a known series,
-// from the Plex metadata provider of its server. A GUID that the provider
-// does not know answers no field.
+// serveCandidate answers GET /api/candidate with the TMDB ID and the season
+// and episode counts of the series candidate guid, from the Plex metadata
+// provider, with the token of the server srv. The answer depends on the
+// server and the GUID only, so the dashboard shares it between items. A
+// GUID that the provider does not know answers no field.
 func (s *Server) serveCandidate(w http.ResponseWriter, r *http.Request) {
 	v, err := queryParams(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	guid := v.Get("guid")
-	srv, it, ok := s.knownItem(w, r, v)
-	switch {
-	case !ok:
-		return
-	case it.Type != plex.ShowLibrary:
-		writeError(w, http.StatusBadRequest, "not a show")
+	srv, err := s.srvParam(v)
+	if err == nil && srv == noSrv {
+		err = errInvalidSrv
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), s.liveTimeout)
-	series, err := s.servers[srv].Plex.ProviderSeries(ctx, guid)
+	series, err := s.servers[srv].Plex.ProviderSeries(ctx, v.Get("guid"))
 	cancel()
 	switch {
 	case errors.Is(err, plex.ErrInvalidGUID):

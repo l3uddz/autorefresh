@@ -826,7 +826,7 @@ The image declares port `7380`. Nothing listens on it until you set
 | `api/items` | One page of the items of a tab, `attention`, `fixed`, or `stopped`, with the count of each tab |
 | `api/item` | One item and its history, newest event first |
 | `api/item/live` | What Plex tells about one item now |
-| `api/item/candidate` | The TMDB ID and the season and episode counts that the Plex metadata provider gives for the `plex://` GUID of a series candidate, in the `guid` query parameter |
+| `api/candidate` | The TMDB ID and the season and episode counts that the Plex metadata provider gives for the `plex://` GUID of a series candidate, in the `guid` query parameter, asked with the token of the server `srv` |
 | `api/item/auto-match` | The automatic fix match preview of one item, as a match decision event. A decision event also has `itemYear`, `tmdbId`, `tmdbSkip`, `tmdbMissing`, and `episodeDiff` |
 | `api/item/episode-check` | `POST`: compares the episode numbers of one series with the TMDB ID in the `tmdb` query parameter. `diff` names the first season that differs, with the counts and the episode numbers that only TMDB (`missing`) or only Plex (`extra`) has |
 | `api/items/thumb`, `api/items/art` | The poster and the background art of one item |
@@ -835,7 +835,7 @@ The image declares port `7380`. Nothing listens on it until you set
 
 The API names a server by its position in the `plex` list, from 0, in the
 `srv` query parameter. On `api/items`, `api/item`, `api/item/live`,
-`api/item/candidate`, `api/items/thumb`, `api/items/art`, `api/runs`, and `api/runs/detail`, a
+`api/candidate`, `api/items/thumb`, `api/items/art`, `api/runs`, and `api/runs/detail`, a
 query string that does not decode, for example one with a bad percent
 escape, gets a 400 answer.
 

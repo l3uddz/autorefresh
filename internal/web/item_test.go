@@ -588,11 +588,7 @@ func TestItemLiveTimesOut(t *testing.T) {
 
 func candidateServer(t *testing.T, series func(context.Context, string) (plex.Series, error)) *Server {
 	t.Helper()
-	st := openStore(t)
-	dark := movie("201", "Dark", store.Unmatched, time.Time{})
-	dark.Type = "show"
-	readLibrary(t, st, "Home", "1", testNow, dark, movie("101", "Alien", store.Unmatched, time.Time{}))
-	return newServerWith(st, 0, []PlexServer{{Name: "Home", Plex: &fakePlex{series: series}}})
+	return newServerWith(openStore(t), 0, []PlexServer{{Name: "Home", Plex: &fakePlex{series: series}}})
 }
 
 func TestItemCandidate(t *testing.T) {
@@ -605,15 +601,15 @@ func TestItemCandidate(t *testing.T) {
 		}
 		return plex.Series{TMDBID: "48213", Seasons: 1, Episodes: 10}, nil
 	})
-	query := url.Values{"srv": {"0"}, "key": {"201"}, "guid": {guid}}
+	query := url.Values{"srv": {"0"}, "guid": {guid}}
 	var got map[string]any
-	getJSON(t, s, "/api/item/candidate?"+query.Encode(), &got)
+	getJSON(t, s, "/api/candidate?"+query.Encode(), &got)
 	if !reflect.DeepEqual(got, map[string]any{"tmdbId": "48213", "seasons": 1.0, "episodes": 10.0}) {
 		t.Errorf("candidate = %v", got)
 	}
 	query.Set("guid", "plex://show/000000000000000000000002")
 	got = nil
-	getJSON(t, s, "/api/item/candidate?"+query.Encode(), &got)
+	getJSON(t, s, "/api/candidate?"+query.Encode(), &got)
 	if len(got) != 0 {
 		t.Errorf("unknown candidate = %v, want no field", got)
 	}
@@ -635,7 +631,7 @@ func TestItemCandidateErrors(t *testing.T) {
 	} {
 		t.Run(tt.msg, func(t *testing.T) {
 			s := candidateServer(t, func(context.Context, string) (plex.Series, error) { return plex.Series{}, tt.err })
-			rec := serve(s, httptest.NewRequest(http.MethodGet, "/api/item/candidate?srv=0&key=201&guid=x", nil))
+			rec := serve(s, httptest.NewRequest(http.MethodGet, "/api/candidate?srv=0&guid=x", nil))
 			assertJSONError(t, rec, tt.status, tt.msg)
 		})
 	}
@@ -650,11 +646,11 @@ func TestItemCandidateErrors(t *testing.T) {
 		status int
 		msg    string
 	}{
-		{"srv=0&key=101&guid=x", http.StatusBadRequest, "not a show"},
-		{"srv=0&key=999&guid=x", http.StatusNotFound, "not found"},
-		{"srv=0&key=201&guid=%zz", http.StatusBadRequest, "invalid query"},
+		{"guid=x", http.StatusBadRequest, "invalid srv"},
+		{"srv=3&guid=x", http.StatusBadRequest, "invalid srv"},
+		{"srv=0&guid=%zz", http.StatusBadRequest, "invalid query"},
 	} {
-		rec := serve(s, httptest.NewRequest(http.MethodGet, "/api/item/candidate?"+tt.query, nil))
+		rec := serve(s, httptest.NewRequest(http.MethodGet, "/api/candidate?"+tt.query, nil))
 		assertJSONError(t, rec, tt.status, tt.msg)
 	}
 	if calls != 0 {
