@@ -177,10 +177,11 @@ with a database error or an unavailable server, autorefresh also logs one
 ### Fix match
 
 A fix match links an unmatched item to a specific entry in the Plex metadata
-database. Autorefresh tries a fix match only for an unmatched movie or series
-that it refreshed at least once before. So the first attempt is always a
-plain refresh. If `ignore-reasons` holds `unmatched`, autorefresh never
-tries a fix match.
+database. A run tries a fix match only for an unmatched movie or series
+that it refreshed at least once before. So the first attempt of a run is
+always a plain refresh. **Refresh now** in the dashboard tries the fix
+match also before the first refresh. If `ignore-reasons` holds
+`unmatched`, autorefresh never tries a fix match.
 
 1. Autorefresh reads IDs from the folder names and the file names of the
    item. An ID is in curly brackets, square brackets, or parentheses, for
@@ -676,9 +677,21 @@ address keeps the choice, so a link or a reload shows the same server.
   of the page forgets the servers that have not started. The item details
   show the poster, the art, the summary, the path, the queue state, the
   last action, and when and how the item was fixed. From there you can
-  refresh the item, check its metadata again, stop or resume automatic
-  work on it, fix its match, and open it in Plex. If Plex no longer has the
-  item, a check says so and autorefresh removes the item from the queue.
+  refresh the item now, stop or resume automatic work on it, fix its
+  match, and open it in Plex. **Refresh now** handles the item as a run
+  handles a due item. An unmatched item in the cache gets the automatic
+  fix match, also before its first refresh, unless `unmatched` is in
+  `ignore-reasons`, and its decision is recorded in the history. If the
+  decision picks a candidate, autorefresh applies that match and follows
+  it up as **Match** in the Fix match dialog does. Otherwise, also when the
+  search failed, autorefresh requests a refresh, and then checks an item
+  in the cache after waits of 1, 2, and 4 seconds. An item that a check
+  finds complete moves to the Fixed tab at once. A message tells you the
+  match that was applied and what the check found, or only that Plex
+  accepted the request if no check could read the item. If Plex no longer has
+  the item, the message says so and autorefresh removes the item from the
+  queue. Each request counts as an attempt of the item, so it restarts
+  the wait before the next automatic refresh.
   Below the actions, the history of the item lists each event, newest
   first: requests by autorefresh or by hand and whether Plex accepted them,
   fix match decisions with their searches, stops and resumes, and when
@@ -755,8 +768,8 @@ applies the candidate. After Plex accepts the match, autorefresh also
 requests a refresh of the item. The refresh counts as one more attempt of
 the item, and as an accepted refresh it lengthens the wait before the next
 automatic refresh, like any refresh. Then, for an item in the cache, autorefresh
-checks the item as **Check now** does, after waits of 1, 2, and 4 seconds,
-while Plex loads the new metadata. An item that a check finds complete
+reads the item from Plex again after waits of 1, 2, and 4 seconds, while
+Plex loads the new metadata. An item that a check finds complete
 moves to the Fixed tab at once. Otherwise the next run reads it again.
 If the server is unavailable for the refresh or a check, autorefresh
 stops checking.
@@ -773,7 +786,9 @@ match** runs one now as a preview. The preview uses the same code as a
 run, also for an item that a run would not try, and shows its decision in
 the same way. It asks TMDB even when a TMDB lookup failed earlier in a
 run, as the next run does. It marks the candidate that it picked, which
-you can then apply with **Match**. The pick gets a card even when the
+you can then apply with **Match**. For an unmatched item in the cache,
+**Refresh now** in the item details also runs the automatic fix match
+again and applies its pick, unless `unmatched` is in `ignore-reasons`. The pick gets a card even when the
 opening search of its folder ID failed. The dialog keeps the last preview
 of the item while the page is open, so it shows it again, with **Run
 again**, when you reopen the dialog. A reload of the page, or a restart of
