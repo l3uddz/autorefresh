@@ -1,5 +1,5 @@
-import type { Candidate, EpisodeDiff, ItemDetail, MatchSearch, TimelineEvent } from './api';
-import { actionText, fixedBy, plural, titleYear } from './format';
+import type { Candidate, EpisodeDiff, ItemDetail, MatchSearch, RefreshAnswer, TimelineEvent } from './api';
+import { actionText, fixedBy, label, plural, titleYear } from './format';
 import { compareYear } from './match';
 
 // Facts of an item that come from its timeline, newest event first. The
@@ -21,24 +21,56 @@ export function disposition(detail: ItemDetail): Disposition | undefined {
   return undefined;
 }
 
-export type CheckResult = { kind: 'gone' } | { kind: 'complete' } | { kind: 'missing'; reasons: string[] };
+export type RefreshResult = { kind: 'gone' } | { kind: 'complete' } | { kind: 'missing'; reasons: string[] } | { kind: 'sent' };
 
-/** Returns the result of "Check now" from the detail that it answered. A
- * check reads a cached item. When Plex no longer has it, autorefresh
- * removes its row and records a gone event, so the item is not cached and
- * its newest event is gone. When the check completes it, the newest event
- * is completed. */
-export function checkResult(detail: ItemDetail): CheckResult {
-  const reasons = detail.item.reasons ?? [];
-  if (!detail.item.cached && detail.timeline[0]?.kind === 'gone') return { kind: 'gone' };
-  return reasons.length ? { kind: 'missing', reasons } : { kind: 'complete' };
+/** Returns the result of "Refresh now" from its answer. A check runs only
+ * for an item that was cached, and it is current only when the answer says
+ * so (checked). A checked item that is no longer cached was completed or
+ * removed during the refresh, by the check or by a read of a run, which
+ * its disposition tells, also when the request is the newest event. When
+ * Plex answers a request with 404, autorefresh records the item gone after
+ * it, so the newest event is gone. Otherwise, also for an answer without
+ * the detail, only the request was sent. */
+export function refreshResult(answer: RefreshAnswer): RefreshResult {
+  if (!answer.item || !answer.timeline) return { kind: 'sent' };
+  const detail = { item: answer.item, timeline: answer.timeline };
+  if (!answer.item.cached) {
+    if (!answer.checked) return answer.timeline[0]?.kind === 'gone' ? { kind: 'gone' } : { kind: 'sent' };
+    const end = disposition(detail)?.kind;
+    if (end === 'fixed') return { kind: 'complete' };
+    return end === 'removed' ? { kind: 'gone' } : { kind: 'sent' };
+  }
+  const reasons = answer.item.reasons ?? [];
+  return answer.checked && reasons.length ? { kind: 'missing', reasons } : { kind: 'sent' };
+}
+
+/** Returns the toast text of a "Refresh now" answer: the match that it
+ * applied or the refresh that it sent, and what the check after it found. */
+export function refreshText(answer: RefreshAnswer, title: string): string {
+  const result = refreshResult(answer);
+  const removed = `Plex no longer has ${title}. Autorefresh removed it from the queue.`;
+  if (result.kind === 'gone' && !answer.match) return removed;
+  const sent = answer.match
+    ? `Matched ${title} to ${titleYear(answer.match.title ?? answer.match.guid, answer.match.year)}`
+    : `Plex accepted the refresh of ${title}`;
+  switch (result.kind) {
+    case 'gone':
+      return `${sent}. Then ${removed}`;
+    case 'complete':
+      return `${sent}. It is complete.`;
+    case 'missing':
+      return `${sent}. Still missing: ${result.reasons.map(label).join(', ')}`;
+    default:
+      return sent;
+  }
 }
 
 // Presentation of timeline events. The texts use only fields of the API;
 // error texts are the redacted texts of the API.
 
 /** Returns the newest automatic fix match decision, which the Fix match
- * dialog explains. Manual searches record no decision. */
+ * dialog explains: of a run or of "Refresh now". Manual searches record no
+ * decision. */
 export function lastDecision(timeline: TimelineEvent[]): TimelineEvent | undefined {
   return timeline.find(event => event.kind === 'match-decision');
 }

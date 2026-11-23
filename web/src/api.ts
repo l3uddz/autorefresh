@@ -148,6 +148,16 @@ export interface ItemDetail {
   timeline: TimelineEvent[];
 }
 
+/** The answer of POST /api/item/refresh: the item detail after the
+ * refresh, the fix match that the refresh applied, if any, and whether a
+ * check after the request saved the current reasons of the item. Plex
+ * accepted the refresh, so the answer leaves out a detail that autorefresh
+ * failed to read. */
+export interface RefreshAnswer extends Partial<ItemDetail> {
+  match?: TimelineEvent['match'];
+  checked: boolean;
+}
+
 export interface LiveItem {
   summary?: string;
   guid?: string;

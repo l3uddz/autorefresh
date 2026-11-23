@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ItemDetail, ItemRecord, TimelineEvent } from './api';
-import { checkResult, decisionView, disposition, episodeDiffText, eventView, lastDecision, rowVerdict, searchSource, verdictName } from './timeline';
+import type { ItemDetail, ItemRecord, RefreshAnswer, TimelineEvent } from './api';
+import { decisionView, refreshResult, refreshText, disposition, episodeDiffText, eventView, lastDecision, rowVerdict, searchSource, verdictName } from './timeline';
 
 const item = (change: Partial<ItemRecord> = {}): ItemRecord => ({ srv: 0, key: '7', cached: false, attempts: 0, refreshes: 0, ...change });
 const event = (id: number, kind: string, change: Partial<TimelineEvent> = {}): TimelineEvent => ({ id, kind, accepted: false, at: `2026-11-${10 + id}T00:00:00Z`, searches: [], ...change });
@@ -35,16 +35,37 @@ describe('disposition', () => {
   });
 });
 
-describe('check result', () => {
-  const detail = (change: Partial<ItemRecord>, timeline: TimelineEvent[]): ItemDetail => ({ item: item(change), timeline });
+describe('refresh result', () => {
+  const answer = (change: Partial<ItemRecord>, timeline: TimelineEvent[], checked = true): RefreshAnswer => ({ item: item(change), timeline, checked });
 
   it('reports an item that Plex no longer has as gone, not complete', () => {
-    expect(checkResult(detail({}, [event(2, 'gone'), event(1, 'request')]))).toEqual({ kind: 'gone' });
+    expect(refreshResult(answer({}, [event(2, 'gone'), event(1, 'request')]))).toEqual({ kind: 'gone' });
   });
 
   it('reports a completed item as complete and an incomplete one with its reasons', () => {
-    expect(checkResult(detail({}, [event(2, 'completed')]))).toEqual({ kind: 'complete' });
-    expect(checkResult(detail({ cached: true, reasons: ['no-art'] }, [event(1, 'request')]))).toEqual({ kind: 'missing', reasons: ['no-art'] });
+    expect(refreshResult(answer({}, [event(2, 'completed'), event(1, 'request')]))).toEqual({ kind: 'complete' });
+    // A read of a run completed the item during the search, before the
+    // refresh, whose request is the newest event.
+    expect(refreshResult(answer({}, [event(3, 'request'), event(2, 'completed'), event(1, 'match-decision')]))).toEqual({ kind: 'complete' });
+    // A fixed item that was not cached: only the refresh was sent.
+    expect(refreshResult(answer({}, [event(3, 'request'), event(2, 'completed')], false))).toEqual({ kind: 'sent' });
+    expect(refreshResult(answer({ cached: true, reasons: ['no-art'] }, [event(1, 'request')]))).toEqual({ kind: 'missing', reasons: ['no-art'] });
+  });
+
+  it('reports only the request when no check saved the reasons', () => {
+    expect(refreshResult(answer({}, [event(1, 'request')]))).toEqual({ kind: 'sent' });
+    expect(refreshResult({ checked: true })).toEqual({ kind: 'sent' });
+    expect(refreshText({ checked: false, match: { guid: 'plex://show/1', title: 'Show' } }, 'Item')).toBe('Matched Item to Show');
+    expect(refreshResult(answer({ cached: true, reasons: ['no-art'] }, [event(1, 'request')], false))).toEqual({ kind: 'sent' });
+  });
+
+  it('names the match that the refresh applied and what the check found', () => {
+    const match = { guid: 'plex://show/1', title: 'Show', year: 2022 };
+    expect(refreshText({ ...answer({}, [event(2, 'completed')]), match }, 'Item')).toBe('Matched Item to Show (2022). It is complete.');
+    expect(refreshText(answer({ cached: true, reasons: ['no-art', 'no-summary'] }, [event(1, 'request')]), 'Item')).toBe('Plex accepted the refresh of Item. Still missing: no art, no summary');
+    expect(refreshText(answer({ cached: true, reasons: ['no-art'] }, [event(1, 'request')], false), 'Item')).toBe('Plex accepted the refresh of Item');
+    expect(refreshText(answer({}, [event(2, 'gone')]), 'Item')).toBe('Plex no longer has Item. Autorefresh removed it from the queue.');
+    expect(refreshText({ ...answer({}, [event(3, 'gone'), event(2, 'request')]), match }, 'Item')).toBe('Matched Item to Show (2022). Then Plex no longer has Item. Autorefresh removed it from the queue.');
   });
 });
 
