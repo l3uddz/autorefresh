@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/refresher"
 	"github.com/l3uddz/autorefresh/internal/store"
 	"github.com/l3uddz/autorefresh/internal/tmdb"
@@ -267,5 +268,48 @@ func TestCheckOfGoneItemAnswersUncachedWithGoneEvent(t *testing.T) {
 	}
 	if len(got.Timeline) == 0 || got.Timeline[0].Kind != "gone" {
 		t.Fatalf("expected newest event to be gone, timeline %+v", got.Timeline)
+	}
+}
+
+type fakeAutoMatch struct {
+	Actions
+	decision store.MatchDecision
+	err      error
+}
+
+func (a fakeAutoMatch) PreviewMatch(context.Context, string, string) (store.MatchDecision, error) {
+	return a.decision, a.err
+}
+
+func TestAutoMatchAnswersTheDecisionRedacted(t *testing.T) {
+	const secret = "fake-private-token"
+	at := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	actions := fakeAutoMatch{decision: store.MatchDecision{
+		At: at, Source: store.SourceAuto, Outcome: store.DecisionMatched, PathYear: 2018,
+		Error: "search failed at " + secret,
+		Searches: []store.MatchSearch{{Query: "tmdb-1", Source: "path", Candidates: []store.MatchCandidate{
+			{GUID: "plex://movie/1", Verdict: "picked", Thumb: "https://example.invalid/1?sig=" + secret},
+		}}},
+	}}
+	server := New(Options{Actions: actions, Secrets: []string{secret}, Credentials: []string{secret}, Servers: []PlexServer{{Name: "home"}}})
+	var got eventJSON
+	body := getJSON(t, server, "/api/item/auto-match?srv=0&key=1", &got)
+	if strings.Contains(body, secret) {
+		t.Fatalf("response holds the secret: %s", body)
+	}
+	if got.Kind != "match-decision" || got.Source != "auto" || got.Outcome != "matched" || !got.At.Equal(at) || got.PathYear != 2018 {
+		t.Errorf("decision = %+v", got)
+	}
+	if len(got.Searches) != 1 || len(got.Searches[0].Candidates) != 1 ||
+		got.Searches[0].Candidates[0].Verdict != "picked" || got.Searches[0].Candidates[0].Thumb != "" {
+		t.Errorf("searches = %+v", got.Searches)
+	}
+}
+
+func TestAutoMatchOfGoneItemAnswers404(t *testing.T) {
+	server := New(Options{Actions: fakeAutoMatch{err: plex.ErrNotFound}, Servers: []PlexServer{{Name: "home"}}})
+	rec := serve(server, httptest.NewRequest(http.MethodGet, "/api/item/auto-match?srv=0&key=1", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
 	}
 }

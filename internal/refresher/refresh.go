@@ -281,12 +281,21 @@ func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Libr
 	if it.Reasons&store.Unmatched == 0 || r.opts.IgnoreReasons&store.Unmatched != 0 || it.Refreshes < 1 {
 		return nil, nil
 	}
-	d := &decisionLog{}
-	ev, err := r.evaluateMatch(ctx, run, lib, it, d)
-	if recErr := r.recordDecision(ctx, run, it, d, ev, err); recErr != nil {
+	ev, dec, err := r.autoMatch(ctx, run, lib, it)
+	if recErr := r.recordDecision(ctx, run, it, dec, err); recErr != nil {
 		return nil, recErr
 	}
 	return ev.fm, err
+}
+
+// autoMatch runs the automatic fix match of the item and returns its
+// evaluation and its decision. A run and a preview both decide through it,
+// so they always choose the same way. err is the error of evaluateMatch,
+// which the decision also holds.
+func (r *Refresher) autoMatch(ctx context.Context, run *serverRun, lib plex.Library, it store.Item) (evaluation, store.MatchDecision, error) {
+	d := &decisionLog{}
+	ev, err := r.evaluateMatch(ctx, run, lib, it, d)
+	return ev, d.decision(ev, err), err
 }
 
 // evaluateMatch searches the fix match of the item and logs each search in
@@ -359,7 +368,8 @@ func (r *Refresher) resolveMatch(ctx context.Context, run *serverRun, mc matchCo
 // itemPaths returns the paths of the item: the movie files from the reads
 // of the run, or else the paths that Plex gives for the item. It saves the
 // folder of a series as the path of its row, also in a dry run, because the
-// path is cache metadata. A failed save returns an errCache error.
+// path is cache metadata, but not in a preview. A failed save returns an
+// errCache error.
 func (r *Refresher) itemPaths(ctx context.Context, run *serverRun, it store.Item) ([]string, error) {
 	if it.Type == plex.MovieLibrary {
 		if paths := run.files[it.RatingKey]; len(paths) > 0 {
@@ -370,7 +380,7 @@ func (r *Refresher) itemPaths(ctx context.Context, run *serverRun, it store.Item
 	if err != nil {
 		return nil, err
 	}
-	if folder := seriesFolder(it.Type, paths); folder != "" {
+	if folder := seriesFolder(it.Type, paths); folder != "" && !run.preview {
 		if err := r.store.SetPath(run.server.Name, it.RatingKey, folder); err != nil {
 			return nil, fmt.Errorf("%w: %w", errCache, err)
 		}
@@ -425,7 +435,7 @@ func foundLinks(results []searchResult, show bool) []string {
 // pass found no candidate, so the item then gets a plain refresh, as
 // without a TMDB client.
 func (r *Refresher) tmdbFallback(ctx context.Context, run *serverRun, lib plex.Library, it store.Item, ids []pathID, d *decisionLog) ([]searchResult, error) {
-	results, err := r.tmdbResults(ctx, run.server, lib, it, ids, d)
+	results, err := r.tmdbResults(ctx, run, lib, it, ids, d)
 	if !errors.Is(err, ErrTMDB) || ctx.Err() != nil {
 		return results, err
 	}

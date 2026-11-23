@@ -189,6 +189,7 @@ func New(opts Options) *Server {
 	s.api("POST /api/item/stop", s.serveStop)
 	s.api("POST /api/item/resume", s.serveResume)
 	s.api("GET /api/item/matches", s.serveMatches)
+	s.api("GET /api/item/auto-match", s.serveAutoMatch)
 	s.api("POST /api/item/episode-check", s.serveEpisodeCheck)
 
 	s.api("POST /api/runs", s.serveRunNow)

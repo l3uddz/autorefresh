@@ -143,6 +143,7 @@ type serverRun struct {
 	incomplete           int  // incomplete items that the summary counted; 0 without a summary
 	remaining            int  // due items that the limit or a stop kept from this run
 	tmdbFailed           bool // a TMDB lookup failed, so the run asks TMDB nothing more
+	preview              bool // a fix match preview, which writes nothing to the store
 }
 
 // completedItem is a row that a read of the run found complete.

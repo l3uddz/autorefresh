@@ -16,6 +16,7 @@ import (
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/refresher"
+	"github.com/l3uddz/autorefresh/internal/store"
 	"github.com/l3uddz/autorefresh/internal/tmdb"
 )
 
@@ -33,6 +34,7 @@ type Actions interface {
 	SetStopped(context.Context, string, string, bool) (bool, error)
 	SearchMatches(context.Context, string, string, refresher.MatchQuery) (refresher.MatchResult, error)
 	EpisodeCheck(context.Context, string, string, string) (refresher.EpisodeResult, error)
+	PreviewMatch(context.Context, string, string) (store.MatchDecision, error)
 }
 
 func (s *Server) api(pattern string, next http.HandlerFunc) {
@@ -241,6 +243,27 @@ func (s *Server) serveMatches(w http.ResponseWriter, r *http.Request) {
 		out.Searches = append(out.Searches, s.toSearchJSON(search))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// serveAutoMatch answers GET /api/item/auto-match with the decision that
+// the automatic fix match makes for the item now, as a match decision
+// event. The refresher records and applies nothing.
+func (s *Server) serveAutoMatch(w http.ResponseWriter, r *http.Request) {
+	a, ok := s.actionParams(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), searchTimeout)
+	defer cancel()
+	d, err := s.actions.PreviewMatch(ctx, a.server, a.key)
+	if err != nil {
+		s.writeActionError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.toEventJSON(store.Event{
+		At: d.At, Kind: store.EventMatchDecision, Source: d.Source, Outcome: string(d.Outcome), Error: d.Error,
+		Conflict: d.Conflict, PathYear: d.PathYear, TMDBYear: d.TMDBYear, EpisodeCount: d.EpisodeCount, Searches: d.Searches,
+	}))
 }
 
 func digits(s string) bool {
