@@ -86,7 +86,8 @@ interface Builder {
  * Candidates without a GUID stay apart, because Plex cannot apply them.
  * Groups that the typed search found come first, then those that more
  * folder IDs found, then the higher Plex score. A candidate ties to a TMDB
- * ID only when every search of that ID found it as the only candidate.
+ * ID only when a search of that ID found it as the only candidate and no
+ * search of that ID found another candidate.
  * typedYear is the year that the typed search sent, which its answer does
  * not carry. */
 export function groupCandidates(opening: MatchSearch[], typed: MatchSearch[] = [], typedYear?: number): CandidateGroup[] {
