@@ -174,7 +174,7 @@ function LiveError({ error }: { error: Error }) {
 /** Describes the last match that Plex accepted, from the timeline (newest
  * event first). */
 function lastMatch(timeline: TimelineEvent[]): string | undefined {
-  const event = timeline.find(e => e.kind === 'request' && e.accepted && (e.action === 'match' || e.action === 'tmdb-match') && e.match);
+  const event = timeline.find(e => e.kind === 'request' && e.accepted && ['match', 'tmdb-match', 'title-match'].includes(e.action ?? '') && e.match);
   if (!event?.match) return undefined;
   const name = event.match.title ? titleYear(event.match.title, event.match.year) : event.match.guid;
   const by = event.source === 'manual' ? 'matched by hand' : 'matched by autorefresh';

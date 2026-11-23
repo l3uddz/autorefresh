@@ -155,7 +155,8 @@ function comparedYears(event: TimelineEvent): string[] {
   const years = event.itemYear ? [`the item has ${event.itemYear}`] : [];
   if (event.pathYear) years.push(`the folder has ${event.pathYear}`);
   if (event.tmdbYear) years.push(`TMDB has ${event.tmdbYear}`);
-  else if (event.tmdbId) years.push('TMDB has no year');
+  // A title search compares episodes, never the TMDB year.
+  else if (event.tmdbId && !searchedTitle(event)) years.push('TMDB has no year');
   return years;
 }
 
@@ -211,7 +212,26 @@ function failedDetail(event: TimelineEvent): string | undefined {
 /** Returns why a decision found no match. */
 function noMatchDetail(event: TimelineEvent): string {
   if (event.conflict === 'year differs') return yearConflict(event);
+  if (event.conflict === 'not confirmed') return titleUnconfirmed(event);
+  if (event.conflict === 'folder id differs') {
+    return `The Plex metadata provider gives tmdb-${event.tmdbId ?? '?'} for the series that the title search found, but the folder names give another TMDB ID.`;
+  }
   return (event.conflict && conflictText[event.conflict]) || 'No search found a candidate.';
+}
+
+/** Explains why the TMDB episode numbers did not confirm the series that
+ * a title search found. */
+function titleUnconfirmed(event: TimelineEvent): string {
+  const found = 'The title search found one series with the same title and year, but nothing confirmed it.';
+  if (event.episodeDiff) return `${found} ${episodeDiffText(event.episodeDiff, event.tmdbId)}`;
+  if (event.tmdbId) return `${found} Plex lists no regular episodes to compare with tmdb-${event.tmdbId}.`;
+  return `${found} The Plex metadata provider has no TMDB ID for it.`;
+}
+
+/** Reports whether a decision searched by title, which only TMDB episode
+ * numbers confirm. */
+function searchedTitle(event: TimelineEvent): boolean {
+  return event.searches.some(s => s.source === 'title');
 }
 
 /** Returns the outcome of a fix match decision and why, with what the
@@ -247,6 +267,9 @@ function outcomeView(event: TimelineEvent): EventView {
 
 /** Returns how the years of a decision confirmed its match, if they did. */
 function confirmation(event: TimelineEvent): string | undefined {
+  if (event.episodeCount && searchedTitle(event)) {
+    return `The title search found one series with the same title and year, and the episode numbers of ${event.episodeCount} episodes from tmdb-${event.tmdbId ?? '?'} confirmed it.`;
+  }
   if (event.episodeCount) return `The episode numbers of ${event.episodeCount} episodes confirmed the candidate.`;
   if (event.tmdbYear) return `TMDB confirmed the year ${event.tmdbYear}.`;
   if (event.pathYear) return `The folder year ${event.pathYear} confirmed the candidate.`;
@@ -275,6 +298,7 @@ const verdictText: Record<string, string> = {
   picked: 'picked',
   'different candidate': 'another candidate',
   'not compared': 'not compared',
+  'other title': 'other title or year',
 };
 
 /** Returns the verdict of a candidate of the search for people. Conflicts

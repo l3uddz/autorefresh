@@ -162,6 +162,25 @@ describe('decision evidence', () => {
     expect(outcome({ outcome: 'failed', tmdbMissing: ['tvdb-5'] })).toBe('TMDB has no single entry for tvdb-5.');
   });
 
+  it('explains the decisions of a title search', () => {
+    const titleSearch = { query: 'Show', source: 'title', failed: false, candidates: [] };
+    const title = (fields: Partial<TimelineEvent>) => event(1, 'match-decision', { searches: [titleSearch], itemYear: 2020, ...fields });
+    expect(decisionView(title({ outcome: 'matched', episodeCount: 6, tmdbId: '88' })).detail).toBe(
+      'The title search found one series with the same title and year, and the episode numbers of 6 episodes from tmdb-88 confirmed it.',
+    );
+    expect(decisionView(title({ outcome: 'no-match', conflict: 'not confirmed', tmdbId: '88', episodeDiff: { season: 1, plex: 3, tmdb: 2, extra: [3] } })).detail).toBe(
+      'The title search found one series with the same title and year, but nothing confirmed it. The episode numbers differ from tmdb-88 in season 1: Plex has 3 episodes, and TMDB has 2. Only Plex has episode 3.',
+    );
+    expect(decisionView(title({ outcome: 'no-match', conflict: 'not confirmed' })).detail).toBe(
+      'The title search found one series with the same title and year, but nothing confirmed it. The Plex metadata provider has no TMDB ID for it.',
+    );
+    expect(decisionView(title({ outcome: 'no-match', conflict: 'folder id differs', tmdbId: '88' })).detail).toBe(
+      'The Plex metadata provider gives tmdb-88 for the series that the title search found, but the folder names give another TMDB ID.',
+    );
+    expect(decisionView(title({ outcome: 'failed', error: 'tmdb lookup: 500', tmdbId: '88' })).detail).toBe('tmdb lookup: 500');
+    expect(verdictName('other title', { query: 'Show' })).toBe('other title or year');
+  });
+
   it('explains an episode comparison that differs', () => {
     expect(episodeDiffText({ season: 1, plex: 10, tmdb: 10, missing: [11], extra: [0] }, '5')).toBe(
       'The episode numbers differ from tmdb-5 in season 1: Plex and TMDB both have 10 episodes, but with other numbers. Only TMDB has episode 11. Only Plex has episode 0.',

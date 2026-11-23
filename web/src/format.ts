@@ -127,9 +127,11 @@ const outcomeText: Record<string, string> = {
   refresh: 'refresh',
   match: 'match',
   'tmdb-match': 'TMDB match',
+  'title-match': 'title match',
   'refresh-failed': 'refresh failed',
   'match-failed': 'match failed',
   'tmdb-match-failed': 'TMDB match failed',
+  'title-match-failed': 'title match failed',
   'search-failed': 'search failed',
 };
 
