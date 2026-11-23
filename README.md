@@ -325,13 +325,17 @@ Plex returns many series for a title search, so the search alone proves
 nothing. Autorefresh applies a match only if all of these are true:
 
 1. Exactly one candidate has the same title as the item, ignoring case,
-   spaces, and punctuation, and a year that differs by 1 or less. A title
-   without letters or digits matches nothing. Other
-   candidates get the verdict "other title or year".
-2. The Plex metadata provider gives a TMDB ID for that candidate. If the
+   spaces, and punctuation, and a year that differs by 1 or less from the
+   year of the item and from the year of the series folder, such as
+   `(2012)`, if it has one. Symbols such as `+` count, and a title without
+   letters or digits matches nothing. Other candidates get the verdict
+   "other title or year".
+2. The Plex metadata provider gives one TMDB ID for that candidate. If it
+   gives several different ones, nothing confirms the candidate. If the
    folder names give TMDB IDs, each of them must be that ID: each `tmdb`
    ID, and the TMDB ID that TMDB gives for each `imdb` ID and each `tvdb`
-   ID. Otherwise the conflict is `folder id differs`.
+   ID. An ID that TMDB has several entries for names no single series.
+   Otherwise the conflict is `folder id differs`.
 3. Every local regular season has the same episode count and numbers as
    that season in TMDB, as in the year check above. Otherwise the conflict
    is `not confirmed`, and the decision keeps the first season that

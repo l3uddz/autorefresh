@@ -33,6 +33,9 @@ type decisionLog struct {
 	searches []store.MatchSearch
 	evidence store.MatchEvidence
 	err      error // a failure that the code handled (a swallowed TMDB or confirmation failure)
+	// severalTMDB are the path IDs of TMDBMissing that TMDB has several
+	// entries for, so the folder names no single series.
+	severalTMDB []string
 }
 
 // skipTMDB keeps the first reason why the evaluation asked TMDB nothing. An
@@ -43,10 +46,14 @@ func (d *decisionLog) skipTMDB(reason string) {
 	}
 }
 
-// noTMDBEntry logs that TMDB has no single entry for the path ID from.
-func (d *decisionLog) noTMDBEntry(from pathID) {
+// noTMDBEntry logs that TMDB has no single entry for the path ID from: none,
+// or several.
+func (d *decisionLog) noTMDBEntry(from pathID, entries tmdbEntries) {
 	if !slices.Contains(d.evidence.TMDBMissing, from.title()) {
 		d.evidence.TMDBMissing = append(d.evidence.TMDBMissing, from.title())
+	}
+	if entries == tmdbSeveral && !slices.Contains(d.severalTMDB, from.title()) {
+		d.severalTMDB = append(d.severalTMDB, from.title())
 	}
 }
 
@@ -130,17 +137,18 @@ func verdict(m store.MatchSearch, c store.MatchCandidate, guid, conflict string,
 }
 
 // judgeTitle sets the verdict of each candidate of the title search at pos
-// of a series it. A candidate with another title or year gets "other
-// title". Of the others, picked is the GUID of the match, and conflict the
-// conflict of no match. A handled failure leaves every verdict empty.
-func (d *decisionLog) judgeTitle(pos int, it store.Item, picked, conflict string) {
+// of a series it with the folder year pathYear. A candidate with another
+// title or year gets "other title". Of the others, picked is the GUID of the
+// match, and conflict the conflict of no match. A handled failure leaves
+// every verdict empty.
+func (d *decisionLog) judgeTitle(pos int, it store.Item, pathYear int, picked, conflict string) {
 	if d.err != nil {
 		return
 	}
 	m := &d.searches[pos]
 	for i, c := range m.Candidates {
 		switch {
-		case !titleAgrees(it, c.Name, c.Year):
+		case !titleAgrees(it, pathYear, c.Name, c.Year):
 			m.Candidates[i].Verdict = verdictOtherTitle
 		case conflict != "":
 			m.Candidates[i].Verdict = conflict

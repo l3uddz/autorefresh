@@ -9,6 +9,7 @@ import (
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
+	"github.com/l3uddz/autorefresh/internal/tmdb"
 )
 
 // The title search of the unmatched show 201 ("Title 201", 2020) and the
@@ -48,7 +49,7 @@ func TestTitleMatchWithoutFolderIDs(t *testing.T) {
 	wantCalls(t, ft.calls, "SeasonEpisodes 88 1")
 	e := f.decision("201")
 	wantDecision(t, e, store.DecisionMatched, "", titleVerdicts)
-	wantYears(t, e, 0, 0, 3)
+	wantYears(t, e, 2020, 0, 3)
 	wantEvidence(t, e, store.MatchEvidence{TMDBID: "88"})
 	sent := f.logLines("info", "Sent request")
 	if len(sent) == 0 {
@@ -82,7 +83,7 @@ func TestTitleMatchEpisodesDiffer(t *testing.T) {
 	e := f.decision("201")
 	wantDecision(t, e, store.DecisionNoMatch, "not confirmed",
 		"title Title 201: plex://show/t=not confirmed plex://show/o=other title plex://show/y=other title")
-	wantYears(t, e, 0, 0, 0)
+	wantYears(t, e, 2020, 0, 0)
 	wantEvidence(t, e, store.MatchEvidence{TMDBID: "88",
 		EpisodeDiff: store.EpisodeDiff{Season: 1, Plex: 3, TMDB: 2, Extra: []int{3}}})
 }
@@ -242,6 +243,38 @@ func TestTitleMatchAnyFolderTMDBIDDiffers(t *testing.T) {
 	}
 }
 
+// A folder ID that TMDB has several entries for names no single series,
+// so it vetoes the title match, also when the TMDB fallback asked first.
+func TestTitleMatchFolderIDWithSeveralTMDBEntries(t *testing.T) {
+	f, fp, ft := titleFixture(t, "tvdb-5")
+	ft.errs = map[string]error{"tvdb 5 true": tmdb.ErrSeveral}
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 201")
+	wantCalls(t, ft.calls, "Find tvdb 5 true")
+	e := f.decision("201")
+	if e.Conflict != "folder id differs" || store.DecisionOutcome(e.Outcome) != store.DecisionNoMatch {
+		t.Errorf("decision = %q · %q, want no-match · folder id differs", e.Outcome, e.Conflict)
+	}
+	wantEvidence(t, e, store.MatchEvidence{TMDBID: "88", TMDBMissing: []string{"tvdb-5"}})
+}
+
+// A title candidate whose year differs from the year of the series folder
+// is another series, such as a remake.
+func TestTitleMatchFolderYearDiffers(t *testing.T) {
+	f, fp, _ := titleFixture(t)
+	fp.paths["201"] = []string{"/tv/Title 201 (2012)"}
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 201")
+	e := f.decision("201")
+	wantDecision(t, e, store.DecisionNoMatch, "",
+		"title Title 201: plex://show/t=other title plex://show/o=other title plex://show/y=other title")
+	wantYears(t, e, 2012, 0, 0)
+}
+
 func TestTitleAgrees(t *testing.T) {
 	it := store.Item{Title: "Limitless With Chris Hemsworth", Year: 2022}
 	for _, c := range []struct {
@@ -255,16 +288,31 @@ func TestTitleAgrees(t *testing.T) {
 		{"Limitless with Chris Hemsworth", 2025, false},
 		{"Limitless with Chris Hemsworth", 0, false},
 	} {
-		if got := titleAgrees(it, c.name, c.year); got != c.want {
+		if got := titleAgrees(it, 0, c.name, c.year); got != c.want {
 			t.Errorf("titleAgrees(%q, %d) = %v, want %v", c.name, c.year, got, c.want)
 		}
 	}
 	// Vowel signs are marks, and they tell these titles apart.
-	if titleAgrees(store.Item{Title: "कला", Year: 2020}, "कली", 2020) {
+	if titleAgrees(store.Item{Title: "कला", Year: 2020}, 0, "कली", 2020) {
 		t.Error("titles that differ in a vowel sign agree")
 	}
-	if titleAgrees(store.Item{Title: "!!!", Year: 2020}, "???", 2020) {
+	if titleAgrees(store.Item{Title: "!!!", Year: 2020}, 0, "???", 2020) {
 		t.Error("titles without letters or digits agree")
+	}
+	// A combining mark alone is no letter.
+	if titleAgrees(store.Item{Title: "\u0301", Year: 2020}, 0, "\u0301", 2020) {
+		t.Error("titles of marks alone agree")
+	}
+	// Symbols tell titles apart.
+	if titleAgrees(store.Item{Title: "Example+", Year: 2020}, 0, "Example", 2020) {
+		t.Error("Example+ agrees with Example")
+	}
+	// The folder year must agree too.
+	if titleAgrees(store.Item{Title: "Example", Year: 2022}, 2012, "Example", 2022) {
+		t.Error("a candidate of 2022 agrees with the folder year 2012")
+	}
+	if !titleAgrees(store.Item{Title: "Example", Year: 2022}, 2022, "Example", 2022) {
+		t.Error("a candidate of 2022 does not agree with the folder year 2022")
 	}
 }
 
