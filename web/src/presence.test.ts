@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { afterExit, closeAction, nextShown } from './presence';
+import { afterExit, closeAction, nextShown, selects } from './presence';
 
 describe('drawer presence', () => {
   const key = (value: { id: number }) => String(value.id);
@@ -33,5 +33,14 @@ describe('drawer presence', () => {
     // A close event queued before the drawer opened again is stale.
     expect(closeAction(true, true)).toBe('ignore');
     expect(closeAction(true, false)).toBe('ignore');
+  });
+
+  it('dismisses only while the live route still selects the value that closed', () => {
+    const one = { id: 1 };
+    expect(selects({ id: 1 }, one, key)).toBe(true);
+    // The route already moved to another item, so a late close must not undo it.
+    expect(selects({ id: 2 }, one, key)).toBe(false);
+    expect(selects(undefined, one, key)).toBe(false);
+    expect(selects(one, undefined, key)).toBe(false);
   });
 });

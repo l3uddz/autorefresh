@@ -29,29 +29,44 @@ export function closeAction(isDialogOpen: boolean, isSelected: boolean): 'ignore
   return isSelected ? 'dismiss' : 'drop';
 }
 
+/** Reports whether live, the selection of the current location, is the
+ * closed value. A close event can come after the location moved on, and
+ * then dismissing would undo the newer navigation. */
+export function selects<T>(live: T | undefined, closed: T | undefined, key: (value: T) => string): boolean {
+  return live !== undefined && closed !== undefined && key(live) === key(closed);
+}
+
 /** Returns the value that a drawer shows, as nextShown decides, and a ref
  * for the Drawer. The ref listens for the close event of its dialog and
  * acts as closeAction decides: the event comes when the exit slide ends,
  * or when the browser closes the dialog by itself, as a Back gesture does,
- * and then onDismiss closes the selection. The value can also close before
+ * and then onDismiss closes the selection if readLive, which reads the
+ * selection of the current location, still selects the closed value. The value can also close before
  * the dialog opened. Then no slide runs, so a dialog that is closed after a
  * render drops the value too. */
 export function useShown<T>(
   value: T | undefined,
   key: (value: T) => string,
   onDismiss: () => void,
+  readLive: () => T | undefined,
 ): [shown: T | undefined, ref: (dialog: HTMLDialogElement | null) => (() => void) | undefined] {
   const [shown, setShown] = useState(value);
   const next = nextShown(shown, value, key);
   if (next !== shown) setShown(next);
-  // The close event reads the value and the callback of the latest render.
+  // The close event reads the values and callbacks of the latest render.
   const latest = useRef(value);
+  const shownRef = useRef(next);
   const dismiss = useRef(onDismiss);
+  const live = useRef(readLive);
+  const keyRef = useRef(key);
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   // This effect runs after the effect of the Drawer, which starts the slide.
   useEffect(() => {
     latest.current = value;
+    shownRef.current = next;
     dismiss.current = onDismiss;
+    live.current = readLive;
+    keyRef.current = key;
     const dialog = dialogRef.current;
     if (dialog && !dialog.open) setShown(current => afterExit(current, value));
   });
@@ -59,9 +74,9 @@ export function useShown<T>(
     dialogRef.current = dialog;
     if (!dialog) return undefined;
     const onClose = () => {
-      const action = closeAction(dialog.open, latest.current !== undefined);
+      const action = closeAction(dialog.open, selects(live.current(), shownRef.current, keyRef.current));
       if (action === 'dismiss') dismiss.current();
-      if (action === 'drop') setShown(undefined);
+      if (action === 'drop') setShown(current => afterExit(current, latest.current));
     };
     dialog.addEventListener('close', onClose);
     return () => {

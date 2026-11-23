@@ -34,7 +34,7 @@ import { fixedBy, label, plural, queueState, relative } from './format';
 import { Poster, Reasons } from './media';
 import { useShown } from './presence';
 import { NothingMatched, startBulkRefresh, useIsRefreshBusy } from './queue';
-import { itemHash, navigate, tabNames, type ItemKey, type TabName } from './route';
+import { itemHash, navigate, parseRoute, tabNames, type ItemKey, type TabName } from './route';
 import { useRowOpen } from './rowopen';
 import { chooseSort, formatSort, parseSort, sortKeys, stableRows, tableRow, type TableRow } from './table';
 
@@ -284,12 +284,18 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
 /** The item details of table mode in a drawer. It keeps the item while it
  * slides out, and drops it once the slide ends. */
 function ItemDrawer({ item, server, ignored, onClose }: { item?: ItemKey; server: (key: ItemKey) => ServerInfo | undefined; ignored: string[]; onClose: () => void }) {
-  const [shown, drawerRef] = useShown(item, itemID, onClose);
+  const [shown, drawerRef] = useShown(item, itemID, onClose, liveItem);
   return (
     <Drawer isOpen={Boolean(item)} onOpenChange={open => !open && onClose()} ref={drawerRef} label="Item details" width={600} padding={0}>
       {shown ? <ItemDetail key={itemID(shown)} target={shown} server={server(shown)} ignored={ignored} onClose={onClose} /> : null}
     </Drawer>
   );
+}
+
+/** Returns the item that the current location selects. */
+function liveItem(): ItemKey | undefined {
+  const route = parseRoute(window.location.hash);
+  return route.page === 'items' ? route.item : undefined;
 }
 
 function DetailPane({ detail }: { detail?: React.ReactNode }) {
