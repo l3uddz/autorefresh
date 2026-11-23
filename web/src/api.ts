@@ -141,6 +141,12 @@ export interface ServerInfo {
   name: string;
   machineIdentifier?: string;
   scanned: boolean;
+  /** When the next full cache refresh of a library is due, absent without
+   * libraries. */
+  nextFullRead?: string;
+  /** True when the next full cache refresh is due at the time of the
+   * answer. */
+  fullReadDue?: boolean;
   libraries: Library[];
 }
 
@@ -187,6 +193,8 @@ export interface Status {
   seq: number;
   servers: ServerStatus[];
   tmdb: 'off' | Health;
+  /** The next start of the run schedule, absent without a schedule. */
+  nextRun?: string;
 }
 
 export interface RunRecord {
@@ -209,6 +217,10 @@ export interface RunRecord {
   due: number;
   selected: number;
   skipped: number;
+  /** The libraries that the run read fully and incrementally. Older runs
+   * have neither. */
+  fullReads?: number;
+  incrementalReads?: number;
 }
 
 export interface RunItem {

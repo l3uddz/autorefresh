@@ -42,7 +42,7 @@ func TestRunWritesFinishedRunRow(t *testing.T) {
 	want := store.Run{
 		ID: got.ID, Server: testServer, Kind: store.RunKindRun, Source: store.RunSourceSchedule,
 		Status: store.RunFinished, StartedAt: t0, FinishedAt: t0,
-		ReadItems: 1, Refreshed: 1, Incomplete: 1, Due: 1, Selected: 1,
+		ReadItems: 1, Refreshed: 1, Incomplete: 1, Due: 1, Selected: 1, FullReads: 1,
 	}
 	if got != want {
 		t.Errorf("run = %+v, want %+v", got, want)

@@ -15,7 +15,7 @@ const maxBulkItems = 5000
 
 // Jobs is the set of background dashboard actions.
 type Jobs interface {
-	RunNow([]string) ([]int64, error)
+	RunNow(names []string, full bool) ([]int64, error)
 	BulkRefresh(string, []string) (int64, error)
 	Cancel(int64) error
 }
@@ -33,7 +33,8 @@ func (s *Server) serveRunNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Srv *int `json:"srv"`
+		Srv  *int `json:"srv"`
+		Full bool `json:"full"` // read every library fully
 	}
 	if !decodeBody(w, r, &body) {
 		return
@@ -47,7 +48,7 @@ func (s *Server) serveRunNow(w http.ResponseWriter, r *http.Request) {
 		}
 		names = []string{s.servers[srv].Name}
 	}
-	ids, err := s.jobs.RunNow(names)
+	ids, err := s.jobs.RunNow(names, body.Full)
 	if err != nil {
 		s.writeJobError(w, r, err)
 		return

@@ -27,7 +27,8 @@ func supported(lib plex.Library) bool {
 
 // readLibraries selects the libraries of the server and reads each one into
 // the cache. It returns only the error of stopError, the error of a failed
-// library listing, or a store error. It logs and skips the other failures.
+// library listing, a store error, or in a full run the error of a failed
+// library read. It logs and skips the other failures.
 func (r *Refresher) readLibraries(ctx context.Context, run *serverRun) error {
 	libraries, err := run.server.Plex.Libraries(ctx)
 	if err != nil {
@@ -151,7 +152,7 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 		Server:  name,
 		Section: lib.ID,
 		At:      at,
-		Full:    state.LastFullRead.IsZero() || !r.opts.CacheRefresh.Next(state.LastFullRead).After(at),
+		Full:    run.full || state.LastFullRead.IsZero() || !r.opts.CacheRefresh.Next(state.LastFullRead).After(at),
 		Shows:   lib.Type == plex.ShowLibrary,
 		DryRun:  r.opts.DryRun,
 	}
@@ -164,7 +165,7 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 
 	items, err := r.listItems(ctx, client, lib.ID, itemType, rd.Full, state.LastRead)
 	if err != nil {
-		return readFailed(ctx, name, lib, err)
+		return readFailed(ctx, run, lib, err)
 	}
 	rd.Items = make([]store.Item, 0, len(items))
 	seen := make([]string, 0, len(items))
@@ -179,13 +180,13 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 			return err
 		}
 		if rd.Gone, rd.Folders, err = goneKeys(ctx, client, name, lib, unseen); err != nil {
-			return readFailed(ctx, name, lib, err)
+			return readFailed(ctx, run, lib, err)
 		}
 	}
 
 	if rd.Shows {
 		if rd.EpisodeNoSummary, rd.EpisodeUnmatched, err = r.episodeSeries(ctx, client, name, lib, at); err != nil {
-			return readFailed(ctx, name, lib, err)
+			return readFailed(ctx, run, lib, err)
 		}
 	}
 
@@ -204,8 +205,10 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 // match can use instead of a request.
 func (run *serverRun) recordRead(rd store.Read, lib plex.Library, items []plex.Item, fixed []store.Item) {
 	if rd.Full {
+		run.fullReads++
 		run.fullReadItems += len(items)
 	} else {
+		run.incrementalReads++
 		run.incrementalReadItems += len(items)
 	}
 	for _, it := range fixed {
@@ -239,13 +242,18 @@ func stopError(ctx context.Context, err error) error {
 	return nil
 }
 
-// readFailed returns the error of stopError. Otherwise it logs err and
-// returns nil, so the library keeps its cache and the run continues.
-func readFailed(ctx context.Context, server string, lib plex.Library, err error) error {
+// readFailed returns the error of stopError. A full run promises a full
+// read of every library before it refreshes, so it also returns the other
+// errors and ends. Otherwise it logs err and returns nil, so the library
+// keeps its cache and the run continues.
+func readFailed(ctx context.Context, run *serverRun, lib plex.Library, err error) error {
 	if stop := stopError(ctx, err); stop != nil {
 		return stop
 	}
-	log.Warn().Str("server", server).Str("library", lib.Title).Err(err).Msg("Reading library failed")
+	if run.full {
+		return fmt.Errorf("reading library %s: %w", lib.Title, err)
+	}
+	log.Warn().Str("server", run.server.Name).Str("library", lib.Title).Err(err).Msg("Reading library failed")
 	return nil
 }
 

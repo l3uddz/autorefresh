@@ -89,8 +89,10 @@ func (j *Jobs) launch(ids []int64, work func(context.Context)) {
 	}()
 }
 
-// RunNow admits a manual scan of the selected servers. Nil selects all servers.
-func (j *Jobs) RunNow(names []string) ([]int64, error) {
+// RunNow admits a manual scan of the selected servers. Nil selects all
+// servers. With full, the run reads every library fully, also when its full
+// read is not due.
+func (j *Jobs) RunNow(names []string, full bool) ([]int64, error) {
 	if err := j.admit(); err != nil {
 		return nil, err
 	}
@@ -105,8 +107,9 @@ func (j *Jobs) RunNow(names []string) ([]int64, error) {
 		return nil, fmt.Errorf("%w: %w", ErrStore, err)
 	}
 	ids := make([]int64, len(runs))
-	for i, run := range runs {
-		ids[i] = run.id
+	for i := range runs {
+		runs[i].full = full
+		ids[i] = runs[i].id
 	}
 	j.launch(ids, func(ctx context.Context) {
 		if err := j.r.execute(ctx, runs); err != nil {

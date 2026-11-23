@@ -178,3 +178,37 @@ func TestBulkMatchingPagesAndAppliesFilter(t *testing.T) {
 		t.Fatalf("selected keys = %d, includes excluded = %v", len(jobs.keys), slices.Contains(jobs.keys, "9000"))
 	}
 }
+
+// runNowJobs records the arguments of RunNow.
+type runNowJobs struct {
+	Jobs
+	names []string
+	full  bool
+}
+
+func (j *runNowJobs) RunNow(names []string, full bool) ([]int64, error) {
+	j.names, j.full = names, full
+	return []int64{7}, nil
+}
+
+func TestRunNowPassesFull(t *testing.T) {
+	tests := []struct {
+		body      string
+		wantNames []string
+		wantFull  bool
+	}{
+		{`{}`, nil, false},
+		{`{"srv": 1, "full": true}`, []string{"away"}, true},
+		{`{"full": true}`, nil, true},
+	}
+	for _, tt := range tests {
+		jobs := &runNowJobs{}
+		s := New(Options{Jobs: jobs, Servers: []PlexServer{{Name: "home"}, {Name: "away"}}})
+		req := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(tt.body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := serve(s, req)
+		if rec.Code != http.StatusAccepted || !reflect.DeepEqual(jobs.names, tt.wantNames) || jobs.full != tt.wantFull {
+			t.Errorf("%s: code %d, names %v, full %v; want 202, %v, %v", tt.body, rec.Code, jobs.names, jobs.full, tt.wantNames, tt.wantFull)
+		}
+	}
+}
