@@ -704,8 +704,8 @@ func TestRunMatchFollowUpCanceledEndsTheRun(t *testing.T) {
 	}
 }
 
-// After a 500 on the follow-up refresh, the run still checks the matched
-// item. Then it refreshes its next item.
+// After a 500 on the follow-up refresh, the run logs the failure and still
+// checks the matched item. Then it refreshes its next item.
 func TestRunMatchFollowUpServerErrorKeepsTheRunGoing(t *testing.T) {
 	f, fp, checks := runMatchFixture(t, checkAnswer{item: completeItem("101")})
 	f.seed(testServer, moviesLib, incompleteItem("102"), store.NoSummary, 2)
@@ -717,6 +717,12 @@ func TestRunMatchFollowUpServerErrorKeepsTheRunGoing(t *testing.T) {
 	if *checks != 1 {
 		t.Errorf("checks = %d, want 1", *checks)
 	}
+	warnings := f.logLines("warn", "Following up a match failed")
+	if len(warnings) != 1 {
+		t.Fatalf("got %d follow-up warnings, want 1", len(warnings))
+	}
+	wantField(t, warnings[0], "step", "refresh")
+	wantField(t, warnings[0], "error", errServer.Error())
 	if _, found := f.row(testServer, "1", "101"); found {
 		t.Error("complete item still in the cache")
 	}
