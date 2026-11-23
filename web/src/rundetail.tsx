@@ -37,7 +37,7 @@ interface Props {
 export function RunDrawer({ id, isMulti, srv, onClose }: Props) {
   // The drawer keeps the run while it slides out, and drops it once the
   // slide ends. A new run starts at the top of its items.
-  const [shown, drawerRef] = useShown(id, String);
+  const [shown, drawerRef] = useShown(id, String, onClose);
   return (
     <Drawer isOpen={id !== undefined} onOpenChange={open => !open && onClose()} ref={drawerRef} label="Run details" width={600} padding={0}>
       {shown !== undefined ? <RunDetails key={shown} id={shown} isMulti={isMulti} srv={srv} onClose={onClose} isPinned /> : null}
