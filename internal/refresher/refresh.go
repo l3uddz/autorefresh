@@ -358,7 +358,7 @@ func (r *Refresher) evaluateMatch(ctx context.Context, run *serverRun, lib plex.
 	}
 	ids := parseIDs(paths)
 	if len(ids) == 0 {
-		if r.titleFallback(run, it, nil) {
+		if r.titleFallback(run, it, paths, nil) {
 			return r.titleMatch(ctx, run, matchContext{lib: lib, it: it, paths: paths, d: d})
 		}
 		return evaluation{noIDs: true}, nil
@@ -378,7 +378,7 @@ func (r *Refresher) evaluateMatch(ctx context.Context, run *serverRun, lib plex.
 		action = store.ActionTMDBMatch
 	}
 	mc := matchContext{lib: lib, it: it, paths: paths, ids: ids, results: results, d: d}
-	if r.titleFallback(run, it, results) {
+	if r.titleFallback(run, it, paths, results) {
 		return r.titleMatch(ctx, run, mc)
 	}
 	return r.resolveMatch(ctx, run, mc, action)

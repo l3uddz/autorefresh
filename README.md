@@ -317,6 +317,8 @@ true:
 - The item is a series. A movie has no episodes to confirm a title, so a
   movie never gets this pass.
 - The item has a year in Plex.
+- The series folders do not hold different years, such as `(2012)` and
+  `(2020)`, which can mean that one item holds two series.
 - No search of the passes above found a candidate, or the paths hold no ID.
 - No TMDB failure in the same run turned TMDB off.
 
@@ -341,9 +343,10 @@ nothing. Autorefresh applies a match only if all of these are true:
    is `not confirmed`, and the decision keeps the first season that
    differs.
 
-The match request has the action `title-match`. A failed provider or TMDB
-request is a failed decision: the item gets a plain refresh, and the run
-goes on.
+The match request has the action `title-match`. A failed title search,
+provider request, or TMDB request is a failed decision: the item gets a
+plain refresh, and the run goes on. Only a `404 Not Found` answer of the
+title search keeps its meaning: the item is gone.
 
 ### History
 

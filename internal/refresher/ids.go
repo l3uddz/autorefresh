@@ -62,23 +62,29 @@ var (
 // "/media/Backup (2019)/..." never supply a year. It returns 0 if no such
 // year exists or multiple different years appear.
 func parsePathYear(paths []string, show bool) int {
+	year, _ := pathYears(paths, show)
+	return year
+}
+
+// pathYears is parsePathYear that also reports whether the paths hold
+// several different years (ambiguous), as opposed to none.
+func pathYears(paths []string, show bool) (year int, ambiguous bool) {
 	segments := 2
 	if show {
 		segments = 1
 	}
-	var year int
 	for _, path := range paths {
 		for _, seg := range tailSegments(path, segments) {
-			y, ambiguous := segmentYear(seg)
-			if ambiguous || (y != 0 && year != 0 && year != y) {
-				return 0
+			y, several := segmentYear(seg)
+			if several || (y != 0 && year != 0 && year != y) {
+				return 0, true
 			}
 			if y != 0 {
 				year = y
 			}
 		}
 	}
-	return year
+	return year, false
 }
 
 // segmentYear returns the single plausible release year in parentheses within

@@ -14,11 +14,15 @@ import (
 )
 
 // titleFallback reports whether the fix match of the item searches Plex by
-// its title: a series with a year, whose searches found no candidate, with
-// a TMDB client that no failure of the run turned off. The title search
-// alone proves nothing, so only TMDB episode numbers confirm its candidate.
-func (r *Refresher) titleFallback(run *serverRun, it store.Item, results []searchResult) bool {
+// its title: a series with a year, whose folders do not hold different
+// years, whose searches found no candidate, with a TMDB client that no
+// failure of the run turned off. The title search alone proves nothing, so
+// only TMDB episode numbers confirm its candidate.
+func (r *Refresher) titleFallback(run *serverRun, it store.Item, paths []string, results []searchResult) bool {
 	if it.Type != plex.ShowLibrary || it.Year == 0 || r.opts.TMDB == nil || run.tmdbFailed {
+		return false
+	}
+	if _, ambiguous := pathYears(paths, true); ambiguous {
 		return false
 	}
 	return !slices.ContainsFunc(results, func(res searchResult) bool { return len(res.candidates) > 0 })
@@ -30,13 +34,23 @@ func (r *Refresher) titleFallback(run *serverRun, it store.Item, results []searc
 // metadata provider gives the TMDB ID of that candidate, which must equal
 // every TMDB ID of the folder names (folderTMDBIDs), and every local season
 // must have the episode numbers of TMDB. err is the error of the title
-// search or of the episode read, or a store error.
+// search that says that the item is gone or of the episode read, or a store
+// error. Another failed title search is a handled failure: before the title
+// fallback, the item got a plain refresh without it.
 func (r *Refresher) titleMatch(ctx context.Context, run *serverRun, mc matchContext) (evaluation, error) {
 	srv := run.server
 	cands, err := srv.Plex.SearchMatches(ctx, mc.it.RatingKey, mc.it.Title, mc.lib.Agent, mc.lib.Language, mc.it.Year)
 	mc.d.addSearch(mc.it.Title, searchTitle, "", cands, err != nil)
-	if err != nil {
+	switch {
+	case ctx.Err() != nil:
+		return evaluation{}, ctx.Err()
+	case errors.Is(err, plex.ErrNotFound):
 		return evaluation{}, err
+	case err != nil:
+		mc.d.fail(err)
+		run.failures++
+		itemEvent(log.Warn(), srv.Name, mc.lib, mc.it).Err(err).Msg("Match title search failed")
+		return evaluation{}, nil
 	}
 	itemEvent(log.Debug(), srv.Name, mc.lib, mc.it).Int("candidates", len(cands)).Msg("Match title search result")
 	pos := len(mc.d.searches) - 1

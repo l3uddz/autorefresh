@@ -340,3 +340,39 @@ func TestTitleMatchTMDBFailureTurnsTitleSearchOff(t *testing.T) {
 		t.Errorf("run = %+v, want a finished run", run)
 	}
 }
+
+// A failed title search is a handled failure: before the title fallback,
+// the item got a plain refresh, so it still gets one, and the run goes on
+// to the next item.
+func TestTitleSearchFailureSendsPlainRefresh(t *testing.T) {
+	f, fp, _ := titleFixture(t)
+	fp.searchErrs[titleSearch] = fmt.Errorf("504 Gateway Timeout: %w", plex.ErrUnavailable)
+	second := unmatchedItem("202")
+	second.AddedAt = addedAt.Add(time.Hour)
+	f.seed(testServer, showsLib, second, store.Unmatched, 1)
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 201", "Refresh 202")
+	e := f.decision("201")
+	if store.DecisionOutcome(e.Outcome) != store.DecisionFailed || !strings.Contains(e.Error, "504") {
+		t.Errorf("decision = %q (%q), want failed with the search error", e.Outcome, e.Error)
+	}
+	wantDecision(t, e, store.DecisionFailed, "", "title Title 201 failed:")
+	if run := f.onlyRun(); run.Status != store.RunFinished || run.Failed != 1 {
+		t.Errorf("run = %+v, want a finished run with 1 failure", run)
+	}
+}
+
+// Folders with different years, such as two volumes of one item, name no
+// single series, so the title fallback does not run.
+func TestTitleFallbackSkipsFoldersWithDifferentYears(t *testing.T) {
+	f, fp, _ := titleFixture(t)
+	fp.paths["201"] = []string{"/tv/Title 201 (2012)", "/tv/Title 201 (2020)"}
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 201")
+	wantCalls(t, matchReads(fp.calls), "ItemPaths 201")
+	wantDecision(t, f.decision("201"), store.DecisionNoIDs, "")
+}
