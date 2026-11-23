@@ -38,25 +38,27 @@ var idPattern = regexp.MustCompile(`^[0-9]+$`)
 
 // Client sends requests to one Plex server.
 type Client struct {
-	name  string
-	base  *url.URL
-	token string
-	http  *http.Client
+	name     string
+	base     *url.URL
+	provider *url.URL // the metadata provider; tests replace it
+	token    string
+	http     *http.Client
 }
 
 // New returns a Client. name is the server name from the configuration. It
 // labels trace lines. base is the server URL, which can have a path. timeout
 // limits each request, with the response body.
 func New(name string, base *url.URL, token string, timeout time.Duration) *Client {
-	b := *base
+	b, provider := *base, providerURL
 	if b.Path == "" {
 		b.Path = "/" // the request paths then start with "/"
 	}
 	return &Client{
-		name:  name,
-		base:  &b,
-		token: token,
-		http:  &http.Client{Timeout: timeout, CheckRedirect: sameOrigin},
+		name:     name,
+		base:     &b,
+		provider: &provider,
+		token:    token,
+		http:     &http.Client{Timeout: timeout, CheckRedirect: sameOrigin},
 	}
 }
 

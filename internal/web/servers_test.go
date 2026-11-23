@@ -27,6 +27,9 @@ type fakePlex struct {
 	details func(ctx context.Context, ratingKey string) (plex.Details, error)
 	// photo answers Photo; without it, Photo gives plex.ErrNotFound.
 	photo func(ctx context.Context, ratingKey, imagePath string, width, height int) ([]byte, error)
+	// series answers ProviderSeries; without it, ProviderSeries gives
+	// plex.ErrNotFound.
+	series func(ctx context.Context, guid string) (plex.Series, error)
 
 	mu    sync.Mutex
 	calls int
@@ -37,6 +40,13 @@ func (f *fakePlex) Photo(ctx context.Context, ratingKey, imagePath string, width
 		return nil, plex.ErrNotFound
 	}
 	return f.photo(ctx, ratingKey, imagePath, width, height)
+}
+
+func (f *fakePlex) ProviderSeries(ctx context.Context, guid string) (plex.Series, error) {
+	if f.series == nil {
+		return plex.Series{}, plex.ErrNotFound
+	}
+	return f.series(ctx, guid)
 }
 
 func (f *fakePlex) Identity(context.Context) (string, error) {

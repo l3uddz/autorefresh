@@ -275,6 +275,62 @@ func (s *Server) livePath(ctx context.Context, it store.ListItem, paths plex.Pat
 	return cmp.Or(kept, path), nil
 }
 
+// seriesJSON is what the metadata provider tells about a series candidate.
+type seriesJSON struct {
+	TMDBID   string `json:"tmdbId,omitempty"`
+	Seasons  int    `json:"seasons,omitempty"`
+	Episodes int    `json:"episodes,omitempty"`
+}
+
+// serveCandidate answers GET /api/item/candidate with the TMDB ID and the
+// season and episode counts of the series candidate guid of a known series,
+// from the Plex metadata provider of its server. A GUID that the provider
+// does not know answers no field.
+func (s *Server) serveCandidate(w http.ResponseWriter, r *http.Request) {
+	v, err := queryParams(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	guid := v.Get("guid")
+	srv, it, ok := s.knownItem(w, r, v)
+	switch {
+	case !ok:
+		return
+	case it.Type != plex.ShowLibrary:
+		writeError(w, http.StatusBadRequest, "not a show")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), s.liveTimeout)
+	series, err := s.servers[srv].Plex.ProviderSeries(ctx, guid)
+	cancel()
+	switch {
+	case errors.Is(err, plex.ErrInvalidGUID):
+		writeError(w, http.StatusBadRequest, "invalid guid")
+	case errors.Is(err, plex.ErrNotFound):
+		writeJSON(w, http.StatusOK, seriesJSON{})
+	case err != nil:
+		s.writeProviderError(w, r, err)
+	default:
+		writeJSON(w, http.StatusOK, seriesJSON{TMDBID: series.TMDBID, Seasons: series.Seasons, Episodes: series.Episodes})
+	}
+}
+
+// writeProviderError answers a failed request to the metadata provider with
+// a fixed message.
+func (s *Server) writeProviderError(w http.ResponseWriter, r *http.Request, err error) {
+	if r.Context().Err() != nil {
+		log.Debug().Str("error", s.redact(err.Error())).Str("path", r.URL.Path).Msg("Metadata provider request failed")
+		return
+	}
+	log.Warn().Str("error", s.redact(err.Error())).Str("path", r.URL.Path).Msg("Metadata provider request failed")
+	if errors.Is(err, plex.ErrUnauthorized) {
+		writeError(w, http.StatusBadGateway, "the Plex metadata provider rejected the token")
+		return
+	}
+	writeError(w, http.StatusBadGateway, "Plex metadata provider unavailable")
+}
+
 // writePlexError answers a failed Plex request with a fixed message, so no
 // Plex text reaches the browser.
 func (s *Server) writePlexError(w http.ResponseWriter, r *http.Request, err error) {

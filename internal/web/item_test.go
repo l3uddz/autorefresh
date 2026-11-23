@@ -3,8 +3,10 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -581,5 +583,81 @@ func TestItemLiveTimesOut(t *testing.T) {
 	assertJSONError(t, rec, http.StatusBadGateway, "Plex unavailable")
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Errorf("answer took %v, want about 50ms", elapsed)
+	}
+}
+
+func candidateServer(t *testing.T, series func(context.Context, string) (plex.Series, error)) *Server {
+	t.Helper()
+	st := openStore(t)
+	dark := movie("201", "Dark", store.Unmatched, time.Time{})
+	dark.Type = "show"
+	readLibrary(t, st, "Home", "1", testNow, dark, movie("101", "Alien", store.Unmatched, time.Time{}))
+	return newServerWith(st, 0, []PlexServer{{Name: "Home", Plex: &fakePlex{series: series}}})
+}
+
+func TestItemCandidate(t *testing.T) {
+	const guid = "plex://show/000000000000000000000001"
+	var asked []string
+	s := candidateServer(t, func(_ context.Context, g string) (plex.Series, error) {
+		asked = append(asked, g)
+		if g != guid {
+			return plex.Series{}, fmt.Errorf("provider series: %w", plex.ErrNotFound)
+		}
+		return plex.Series{TMDBID: "48213", Seasons: 1, Episodes: 10}, nil
+	})
+	query := url.Values{"srv": {"0"}, "key": {"201"}, "guid": {guid}}
+	var got map[string]any
+	getJSON(t, s, "/api/item/candidate?"+query.Encode(), &got)
+	if !reflect.DeepEqual(got, map[string]any{"tmdbId": "48213", "seasons": 1.0, "episodes": 10.0}) {
+		t.Errorf("candidate = %v", got)
+	}
+	query.Set("guid", "plex://show/000000000000000000000002")
+	got = nil
+	getJSON(t, s, "/api/item/candidate?"+query.Encode(), &got)
+	if len(got) != 0 {
+		t.Errorf("unknown candidate = %v, want no field", got)
+	}
+	if len(asked) != 2 {
+		t.Errorf("provider requests = %v", asked)
+	}
+}
+
+func TestItemCandidateErrors(t *testing.T) {
+	for _, tt := range []struct {
+		err    error
+		status int
+		msg    string
+	}{
+		{fmt.Errorf("provider series: %w", plex.ErrInvalidGUID), http.StatusBadRequest, "invalid guid"},
+		{errors.Join(errors.New("401 at http://secret-host"), plex.ErrUnauthorized, plex.ErrUnavailable),
+			http.StatusBadGateway, "the Plex metadata provider rejected the token"},
+		{errors.Join(errors.New("503 at http://secret-host"), plex.ErrUnavailable), http.StatusBadGateway, "Plex metadata provider unavailable"},
+	} {
+		t.Run(tt.msg, func(t *testing.T) {
+			s := candidateServer(t, func(context.Context, string) (plex.Series, error) { return plex.Series{}, tt.err })
+			rec := serve(s, httptest.NewRequest(http.MethodGet, "/api/item/candidate?srv=0&key=201&guid=x", nil))
+			assertJSONError(t, rec, tt.status, tt.msg)
+		})
+	}
+
+	calls := 0
+	s := candidateServer(t, func(context.Context, string) (plex.Series, error) {
+		calls++
+		return plex.Series{}, nil
+	})
+	for _, tt := range []struct {
+		query  string
+		status int
+		msg    string
+	}{
+		{"srv=0&key=101&guid=x", http.StatusBadRequest, "not a show"},
+		{"srv=0&key=999&guid=x", http.StatusNotFound, "not found"},
+		{"srv=0&key=201&guid=%zz", http.StatusBadRequest, "invalid query"},
+	} {
+		rec := serve(s, httptest.NewRequest(http.MethodGet, "/api/item/candidate?"+tt.query, nil))
+		assertJSONError(t, rec, tt.status, tt.msg)
+	}
+	if calls != 0 {
+		t.Errorf("provider requests = %d, want none", calls)
 	}
 }
