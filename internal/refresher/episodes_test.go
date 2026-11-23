@@ -3,6 +3,7 @@ package refresher
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -10,26 +11,82 @@ import (
 	"github.com/l3uddz/autorefresh/internal/store"
 )
 
+func seq(n int, skip ...int) []int {
+	out := make([]int, 0, n)
+	for i := 1; i <= n; i++ {
+		if !slices.Contains(skip, i) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
 func TestEpisodeNumbersConfirmSeriesYearConflict(t *testing.T) {
 	tests := []struct {
-		name     string
-		local    map[int][]int
-		catalog  map[string][]int
-		want     []string
-		directID bool
+		name      string
+		local     map[int][]int
+		catalog   map[string][]int
+		want      []string
+		wantCount float64
+		wantDiff  store.EpisodeDiff
+		directID  bool
 	}{
 		{
-			name:    "complete local season matches despite a bad year and absent later season",
-			local:   map[int][]int{1: {3, 1, 2}},
-			catalog: map[string][]int{"77 1": {1, 2, 3}, "77 2": {1, 2}},
-			want:    []string{"Match 201 plex://show/right", "Refresh 201"},
+			name:      "complete local season matches despite a bad year and absent later season",
+			local:     map[int][]int{1: {3, 1, 2}},
+			catalog:   map[string][]int{"77 1": {1, 2, 3}, "77 2": {1, 2}},
+			want:      []string{"Match 201 plex://show/right", "Refresh 201"},
+			wantCount: 3,
 		},
 		{
-			name:     "direct and translated IDs agree",
-			local:    map[int][]int{1: {1, 2, 3}},
-			catalog:  map[string][]int{"77 1": {1, 2, 3}},
-			want:     []string{"Match 201 plex://show/right", "Refresh 201"},
-			directID: true,
+			name:      "direct and translated IDs agree",
+			local:     map[int][]int{1: {1, 2, 3}},
+			catalog:   map[string][]int{"77 1": {1, 2, 3}},
+			want:      []string{"Match 201 plex://show/right", "Refresh 201"},
+			wantCount: 3,
+			directID:  true,
+		},
+		{
+			name:      "missing episodes across seasons at or above 90% confirm",
+			local:     map[int][]int{1: seq(20), 2: seq(21, 8, 9)},
+			catalog:   map[string][]int{"77 1": seq(20), "77 2": seq(21)},
+			want:      []string{"Match 201 plex://show/right", "Refresh 201"},
+			wantCount: 39,
+		},
+		{
+			name:      "missing one episode at exact 90% boundary confirms",
+			local:     map[int][]int{1: seq(10, 5)},
+			catalog:   map[string][]int{"77 1": seq(10)},
+			want:      []string{"Match 201 plex://show/right", "Refresh 201"},
+			wantCount: 9,
+		},
+		{
+			name:      "ongoing later season confirmed by high overall coverage",
+			local:     map[int][]int{1: seq(20), 2: {1}},
+			catalog:   map[string][]int{"77 1": seq(20), "77 2": {1, 2, 3}},
+			want:      []string{"Match 201 plex://show/right", "Refresh 201"},
+			wantCount: 21,
+		},
+		{
+			name:     "missing one episode below 90% boundary does not confirm",
+			local:    map[int][]int{1: seq(9, 5)},
+			catalog:  map[string][]int{"77 1": seq(9)},
+			want:     []string{"Refresh 201"},
+			wantDiff: store.EpisodeDiff{Season: 1, Plex: 8, TMDB: 9, Missing: []int{5}},
+		},
+		{
+			name:     "remake with longer seasons does not confirm",
+			local:    map[int][]int{1: seq(13)},
+			catalog:  map[string][]int{"77 1": seq(22)},
+			want:     []string{"Refresh 201"},
+			wantDiff: store.EpisodeDiff{Season: 1, Plex: 13, TMDB: 22, Missing: []int{14, 15, 16, 17, 18, 19, 20, 21, 22}},
+		},
+		{
+			name:     "extra episode in later season rejects and reports that season",
+			local:    map[int][]int{1: seq(20, 20), 2: seq(21)},
+			catalog:  map[string][]int{"77 1": seq(20), "77 2": seq(20)},
+			want:     []string{"Refresh 201"},
+			wantDiff: store.EpisodeDiff{Season: 2, Plex: 21, TMDB: 20, Extra: []int{21}},
 		},
 		{
 			name:    "same count with different numbering",
@@ -38,15 +95,27 @@ func TestEpisodeNumbersConfirmSeriesYearConflict(t *testing.T) {
 			want:    []string{"Refresh 201"},
 		},
 		{
-			name:    "a second local season is incomplete",
+			name:    "a second local season is incomplete below threshold",
 			local:   map[int][]int{1: {1, 2, 3}, 2: {1}},
 			catalog: map[string][]int{"77 1": {1, 2, 3}, "77 2": {1, 2}},
 			want:    []string{"Refresh 201"},
 		},
 		{
-			name:    "duplicate numbers cannot confirm a season",
+			name:    "duplicate catalog numbers cannot confirm a season",
 			local:   map[int][]int{1: {1, 1, 3}},
 			catalog: map[string][]int{"77 1": {1, 1, 3}},
+			want:    []string{"Refresh 201"},
+		},
+		{
+			name:    "duplicate local numbers cannot confirm even with high count",
+			local:   map[int][]int{1: {1, 1, 2, 3, 4, 5, 6, 7, 8, 9}},
+			catalog: map[string][]int{"77 1": seq(10)},
+			want:    []string{"Refresh 201"},
+		},
+		{
+			name:    "non-positive episode number cannot confirm",
+			local:   map[int][]int{1: {0, 1, 2}},
+			catalog: map[string][]int{"77 1": {0, 1, 2}},
 			want:    []string{"Refresh 201"},
 		},
 		{
@@ -92,7 +161,13 @@ func TestEpisodeNumbersConfirmSeriesYearConflict(t *testing.T) {
 				if len(sent) != 2 {
 					t.Fatalf("sent %d requests, want 2", len(sent))
 				}
-				wantField(t, sent[0], "episode_count", float64(3))
+				wantField(t, sent[0], "episode_count", tt.wantCount)
+			}
+			if tt.wantDiff.Season > 0 {
+				e := f.decision("201")
+				if !reflect.DeepEqual(e.EpisodeDiff, tt.wantDiff) {
+					t.Errorf("episode diff = %+v, want %+v", e.EpisodeDiff, tt.wantDiff)
+				}
 			}
 		})
 	}

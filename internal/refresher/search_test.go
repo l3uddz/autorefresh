@@ -62,20 +62,33 @@ func TestHistorySearchDoesNotCacheTMDBForRowCreatedMidSearch(t *testing.T) {
 func TestEpisodeCheckComparesNumbers(t *testing.T) {
 	lib := plex.Library{ID: "1", Type: "show"}
 	p := newFakePlex(lib)
-	p.episodeNumbers = map[string]map[int][]int{"1": {1: {1, 2}}}
+	p.episodeNumbers = map[string]map[int][]int{
+		"1": {1: {1, 2}},
+		"2": {1: seq(10, 10)},
+	}
 	f := newRefreshFixture(t, Server{Name: "home", Plex: p})
 	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
-	f.r.opts.TMDB = &fakeTMDB{seasons: map[string][]int{"77 1": {1, 2}, "78 1": {1, 3, 4}, "79 1": {1, 3}}}
+	f.seed("home", lib, incompleteItem("2"), store.NoSummary, 0)
+	f.r.opts.TMDB = &fakeTMDB{seasons: map[string][]int{
+		"77 1": {1, 2},
+		"78 1": {1, 3, 4},
+		"79 1": {1, 3},
+		"80 1": seq(10),
+		"81 1": seq(11),
+	}}
 	for _, tc := range []struct {
+		key  string
 		id   string
 		want EpisodeResult
 	}{
-		{"77", EpisodeResult{Match: true, Episodes: 2}},
-		{"78", EpisodeResult{Diff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 3, Missing: []int{3, 4}, Extra: []int{2}}}},
-		{"79", EpisodeResult{Diff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 2, Missing: []int{3}, Extra: []int{2}}}},
+		{"1", "77", EpisodeResult{Match: true, Episodes: 2}},
+		{"1", "78", EpisodeResult{Diff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 3, Missing: []int{3, 4}, Extra: []int{2}}}},
+		{"1", "79", EpisodeResult{Diff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 2, Missing: []int{3}, Extra: []int{2}}}},
+		{"2", "80", EpisodeResult{Match: true, Episodes: 9}},
+		{"2", "81", EpisodeResult{Diff: store.EpisodeDiff{Season: 1, Plex: 9, TMDB: 11, Missing: []int{10, 11}}}},
 	} {
-		if got, err := f.r.EpisodeCheck(t.Context(), "home", "1", tc.id); err != nil || !reflect.DeepEqual(got, tc.want) {
-			t.Errorf("%s: got %+v, %v, want %+v", tc.id, got, err, tc.want)
+		if got, err := f.r.EpisodeCheck(t.Context(), "home", tc.key, tc.id); err != nil || !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s/%s: got %+v, %v, want %+v", tc.key, tc.id, got, err, tc.want)
 		}
 	}
 }

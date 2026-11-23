@@ -77,10 +77,12 @@ const (
 	TMDBNoSource = "no-source" // the paths hold no imdb ID, and no tvdb ID of a series
 )
 
-// EpisodeDiff is the first local season whose regular episode numbers
-// differ from TMDB, with the episode count of Plex and of TMDB, and the
-// sorted episode numbers of the season that only TMDB (Missing), or only
-// Plex (Extra), has. Season 0 means none.
+// EpisodeDiff is the local season whose regular episode numbers kept a
+// series from confirming against TMDB (the first season with extra or
+// invalid numbers, or the first season missing episodes when coverage is too
+// low), with the episode count of Plex and of TMDB, and the sorted episode
+// numbers of the season that only TMDB (Missing), or only Plex (Extra), has.
+// Season 0 means none.
 type EpisodeDiff struct {
 	Season, Plex, TMDB int
 	Missing, Extra     []int

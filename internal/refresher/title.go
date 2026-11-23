@@ -32,8 +32,9 @@ func (r *Refresher) titleFallback(run *serverRun, it store.Item, paths []string,
 // the one candidate with the same title and year (sameTitle), also with the
 // year of the series folder, if it has one. The Plex
 // metadata provider gives the TMDB ID of that candidate, which must equal
-// every TMDB ID of the folder names (folderTMDBIDs), and every local season
-// must have the episode numbers of TMDB. err is the error of the title
+// every TMDB ID of the folder names (folderTMDBIDs), and the local seasons
+// must confirm the candidate against TMDB's episode numbers
+// (confirmEpisodeNumbers). err is the error of the title
 // search or the episode read that says that the item is gone, or a store
 // error. Other failed requests are handled failures (titleRequestFailed).
 func (r *Refresher) titleMatch(ctx context.Context, run *serverRun, mc matchContext) (evaluation, error) {
