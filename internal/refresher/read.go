@@ -252,11 +252,24 @@ func readFailed(ctx context.Context, run *serverRun, lib plex.Library, err error
 		return stop
 	}
 	if run.full {
-		return fmt.Errorf("reading library %s: %w", lib.Title, err)
+		return &libraryReadError{library: lib.Title, err: err}
 	}
 	log.Warn().Str("server", run.server.Name).Str("library", lib.Title).Err(err).Msg("Reading library failed")
 	return nil
 }
+
+// libraryReadError is a library read that failed in a full run. It ends the
+// run of its own server only, so the other servers of the run continue.
+type libraryReadError struct {
+	library string
+	err     error
+}
+
+func (e *libraryReadError) Error() string {
+	return fmt.Sprintf("reading library %s: %v", e.library, e.err)
+}
+
+func (e *libraryReadError) Unwrap() error { return e.err }
 
 // listItems does a full read, or an incremental read that joins three
 // listings by rating key.

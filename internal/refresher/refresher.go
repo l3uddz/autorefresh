@@ -281,13 +281,21 @@ func (r *Refresher) execute(ctx context.Context, runs []startedRun) error {
 		wg.Go(func() {
 			err := r.runServer(ctx, run)
 			errs[i] = err
-			if err != nil && !errors.Is(err, plex.ErrUnavailable) {
+			if err != nil && !serverOnly(err) {
 				cancel()
 			}
 		})
 	}
 	wg.Wait()
 	return errors.Join(errs...)
+}
+
+// serverOnly reports whether err ends only the run of its own server: an
+// unavailable server or a failed library read. Other errors, such as a store
+// error, stop the runs of the other servers too.
+func serverOnly(err error) bool {
+	var readErr *libraryReadError
+	return errors.Is(err, plex.ErrUnavailable) || errors.As(err, &readErr)
 }
 
 func (r *Refresher) runServer(ctx context.Context, started startedRun) error {
