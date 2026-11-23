@@ -388,7 +388,8 @@ func (r *Refresher) resolveMatch(ctx context.Context, run *serverRun, mc matchCo
 	if conflict == conflictYear {
 		var err error
 		if yr, err = r.confirmYear(ctx, run, mc); err != nil {
-			return evaluation{}, err
+			// The decision keeps the years compared before the failure.
+			return evaluation{years: yr}, err
 		}
 		if yr.ok {
 			cand, match, conflict = yr.cand, true, ""
@@ -401,7 +402,7 @@ func (r *Refresher) resolveMatch(ctx context.Context, run *serverRun, mc matchCo
 		}
 		ev.Strs("candidates", describeCandidates(mc.results, show)).Msg("Match conflict")
 	}
-	mc.d.judge(mc.results, cand, conflict)
+	mc.d.judge(mc.results, cand, conflict, mc.it.Year)
 	result := evaluation{conflict: conflict, years: yr}
 	if !match {
 		return result, nil

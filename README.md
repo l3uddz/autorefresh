@@ -216,7 +216,10 @@ tries a fix match.
 
 The decision of a year conflict keeps the years that autorefresh compared:
 the year of the item, the year of its folder, if any, and the TMDB year, if
-TMDB was asked. It also keeps the TMDB ID that it checked and, for a
+TMDB was asked, also when a later step failed. Only a search whose
+candidate year differs from the item gets the verdict "year differs"; a
+search that returned the same candidate with an agreeing year gets "year
+agrees". It also keeps the TMDB ID that it checked and, for a
 series, the first local season whose episode numbers differ from TMDB,
 with the episode count of Plex and of TMDB. The Fix match dialog shows
 them.

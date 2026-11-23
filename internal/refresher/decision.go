@@ -23,6 +23,7 @@ const (
 	verdictConfirms    = "confirms"
 	verdictDifferent   = "different candidate"
 	verdictNotCompared = "not compared"
+	verdictYearAgrees  = "year agrees" // of a year conflict that another search's year caused
 )
 
 // decisionLog collects one fix match evaluation as it happens.
@@ -67,9 +68,9 @@ func (d *decisionLog) fail(err error) {
 
 // judge sets the verdict of each candidate of results, the searches that
 // resolveMatch evaluated, and of the tie searches. picked is the candidate
-// of a match, and conflict the conflict of no match. A handled failure
-// leaves every verdict empty.
-func (d *decisionLog) judge(results []searchResult, picked plex.Candidate, conflict string) {
+// of a match, conflict the conflict of no match, and itemYear the year of
+// the item. A handled failure leaves every verdict empty.
+func (d *decisionLog) judge(results []searchResult, picked plex.Candidate, conflict string, itemYear int) {
 	if d.err != nil {
 		return
 	}
@@ -81,24 +82,26 @@ func (d *decisionLog) judge(results []searchResult, picked plex.Candidate, confl
 		guid = cand.GUID
 	}
 	for _, res := range results {
-		d.judgeSearch(&d.searches[res.pos], guid, conflict)
+		d.judgeSearch(&d.searches[res.pos], guid, conflict, itemYear)
 	}
 	for i := range d.searches {
 		if d.searches[i].Source == searchTie {
-			d.judgeSearch(&d.searches[i], guid, conflict)
+			d.judgeSearch(&d.searches[i], guid, conflict, itemYear)
 		}
 	}
 }
 
-func (d *decisionLog) judgeSearch(m *store.MatchSearch, guid, conflict string) {
+func (d *decisionLog) judgeSearch(m *store.MatchSearch, guid, conflict string, itemYear int) {
 	for i := range m.Candidates {
-		m.Candidates[i].Verdict = verdict(*m, m.Candidates[i], guid, conflict)
+		m.Candidates[i].Verdict = verdict(*m, m.Candidates[i], guid, conflict, itemYear)
 	}
 }
 
 // verdict returns the verdict of the candidate c of the search m, by the
-// first rule that applies. guid is the GUID of the evaluated candidate.
-func verdict(m store.MatchSearch, c store.MatchCandidate, guid, conflict string) string {
+// first rule that applies. guid is the GUID of the evaluated candidate. Of
+// a year conflict, only a candidate whose year differs from itemYear gets
+// the conflict: a search can return the same candidate with another year.
+func verdict(m store.MatchSearch, c store.MatchCandidate, guid, conflict string, itemYear int) string {
 	switch {
 	case len(m.Candidates) > 1:
 		return conflictSeveral
@@ -108,6 +111,8 @@ func verdict(m store.MatchSearch, c store.MatchCandidate, guid, conflict string)
 		return sameGUID(c.GUID, guid, verdictConfirms)
 	case conflict == "":
 		return sameGUID(c.GUID, guid, verdictPicked)
+	case conflict == conflictYear && !yearDiffers(itemYear, c.Year):
+		return verdictYearAgrees
 	case conflict == conflictDifferent || conflict == conflictYear:
 		return conflict
 	default: // another search has several candidates or one without a GUID

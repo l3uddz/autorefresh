@@ -244,6 +244,42 @@ func TestDecisionYearDiffers(t *testing.T) {
 	})
 }
 
+// A search can return the same candidate with another year. Only the row
+// whose year differs gets the conflict.
+func TestDecisionYearVerdictPerRow(t *testing.T) {
+	fp := newFakePlex(showsLib)
+	fp.candidates["201 tvdb-5"] = []plex.Candidate{{GUID: "plex://show/s", Name: "Show", Year: 2022}}
+	fp.candidates["201 imdb-tt1"] = []plex.Candidate{{GUID: "plex://show/s", Name: "Show", Year: 1978}}
+	f := yearConflictFixture(t, fp, nil)
+	// The fixture sets the path, so the second ID comes after it.
+	fp.paths["201"] = []string{"/tv/Show (2022) {tvdb-5} {imdb-tt1}"}
+
+	f.run(t0)
+
+	wantDecision(t, f.decision("201"), store.DecisionNoMatch, "year differs",
+		"path tvdb-5: plex://show/s=year agrees",
+		"path imdb-tt1: plex://show/s=year differs")
+}
+
+// A Plex failure of the episode lookup keeps the years compared before it.
+func TestDecisionKeepsYearsOfAPlexEpisodeFailure(t *testing.T) {
+	fp := newFakePlex(showsLib)
+	old := []plex.Candidate{{GUID: "plex://show/old", Name: "Show", Year: 1978}}
+	fp.candidates["201 tvdb-5"] = old
+	fp.candidates["201 tmdb-77"] = old
+	fp.episodeReadErr = errServer
+	ft := &fakeTMDB{ids: map[string]string{"tvdb 5 true": "77"}, years: map[string]int{"77 true": 1978}}
+	f := yearConflictFixture(t, fp, ft)
+
+	f.run(t0)
+
+	e := f.decision("201")
+	if e.Outcome != string(store.DecisionFailed) {
+		t.Fatalf("outcome = %q, want failed", e.Outcome)
+	}
+	wantYears(t, e, 2022, 1978, 0)
+}
+
 // The year check logs a path ID that TMDB has no entry for.
 func TestDecisionYearCheckWithoutTMDBEntry(t *testing.T) {
 	fp := newFakePlex(showsLib)
