@@ -123,6 +123,7 @@ describe('decision evidence', () => {
     expect(rowVerdict({ verdict: 'year differs', year: 1997 }, 2009)).toBe('year differs');
     expect(rowVerdict({ verdict: 'year differs', year: 2009 }, undefined)).toBe('year differs');
     expect(rowVerdict({ verdict: 'picked', year: 1997 }, 2009)).toBe('picked');
+    expect(rowVerdict({ verdict: 'year differs' }, 2009)).toBe('not compared');
   });
 
   it('shows the years that a failed decision compared', () => {
@@ -131,6 +132,12 @@ describe('decision evidence', () => {
       'tmdb lookup: tmdb-77: 500 Before the failure, it compared these years: the item has 2022, the folder has 2022, and TMDB has 2017.',
     );
     expect(failed({ itemYear: 2022 })).toBe('tmdb lookup: tmdb-77: 500');
+    // A failure after a year conflict names the candidate year that started the check.
+    const conflict = { itemYear: 2009, conflict: 'year differs', searches: [
+      { query: 'tvdb-5', source: 'path', failed: false, candidates: [{ guid: 'plex://show/b', year: 1997, score: 0 }] },
+    ] };
+    expect(failed(conflict)).toBe('tmdb lookup: tmdb-77: 500 Before the failure, it compared these years: Plex has 1997 and the item has 2009.');
+    expect(failed({ ...conflict, conflict: undefined })).toBe('tmdb lookup: tmdb-77: 500');
   });
 
   it('shows a stored TMDB year without the TMDB ID of older decisions', () => {

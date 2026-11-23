@@ -169,8 +169,9 @@ export function episodeCheckId(group: CandidateGroup, itemType: string | undefin
 /** The series of a candidate from the metadata provider, asked with the
  * token of the server of the item params. The answer depends on the server
  * and the GUID only, so items share it. The provider is a remote service,
- * so each GUID is asked once while the page is open: no refetch, no retry, also not when the
- * dialog opens again after a failure, and the answer stays in the cache.
+ * so each GUID is asked once while the page is open: no refetch, no retry,
+ * also not when the dialog opens again after a failure, and the answer
+ * stays in the cache.
  * The request takes no abort signal, so closing the dialog lets it finish
  * into the cache instead of starting it again on the next open. Its key is
  * outside the item prefix. */

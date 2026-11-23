@@ -125,19 +125,23 @@ function listText(words: string[]): string {
 }
 
 /** Returns the verdict of a candidate of a decision about an item of the
- * year itemYear. A search can return the same candidate with another year.
- * Older decisions gave every row of a year conflict "year differs"; a row
- * whose year does not differ from the item year reads "year agrees", as
- * newer decisions store it. */
+ * year itemYear. A search can return the same candidate with another year
+ * or none. Older decisions gave every row of a year conflict "year
+ * differs"; a row without a year reads "not compared", and a row whose year
+ * does not differ from the item year "year agrees", as newer decisions
+ * store them. */
 export function rowVerdict(candidate: Pick<Candidate, 'verdict' | 'year'>, itemYear: number | undefined): string | undefined {
-  if (candidate.verdict === 'year differs' && itemYear && compareYear(itemYear, candidate.year).kind !== 'differs') return 'year agrees';
-  return candidate.verdict;
+  if (candidate.verdict !== 'year differs' || !itemYear) return candidate.verdict;
+  if (!candidate.year) return 'not compared';
+  return compareYear(itemYear, candidate.year).kind === 'differs' ? 'year differs' : 'year agrees';
 }
 
-/** Returns the year of the candidate that the year check rejected. */
-function rejectedYear(event: TimelineEvent, itemYear: number): number | undefined {
+/** Returns the year of a candidate that differs from the item year, which
+ * caused the year conflict. A failed decision has no verdicts, so this
+ * compares the years themselves. */
+function conflictingYear(event: TimelineEvent, itemYear: number): number | undefined {
   for (const search of event.searches) {
-    const candidate = search.candidates.find(c => c.year && rowVerdict(c, itemYear) === 'year differs');
+    const candidate = search.candidates.find(c => compareYear(itemYear, c.year).kind === 'differs');
     if (candidate) return candidate.year;
   }
   return undefined;
@@ -157,7 +161,7 @@ function comparedYears(event: TimelineEvent): string[] {
  * episode comparison. A decision from before autorefresh kept these
  * values gets the general text. */
 function yearConflict(event: TimelineEvent): string {
-  const candidateYear = event.itemYear && rejectedYear(event, event.itemYear);
+  const candidateYear = event.itemYear && conflictingYear(event, event.itemYear);
   if (!event.itemYear || !candidateYear) return conflictText['year differs'];
   const sentences = [`${listText([`Plex has ${candidateYear}`, ...comparedYears(event)])}.`];
   if (event.episodeDiff) sentences.push(episodeDiffText(event.episodeDiff, event.tmdbId));
@@ -191,9 +195,11 @@ export function episodeDiffText(diff: EpisodeDiff, tmdbId?: string): string {
 }
 
 /** Returns the error of a failed decision, with the years that it compared
- * before the failure. */
+ * before the failure: the candidate year of a year conflict, and the years
+ * of the item, its folder, and TMDB. */
 function failedDetail(event: TimelineEvent): string | undefined {
-  const years = comparedYears(event);
+  const candidateYear = event.conflict === 'year differs' && event.itemYear ? conflictingYear(event, event.itemYear) : undefined;
+  const years = [...(candidateYear ? [`Plex has ${candidateYear}`] : []), ...comparedYears(event)];
   // The item year alone was not compared with anything.
   if (years.length < 2) return event.error;
   const compared = `Before the failure, it compared these years: ${listText(years)}.`;
