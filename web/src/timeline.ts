@@ -132,8 +132,9 @@ function listText(words: string[]): string {
  * does not differ from the item year "year agrees", as newer decisions
  * store them. */
 export function rowVerdict(candidate: Pick<Candidate, 'verdict' | 'year'>, itemYear: number | undefined): string | undefined {
-  if (candidate.verdict !== 'year differs' || !itemYear) return candidate.verdict;
+  if (candidate.verdict !== 'year differs') return candidate.verdict;
   if (!candidate.year) return 'not compared';
+  if (!itemYear) return candidate.verdict;
   return compareYear(itemYear, candidate.year).kind === 'differs' ? 'year differs' : 'year agrees';
 }
 

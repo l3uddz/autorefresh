@@ -124,6 +124,7 @@ describe('decision evidence', () => {
     expect(rowVerdict({ verdict: 'year differs', year: 2009 }, undefined)).toBe('year differs');
     expect(rowVerdict({ verdict: 'picked', year: 1997 }, 2009)).toBe('picked');
     expect(rowVerdict({ verdict: 'year differs' }, 2009)).toBe('not compared');
+    expect(rowVerdict({ verdict: 'year differs' }, undefined)).toBe('not compared');
   });
 
   it('shows the years that a failed decision compared', () => {
