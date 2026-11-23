@@ -155,8 +155,7 @@ function comparedYears(event: TimelineEvent): string[] {
   const years = event.itemYear ? [`the item has ${event.itemYear}`] : [];
   if (event.pathYear) years.push(`the folder has ${event.pathYear}`);
   if (event.tmdbYear) years.push(`TMDB has ${event.tmdbYear}`);
-  // A title search compares episodes, never the TMDB year.
-  else if (event.tmdbId && !searchedTitle(event)) years.push('TMDB has no year');
+  else if (event.tmdbId) years.push('TMDB has no year');
   return years;
 }
 
@@ -201,6 +200,8 @@ export function episodeDiffText(diff: EpisodeDiff, tmdbId?: string): string {
  * before the failure: the candidate year of a year conflict, and the years
  * of the item, its folder, and TMDB. */
 function failedDetail(event: TimelineEvent): string | undefined {
+  // A title search compares no years: its candidates only had to agree.
+  if (searchedTitle(event)) return event.error;
   const candidateYear = event.conflict === 'year differs' && event.itemYear ? conflictingYear(event, event.itemYear) : undefined;
   const years = [...(candidateYear ? [`Plex has ${candidateYear}`] : []), ...comparedYears(event)];
   // The item year alone was not compared with anything.
@@ -218,10 +219,17 @@ function noMatchDetail(event: TimelineEvent): string {
   }
   if (event.conflict) return conflictText[event.conflict] ?? event.conflict;
   if (event.searches.some(s => s.source === 'title' && s.candidates.length > 0)) {
-    const years = event.pathYear ? `the year ${event.itemYear ?? '?'} of the item and ${event.pathYear} of its folder` : 'the year of the item';
-    return `No result of the title search had the title of the item and a year within 1 of ${years}.`;
+    return `No result of the title search had the title of the item and a year within 1 of ${titleYears(event)}.`;
   }
   return 'No search found a candidate.';
+}
+
+/** Names the years that the candidates of a title search had to agree
+ * with: the year of the item, and the year of its folder if it differs. */
+function titleYears(event: TimelineEvent): string {
+  if (!event.itemYear) return 'the year of the item';
+  const folder = event.pathYear && event.pathYear !== event.itemYear ? ` and ${event.pathYear} of its folder` : '';
+  return `the year ${event.itemYear} of the item${folder}`;
 }
 
 /** Explains why the TMDB episode numbers did not confirm the series that

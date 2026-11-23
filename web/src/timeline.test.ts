@@ -179,13 +179,19 @@ describe('decision evidence', () => {
     );
     const otherTitle = { ...titleSearch, candidates: [{ guid: 'plex://show/o', year: 2015, score: 0, verdict: 'other title' }] };
     expect(decisionView(title({ outcome: 'no-match', searches: [otherTitle] })).detail).toBe(
-      'No result of the title search had the title of the item and a year within 1 of the year of the item.',
+      'No result of the title search had the title of the item and a year within 1 of the year 2020 of the item.',
+    );
+    expect(decisionView(title({ outcome: 'no-match', searches: [otherTitle], pathYear: 2020 })).detail).toBe(
+      'No result of the title search had the title of the item and a year within 1 of the year 2020 of the item.',
+    );
+    expect(decisionView(title({ outcome: 'no-match', conflict: 'not confirmed', tmdbId: '88' })).detail).toBe(
+      'The title search found one series with the same title and a year within 1, but nothing confirmed it. Plex returned no usable episode numbers to compare with tmdb-88.',
     );
     expect(decisionView(title({ outcome: 'no-match', searches: [otherTitle], pathYear: 2012 })).detail).toBe(
       'No result of the title search had the title of the item and a year within 1 of the year 2020 of the item and 2012 of its folder.',
     );
     expect(decisionView(title({ outcome: 'no-match' })).detail).toBe('No search found a candidate.');
-    expect(decisionView(title({ outcome: 'failed', error: 'tmdb lookup: 500', tmdbId: '88' })).detail).toBe('tmdb lookup: 500');
+    expect(decisionView(title({ outcome: 'failed', error: 'tmdb lookup: 500', tmdbId: '88', pathYear: 2020 })).detail).toBe('tmdb lookup: 500');
     expect(verdictName('other title', { query: 'Show' })).toBe('other title or year');
   });
 
