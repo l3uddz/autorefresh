@@ -1,19 +1,31 @@
 import { describe, expect, it } from 'vitest';
-import { wholeSecond } from './clock';
-import { countdown } from './now';
+import { freshReader } from './clock';
+import { countdown, since } from './now';
+
+const at = (time: string) => Date.parse(`2026-11-23T${time}Z`);
 
 describe('second clock', () => {
-  it('rounds up so a countdown never shows more seconds than are left', () => {
-    const start = Date.parse('2026-11-23T12:00:00Z');
-    for (const late of [0, 1, 250, 999]) {
-      const now = start + late;
-      expect(countdown(new Date(now + 5000).toISOString(), wholeSecond(now))).toBe('in 5s');
-    }
+  it('reads the time of a status event, not the time of the last tick', () => {
+    let time = at('12:00:00.000');
+    const read = freshReader(() => time);
+    read(); // the tick
+    time = at('12:00:00.700'); // the status event of the next item
+    expect(countdown('2026-11-23T12:00:05.690Z', read())).toBe('in 5s');
   });
 
-  it('keeps one value within a second', () => {
-    const start = Date.parse('2026-11-23T12:00:00Z');
-    expect(wholeSecond(start + 1)).toBe(wholeSecond(start + 999));
-    expect(wholeSecond(start)).toBe(start);
+  it('never counts down to now or ages an item before the second passes', () => {
+    let time = at('12:00:04.100');
+    const read = freshReader(() => time);
+    expect(countdown('2026-11-23T12:00:04.900Z', read())).toBe('in 1s');
+    time = at('12:00:04.950');
+    expect(since('2026-11-23T12:00:04.100Z', read())).toBe('now');
+  });
+
+  it('gives one time to the reads of one render', () => {
+    let time = at('12:00:00.000');
+    const read = freshReader(() => time);
+    const first = read();
+    time += 20;
+    expect(read()).toBe(first);
   });
 });

@@ -28,9 +28,27 @@ export function useNow(): number {
 
 // A second clock for countdowns, such as the wait before the next item of
 // a run. It ticks only while a component that is active listens, so the
-// rest of the page keeps the slow clock above. It reads the time at each
-// render, so a status event that brings a new countdown shows it at once.
+// rest of the page keeps the slow clock above. Each render reads the time,
+// so a status event that brings a new countdown starts it from the time of
+// the event, not from the last tick.
 
+/** freshAge is how long, in milliseconds, a read time stays the time of the
+ * clock, so that all reads of one render get the same time, as
+ * useSyncExternalStore needs. */
+const freshAge = 50;
+
+/** Returns a reader of the clock time. The reader gives the time of clock,
+ * or the time of its last read if that is less than freshAge old. */
+export function freshReader(clock: () => number): () => number {
+  let last = -Infinity;
+  return () => {
+    const time = clock();
+    if (time - last >= freshAge) last = time;
+    return last;
+  };
+}
+
+const readSeconds = freshReader(Date.now);
 const secondListeners = new Set<() => void>();
 let secondTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -48,15 +66,8 @@ function subscribeSeconds(listener: () => void) {
 
 const subscribeNever = () => () => {};
 
-/** Returns the time t in milliseconds, rounded up to a whole second. A
- * countdown that reads it never shows more seconds than are left, and the
- * value stays the same within a second, as useSyncExternalStore needs. */
-export function wholeSecond(t: number): number {
-  return Math.ceil(t / 1000) * 1000;
-}
-
-/** Returns the current time in milliseconds, rounded up to a whole second
- * (wholeSecond), and updated every second while isActive. */
+/** Returns the current time in milliseconds, updated every second while
+ * isActive. */
 export function useSecondClock(isActive: boolean): number {
-  return useSyncExternalStore(isActive ? subscribeSeconds : subscribeNever, () => wholeSecond(Date.now()));
+  return useSyncExternalStore(isActive ? subscribeSeconds : subscribeNever, readSeconds);
 }
