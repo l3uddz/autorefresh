@@ -315,7 +315,7 @@ func TestRunDetailListsItemsOfBulkJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	one := movie("1", "One", store.NoSummary, testNow)
-	one.Thumb = "/library/metadata/1/thumb/1700000000"
+	one.Thumb, one.Year = "/library/metadata/1/thumb/1700000000", 2020
 	if _, err := db.ApplyRead(store.Read{Server: "home", Section: "1", At: testNow, Items: []store.Item{one}}); err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +331,7 @@ func TestRunDetailListsItemsOfBulkJob(t *testing.T) {
 		t.Fatalf("detail = %+v", got)
 	}
 	item := got.Items[0]
-	want := map[string]any{"key": "1", "title": "One", "outcome": store.ItemAccepted, "type": "movie", "library": "Movies"}
+	want := map[string]any{"key": "1", "title": "One", "outcome": store.ItemAccepted, "type": "movie", "year": 2020.0, "library": "Movies"}
 	for field, w := range want {
 		if !reflect.DeepEqual(item[field], w) {
 			t.Errorf("item %s = %#v, want %#v", field, item[field], w)

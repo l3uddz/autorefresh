@@ -491,7 +491,9 @@ func TestRunDetailOfRun(t *testing.T) {
 }
 
 // The items of a bulk job carry the type, year, poster, and section of the
-// cached row, or else of the newest event of the item.
+// cached row, or else of the newest event of the item. The cached row wins
+// over older events, and another server's item with the same key is not
+// used.
 func TestRunItemsCarryTheirItem(t *testing.T) {
 	s := openTest(t)
 	cached := item("a", NoArt)
@@ -499,7 +501,17 @@ func TestRunItemsCarryTheirItem(t *testing.T) {
 	gone := item("b", NoArt)
 	gone.Type, gone.Year, gone.Thumb = "movie", 1999, "/library/metadata/b/thumb/1"
 	apply(t, s, Read{Items: []Item{cached, gone}})
+	// Events with the old posters, then newer rows.
+	accept(t, s, "a", base.Add(time.Minute), ActionRefresh)
+	accept(t, s, "b", base.Add(time.Minute), ActionRefresh)
+	cached.Thumb = "/library/metadata/a/thumb/2"
+	gone.Thumb = "/library/metadata/b/thumb/2"
+	apply(t, s, Read{At: base.Add(30 * time.Minute), Full: true, Items: []Item{cached, gone}})
+	// The gone event keeps the newest snapshot of b.
 	apply(t, s, Read{At: base.Add(time.Hour), Full: true, Items: []Item{cached}, Gone: []string{"b"}})
+	other := item("c", NoArt)
+	other.Server, other.Thumb = "other", "/library/metadata/c/thumb/1"
+	apply(t, s, Read{Server: "other", Items: []Item{other}})
 	start := runStart(srv, base)
 	start.Kind = RunKindBulkRefresh
 	id, err := s.StartRun(start)
