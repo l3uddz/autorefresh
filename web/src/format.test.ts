@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { duration, fixedBy, fullReadText, lastAction, nextRunText, plural, queueState, relative, runDuration, runKind, runTitle, typeName } from './format';
+import { duration, fixedBy, fullReadText, lastAction, nextRunText, plexCounts, plural, queueState, relative, runDuration, runKind, runTitle, typeName } from './format';
 
 const now = Date.parse('2026-11-22T12:00:00Z');
 const at = (seconds: number) => new Date(now + seconds * 1000).toISOString();
 
 describe('format', () => {
+  it('names the season and episode counts that are known', () => {
+    expect(plexCounts({ seasons: 1, episodes: 10 })).toEqual(['1 season', '10 episodes']);
+    expect(plexCounts({ episodes: 0 })).toEqual(['0 episodes']);
+    expect(plexCounts(undefined)).toEqual([]);
+  });
+
   it('shortens durations', () => {
     expect(duration(45)).toBe('45s');
     expect(duration(12 * 60)).toBe('12m');

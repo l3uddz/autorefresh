@@ -91,6 +91,15 @@ export function typeName(type?: string): string {
   return type === 'show' ? 'Series' : type === 'movie' ? 'Movie' : label(type);
 }
 
+/** Returns the season and episode counts that Plex has for a series, such
+ * as ["1 season", "10 episodes"], without the unknown ones. */
+export function plexCounts(counts?: { seasons?: number; episodes?: number }): string[] {
+  return [
+    counts?.seasons !== undefined ? plural(counts.seasons, 'season') : undefined,
+    counts?.episodes !== undefined ? plural(counts.episodes, 'episode') : undefined,
+  ].filter((part): part is string => part !== undefined);
+}
+
 /** Returns "1 item" or "3 items". */
 export function plural(count: number, noun: string, nouns = `${noun}s`): string {
   return `${count.toLocaleString()} ${count === 1 ? noun : nouns}`;

@@ -1,5 +1,5 @@
 import { queryOptions } from '@tanstack/react-query';
-import { api, type Candidate, type MatchSearch, type TimelineEvent } from './api';
+import { api, type Candidate, type CandidateSeries, type MatchSearch, type TimelineEvent } from './api';
 import { maxSearchBytes } from './bulk';
 import { verdictName } from './timeline';
 
@@ -26,7 +26,7 @@ export interface CandidateGroup {
   candidate: Candidate;
   foundBy: Evidence[];
   /** The one TMDB ID that a search tied to this candidate, if exactly one
-   * did. Only such a candidate offers the episode check. */
+   * did. It wins over the TMDB ID of the metadata provider. */
   tmdbId?: string;
 }
 
@@ -141,13 +141,54 @@ export function isCurrentMatch(group: CandidateGroup, liveGuid: string | undefin
   return Boolean(liveGuid && group.guid && group.guid === liveGuid);
 }
 
-/** Reports whether group offers the TMDB episode check: a candidate of a
- * series, tied to one TMDB ID, while autorefresh has a TMDB token. A
+/** Reports whether group is a series candidate of a series item. A
  * candidate without a type counts as a series, because the search of a
  * series item uses the series agent; a candidate of another type does not. */
-export function offersEpisodeCheck(group: CandidateGroup, itemType: string | undefined, isTMDBOn: boolean): boolean {
+function isSeriesCandidate(group: CandidateGroup, itemType: string | undefined): boolean {
   const type = group.candidate.type;
-  return isTMDBOn && itemType === 'show' && (!type || type === 'show') && group.guid !== '' && group.tmdbId !== undefined;
+  return itemType === 'show' && (!type || type === 'show') && group.guid !== '';
+}
+
+// The plex:// GUID of a series, which the metadata provider describes.
+const providerGuid = /^plex:\/\/show\/[0-9a-f]{24}$/;
+
+/** Reports whether the dialog asks the metadata provider about group: a
+ * series candidate of a series item with a plex:// series GUID. */
+export function asksProvider(group: CandidateGroup, itemType: string | undefined): boolean {
+  return isSeriesCandidate(group, itemType) && providerGuid.test(group.guid);
+}
+
+/** Returns the TMDB ID of the episode check of group, if it offers one: a
+ * series candidate with a TMDB ID, while autorefresh has a TMDB token. A
+ * search that tied the candidate to an ID wins over providerId, the TMDB ID
+ * of the metadata provider. */
+export function episodeCheckId(group: CandidateGroup, itemType: string | undefined, isTMDBOn: boolean, providerId?: string): string | undefined {
+  return isTMDBOn && isSeriesCandidate(group, itemType) ? group.tmdbId ?? providerId : undefined;
+}
+
+/** The series of a candidate from the metadata provider of the server of
+ * the item params. The provider is a remote service, so each GUID is asked
+ * once while the page is open: no refetch, no retry, and the answer stays in
+ * the cache. Its key is outside the item prefix. */
+export function candidateQuery(params: string, guid: string) {
+  return queryOptions({
+    queryKey: ['candidate', new URLSearchParams(params).get('srv'), guid],
+    queryFn: ({ signal }) => api<CandidateSeries>(`item/candidate?${new URLSearchParams([...new URLSearchParams(params), ['guid', guid]])}`, { signal }),
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+}
+
+export type EpisodeCountCheck = { kind: 'same' | 'differs'; episodes: number; yours: number } | { kind: 'unknown' };
+
+/** Compares the episode count of a candidate with the count that Plex has
+ * for the item. */
+export function compareEpisodeCount(itemEpisodes: number | undefined, candidateEpisodes: number | undefined): EpisodeCountCheck {
+  if (itemEpisodes === undefined || !candidateEpisodes) return { kind: 'unknown' };
+  return { kind: itemEpisodes === candidateEpisodes ? 'same' : 'differs', episodes: candidateEpisodes, yours: itemEpisodes };
 }
 
 export type YearCheck = { kind: 'same' | 'off' | 'differs'; year: number; diff: number } | { kind: 'unknown' };

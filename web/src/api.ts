@@ -130,6 +130,13 @@ export interface Matches {
 }
 
 /** The answer of POST /api/item/episode-check. */
+/** What the Plex metadata provider tells about a series candidate. */
+export interface CandidateSeries {
+  tmdbId?: string;
+  seasons?: number;
+  episodes?: number;
+}
+
 export interface EpisodeCheck {
   match: boolean;
   episodes: number;

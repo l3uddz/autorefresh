@@ -16,12 +16,12 @@ import { useToast } from '@astryxdesign/core/Toast';
 import { Token } from '@astryxdesign/core/Token';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useState } from 'react';
-import { ApiError, api, invalidateLists, post, useStatus, type Candidate, type EpisodeCheck, type ItemRecord, type Matches, type MatchSearch, type TimelineEvent } from './api';
+import { ApiError, api, invalidateLists, post, useStatus, type Candidate, type EpisodeCheck, type ItemRecord, type LiveItem, type Matches, type MatchSearch, type TimelineEvent } from './api';
 import { askThen } from './confirm';
 import { actionError } from './errors';
-import { plural, titleYear, typeName } from './format';
+import { plexCounts, plural, titleYear, typeName } from './format';
 import { DecisionPanel } from './history';
-import { autoEvidence, autoEvidenceText, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isFolderEvidence, listView, matchBody, matchesPath, newerDecision, offersEpisodeCheck, previewQuery, sameSearch, type CandidateGroup, type Evidence, type TypedSearch, type YearCheck } from './match';
+import { autoEvidence, autoEvidenceText, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isFolderEvidence, listView, matchBody, matchesPath, newerDecision, previewQuery, sameSearch, asksProvider, candidateQuery, compareEpisodeCount, episodeCheckId, type CandidateGroup, type EpisodeCountCheck, type Evidence, type TypedSearch, type YearCheck } from './match';
 import { RemotePoster } from './media';
 import { episodeDiffText, lastDecision } from './timeline';
 
@@ -43,8 +43,8 @@ interface Props {
   item: ItemRecord;
   params: string;
   timeline: TimelineEvent[];
-  /** The current Plex GUID of the item, from the live view. */
-  liveGuid?: string;
+  /** What Plex tells about the item now: its GUID and counts. */
+  live?: LiveItem;
   isOpen: boolean;
   onClose: () => void;
 }
@@ -82,7 +82,7 @@ function candidateTitle(candidate: Candidate): string {
   return titleYear(candidate.name || candidate.guid, candidate.year);
 }
 
-function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: BodyProps) {
+function FixMatchBody({ item, params, timeline, live, isWide, onClose }: BodyProps) {
   const client = useQueryClient();
   const showToast = useToast();
   const confirm = useImperativeAlertDialog();
@@ -126,6 +126,8 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
   );
   const groups = groupCandidates([...(opening.data?.searches ?? []), ...previewSearches(isPreview ? decision : undefined)], typed ? search.data?.searches : [], typed?.year);
   const title = titleYear(item.title ?? `Item ${item.key}`, item.year);
+  const counts = plexCounts(live);
+  const subtitle = [item.library, counts.length ? `${counts.join(' · ')} in Plex` : undefined].filter(Boolean).join(' · ');
   const isTypedPending = typed !== undefined && search.isPending;
   const view = listView(groups.length, opening.isPending || isTypedPending, opening.isSuccess || (typed !== undefined && search.isSuccess));
 
@@ -177,8 +179,9 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
               params={params}
               decision={decision}
               isPreview={isPreview}
-              isCurrent={isCurrentMatch(group, liveGuid)}
-              hasEpisodeCheck={offersEpisodeCheck(group, item.type, isTMDBOn)}
+              isCurrent={isCurrentMatch(group, live?.guid)}
+              itemEpisodes={live?.episodes}
+              isTMDBOn={isTMDBOn}
               isApplying={apply.isPending}
               isCompact={!isWide}
               onChoose={() => choose(group)}
@@ -196,7 +199,7 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
       height="fill"
       padding={5}
       defaultHasDividers
-      header={<DialogHeader title={`Fix match · ${title}`} subtitle={item.library} onOpenChange={open => !open && onClose()} hasDivider={false} />}
+      header={<DialogHeader title={`Fix match · ${title}`} subtitle={subtitle} onOpenChange={open => !open && onClose()} hasDivider={false} />}
       content={
         <LayoutContent isScrollable label="Candidates">
           {/* The inline end padding keeps the cards off the scrollbar. */}
@@ -337,6 +340,17 @@ function yearToken(check: YearCheck) {
   }
 }
 
+function episodeToken(check: EpisodeCountCheck) {
+  switch (check.kind) {
+    case 'same':
+      return <Token size="sm" color="green" label={`${plural(check.episodes, 'episode')}, same as yours`} />;
+    case 'differs':
+      return <Token size="sm" color="yellow" label={`${plural(check.episodes, 'episode')}, yours has ${check.yours.toLocaleString()}`} />;
+    default:
+      return null;
+  }
+}
+
 function foundLabel(evidence: Evidence): string {
   const year = evidence.year ? ` (${evidence.year})` : '';
   return `Found by ${evidence.isTyped ? 'your' : 'the'} ${evidence.source === 'id' ? 'ID' : 'title'} search “${evidence.query}”${year}`;
@@ -396,19 +410,25 @@ interface CardProps {
   /** The decision is a preview, not the last automatic fix match. */
   isPreview: boolean;
   isCurrent: boolean;
-  hasEpisodeCheck: boolean;
+  /** The episodes that Plex has for the item, from the live view. */
+  itemEpisodes?: number;
+  isTMDBOn: boolean;
   isApplying: boolean;
   /** Puts the score and the button below the details, for a phone. */
   isCompact: boolean;
   onChoose: () => void;
 }
 
-function CandidateCard({ group, item, params, decision, isPreview, isCurrent, hasEpisodeCheck, isApplying, isCompact, onChoose }: CardProps) {
+function CandidateCard({ group, item, params, decision, isPreview, isCurrent, itemEpisodes, isTMDBOn, isApplying, isCompact, onChoose }: CardProps) {
   const { candidate } = group;
+  // The metadata provider gives a series candidate its counts and TMDB ID.
+  // A failed or unknown answer adds nothing to the card.
+  const series = useQuery({ ...candidateQuery(params, group.guid), enabled: asksProvider(group, item.type) });
+  const tmdbId = episodeCheckId(group, item.type, isTMDBOn, series.data?.tmdbId);
   const folder = group.foundBy.filter(isFolderEvidence);
   const found = group.foundBy.filter(e => !isFolderEvidence(e));
   const auto = autoEvidence(decision, group.guid);
-  const facts = [typeName(candidate.type), candidate.year].filter(Boolean).join(' · ');
+  const facts = [typeName(candidate.type), candidate.year, ...plexCounts(series.data)].filter(Boolean).join(' · ');
   const reason = !group.guid ? 'Plex gave this candidate no GUID, so it cannot be applied' : isCurrent ? 'This is the current match' : undefined;
   const score = candidate.score > 0 && (
     <VStack gap={0} hAlign={isCompact ? 'start' : 'end'}>
@@ -432,6 +452,7 @@ function CandidateCard({ group, item, params, decision, isPreview, isCurrent, ha
             <HStack gap={1} wrap="wrap">
               {folder.map((e, index) => <Token key={`${index}-${e.query}`} size="sm" color="green" label={evidenceLabel(e)} />)}
               {yearToken(compareYear(item.year, candidate.year))}
+              {episodeToken(compareEpisodeCount(itemEpisodes, series.data?.episodes))}
             </HStack>
             {/* Longer evidence is text, so it wraps instead of being cut. */}
             {found.map((e, index) => (
@@ -448,7 +469,7 @@ function CandidateCard({ group, item, params, decision, isPreview, isCurrent, ha
             {/* The key ties the check to the item and the TMDB ID: when a
                 search ties the candidate to another ID, the row starts
                 again and drops the answer of the previous ID. */}
-            {hasEpisodeCheck && group.tmdbId && <EpisodeCheckRow key={`${params}|${group.tmdbId}`} params={params} tmdbId={group.tmdbId} />}
+            {tmdbId && <EpisodeCheckRow key={`${params}|${tmdbId}`} params={params} tmdbId={tmdbId} />}
           </VStack>
         </StackItem>
         {!isCompact && <VStack gap={2} hAlign="end">{score}{match}</VStack>}
