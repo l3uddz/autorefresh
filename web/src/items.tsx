@@ -6,6 +6,7 @@ import { Drawer } from '@astryxdesign/core/Drawer';
 import { EmptyState } from '@astryxdesign/core/EmptyState';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
 import { Icon } from '@astryxdesign/core/Icon';
+import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, Layout, LayoutContent, LayoutHeader, LayoutPanel, StackItem, VStack } from '@astryxdesign/core/Layout';
 import { List, ListItem } from '@astryxdesign/core/List';
 import { ResizeHandle, useResizable } from '@astryxdesign/core/Resizable';
@@ -20,10 +21,10 @@ import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { useToast } from '@astryxdesign/core/Toast';
 import { colorVars } from '@astryxdesign/core/theme/tokens.stylex';
-import { InboxIcon } from '@heroicons/react/24/outline';
+import { BarsArrowDownIcon, BarsArrowUpIcon, InboxIcon } from '@heroicons/react/24/outline';
 import * as stylex from '@stylexjs/stylex';
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, invalidateLists, itemID, useServers, type ItemPage, type ItemRecord, type ServerInfo } from './api';
 import { bulkError, bulkRequests, isSearchTooLong, listParams, maxSearchBytes, stopOrResume, tabActions, type BulkAction, type BulkRequest, type Filters, type Selection } from './bulk';
 import { useNow } from './clock';
@@ -34,7 +35,7 @@ import { Poster, Reasons } from './media';
 import { NothingMatched, startBulkRefresh, useIsRefreshBusy } from './queue';
 import { itemHash, navigate, tabNames, type ItemKey, type TabName } from './route';
 import { useRowOpen } from './rowopen';
-import { stableRows, tableRow, type TableRow } from './table';
+import { chooseSort, formatSort, parseSort, sortKeys, stableRows, tableRow, type TableRow } from './table';
 
 const tabTitles: Record<TabName, string> = { attention: 'Attention', fixed: 'Fixed', stopped: 'Stopped' };
 const reasonOptions = ['unmatched', 'no-summary', 'no-poster', 'no-art', 'episode-no-summary', 'episode-unmatched'];
@@ -164,6 +165,12 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
   const [shownParams, setShownParams] = useState(params);
   if (!page.isPlaceholderData && shownParams !== params) setShownParams(params);
   const tableKey = page.isPlaceholderData ? shownParams : params;
+  // List mode scrolls the content itself, so a new filter or sort scrolls
+  // it back to the top once the new rows arrive, as the table remounts.
+  const contentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (mode !== 'table') contentRef.current?.scrollTo({ top: 0 });
+  }, [tableKey, mode]);
   const counts = page.data?.pages[0]?.counts;
   const server = (key: ItemKey) => inventory.find(entry => entry.srv === key.srv);
   const close = () => navigate({ page: 'items', tab, srv });
@@ -194,6 +201,8 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
       search={search}
       isSearchInvalid={isSearchInvalid}
       onSearch={changeSearch}
+      sort={sort}
+      onSort={value => setSorts({ ...sorts, [tab]: value })}
       bulk={
         selected && (
           <BulkBand
@@ -239,7 +248,7 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
   );
 
   const content = (
-    <LayoutContent padding={isTable ? 4 : 0} isScrollable={!isTable || (Boolean(item) && !isTwoPane)}>
+    <LayoutContent ref={contentRef} padding={isTable ? 4 : 0} isScrollable={!isTable || (Boolean(item) && !isTwoPane)}>
       {item && !isTwoPane ? (
         detail
       ) : (
@@ -338,10 +347,14 @@ interface HeaderProps {
   /** Whether search is too long for the API, so the list ignores it. */
   isSearchInvalid: boolean;
   onSearch: (value: string) => void;
+  /** The sort of the tab, as the API reads it. Table mode sorts by its
+   * column headers instead. */
+  sort: string;
+  onSort: (sort: string) => void;
   bulk?: React.ReactNode;
 }
 
-function ItemsHeader({ tab, counts, mode, onMode, srv, server, filters, onFilters, search, isSearchInvalid, onSearch, bulk }: HeaderProps) {
+function ItemsHeader({ tab, counts, mode, onMode, srv, server, filters, onFilters, search, isSearchInvalid, onSearch, sort, onSort, bulk }: HeaderProps) {
   const set = onFilters;
   const optional = (value: string | null) => value || undefined;
   return (
@@ -395,6 +408,7 @@ function ItemsHeader({ tab, counts, mode, onMode, srv, server, filters, onFilter
             options={[{ ...anyOption, label: 'Movies and series' }, { value: 'movie', label: 'Movies' }, { value: 'show', label: 'Series' }]}
             onChange={value => set({ type: optional(value) })}
           />
+          {mode === 'list' && <SortControl tab={tab} sort={sort} onSort={onSort} />}
           {tab !== 'stopped' && (
             <Switch
               label={tab === 'fixed' ? 'Include fixed by Plex alone' : 'Include ignored reasons'}
@@ -415,6 +429,37 @@ function ItemsHeader({ tab, counts, mode, onMode, srv, server, filters, onFilter
         </VStack>
       )}
     </LayoutHeader>
+  );
+}
+
+/** The sort of list mode: a sort key of the tab and its direction. */
+function SortControl({ tab, sort, onSort }: { tab: TabName; sort: string; onSort: (sort: string) => void }) {
+  const { key, desc } = parseSort(sort);
+  const direction = desc ? 'Descending, change to ascending' : 'Ascending, change to descending';
+  return (
+    <HStack gap={1} vAlign="center">
+      <Selector
+        label="Sort"
+        isLabelHidden
+        variant="secondary"
+        value={key}
+        // Short option labels keep the menu's typeahead useful; the closed
+        // control says what the value means.
+        options={[{ value: '', label: 'Default order' }, ...sortKeys[tab].map(entry => ({ value: entry.key, label: entry.label }))]}
+        renderValue={option => (option.value ? `Sort by ${(option.label ?? option.value).toLowerCase()}` : option.label)}
+        onChange={value => onSort(chooseSort(tab, sort, value ?? ''))}
+      />
+      {key && (
+        <IconButton
+          label={direction}
+          tooltip={direction}
+          icon={<Icon icon={desc ? BarsArrowDownIcon : BarsArrowUpIcon} size="sm" />}
+          variant="ghost"
+          size="sm"
+          onClick={() => onSort(formatSort(key, !desc))}
+        />
+      )}
+    </HStack>
   );
 }
 
@@ -504,16 +549,17 @@ function ItemTable({ tab, rows, isMulti, ignored, sort, onSort, selection, onSel
     getIsIndeterminate: () => keys.size > 0,
   });
   const sortPlugin = useTableSortable<TableRow>({
-    sort: sort ? [{ sortKey: sort.replace(/^-/, ''), direction: sort.startsWith('-') ? 'descending' : 'ascending' }] : [],
-    onSortChange: next => onSort(next[0] ? `${next[0].direction === 'descending' ? '-' : ''}${next[0].sortKey}` : ''),
+    sort: sort ? [{ sortKey: parseSort(sort).key, direction: parseSort(sort).desc ? 'descending' : 'ascending' }] : [],
+    onSortChange: next => onSort(next[0] ? formatSort(next[0].sortKey, next[0].direction === 'descending') : ''),
   });
 
   // No column has a renderCell: Astryx windows only plain text cells.
-  const title: TableColumn<TableRow> = { key: 'title', header: 'Item', sortable: true, width: proportional(2.4, { minWidth: 200 }) };
+  const isSortable = (key: string) => sortKeys[tab].some(entry => entry.key === key);
+  const title: TableColumn<TableRow> = { key: 'title', header: 'Item', sortable: isSortable('title'), width: proportional(2.4, { minWidth: 200 }) };
   const kind: TableColumn<TableRow> = { key: 'kind', header: 'Type', width: proportional(0.9, { minWidth: 110 }) };
   const library: TableColumn<TableRow> = { key: 'library', header: isMulti ? 'Server · library' : 'Library', width: proportional(1.2, { minWidth: 120 }) };
   const reasons: TableColumn<TableRow> = { key: 'reasons', header: 'Reasons', width: proportional(1.6, { minWidth: 160 }) };
-  const tries: TableColumn<TableRow> = { key: 'tries', header: 'Tries', sortable: true, align: 'end', width: pixel(88) };
+  const tries: TableColumn<TableRow> = { key: 'tries', header: 'Tries', sortable: isSortable('tries'), align: 'end', width: pixel(88) };
   const byTab: Record<TabName, TableColumn<TableRow>[]> = {
     attention: [
       title,
@@ -521,16 +567,16 @@ function ItemTable({ tab, rows, isMulti, ignored, sort, onSort, selection, onSel
       library,
       reasons,
       tries,
-      { key: 'last-attempt', header: 'Last action', sortable: true, width: proportional(1.2, { minWidth: 130 }) },
-      { key: 'due', header: 'Next due', sortable: true, width: proportional(1, { minWidth: 120 }) },
+      { key: 'last-attempt', header: 'Last action', sortable: isSortable('last-attempt'), width: proportional(1.2, { minWidth: 130 }) },
+      { key: 'due', header: 'Next due', sortable: isSortable('due'), width: proportional(1, { minWidth: 120 }) },
     ],
-    stopped: [title, kind, library, reasons, tries, { key: 'stopped', header: 'Stopped', sortable: true, width: proportional(1, { minWidth: 120 }) }],
+    stopped: [title, kind, library, reasons, tries, { key: 'stopped', header: 'Stopped', sortable: isSortable('stopped'), width: proportional(1, { minWidth: 120 }) }],
     fixed: [
       title,
       kind,
       library,
       { key: 'fixed-by', header: 'Fixed by', width: proportional(1.4, { minWidth: 140 }) },
-      { key: 'completed', header: 'Completed', sortable: true, width: proportional(1, { minWidth: 120 }) },
+      { key: 'completed', header: 'Completed', sortable: isSortable('completed'), width: proportional(1, { minWidth: 120 }) },
     ],
   };
   const plugins: Record<string, TablePlugin<TableRow>> = tabActions[tab].length
