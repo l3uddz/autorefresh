@@ -60,6 +60,14 @@ describe('groupCandidates', () => {
     expect(tmdb).toEqual({ 'plex://one': '10', 'plex://two': undefined, 'plex://three': undefined, 'plex://four': undefined, 'plex://five': undefined });
   });
 
+  it('ties no candidate to a TMDB ID whose searches found different candidates', () => {
+    const groups = groupCandidates(
+      [search('tmdb-48213', [cand('plex://a')], { source: 'path' }), search('tmdb-48213', [cand('plex://b')], { source: 'path' })],
+      [search('tmdb-9', [cand('plex://c')], { source: 'id' })],
+    );
+    expect(groups.map(g => [g.guid, g.tmdbId])).toEqual([['plex://c', '9'], ['plex://a', undefined], ['plex://b', undefined]]);
+  });
+
   it('ties a typed TMDB ID search too', () => {
     const [group] = groupCandidates([], [search('tmdb-77', [cand('plex://x')], { source: 'id' })]);
     expect(group.tmdbId).toBe('77');

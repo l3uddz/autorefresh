@@ -660,7 +660,7 @@ type, summary, and Plex score (when Plex gives one), and how it was found:
 the folder IDs that found it, the year compared with the item, and the
 searches of the last automatic fix match that found it. The current match of the item in Plex
 is marked, and you cannot apply it again. For a series, a candidate that
-a search by one TMDB ID found as its only candidate can compare the
+every search by one TMDB ID found as its only candidate can compare the
 episode numbers of the item with that TMDB series. This needs a
 `tmdb-token`. The comparison changes nothing. **Match** asks before it
 applies the candidate. After Plex accepts the match, autorefresh also

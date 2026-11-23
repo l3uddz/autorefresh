@@ -85,16 +85,23 @@ interface Builder {
 /** Groups the candidates of the opening and the typed searches by GUID.
  * Candidates without a GUID stay apart, because Plex cannot apply them.
  * Groups that the typed search found come first, then those that more
- * folder IDs found, then the higher Plex score. typedYear is the year
- * that the typed search sent, which its answer does not carry. */
+ * folder IDs found, then the higher Plex score. A candidate ties to a TMDB
+ * ID only when every search of that ID found it as the only candidate.
+ * typedYear is the year that the typed search sent, which its answer does
+ * not carry. */
 export function groupCandidates(opening: MatchSearch[], typed: MatchSearch[] = [], typedYear?: number): CandidateGroup[] {
   const groups = new Map<string, Builder>();
   const loose: Builder[] = [];
+  // The GUIDs that the searches of each TMDB ID found. Searches that
+  // disagree tie no candidate to the ID.
+  const found = new Map<string, Set<string>>();
   let order = 0;
   const add = (search: MatchSearch, isTyped: boolean) => {
     const year = isTyped && search.source === 'title' ? typedYear : undefined;
     const evidence: Evidence = { query: search.query, source: search.source, fromId: search.fromId, isTyped, ...(year ? { year } : {}) };
     const tie = tmdbTie(search);
+    const id = tmdbIdOf(search);
+    if (id) found.set(id, new Set([...(found.get(id) ?? []), ...search.candidates.map(c => c.guid)]));
     for (const candidate of search.candidates) {
       let entry = candidate.guid ? groups.get(candidate.guid) : undefined;
       if (!entry) {
@@ -121,7 +128,10 @@ export function groupCandidates(opening: MatchSearch[], typed: MatchSearch[] = [
       const [x, y] = [rank(a), rank(b)];
       return y[0] - x[0] || y[1] - x[1] || y[2] - x[2] || a.order - b.order;
     })
-    .map(({ group, tmdbIds }) => (tmdbIds.size === 1 ? { ...group, tmdbId: [...tmdbIds][0] } : group));
+    .map(({ group, tmdbIds }) => {
+      const [id] = tmdbIds;
+      return tmdbIds.size === 1 && found.get(id)?.size === 1 ? { ...group, tmdbId: id } : group;
+    });
 }
 
 /** Reports whether group is the current match of the item in Plex. */
