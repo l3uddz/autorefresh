@@ -64,7 +64,7 @@ func TestProviderSeriesNotFound(t *testing.T) {
 func TestProviderSeriesRejectsOtherGUIDs(t *testing.T) {
 	rec, c := newProvider(t, serveFixture(t, "provider_show.json"))
 	for _, guid := range []string{
-		"", "plex://movie/000000000000000000000001", "plex://show/../000000000000000000000001",
+		"", "https://example.invalid/collect", "plex://movie/000000000000000000000001", "plex://show/../000000000000000000000001",
 		"plex://show/000000000000000000000001?x=1", "local://1", "plex://show/00000000000000000000000G",
 	} {
 		if _, err := c.ProviderSeries(context.Background(), guid); !errors.Is(err, ErrInvalidGUID) {

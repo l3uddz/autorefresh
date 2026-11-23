@@ -577,3 +577,35 @@ func TestRecordManualUsesAdmissionSnapshotAcrossRowChanges(t *testing.T) {
 		})
 	}
 }
+
+// A decision from before migration 14 reads with empty evidence.
+func TestEvidenceMigrationKeepsOldDecisions(t *testing.T) {
+	file := openAtVersion(t, 13)
+	db, err := sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`INSERT INTO library (server, section) VALUES ('` + srv + `', '` + sec + `')`,
+		`INSERT INTO event (server, section, rating_key, at, kind, outcome, conflict, path_year)
+			VALUES ('` + srv + `', '` + sec + `', 'old', 100, 'match-decision', 'no-match', 'year differs', 2020)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	s, err := Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	events, err := s.Timeline(srv, "old")
+	if err != nil || len(events) != 1 {
+		t.Fatalf("Timeline = %+v, %v", events, err)
+	}
+	if e := events[0]; e.PathYear != 2020 || !reflect.DeepEqual(e.MatchEvidence, MatchEvidence{}) {
+		t.Fatalf("event = %+v, want the old fields and empty evidence", e)
+	}
+}
