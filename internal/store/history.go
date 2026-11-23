@@ -68,6 +68,29 @@ type MatchSearch struct {
 	Candidates []MatchCandidate
 }
 
+// Why a fix match decision asked TMDB nothing where TMDB could have helped.
+const (
+	TMDBOff      = "off"       // no TMDB token is set
+	TMDBFailed   = "failed"    // an earlier TMDB failure in the run turned TMDB off
+	TMDBHasID    = "tmdb-id"   // the paths hold a tmdb ID, which Plex searched directly
+	TMDBNoSource = "no-source" // the paths hold no imdb ID, and no tvdb ID of a series
+)
+
+// EpisodeDiff is the first local season whose regular episode numbers
+// differ from TMDB, with the episode count of Plex and of TMDB. Season 0
+// means none.
+type EpisodeDiff struct {
+	Season, Plex, TMDB int
+}
+
+// MatchEvidence is what a fix match decision learned beyond its searches.
+type MatchEvidence struct {
+	TMDBID      string      // the TMDB ID whose year and episodes the year check compared
+	TMDBSkip    string      // why TMDB was not asked: TMDBOff, TMDBFailed, TMDBHasID, or TMDBNoSource
+	TMDBMissing []string    // the path IDs, such as tvdb-357542, that TMDB has no entry for
+	EpisodeDiff EpisodeDiff // the episode comparison that did not confirm the candidate
+}
+
 // Event is one thing that happened to an item, with a snapshot of the item.
 type Event struct {
 	ID                               int64
@@ -90,11 +113,13 @@ type Event struct {
 	FixedMatchEventID                int64 // 0: none
 	RunID                            int64 // the run that wrote it; 0: none
 	Searches                         []MatchSearch
+	MatchEvidence                    // match decisions
 }
 
 const eventColumns = `id, server, section, rating_key, at, kind, source, title, year, type, thumb, art, path,
 	action, accepted, outcome, error, match_guid, match_title, match_year, conflict, path_year, tmdb_year,
-	episode_count, links, fixed_action, fixed_match, fixed_match_event_id, run_id`
+	episode_count, links, fixed_action, fixed_match, fixed_match_event_id, run_id, tmdb_id, tmdb_skip, tmdb_missing,
+	episode_season, episode_plex, episode_tmdb`
 
 // Outcome is the outcome of the request: the action, with "-failed" when
 // Plex did not accept it, or "search-failed" without an action.
@@ -200,6 +225,23 @@ type MatchDecision struct {
 	PathYear, TMDBYear, EpisodeCount int
 	Searches                         []MatchSearch
 	RunID                            int64 // the run that searched; 0: none
+	ItemYear                         int   // the year of the item; RecordMatchDecision takes the year of its row
+	MatchEvidence
+}
+
+// Event returns the match decision event of d, with the item year as its
+// only snapshot field, for a decision that is not recorded.
+func (d MatchDecision) Event() Event {
+	e := Event{At: d.At, Kind: EventMatchDecision, Source: d.Source, Year: d.ItemYear}
+	d.setOn(&e)
+	return e
+}
+
+// setOn sets the decision fields of the event e.
+func (d MatchDecision) setOn(e *Event) {
+	e.Outcome, e.Conflict, e.Error = string(d.Outcome), d.Conflict, d.Error
+	e.PathYear, e.TMDBYear, e.EpisodeCount = d.PathYear, d.TMDBYear, d.EpisodeCount
+	e.RunID, e.Searches, e.MatchEvidence = d.RunID, d.Searches, d.MatchEvidence
 }
 
 // RecordMatchDecision writes a match decision event with its searches and
@@ -217,9 +259,7 @@ func (s *Store) RecordMatchDecision(d MatchDecision) error {
 		return err
 	}
 	e := snapshotEvent(snap, d.At, EventMatchDecision, d.Source)
-	e.Outcome, e.Conflict, e.Error = string(d.Outcome), d.Conflict, d.Error
-	e.PathYear, e.TMDBYear, e.EpisodeCount = d.PathYear, d.TMDBYear, d.EpisodeCount
-	e.RunID = d.RunID
+	d.setOn(&e)
 	eventID, err := insertEvent(tx, e)
 	if err != nil {
 		return err
@@ -345,13 +385,15 @@ func readItem(tx *sql.Tx, server, ratingKey string) (it Item, found bool, err er
 func insertEvent(tx *sql.Tx, e Event) (int64, error) {
 	res, err := tx.Exec(`INSERT INTO event (server, section, rating_key, at, kind, source, title, year, type, thumb, art, path,
 		action, accepted, outcome, error, match_guid, match_title, match_year, conflict, path_year, tmdb_year,
-		episode_count, links, fixed_action, fixed_match, fixed_match_event_id, run_id)
+		episode_count, links, fixed_action, fixed_match, fixed_match_event_id, run_id, tmdb_id, tmdb_skip, tmdb_missing,
+		episode_season, episode_plex, episode_tmdb)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT id FROM event WHERE id = ?),
-		(SELECT id FROM run WHERE id = ?))`,
+		(SELECT id FROM run WHERE id = ?), ?, ?, ?, ?, ?, ?)`,
 		e.Server, e.Section, e.RatingKey, e.At.Unix(), e.Kind, e.Source, e.Title, e.Year, e.Type, e.Thumb, e.Art, e.Path,
 		e.Action, e.Accepted, e.Outcome, e.Error, e.MatchGUID, e.MatchTitle, e.MatchYear, e.Conflict,
 		e.PathYear, e.TMDBYear, e.EpisodeCount, strings.Join(e.Links, "\n"), e.FixedAction, e.FixedMatch, e.FixedMatchEventID,
-		e.RunID)
+		e.RunID, e.TMDBID, e.TMDBSkip, strings.Join(e.TMDBMissing, "\n"), e.EpisodeDiff.Season, e.EpisodeDiff.Plex,
+		e.EpisodeDiff.TMDB)
 	if err != nil {
 		return 0, fmt.Errorf("write event: %w", err)
 	}
@@ -494,20 +536,27 @@ func scanEvent(row scanner) (Event, error) {
 		e       Event
 		at      int64
 		links   string
+		missing string
 		fixedID sql.NullInt64
 		runID   sql.NullInt64
 	)
 	err := row.Scan(&e.ID, &e.Server, &e.Section, &e.RatingKey, &at, &e.Kind, &e.Source, &e.Title, &e.Year, &e.Type,
 		&e.Thumb, &e.Art, &e.Path, &e.Action, &e.Accepted, &e.Outcome, &e.Error, &e.MatchGUID, &e.MatchTitle,
 		&e.MatchYear, &e.Conflict, &e.PathYear, &e.TMDBYear, &e.EpisodeCount, &links, &e.FixedAction, &e.FixedMatch,
-		&fixedID, &runID)
+		&fixedID, &runID, &e.TMDBID, &e.TMDBSkip, &missing, &e.EpisodeDiff.Season, &e.EpisodeDiff.Plex, &e.EpisodeDiff.TMDB)
 	if err != nil {
 		return Event{}, err
 	}
 	e.At = time.Unix(at, 0)
 	e.FixedMatchEventID, e.RunID = fixedID.Int64, runID.Int64
-	if links != "" {
-		e.Links = strings.Split(links, "\n")
-	}
+	e.Links, e.TMDBMissing = lines(links), lines(missing)
 	return e, nil
+}
+
+// lines splits a text column of lines, and returns nil for an empty one.
+func lines(text string) []string {
+	if text == "" {
+		return nil
+	}
+	return strings.Split(text, "\n")
 }

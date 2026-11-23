@@ -32,9 +32,14 @@ type MatchResult struct {
 }
 
 // EpisodeResult reports whether all locally represented seasons matched TMDB.
+// Without a match, Diff is the first season that differs, and Missing and
+// Extra are the episode numbers of that season that only TMDB, or only
+// Plex, has. Diff is zero when Plex lists no complete regular episodes.
 type EpisodeResult struct {
-	Match    bool
-	Episodes int
+	Match          bool
+	Episodes       int
+	Diff           store.EpisodeDiff
+	Missing, Extra []int
 }
 
 func (r *Refresher) lookupItem(server, key string) (manualItem, error) {
@@ -131,7 +136,7 @@ func (r *Refresher) openSearch(ctx context.Context, s *matchSearch) error {
 func (r *Refresher) searchTMDB(ctx context.Context, s *matchSearch, ids []pathID) error {
 	seen := map[string]bool{}
 	for _, from := range ids {
-		if from.Source != "imdb" && (from.Source != "tvdb" || s.row.Type != plex.ShowLibrary) {
+		if !tmdbSource(from, s.row.Type) {
 			continue
 		}
 		id, ok, err := r.tmdbID(ctx, s.server.Name, s.row, from, s.cached)
@@ -172,5 +177,5 @@ func (r *Refresher) EpisodeCheck(ctx context.Context, server, key, id string) (E
 		return EpisodeResult{}, ErrUnknownItem
 	}
 	result, err := compareEpisodes(ctx, it.server.Plex, r.opts.TMDB, key, id)
-	return EpisodeResult{Match: result.count > 0, Episodes: result.count}, err
+	return EpisodeResult{Match: result.count > 0, Episodes: result.count, Diff: result.diff, Missing: result.missing, Extra: result.extra}, err
 }

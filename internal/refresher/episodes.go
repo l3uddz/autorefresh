@@ -8,10 +8,13 @@ import (
 	"slices"
 
 	"github.com/rs/zerolog/log"
+
+	"github.com/l3uddz/autorefresh/internal/store"
 )
 
 // confirmEpisodeNumbers requires every locally represented regular season to
-// match TMDB in full. A season that the local library lacks supplies no evidence.
+// match TMDB in full. A season that the local library lacks supplies no
+// evidence. It logs a season that differs in mc.d.
 func (r *Refresher) confirmEpisodeNumbers(ctx context.Context, run *serverRun, mc matchContext, tmdbID string) (int, error) {
 	result, err := compareEpisodes(ctx, run.server.Plex, r.opts.TMDB, mc.it.RatingKey, tmdbID)
 	if errors.Is(err, ErrTMDB) {
@@ -24,18 +27,28 @@ func (r *Refresher) confirmEpisodeNumbers(ctx context.Context, run *serverRun, m
 	if err != nil {
 		return 0, err
 	}
-	if result.mismatch {
-		itemEvent(log.Debug(), run.server.Name, mc.lib, mc.it).Int("season", result.season).
-			Int("local_episode_count", result.localCount).Int("tmdb_episode_count", result.tmdbCount).Msg("Episode numbers differ")
+	if result.diff.Season > 0 {
+		mc.d.evidence.EpisodeDiff = result.diff
+		itemEvent(log.Debug(), run.server.Name, mc.lib, mc.it).Int("season", result.diff.Season).
+			Int("local_episode_count", result.diff.Plex).Int("tmdb_episode_count", result.diff.TMDB).Msg("Episode numbers differ")
 	}
 	return result.count, nil
 }
 
+// episodeComparison is the result of compareEpisodes. count is the number
+// of regular episodes when every local season matched. Otherwise diff is the
+// first season that differs, and missing and extra are the episode numbers
+// of that season that only TMDB, or only Plex, has. Both are zero when Plex
+// lists no complete regular episodes.
 type episodeComparison struct {
-	count, season, localCount, tmdbCount int
-	mismatch                             bool
+	count          int
+	diff           store.EpisodeDiff
+	missing, extra []int
 }
 
+// compareEpisodes compares the regular episode numbers of the series key in
+// Plex with those of the TMDB ID id, season by season, and stops at the
+// first season that differs.
 func compareEpisodes(ctx context.Context, p Plex, t TMDB, key, id string) (episodeComparison, error) {
 	local, err := p.EpisodeNumbers(ctx, key)
 	if err != nil {
@@ -49,11 +62,26 @@ func compareEpisodes(ctx context.Context, p Plex, t TMDB, key, id string) (episo
 		}
 		numbers := local[season]
 		if !sameEpisodeNumbers(numbers, catalog) {
-			return episodeComparison{season: season, localCount: len(numbers), tmdbCount: len(catalog), mismatch: true}, nil
+			return episodeComparison{
+				diff:    store.EpisodeDiff{Season: season, Plex: len(numbers), TMDB: len(catalog)},
+				missing: onlyIn(catalog, numbers), extra: onlyIn(numbers, catalog),
+			}, nil
 		}
 		count += len(catalog)
 	}
 	return episodeComparison{count: count}, nil
+}
+
+// onlyIn returns the sorted episode numbers of a that b lacks, each once.
+func onlyIn(a, b []int) []int {
+	var out []int
+	for _, n := range a {
+		if !slices.Contains(b, n) && !slices.Contains(out, n) {
+			out = append(out, n)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 func sameEpisodeNumbers(local, catalog []int) bool {

@@ -42,6 +42,31 @@ type eventJSON struct {
 	FixedMatch        store.Action `json:"fixedMatch,omitempty"`
 	FixedMatchEventID int64        `json:"fixedMatchEventId,omitempty"`
 	Searches          []searchJSON `json:"searches"`
+	// The evidence of a match decision beyond its searches.
+	ItemYear    int              `json:"itemYear,omitempty"`
+	TMDBID      string           `json:"tmdbId,omitempty"`
+	TMDBSkip    string           `json:"tmdbSkip,omitempty"`
+	TMDBMissing []string         `json:"tmdbMissing,omitempty"`
+	EpisodeDiff *episodeDiffJSON `json:"episodeDiff,omitempty"`
+}
+
+// episodeDiffJSON is the first season whose regular episode numbers differ
+// from TMDB, with the episode count of Plex and of TMDB, and the episode
+// numbers of the season that only TMDB, or only Plex, has.
+type episodeDiffJSON struct {
+	Season  int   `json:"season"`
+	Plex    int   `json:"plex"`
+	TMDB    int   `json:"tmdb"`
+	Missing []int `json:"missing,omitempty"`
+	Extra   []int `json:"extra,omitempty"`
+}
+
+// toEpisodeDiffJSON returns d, or nil when no season differs.
+func toEpisodeDiffJSON(d store.EpisodeDiff) *episodeDiffJSON {
+	if d.Season == 0 {
+		return nil
+	}
+	return &episodeDiffJSON{Season: d.Season, Plex: d.Plex, TMDB: d.TMDB}
 }
 
 // matchJSON is the candidate of a match request.
@@ -157,6 +182,10 @@ func (s *Server) toEventJSON(e store.Event) eventJSON {
 		PathYear: e.PathYear, TMDBYear: e.TMDBYear, EpisodeCount: e.EpisodeCount, Links: e.Links,
 		FixedAction: e.FixedAction, FixedMatch: e.FixedMatch, FixedMatchEventID: e.FixedMatchEventID,
 		Searches: make([]searchJSON, 0, len(e.Searches)),
+	}
+	if e.Kind == store.EventMatchDecision {
+		out.ItemYear, out.TMDBID, out.TMDBSkip, out.TMDBMissing = e.Year, e.TMDBID, e.TMDBSkip, e.TMDBMissing
+		out.EpisodeDiff = toEpisodeDiffJSON(e.EpisodeDiff)
 	}
 	if e.MatchGUID != "" {
 		out.Match = &matchJSON{GUID: e.MatchGUID, Title: e.MatchTitle, Year: e.MatchYear}

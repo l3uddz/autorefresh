@@ -144,6 +144,7 @@ func TestTMDBFallbackSkipped(t *testing.T) {
 		f := newTMDBFixture(t, fp, nil, "tvdb-5")
 		f.run(t0)
 		wantCalls(t, sends(fp.calls), "Refresh 201")
+		wantEvidence(t, f.decision("201"), store.MatchEvidence{TMDBSkip: store.TMDBOff})
 	})
 	t.Run("a normal search found a candidate", func(t *testing.T) {
 		fp := newFakePlex(showsLib)
@@ -153,6 +154,7 @@ func TestTMDBFallbackSkipped(t *testing.T) {
 		f.run(t0)
 		wantCalls(t, sends(fp.calls), "Match 201 plex://show/s", "Refresh 201")
 		wantCalls(t, ft.calls)
+		wantEvidence(t, f.decision("201"), store.MatchEvidence{})
 	})
 	t.Run("the path has a tmdb ID", func(t *testing.T) {
 		fp := newFakePlex(showsLib)
@@ -161,6 +163,7 @@ func TestTMDBFallbackSkipped(t *testing.T) {
 		f.run(t0)
 		wantCalls(t, sends(fp.calls), "Refresh 201")
 		wantCalls(t, ft.calls)
+		wantEvidence(t, f.decision("201"), store.MatchEvidence{TMDBSkip: store.TMDBHasID})
 	})
 	t.Run("a tvdb ID of a movie", func(t *testing.T) {
 		fp := newFakePlex(moviesLib)
@@ -174,6 +177,7 @@ func TestTMDBFallbackSkipped(t *testing.T) {
 		f.run(t0)
 		wantCalls(t, sends(fp.calls), "Refresh 101")
 		wantCalls(t, ft.calls)
+		wantEvidence(t, f.decision("101"), store.MatchEvidence{TMDBSkip: store.TMDBNoSource})
 	})
 }
 
@@ -189,6 +193,9 @@ func TestTMDBFallbackFindsNothing(t *testing.T) {
 	if _, ok, err := f.store.TMDBID(testServer, "201", "tvdb", "5"); err != nil || ok {
 		t.Errorf("cached TMDB ID found = %v, %v, want none", ok, err)
 	}
+	e := f.decision("201")
+	wantDecision(t, e, store.DecisionNoMatch, "", "path tvdb-5:")
+	wantEvidence(t, e, store.MatchEvidence{TMDBMissing: []string{"tvdb-5"}})
 }
 
 func TestTMDBFallbackConflict(t *testing.T) {
@@ -240,6 +247,7 @@ func TestTMDBFailureSendsPlainRefresh(t *testing.T) {
 			}
 			wantField(t, warnings[0], "title", "Title 201")
 			wantField(t, f.lastSummary(testServer), "failed_requests", float64(1))
+			wantEvidence(t, f.decision("202"), store.MatchEvidence{TMDBSkip: store.TMDBFailed})
 
 			// The next run asks TMDB again.
 			ft.calls = nil

@@ -70,7 +70,8 @@ func TestItemFromRowAndHistory(t *testing.T) {
 		t.Errorf("request id = %v", req["id"])
 	}
 	assertTime(t, req, "at", requested.Truncate(time.Second))
-	assertAbsent(t, req, "error", "conflict", "episodeCount", "fixedAction", "fixedMatch", "fixedMatchEventId")
+	assertAbsent(t, req, "error", "conflict", "episodeCount", "fixedAction", "fixedMatch", "fixedMatchEventId",
+		"itemYear", "tmdbId", "tmdbSkip", "tmdbMissing", "episodeDiff")
 	if !strings.Contains(body, `"searches":[]`) {
 		t.Errorf("body has no empty searches: %s", body)
 	}
@@ -121,10 +122,14 @@ func TestItemFromRowAndHistory(t *testing.T) {
 
 func TestItemTimelineDropsUnsafeCandidateThumbs(t *testing.T) {
 	st := openStore(t)
-	readLibrary(t, st, "Home", "1", testNow, movie("101", "Alien", store.Unmatched, time.Time{}))
+	alien := movie("101", "Alien", store.Unmatched, time.Time{})
+	alien.Year = 1978
+	readLibrary(t, st, "Home", "1", testNow, alien)
 	err := st.RecordMatchDecision(store.MatchDecision{
 		Server: "Home", RatingKey: "101", At: testNow.Add(-time.Minute), Source: store.SourceAuto,
 		Outcome: store.DecisionNoMatch, Conflict: "years differ", PathYear: 1979, TMDBYear: 1980, EpisodeCount: 3,
+		MatchEvidence: store.MatchEvidence{TMDBID: "348", TMDBSkip: store.TMDBFailed, TMDBMissing: []string{"imdb-tt1"},
+			EpisodeDiff: store.EpisodeDiff{Season: 2, Plex: 8, TMDB: 10}},
 		Searches: []store.MatchSearch{
 			{Query: "tmdb-348", Source: "path", Candidates: []store.MatchCandidate{
 				{GUID: "plex://movie/a", Name: "Alien", Year: 1979, Type: "movie", Summary: "In space.",
@@ -147,6 +152,18 @@ func TestItemTimelineDropsUnsafeCandidateThumbs(t *testing.T) {
 	if e["kind"] != "match-decision" || e["outcome"] != "no-match" || e["conflict"] != "years differ" ||
 		e["pathYear"] != 1979.0 || e["tmdbYear"] != 1980.0 || e["episodeCount"] != 3.0 || e["accepted"] != false {
 		t.Errorf("event = %v", e)
+	}
+	evidence := map[string]any{
+		"tmdbId": "348", "tmdbSkip": "failed", "tmdbMissing": []any{"imdb-tt1"},
+		"episodeDiff": map[string]any{"season": 2.0, "plex": 8.0, "tmdb": 10.0},
+	}
+	for field, w := range evidence {
+		if !reflect.DeepEqual(e[field], w) {
+			t.Errorf("decision %s = %#v, want %#v", field, e[field], w)
+		}
+	}
+	if e["itemYear"] != 1978.0 {
+		t.Errorf("decision itemYear = %v, want the year of the row", e["itemYear"])
 	}
 	assertAbsent(t, e, "match", "action", "links")
 	searches, _ := e["searches"].([]any)

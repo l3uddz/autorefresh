@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
@@ -27,7 +28,23 @@ const (
 // decisionLog collects one fix match evaluation as it happens.
 type decisionLog struct {
 	searches []store.MatchSearch
+	evidence store.MatchEvidence
 	err      error // a failure that the code handled (a swallowed TMDB or confirmation failure)
+}
+
+// skipTMDB keeps the first reason why the evaluation asked TMDB nothing. An
+// empty reason changes nothing.
+func (d *decisionLog) skipTMDB(reason string) {
+	if d.evidence.TMDBSkip == "" {
+		d.evidence.TMDBSkip = reason
+	}
+}
+
+// noTMDBEntry logs that TMDB has no entry for the path ID from.
+func (d *decisionLog) noTMDBEntry(from pathID) {
+	if !slices.Contains(d.evidence.TMDBMissing, from.title()) {
+		d.evidence.TMDBMissing = append(d.evidence.TMDBMissing, from.title())
+	}
 }
 
 // add logs the search for id and its candidates, with no verdict.
@@ -132,7 +149,7 @@ func skipDecision(ctx context.Context, err error) bool {
 // decision returns the outcome of the evaluation ev, which ended with err,
 // with the logged searches.
 func (d *decisionLog) decision(ev evaluation, err error) store.MatchDecision {
-	dec := store.MatchDecision{Searches: d.searches}
+	dec := store.MatchDecision{Searches: d.searches, MatchEvidence: d.evidence}
 	switch {
 	case err != nil:
 		dec.Outcome, dec.Error = store.DecisionFailed, err.Error()
@@ -145,7 +162,7 @@ func (d *decisionLog) decision(ev evaluation, err error) store.MatchDecision {
 		if ev.fm != nil {
 			dec.Outcome = store.DecisionMatched
 		}
-		dec.PathYear, dec.TMDBYear, dec.EpisodeCount = ev.years.pathYear, ev.years.tmdbYear, ev.years.episodeCount
+		dec.PathYear, dec.TMDBYear, dec.EpisodeCount = ev.years.folderYear, ev.years.tmdbYear, ev.years.episodeCount
 	}
 	return dec
 }

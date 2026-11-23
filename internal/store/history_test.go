@@ -416,9 +416,12 @@ func TestRecordMatchDecisionRoundTrips(t *testing.T) {
 		}},
 		{Query: "tmdb-2", Source: "tmdb", FromID: "tvdb-9", Failed: true},
 	}
+	evidence := MatchEvidence{TMDBID: "77", TMDBSkip: TMDBFailed, TMDBMissing: []string{"tvdb-9", "imdb-tt1"},
+		EpisodeDiff: EpisodeDiff{Season: 3, Plex: 8, TMDB: 10}}
 	err := s.RecordMatchDecision(MatchDecision{
 		Server: srv, RatingKey: "a", At: at, Source: SourceManual, Outcome: DecisionMatched,
 		Conflict: "c", Error: "e", PathYear: 2020, TMDBYear: 2021, EpisodeCount: 8, Searches: searches,
+		MatchEvidence: evidence,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -435,6 +438,9 @@ func TestRecordMatchDecisionRoundTrips(t *testing.T) {
 	if !reflect.DeepEqual(e.Searches, searches) {
 		t.Fatalf("searches = %+v, want %+v", e.Searches, searches)
 	}
+	if !reflect.DeepEqual(e.MatchEvidence, evidence) {
+		t.Fatalf("evidence = %+v, want %+v", e.MatchEvidence, evidence)
+	}
 	if got := rows(t, s)["a"]; got.LastMatchOutcome != "matched" {
 		t.Fatalf("row = %+v", got)
 	}
@@ -448,7 +454,8 @@ func TestRecordMatchDecisionNoIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	events, err := s.Timeline(srv, "a")
-	if err != nil || len(events) != 1 || events[0].Outcome != "no-ids" || events[0].Searches != nil {
+	if err != nil || len(events) != 1 || events[0].Outcome != "no-ids" || events[0].Searches != nil ||
+		events[0].TMDBMissing != nil {
 		t.Fatalf("events = %+v, %v", events, err)
 	}
 	if err := s.RecordMatchDecision(MatchDecision{Server: srv, RatingKey: "zz", At: base, Source: SourceAuto, Outcome: DecisionNoIDs}); err != nil {

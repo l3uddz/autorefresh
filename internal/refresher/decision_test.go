@@ -94,6 +94,13 @@ func wantYears(t *testing.T, e store.Event, pathYear, tmdbYear, episodeCount int
 	}
 }
 
+func wantEvidence(t *testing.T, e store.Event, want store.MatchEvidence) {
+	t.Helper()
+	if !reflect.DeepEqual(e.MatchEvidence, want) {
+		t.Errorf("evidence = %+v, want %+v", e.MatchEvidence, want)
+	}
+}
+
 // yearConflictFixture returns a refresh fixture with the unmatched show
 // 201 of 2022, refreshed once, at the path "/tv/Show (2022) {tvdb-5}".
 func yearConflictFixture(t *testing.T, fp *fakePlex, ft *fakeTMDB) *fixture {
@@ -198,8 +205,30 @@ func TestDecisionYearDiffers(t *testing.T) {
 		wantDecision(t, e, store.DecisionNoMatch, "year differs",
 			"path tvdb-5: plex://show/old=year differs",
 			"tie tmdb-77: plex://show/old=confirms")
-		wantYears(t, e, 0, 1978, 0)
+		wantYears(t, e, 2022, 1978, 0)
+		wantEvidence(t, e, store.MatchEvidence{TMDBID: "77"})
 		wantCalls(t, sends(fp.calls), "Refresh 201")
+	})
+	t.Run("episode numbers differ", func(t *testing.T) {
+		fp := newFakePlex(showsLib)
+		fp.candidates["201 tvdb-5"] = old
+		fp.candidates["201 tmdb-77"] = old
+		fp.episodeNumbers = map[string]map[int][]int{"201": {1: {1, 2, 3}, 2: {1, 2}}}
+		ft := &fakeTMDB{
+			ids:     map[string]string{"tvdb 5 true": "77"},
+			years:   map[string]int{"77 true": 1978},
+			seasons: map[string][]int{"77 1": {1, 2, 3}, "77 2": {1, 2, 3, 4}},
+		}
+		f := yearConflictFixture(t, fp, ft)
+
+		f.run(t0)
+
+		e := f.decision("201")
+		wantDecision(t, e, store.DecisionNoMatch, "year differs",
+			"path tvdb-5: plex://show/old=year differs",
+			"tie tmdb-77: plex://show/old=confirms")
+		wantYears(t, e, 2022, 1978, 0)
+		wantEvidence(t, e, store.MatchEvidence{TMDBID: "77", EpisodeDiff: store.EpisodeDiff{Season: 2, Plex: 2, TMDB: 4}})
 	})
 	t.Run("no TMDB", func(t *testing.T) {
 		fp := newFakePlex(showsLib)
@@ -210,8 +239,24 @@ func TestDecisionYearDiffers(t *testing.T) {
 
 		e := f.decision("201")
 		wantDecision(t, e, store.DecisionNoMatch, "year differs", "path tvdb-5: plex://show/old=year differs")
-		wantYears(t, e, 0, 0, 0)
+		wantYears(t, e, 2022, 0, 0)
+		wantEvidence(t, e, store.MatchEvidence{TMDBSkip: store.TMDBOff})
 	})
+}
+
+// The year check logs a path ID that TMDB has no entry for.
+func TestDecisionYearCheckWithoutTMDBEntry(t *testing.T) {
+	fp := newFakePlex(showsLib)
+	fp.candidates["201 tvdb-5"] = []plex.Candidate{{GUID: "plex://show/old", Name: "Show", Year: 1978}}
+	ft := &fakeTMDB{}
+	f := yearConflictFixture(t, fp, ft)
+
+	f.run(t0)
+
+	e := f.decision("201")
+	wantDecision(t, e, store.DecisionNoMatch, "year differs", "path tvdb-5: plex://show/old=year differs")
+	wantEvidence(t, e, store.MatchEvidence{TMDBMissing: []string{"tvdb-5"}})
+	wantCalls(t, ft.calls, "Find tvdb 5 true")
 }
 
 func TestDecisionConfirmedByPathYear(t *testing.T) {
@@ -246,7 +291,8 @@ func TestDecisionConfirmedByTMDBYear(t *testing.T) {
 	wantDecision(t, e, store.DecisionMatched, "",
 		"path tvdb-5: plex://show/s=picked",
 		"tie tmdb-77: plex://show/s=confirms")
-	wantYears(t, e, 0, 2022, 0)
+	wantYears(t, e, 2022, 2022, 0)
+	wantEvidence(t, e, store.MatchEvidence{TMDBID: "77"})
 	wantYears(t, f.matchRequest("201"), 0, 2022, 0)
 	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s", "Refresh 201")
 }
@@ -274,7 +320,7 @@ func TestDecisionConfirmedByEpisodes(t *testing.T) {
 	wantDecision(t, e, store.DecisionMatched, "",
 		"path tvdb-5: plex://show/right=picked",
 		"tie tmdb-77: plex://show/right=confirms")
-	wantYears(t, e, 0, 2011, 3)
+	wantYears(t, e, 2003, 2011, 3)
 	wantYears(t, f.matchRequest("201"), 0, 2011, 3)
 	wantCalls(t, sends(fp.calls), "Match 201 plex://show/right", "Refresh 201")
 }
@@ -292,7 +338,8 @@ func TestDecisionTieWithDifferentGUID(t *testing.T) {
 	wantDecision(t, e, store.DecisionNoMatch, "year differs",
 		"path tvdb-5: plex://show/a=year differs",
 		"tie tmdb-77: plex://show/b=different candidate")
-	wantYears(t, e, 0, 0, 0)
+	wantYears(t, e, 2022, 0, 0)
+	wantEvidence(t, e, store.MatchEvidence{})
 }
 
 func TestDecisionKeepsFirstPassWithTMDB(t *testing.T) {
