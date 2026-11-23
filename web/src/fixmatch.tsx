@@ -14,28 +14,30 @@ import { Heading, Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { useToast } from '@astryxdesign/core/Toast';
 import { Token } from '@astryxdesign/core/Token';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useState } from 'react';
 import { ApiError, api, invalidateLists, post, useStatus, type Candidate, type EpisodeCheck, type ItemRecord, type Matches, type MatchSearch, type TimelineEvent } from './api';
 import { askThen } from './confirm';
 import { actionError } from './errors';
 import { plural, titleYear, typeName } from './format';
 import { DecisionPanel } from './history';
-import { autoEvidence, checkSearch, compareYear, groupCandidates, isCurrentMatch, isFolderEvidence, listView, matchBody, matchesPath, offersEpisodeCheck, sameSearch, type CandidateGroup, type Evidence, type TypedSearch, type YearCheck } from './match';
+import { autoEvidence, autoEvidenceText, autoMatchPath, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isFolderEvidence, listView, matchBody, matchesPath, offersEpisodeCheck, sameSearch, type CandidateGroup, type Evidence, type TypedSearch, type YearCheck } from './match';
 import { RemotePoster } from './media';
-import { lastDecision, verdictName } from './timeline';
+import { lastDecision } from './timeline';
 
 // The Fix match dialog of one item: candidates with their evidence on the
-// left, the last automatic fix match on the right. It never applies a
-// match without a confirmation that names the item and the candidate.
+// left, the last automatic fix match on the right. Without a last one, a
+// preview runs the automatic fix match on request and marks its pick. The
+// dialog never applies a match without a confirmation that names the item
+// and the candidate.
 
 const wideQuery = `(min-width: ${DEFAULT_WIDTH_BREAKPOINTS.lg}px)`;
 
 /** Match searches call Plex several times, so they run only when asked:
- * no refetch on focus or on a list refresh, no retry, and no cache after
- * the dialog closes. Their keys are outside the item prefix, which
- * invalidateLists refreshes. */
-const searchOptions = { staleTime: Infinity, gcTime: 0, retry: false, refetchOnWindowFocus: false } as const;
+ * no refetch on focus, on a reconnect, or on a list refresh, no retry, and
+ * no cache after the dialog closes. Their keys are outside the item
+ * prefix, which invalidateLists refreshes. */
+const searchOptions = { staleTime: Infinity, gcTime: 0, retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
 
 interface Props {
   item: ItemRecord;
@@ -85,6 +87,7 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
   const confirm = useImperativeAlertDialog();
   const isTMDBOn = (useStatus().data?.tmdb ?? 'off') !== 'off';
   const [typed, setTyped] = useState<TypedSearch>();
+  const [isPreviewAsked, setPreviewAsked] = useState(false);
 
   const opening = useQuery({
     queryKey: ['matches', params],
@@ -97,6 +100,17 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
     enabled: typed !== undefined,
     ...searchOptions,
   });
+  // The preview searches like a run, so it runs only on request.
+  const preview = useQuery({
+    queryKey: ['auto-match', params],
+    queryFn: ({ signal }) => api<TimelineEvent>(autoMatchPath(params), { signal }),
+    enabled: isPreviewAsked,
+    ...searchOptions,
+  });
+  const runPreview = () => {
+    if (isPreviewAsked) void preview.refetch({ cancelRefetch: false });
+    else setPreviewAsked(true);
+  };
 
   const apply = useMutation({
     mutationFn: (target: Applying) => post(`item/match?${target.params}`, matchBody(target.candidate)),
@@ -109,8 +123,15 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
     onSettled: () => invalidateLists(client),
   });
 
-  const decision = lastDecision(timeline);
-  const groups = groupCandidates(opening.data?.searches ?? [], typed ? search.data?.searches : [], typed?.year);
+  // A preview exists only without a last decision, and then marks the
+  // candidates instead.
+  const isPreview = preview.data !== undefined;
+  const decision = preview.data ?? lastDecision(timeline);
+  const decisionTitle = isPreview ? 'Automatic fix match preview' : 'Last automatic fix match';
+  const decisionPanel = (hasHeading: boolean) => (
+    <AutoMatchPanel decision={decision} title={decisionTitle} hasHeading={hasHeading} preview={preview} onRun={runPreview} />
+  );
+  const groups = groupCandidates([...(opening.data?.searches ?? []), ...previewSearches(preview.data)], typed ? search.data?.searches : [], typed?.year);
   const title = titleYear(item.title ?? `Item ${item.key}`, item.year);
   const isTypedPending = typed !== undefined && search.isPending;
   const view = listView(groups.length, opening.isPending || isTypedPending, opening.isSuccess || (typed !== undefined && search.isSuccess));
@@ -162,6 +183,7 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
               item={item}
               params={params}
               decision={decision}
+              isPreview={isPreview}
               isCurrent={isCurrentMatch(group, liveGuid)}
               hasEpisodeCheck={offersEpisodeCheck(group, item.type, isTMDBOn)}
               isApplying={apply.isPending}
@@ -184,13 +206,12 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
       header={<DialogHeader title={`Fix match · ${title}`} subtitle={item.library} onOpenChange={open => !open && onClose()} hasDivider={false} />}
       content={
         <LayoutContent isScrollable label="Candidates">
-          <VStack gap={6} paddingBlock={4}>
+          {/* The inline end padding keeps the cards off the scrollbar. */}
+          <VStack gap={6} paddingBlock={4} paddingInlineEnd={4}>
             {candidates}
             {!isWide && (
-              <Collapsible defaultIsOpen={false} trigger={<Heading level={3} accessibilityLevel={3}>Last automatic fix match</Heading>}>
-                <VStack paddingBlockStart={3}>
-                  <DecisionPanel decision={decision} hasHeading={false} />
-                </VStack>
+              <Collapsible defaultIsOpen={false} trigger={<Heading level={3} accessibilityLevel={3}>{decisionTitle}</Heading>}>
+                <VStack paddingBlockStart={3}>{decisionPanel(false)}</VStack>
               </Collapsible>
             )}
           </VStack>
@@ -199,8 +220,8 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
       }
       end={
         isWide ? (
-          <LayoutPanel width={360} padding={5} hasDivider isScrollable label="Last automatic fix match">
-            <DecisionPanel decision={decision} />
+          <LayoutPanel width={360} padding={5} hasDivider isScrollable label={decisionTitle}>
+            {decisionPanel(true)}
           </LayoutPanel>
         ) : undefined
       }
@@ -333,11 +354,52 @@ function evidenceLabel(evidence: Evidence): string {
   return `matches folder ${evidence.query}`;
 }
 
+interface AutoMatchProps {
+  /** The preview, or else the last automatic decision. */
+  decision?: TimelineEvent;
+  title: string;
+  hasHeading: boolean;
+  preview: UseQueryResult<TimelineEvent>;
+  onRun: () => void;
+}
+
+/** The last automatic fix match, or the preview that runs it now. The
+ * preview records nothing and sends nothing to Plex. */
+function AutoMatchPanel({ decision, title, hasHeading, preview, onRun }: AutoMatchProps) {
+  const run = (label: string, variant: 'primary' | 'secondary') => (
+    <Button label={label} variant={variant} size="sm" isLoading={preview.isFetching} onClick={onRun} />
+  );
+  const failure = preview.error && (
+    <Banner status="error" title="The preview failed" description={actionError(preview.error)} />
+  );
+  if (!preview.data) {
+    return (
+      <VStack gap={4}>
+        <DecisionPanel decision={decision} hasHeading={hasHeading} emptyAction={run('Try automatic fix match', 'primary')} />
+        {failure}
+      </VStack>
+    );
+  }
+  return (
+    <VStack gap={4}>
+      {hasHeading && <Heading level={3} accessibilityLevel={3}>{title}</Heading>}
+      <Text type="supporting" color="secondary">
+        Autorefresh searched as a run would, but recorded nothing and sent nothing to Plex. To apply its pick, click Match on that candidate.
+      </Text>
+      <DecisionPanel decision={decision} hasHeading={false} />
+      {failure}
+      <HStack>{run('Run again', 'secondary')}</HStack>
+    </VStack>
+  );
+}
+
 interface CardProps {
   group: CandidateGroup;
   item: ItemRecord;
   params: string;
   decision?: TimelineEvent;
+  /** The decision is a preview, not the last automatic fix match. */
+  isPreview: boolean;
   isCurrent: boolean;
   hasEpisodeCheck: boolean;
   isApplying: boolean;
@@ -346,7 +408,7 @@ interface CardProps {
   onChoose: () => void;
 }
 
-function CandidateCard({ group, item, params, decision, isCurrent, hasEpisodeCheck, isApplying, isCompact, onChoose }: CardProps) {
+function CandidateCard({ group, item, params, decision, isPreview, isCurrent, hasEpisodeCheck, isApplying, isCompact, onChoose }: CardProps) {
   const { candidate } = group;
   const folder = group.foundBy.filter(isFolderEvidence);
   const found = group.foundBy.filter(e => !isFolderEvidence(e));
@@ -384,7 +446,7 @@ function CandidateCard({ group, item, params, decision, isCurrent, hasEpisodeChe
             ))}
             {auto.map((a, index) => (
               <Text key={`${index}-${a.query}`} type="supporting" wordBreak="break-word">
-                {`The last automatic fix match found it via ${a.query}${verdictName(a.verdict) ? `: ${verdictName(a.verdict)}` : ''}`}
+                {autoEvidenceText(a, isPreview)}
               </Text>
             ))}
             {group.guid && <Text type="code" color="secondary" wordBreak="break-all">{group.guid}</Text>}

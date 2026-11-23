@@ -106,14 +106,13 @@ func sameGUID(a, b, same string) string {
 	return verdictDifferent
 }
 
-// recordDecision records the decision of the fix match evaluation ev, which
+// recordDecision records the decision dec of a fix match evaluation, which
 // ended with err, unless it is a dry run or skipDecision applies. A failed
 // write returns an errCache error.
-func (r *Refresher) recordDecision(ctx context.Context, run *serverRun, it store.Item, d *decisionLog, ev evaluation, err error) error {
+func (r *Refresher) recordDecision(ctx context.Context, run *serverRun, it store.Item, dec store.MatchDecision, err error) error {
 	if r.opts.DryRun || skipDecision(ctx, err) {
 		return nil
 	}
-	dec := d.decision(ev, err)
 	dec.Server, dec.RatingKey, dec.At, dec.Source = run.server.Name, it.RatingKey, r.now(), store.SourceAuto
 	dec.RunID = run.id
 	if err := r.store.RecordMatchDecision(dec); err != nil {

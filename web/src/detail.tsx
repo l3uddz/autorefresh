@@ -1,6 +1,7 @@
 import { useImperativeAlertDialog } from '@astryxdesign/core/AlertDialog';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
+import { EmptyState } from '@astryxdesign/core/EmptyState';
 import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, StackItem, VStack } from '@astryxdesign/core/Layout';
@@ -9,7 +10,7 @@ import { Skeleton } from '@astryxdesign/core/Skeleton';
 import { Heading, Text } from '@astryxdesign/core/Text';
 import { spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { useToast } from '@astryxdesign/core/Toast';
-import { ArrowTopRightOnSquareIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { ArrowTopRightOnSquareIcon, QuestionMarkCircleIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import * as stylex from '@stylexjs/stylex';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -46,22 +47,29 @@ export function ItemDetail({ target, server, ignored, onClose }: Props) {
   const detail = useQuery({
     queryKey: ['item', params],
     queryFn: ({ signal }) => api<Detail>(`item?${params}`, { signal }),
+    retry: (count, error) => !(error instanceof ApiError && error.status === 404) && count < 1,
   });
-  const item = detail.data?.item;
+  const isGone = detail.error instanceof ApiError && detail.error.status === 404;
+  // An item that is no longer known shows no old details.
+  const data = isGone ? undefined : detail.data;
   return (
     <VStack xstyle={styles.frame}>
-      <Backdrop src={item?.art} />
+      <Backdrop src={data?.item.art} />
       {onClose && <IconButton label="Close details" icon={<Icon icon={XMarkIcon} size="sm" />} variant="secondary" onClick={onClose} xstyle={styles.close} />}
       <VStack gap={6} paddingInline={6} paddingBlockEnd={6} xstyle={styles.head}>
         {detail.isPending && <DetailSkeleton />}
-        {detail.error && (
+        {isGone && (
+          <EmptyState title="This item is no longer known" description="Its history may have expired." icon={<Icon icon={QuestionMarkCircleIcon} size="lg" />} />
+        )}
+        {detail.error && !isGone && (
           <Banner
             status="error"
-            title={detail.error instanceof ApiError && detail.error.status === 404 ? 'This item is no longer known' : 'The item is unavailable'}
-            description={detail.error instanceof ApiError && detail.error.status === 404 ? 'Its history may have expired.' : detail.error.message}
+            title="The item is unavailable"
+            description={detail.error.message}
+            endContent={<Button label="Try again" onClick={() => void detail.refetch()} />}
           />
         )}
-        {item && detail.data && <DetailBody detail={detail.data} server={server} ignored={ignored} params={params} />}
+        {data && <DetailBody detail={data} server={server} ignored={ignored} params={params} />}
       </VStack>
     </VStack>
   );

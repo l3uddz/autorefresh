@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Candidate, MatchSearch, TimelineEvent } from './api';
-import { autoEvidence, checkSearch, compareYear, groupCandidates, isCurrentMatch, isIDSearch, listView, matchBody, matchesPath, offersEpisodeCheck, sameSearch, tmdbIdOf } from './match';
+import { autoEvidence, autoEvidenceText, autoMatchPath, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isIDSearch, listView, matchBody, matchesPath, offersEpisodeCheck, sameSearch, tmdbIdOf } from './match';
 
 const cand = (guid: string, change: Partial<Candidate> = {}): Candidate => ({ guid, score: 0, ...change });
 const search = (query: string, candidates: Candidate[], change: Partial<MatchSearch> = {}): MatchSearch => ({ query, failed: false, candidates, ...change });
@@ -15,6 +15,19 @@ describe('groupCandidates', () => {
     expect(groups.map(g => g.guid)).toEqual(['plex://a', 'plex://b']);
     expect(groups[0].candidate).toMatchObject({ name: 'A', summary: 'From the ID search', score: 98 });
     expect(groups[0].foundBy.map(e => e.query)).toEqual(['The Quiet Harbor', 'tmdb-48213', 'imdb-tt1']);
+  });
+
+  it('gives the pick of a preview a card when the opening folder search failed', () => {
+    const preview = { id: 0, kind: 'match-decision', accepted: false, searches: [
+      search('tmdb-1', [cand('plex://a', { verdict: 'picked' })], { source: 'path' }),
+      search('tmdb-7', [cand('plex://a', { verdict: 'confirms' })], { source: 'tie' }),
+    ] } satisfies TimelineEvent;
+    const opening = [search('Title', [cand('plex://b')], { source: 'title' }), search('tmdb-1', [], { source: 'path', failed: true })];
+    expect(previewSearches(preview).map(s => s.source)).toEqual(['path']);
+    expect(previewSearches(undefined)).toEqual([]);
+    const groups = groupCandidates([...opening, ...previewSearches(preview)]);
+    expect(groups.map(g => g.guid)).toEqual(['plex://a', 'plex://b']);
+    expect(groups[0].foundBy).toEqual([{ query: 'tmdb-1', source: 'path', fromId: undefined, isTyped: false }]);
   });
 
   it('keeps candidates without a GUID apart and drops decision verdicts', () => {
@@ -45,6 +58,14 @@ describe('groupCandidates', () => {
     ]);
     const tmdb = Object.fromEntries(groups.map(g => [g.guid, g.tmdbId]));
     expect(tmdb).toEqual({ 'plex://one': '10', 'plex://two': undefined, 'plex://three': undefined, 'plex://four': undefined, 'plex://five': undefined });
+  });
+
+  it('ties no candidate to a TMDB ID whose searches found different candidates', () => {
+    const groups = groupCandidates(
+      [search('tmdb-48213', [cand('plex://a')], { source: 'path' }), search('tmdb-48213', [cand('plex://b')], { source: 'path' })],
+      [search('tmdb-9', [cand('plex://c')], { source: 'id' })],
+    );
+    expect(groups.map(g => [g.guid, g.tmdbId])).toEqual([['plex://c', '9'], ['plex://a', undefined], ['plex://b', undefined]]);
   });
 
   it('ties a typed TMDB ID search too', () => {
@@ -138,6 +159,12 @@ describe('match helpers', () => {
     expect(autoEvidence(decision, '')).toEqual([]);
     expect(autoEvidence(undefined, 'plex://a')).toEqual([]);
   });
+
+  it('names the last decision or the preview in the automatic evidence', () => {
+    expect(autoEvidenceText({ query: 'tmdb-1', verdict: 'picked' }, false)).toBe('The last automatic fix match found it via tmdb-1: picked');
+    expect(autoEvidenceText({ query: 'tmdb-1', verdict: 'picked' }, true)).toBe('The automatic fix match preview found it via tmdb-1: picked');
+    expect(autoEvidenceText({ query: 'imdb-tt2' }, true)).toBe('The automatic fix match preview found it via imdb-tt2');
+  });
 });
 
 describe('dialog state', () => {
@@ -179,6 +206,7 @@ describe('checkSearch', () => {
 
   it('builds the request paths and the exact match body', () => {
     expect(matchesPath('srv=0&key=7')).toBe('item/matches?srv=0&key=7');
+    expect(autoMatchPath('srv=0&key=7')).toBe('item/auto-match?srv=0&key=7');
     expect(matchesPath('srv=0&key=7', { q: 'A & B', year: 2019 })).toBe('item/matches?srv=0&key=7&q=A+%26+B&year=2019');
     expect(matchBody(cand('plex://a', { name: 'A', year: 2019, summary: 'S', score: 9, verdict: 'picked' }))).toEqual({ guid: 'plex://a', name: 'A', year: 2019 });
     expect(matchBody(cand('plex://a'))).toEqual({ guid: 'plex://a', name: '', year: 0 });

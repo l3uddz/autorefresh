@@ -32,6 +32,7 @@ import { askThen } from './confirm';
 import { ItemDetail } from './detail';
 import { fixedBy, label, plural, queueState, relative } from './format';
 import { Poster, Reasons } from './media';
+import { useShown } from './presence';
 import { NothingMatched, startBulkRefresh, useIsRefreshBusy } from './queue';
 import { itemHash, navigate, tabNames, type ItemKey, type TabName } from './route';
 import { useRowOpen } from './rowopen';
@@ -275,12 +276,20 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
   return (
     <>
       <Layout height="fill" header={item && !isTwoPane ? undefined : header} content={content} end={mode === 'list' && isTwoPane ? <DetailPane detail={detail} /> : undefined} />
-      {mode === 'table' && isTwoPane && (
-        <Drawer isOpen={Boolean(item)} onOpenChange={open => !open && close()} label="Item details" width={600} padding={0}>
-          {detail ?? null}
-        </Drawer>
-      )}
+      {mode === 'table' && isTwoPane && <ItemDrawer item={item} server={server} ignored={ignored} onClose={close} />}
     </>
+  );
+}
+
+/** The item details of table mode in a drawer. It keeps the item while it
+ * slides out, and drops it once the slide ends. */
+function ItemDrawer({ item, server, ignored, onClose }: { item?: ItemKey; server: (key: ItemKey) => ServerInfo | undefined; ignored: string[]; onClose: () => void }) {
+  const drawer = useShown(item, itemID, onClose);
+  const shown = drawer.shown;
+  return (
+    <Drawer key={drawer.generation} isOpen={drawer.isOpen} onOpenChange={open => !open && onClose()} ref={drawer.ref} label="Item details" width={600} padding={0}>
+      {shown ? <ItemDetail key={itemID(shown)} target={shown} server={server(shown)} ignored={ignored} onClose={onClose} /> : null}
+    </Drawer>
   );
 }
 

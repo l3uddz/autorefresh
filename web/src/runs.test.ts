@@ -79,9 +79,34 @@ describe('run groups', () => {
       event('1', 'match-decision', { outcome: 'no-ids' }),
     ]));
     expect(groups).toEqual([['Not sent', [
-      ['1', 'Fix match: matched', 'The run ended before the request', 'attention'],
+      ['1', 'Fix match: matched', 'A later decision replaced it', 'attention'],
       ['1', 'Fix match: no folder IDs', 'The run ended before the request', 'attention'],
     ]]]);
+  });
+
+  it('does not say that a running run ended for a replaced decision', () => {
+    const groups = shape(detail([
+      event('1', 'match-decision', { outcome: 'matched' }),
+      event('1', 'match-decision', { outcome: 'no-ids' }),
+    ], { status: 'running' }));
+    expect(groups).toEqual([
+      ['In progress', [['1', 'Fix match: no folder IDs', 'Its request is not sent yet', 'attention']]],
+      ['Not sent', [['1', 'Fix match: matched', 'A later decision replaced it', 'attention']]],
+    ]);
+  });
+
+  it('lists a match, the refresh after it, and the fix that its checks found', () => {
+    const groups = shape(detail([
+      event('1', 'match-decision', { outcome: 'matched' }),
+      event('1', 'request', { action: 'match', accepted: true, match: { guid: 'plex://movie/1', title: 'One', year: 2001 } }),
+      event('1', 'request', { action: 'refresh', accepted: true }),
+      event('1', 'completed', { fixedAction: 'refresh', fixedMatch: 'match' }),
+    ]));
+    expect(groups).toEqual([
+      ['Refreshed', [['1', 'Refresh accepted', undefined, 'attention']]],
+      ['Matched', [['1', 'Match accepted to One (2001)', 'Fix match: matched', 'attention']]],
+      ['Fixed', [['1', 'By match · then refresh', undefined, 'fixed']]],
+    ]);
   });
 
   it('joins a match decision to the removal of its item', () => {
@@ -101,6 +126,12 @@ describe('run groups', () => {
   it('keeps the item of each entry', () => {
     const [group] = runGroups(detail([event('7', 'request', { action: 'refresh', accepted: true, year: 2019, type: 'movie', thumb: '/api/items/thumb?x' })]));
     expect(group.entries[0]).toMatchObject({ key: '7', title: 'Item 7', year: 2019, type: 'movie', thumb: '/api/items/thumb?x' });
+  });
+
+  it('keeps the item of each bulk item', () => {
+    const items: RunItem[] = [{ key: '1', title: 'One', outcome: 'accepted', year: 2019, type: 'show', thumb: '/api/items/thumb?x', library: 'TV' }];
+    const [group] = runGroups(detail([], { kind: 'bulk-refresh' }, items));
+    expect(group.entries[0]).toMatchObject({ key: '1', title: 'One', year: 2019, type: 'show', thumb: '/api/items/thumb?x', library: 'TV' });
   });
 
   it('groups the items of a bulk refresh by outcome', () => {

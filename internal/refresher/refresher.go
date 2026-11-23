@@ -32,7 +32,7 @@ type Plex interface {
 type Store interface {
 	FinishJob(int64, store.RunStart, store.RunResult, []store.RunItem) (bool, error)
 	SetStopped(context.Context, string, string, time.Time, bool) (bool, error)
-	ApplyCheck(string, store.Item, time.Time) (bool, error)
+	ApplyCheck(string, store.Item, time.Time, int64) (bool, error)
 	LibraryInfo(string, string) (store.LibraryInfo, bool, error)
 	RecordManual(store.ManualRecord) error
 	KnownItem(server, ratingKey string) (store.Item, bool, bool, error)
@@ -143,6 +143,7 @@ type serverRun struct {
 	incomplete           int  // incomplete items that the summary counted; 0 without a summary
 	remaining            int  // due items that the limit or a stop kept from this run
 	tmdbFailed           bool // a TMDB lookup failed, so the run asks TMDB nothing more
+	preview              bool // a fix match preview, which writes nothing to the store
 }
 
 // completedItem is a row that a read of the run found complete.
@@ -281,13 +282,21 @@ func (r *Refresher) execute(ctx context.Context, runs []startedRun) error {
 		wg.Go(func() {
 			err := r.runServer(ctx, run)
 			errs[i] = err
-			if err != nil && !errors.Is(err, plex.ErrUnavailable) {
+			if err != nil && !serverOnly(err) {
 				cancel()
 			}
 		})
 	}
 	wg.Wait()
 	return errors.Join(errs...)
+}
+
+// serverOnly reports whether err ends only the run of its own server: an
+// unavailable server or a failed library read. Other errors, such as a store
+// error, stop the runs of the other servers too.
+func serverOnly(err error) bool {
+	var readErr *libraryReadError
+	return errors.Is(err, plex.ErrUnavailable) || errors.As(err, &readErr)
 }
 
 func (r *Refresher) runServer(ctx context.Context, started startedRun) error {

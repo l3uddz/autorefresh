@@ -3,6 +3,7 @@ package refresher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -238,4 +239,26 @@ func TestRunFinishRunError(t *testing.T) {
 			t.Errorf("error = %v, FinishRun calls = %d, want %v and 1", err, st.finishes, errRun)
 		}
 	})
+}
+
+// A failed library read and an unavailable server end only the run of their
+// own server, also after finishRun wrapped them. Other errors stop the runs
+// of the other servers.
+func TestServerOnly(t *testing.T) {
+	read := &libraryReadError{library: "TV", err: errors.New("decoding response: unexpected token")}
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"library read", fmt.Errorf("server home: %w", read), true},
+		{"unavailable", fmt.Errorf("server home: %w", plex.ErrUnavailable), true},
+		{"store", fmt.Errorf("server home: %w: %w", ErrStore, errors.New("disk full")), false},
+		{"other", errors.New("boom"), false},
+	}
+	for _, tt := range tests {
+		if got := serverOnly(tt.err); got != tt.want {
+			t.Errorf("%s: serverOnly = %v, want %v", tt.name, got, tt.want)
+		}
+	}
 }

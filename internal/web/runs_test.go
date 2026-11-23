@@ -248,7 +248,7 @@ func TestRunsEmptyIsArray(t *testing.T) {
 type runDetailAnswer struct {
 	Run    map[string]any   `json:"run"`
 	Events []map[string]any `json:"events"`
-	Items  []runItemJSON    `json:"items"`
+	Items  []map[string]any `json:"items"`
 }
 
 func TestRunDetailListsEventsOfRun(t *testing.T) {
@@ -312,6 +312,14 @@ func TestRunDetailListsItemsOfBulkJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := db.SaveLibraries("home", []store.LibraryInfo{{Section: "1", Title: "Movies"}}); err != nil {
+		t.Fatal(err)
+	}
+	one := movie("1", "One", store.NoSummary, testNow)
+	one.Thumb, one.Year = "/library/metadata/1/thumb/1700000000", 2020
+	if _, err := db.ApplyRead(store.Read{Server: "home", Section: "1", At: testNow, Items: []store.Item{one}}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.FinishJob(id, start, store.RunResult{Status: store.RunFinished, FinishedAt: testNow}, []store.RunItem{
 		{RatingKey: "1", Title: "One", Outcome: store.ItemAccepted},
 	}); err != nil {
@@ -320,8 +328,18 @@ func TestRunDetailListsItemsOfBulkJob(t *testing.T) {
 	s := New(Options{Store: db, Servers: []PlexServer{{Name: "home"}}})
 	var got runDetailAnswer
 	getJSON(t, s, fmt.Sprintf("/api/runs/detail?id=%d", id), &got)
-	if len(got.Items) != 1 || got.Items[0].Key != "1" || got.Items[0].Outcome != store.ItemAccepted || len(got.Events) != 0 {
+	if len(got.Items) != 1 || len(got.Events) != 0 {
 		t.Fatalf("detail = %+v", got)
+	}
+	item := got.Items[0]
+	want := map[string]any{"key": "1", "title": "One", "outcome": store.ItemAccepted, "type": "movie", "year": 2020.0, "library": "Movies"}
+	for field, w := range want {
+		if !reflect.DeepEqual(item[field], w) {
+			t.Errorf("item %s = %#v, want %#v", field, item[field], w)
+		}
+	}
+	if thumb, _ := item["thumb"].(string); !strings.HasPrefix(thumb, "api/items/thumb?") {
+		t.Errorf("thumb = %q, want the image endpoint", thumb)
 	}
 }
 

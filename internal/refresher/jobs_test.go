@@ -289,6 +289,59 @@ func TestRunNowReadFailure(t *testing.T) {
 	}
 }
 
+// A failed library read ends the full run of its own server only. Another
+// server of the same full run still reads and refreshes its due items.
+func TestRunNowFullReadFailureKeepsOtherServers(t *testing.T) {
+	home := newFakePlex(showsLib)
+	home.listErrs["2?type=2"] = errors.New("listing section 2: decoding response: unexpected token")
+	away := newFakePlex(moviesLib)
+	away.lists["1?type=1"] = []plex.Item{incompleteItem("101")}
+	f := newRefreshFixture(t, Server{Name: "home", Plex: home}, Server{Name: "away", Plex: away})
+	f.now = t0
+	f.seed("away", moviesLib, incompleteItem("101"), store.NoSummary, 0)
+	// The away server reads its library only after the home run has ended,
+	// so a cancellation by the home failure reaches its refresh.
+	away.onCall = func(call string) {
+		if call == "List 1?type=1" {
+			waitForRunEnd(t, f.store, "home")
+		}
+	}
+	jobs := NewJobs(f.r)
+	t.Cleanup(jobs.Close)
+	if _, err := jobs.RunNow(nil, true); err != nil {
+		t.Fatal(err)
+	}
+	jobs.wg.Wait()
+	if !slices.Contains(away.calls, "Refresh 101") {
+		t.Errorf("away calls = %v, want the refresh of its due item", away.calls)
+	}
+	for server, want := range map[string]store.RunStatus{"home": store.RunFailed, "away": store.RunFinished} {
+		runs, err := f.store.Runs(t.Context(), store.RunQuery{Servers: []string{server}})
+		if err != nil || len(runs) != 1 {
+			t.Fatalf("%s runs = %+v, %v", server, runs, err)
+		}
+		if runs[0].Status != want {
+			t.Errorf("%s run status = %q, want %q", server, runs[0].Status, want)
+		}
+	}
+}
+
+// waitForRunEnd waits until the run of server has ended, and a little more,
+// so the work that follows the end of its run has happened.
+func waitForRunEnd(t *testing.T, st *store.Store, server string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		runs, err := st.Runs(context.Background(), store.RunQuery{Servers: []string{server}})
+		if err == nil && len(runs) == 1 && runs[0].Status != store.RunRunning {
+			time.Sleep(50 * time.Millisecond)
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Errorf("the run of %s did not end", server)
+}
+
 // Without full, a library whose full read is not due gets an incremental read.
 func TestRunNowReadsIncrementally(t *testing.T) {
 	lib := moviesLib

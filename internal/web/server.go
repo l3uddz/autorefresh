@@ -34,8 +34,7 @@ type Store interface {
 	CountItems(ctx context.Context, q store.ListQuery) (store.ListCounts, error)
 	Libraries(ctx context.Context, server string) ([]store.LibraryEntry, error)
 	Runs(ctx context.Context, q store.RunQuery) ([]store.Run, error)
-	Run(ctx context.Context, id int64) (store.Run, bool, error)
-	RunEvents(ctx context.Context, runID int64) ([]store.Event, error)
+	RunDetail(ctx context.Context, id int64) (store.RunDetail, bool, error)
 	ItemDetail(ctx context.Context, server, ratingKey string, rules store.DueRules) (store.ListItem, bool, error)
 	TimelineContext(ctx context.Context, server, ratingKey string) ([]store.Event, error)
 	FillPath(ctx context.Context, server, ratingKey, path string) (string, error)
@@ -190,6 +189,7 @@ func New(opts Options) *Server {
 	s.api("POST /api/item/stop", s.serveStop)
 	s.api("POST /api/item/resume", s.serveResume)
 	s.api("GET /api/item/matches", s.serveMatches)
+	s.api("GET /api/item/auto-match", s.serveAutoMatch)
 	s.api("POST /api/item/episode-check", s.serveEpisodeCheck)
 
 	s.api("POST /api/runs", s.serveRunNow)

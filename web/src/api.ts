@@ -231,6 +231,11 @@ export interface RunItem {
   title: string;
   outcome: string;
   error?: string;
+  /** The facts of the item, only in the details of a run. */
+  year?: number;
+  type?: string;
+  thumb?: string;
+  library?: string;
 }
 
 /** An event that a run wrote, with the item that it names. */

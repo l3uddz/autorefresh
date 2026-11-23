@@ -201,6 +201,18 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 	return nil
 }
 
+// complete adds the row it of library, which the run found complete, to
+// the counts of the summary.
+func (run *serverRun) complete(library string, it store.Item) {
+	if it.Refreshes > 0 {
+		run.fixed++
+	}
+	if it.LastMatch != "" {
+		run.fixedAfterMatch++
+	}
+	run.completed = append(run.completed, completedItem{library: library, item: it})
+}
+
 // recordRead adds an applied read of lib to the run: the counts of the
 // summary, the rows that became complete, and the movie files that a fix
 // match can use instead of a request.
@@ -213,13 +225,7 @@ func (run *serverRun) recordRead(rd store.Read, lib plex.Library, items []plex.I
 		run.incrementalReadItems += len(items)
 	}
 	for _, it := range fixed {
-		if it.Refreshes > 0 {
-			run.fixed++
-		}
-		if it.LastMatch != "" {
-			run.fixedAfterMatch++
-		}
-		run.completed = append(run.completed, completedItem{library: lib.Title, item: it})
+		run.complete(lib.Title, it)
 	}
 	if !rd.Shows {
 		for _, it := range items {
@@ -252,11 +258,24 @@ func readFailed(ctx context.Context, run *serverRun, lib plex.Library, err error
 		return stop
 	}
 	if run.full {
-		return fmt.Errorf("reading library %s: %w", lib.Title, err)
+		return &libraryReadError{library: lib.Title, err: err}
 	}
 	log.Warn().Str("server", run.server.Name).Str("library", lib.Title).Err(err).Msg("Reading library failed")
 	return nil
 }
+
+// libraryReadError is a library read that failed in a full run. It ends the
+// run of its own server only, so the other servers of the run continue.
+type libraryReadError struct {
+	library string
+	err     error
+}
+
+func (e *libraryReadError) Error() string {
+	return fmt.Sprintf("reading library %s: %v", e.library, e.err)
+}
+
+func (e *libraryReadError) Unwrap() error { return e.err }
 
 // listItems does a full read, or an incremental read that joins three
 // listings by rating key.

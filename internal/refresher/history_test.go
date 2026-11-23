@@ -162,7 +162,7 @@ func TestMatchRecordsTarget(t *testing.T) {
 
 	f.run(t0)
 
-	e := f.newestEvent("101")
+	e := f.matchRequest("101")
 	wantLinks := []string{"https://www.themoviedb.org/movie/1"}
 	if e.Kind != store.EventRequest || e.Source != store.SourceAuto || e.Action != store.ActionMatch || !e.Accepted ||
 		e.Outcome != "match" || e.MatchGUID != "plex://movie/m" || e.MatchTitle != "Film" || e.MatchYear != 2020 ||
@@ -457,15 +457,72 @@ func TestRunLinksItsEvents(t *testing.T) {
 	f.run(t0)
 
 	run := f.onlyRun()
-	events, err := f.store.RunEvents(t.Context(), run.ID)
+	detail, _, err := f.store.RunDetail(t.Context(), run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var got []string
-	for _, e := range events {
+	for _, e := range detail.Events {
 		got = append(got, e.RatingKey+" "+string(e.Kind))
 	}
 	if want := []string{"102 completed", "101 request"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("run events = %v, want %v", got, want)
+	}
+}
+
+// A run links each event that it writes: a match decision and the request
+// after it, a failed request, and an item that Plex no longer has.
+func TestRunLinksDecisionsFailuresAndRemovals(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	fp.paths["101"] = []string{"/m/Film (2020) {imdb-tt1}/Film.mkv"}
+	fp.searchErrs["101 imdb-tt1"] = errServer
+	fp.refreshErrs["102"] = errServer
+	fp.refreshErrs["103"] = plex.ErrNotFound
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.seed(testServer, moviesLib, unmatchedItem("101"), store.Unmatched, 1)
+	f.seed(testServer, moviesLib, incompleteItem("102"), store.NoSummary, 0)
+	f.seed(testServer, moviesLib, incompleteItem("103"), store.NoSummary, 0)
+
+	f.run(t0)
+
+	run := f.onlyRun()
+	detail, _, err := f.store.RunDetail(t.Context(), run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, e := range detail.Events {
+		if e.RunID != run.ID {
+			t.Errorf("event %s %s has run %d, want %d", e.RatingKey, e.Kind, e.RunID, run.ID)
+		}
+		got[e.RatingKey+" "+string(e.Kind)] = true
+		if e.RatingKey == "102" && e.Kind == store.EventRequest && (e.Accepted || e.Error == "") {
+			t.Errorf("request of 102 = accepted %v, error %q; want a failed request", e.Accepted, e.Error)
+		}
+	}
+	for _, want := range []string{"101 match-decision", "101 request", "102 request", "103 gone"} {
+		if !got[want] {
+			t.Errorf("run events = %v, want %q", got, want)
+		}
+	}
+}
+
+// A manual action is not part of a run, so its event links to none.
+func TestManualRefreshLinksNoRun(t *testing.T) {
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: newFakePlex(moviesLib)})
+	f.seed(testServer, moviesLib, incompleteItem("101"), store.NoSummary, 0)
+
+	if err := f.r.RefreshItem(t.Context(), testServer, "101"); err != nil {
+		t.Fatal(err)
+	}
+
+	events := f.timeline("101")
+	if len(events) == 0 {
+		t.Fatal("no event")
+	}
+	for _, e := range events {
+		if e.RunID != 0 {
+			t.Errorf("event %s has run %d, want none", e.Kind, e.RunID)
+		}
 	}
 }

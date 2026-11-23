@@ -180,11 +180,13 @@ func tabSorts(tab Tab, r DueRules) map[SortKey]sortColumn {
 }
 
 // tabDefaults are the default sort key and direction of each tab.
+// Attention lists the items with the most tries first, because they need
+// a person most.
 var tabDefaults = map[Tab]struct {
 	key  SortKey
 	desc bool
 }{
-	TabAttention: {SortDue, false},
+	TabAttention: {SortTries, true},
 	TabStopped:   {SortStopped, true},
 	TabFixed:     {SortCompleted, true},
 }

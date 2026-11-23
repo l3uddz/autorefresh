@@ -399,9 +399,9 @@ func TestFinishJobAfterServerPrune(t *testing.T) {
 	}
 }
 
-// RunEvents returns the events that a run wrote, oldest first: requests,
+// RunDetail returns the events that a run wrote, oldest first: requests,
 // match decisions, and the completions and gone items of its reads.
-func TestRunEventsOfRun(t *testing.T) {
+func TestRunDetailListsEventsOfRun(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("a", NoArt), item("b", NoArt), item("c", NoArt)}})
 	one := startRun(t, s, srv, base)
@@ -424,12 +424,12 @@ func TestRunEventsOfRun(t *testing.T) {
 	later := at.Add(time.Hour)
 	apply(t, s, Read{At: later, Full: true, Items: []Item{item("a", 0), item("b", NoArt)}, Gone: []string{"c"}, RunID: one})
 
-	events, err := s.RunEvents(context.Background(), one)
-	if err != nil {
-		t.Fatal(err)
+	detail, found, err := s.RunDetail(context.Background(), one)
+	if err != nil || !found {
+		t.Fatalf("detail = %v, %v", found, err)
 	}
 	var got []string
-	for _, e := range events {
+	for _, e := range detail.Events {
 		if e.RunID != one {
 			t.Errorf("event %d has run %d, want %d", e.ID, e.RunID, one)
 		}
@@ -478,15 +478,122 @@ func TestPruneRunKeepsItsEvents(t *testing.T) {
 	}
 }
 
-func TestRunByID(t *testing.T) {
+func TestRunDetailOfRun(t *testing.T) {
 	s := openTest(t)
 	id := startRun(t, s, srv, base)
-	run, found, err := s.Run(context.Background(), id)
-	if err != nil || !found || run.ID != id || run.Status != RunRunning {
-		t.Fatalf("Run(%d) = %+v, %v, %v", id, run, found, err)
+	detail, found, err := s.RunDetail(context.Background(), id)
+	if err != nil || !found || detail.Run.ID != id || detail.Run.Status != RunRunning || len(detail.Events) != 0 || len(detail.Items) != 0 {
+		t.Fatalf("RunDetail(%d) = %+v, %v, %v", id, detail, found, err)
 	}
-	if _, found, err := s.Run(context.Background(), id+1); err != nil || found {
-		t.Fatalf("Run(%d) = found %v, %v; want not found", id+1, found, err)
+	if _, found, err := s.RunDetail(context.Background(), id+1); err != nil || found {
+		t.Fatalf("RunDetail(%d) = found %v, %v; want not found", id+1, found, err)
+	}
+}
+
+// The items of a bulk job carry the type, year, poster, and section of the
+// cached row, or else of the newest event of the item. The cached row wins
+// over older events, and another server's item with the same key is not
+// used.
+func TestRunItemsCarryTheirItem(t *testing.T) {
+	s := openTest(t)
+	cached := item("a", NoArt)
+	cached.Thumb = "/library/metadata/a/thumb/1"
+	gone := item("b", NoArt)
+	gone.Type, gone.Year, gone.Thumb = "movie", 1999, "/library/metadata/b/thumb/1"
+	apply(t, s, Read{Items: []Item{cached, gone}})
+	// Events with the old posters, then newer rows.
+	accept(t, s, "a", base.Add(time.Minute), ActionRefresh)
+	accept(t, s, "b", base.Add(time.Minute), ActionRefresh)
+	cached.Thumb = "/library/metadata/a/thumb/2"
+	gone.Thumb = "/library/metadata/b/thumb/2"
+	apply(t, s, Read{At: base.Add(30 * time.Minute), Full: true, Items: []Item{cached, gone}})
+	// The gone event keeps the newest snapshot of b.
+	apply(t, s, Read{At: base.Add(time.Hour), Full: true, Items: []Item{cached}, Gone: []string{"b"}})
+	other := item("c", NoArt)
+	other.Server, other.Thumb = "other", "/library/metadata/c/thumb/1"
+	apply(t, s, Read{Server: "other", Items: []Item{other}})
+	start := runStart(srv, base)
+	start.Kind = RunKindBulkRefresh
+	id, err := s.StartRun(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.FinishJob(id, start, RunResult{FinishedAt: base, Status: RunFinished}, []RunItem{
+		{Position: 0, RatingKey: "a", Title: "A", Outcome: ItemAccepted},
+		{Position: 1, RatingKey: "b", Title: "B", Outcome: ItemGone},
+		{Position: 2, RatingKey: "c", Title: "C", Outcome: ItemNotCached},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	detail, _, err := s.RunDetail(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []RunItem{
+		{Position: 0, RatingKey: "a", Title: "A", Outcome: ItemAccepted, Section: sec, Type: "show", Year: 2020, Thumb: cached.Thumb},
+		{Position: 1, RatingKey: "b", Title: "B", Outcome: ItemGone, Section: sec, Type: "movie", Year: 1999, Thumb: gone.Thumb},
+		{Position: 2, RatingKey: "c", Title: "C", Outcome: ItemNotCached},
+	}
+	if !reflect.DeepEqual(detail.Items, want) {
+		t.Fatalf("items = %+v\nwant %+v", detail.Items, want)
+	}
+}
+
+// Migration 12 keeps the events and runs of a version 11 database. The old
+// events link to no run, and a new event of a run loses only its link when
+// retention removes the run.
+func TestRunLinkMigrationKeepsOldRows(t *testing.T) {
+	file := openAtVersion(t, 11)
+	db, err := sql.Open("sqlite", file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO library (server, section) VALUES (?, ?)`, []any{srv, sec}},
+		{`INSERT INTO run (server, kind, source, status, started_at, finished_at) VALUES (?, 'run', 'schedule', 'finished', ?, ?)`,
+			[]any{srv, base.Unix(), base.Add(time.Minute).Unix()}},
+		{`INSERT INTO event (server, section, rating_key, at, kind) VALUES (?, ?, 'old', ?, 'request')`, []any{srv, sec, base.Add(30 * time.Second).Unix()}},
+	} {
+		if _, err := db.Exec(stmt.sql, stmt.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	s, err := Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	old, found, err := s.RunDetail(context.Background(), 1)
+	if err != nil || !found || old.Run.Status != RunFinished || len(old.Events) != 0 {
+		t.Fatalf("old run = %+v, %v, %v; want it without events", old, found, err)
+	}
+	if events, err := s.Timeline(srv, "old"); err != nil || len(events) != 1 || events[0].RunID != 0 {
+		t.Fatalf("old events = %+v, %v; want one event without a run", events, err)
+	}
+
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	start := runStart(srv, base)
+	id := startRun(t, s, srv, base)
+	if _, err := s.FinishRun(id, start, RunResult{FinishedAt: base, Status: RunFinished}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordRequest(Request{Server: srv, RatingKey: "a", At: base.Add(2 * time.Hour), Source: SourceAuto,
+		Action: ActionRefresh, Accepted: true, RunID: id}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.PruneHistory(base.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := s.RunDetail(context.Background(), id); err != nil || found {
+		t.Fatalf("pruned run found = %v, %v", found, err)
+	}
+	if events, err := s.Timeline(srv, "a"); err != nil || len(events) != 1 || events[0].RunID != 0 {
+		t.Fatalf("events = %+v, %v; want the event without its run", events, err)
 	}
 }
 
@@ -517,11 +624,11 @@ func TestRunEventsLinkedMarksOnlyNewRuns(t *testing.T) {
 		id   int64
 		want bool
 	}{{1, false}, {id, true}} {
-		run, found, err := s.Run(context.Background(), tt.id)
+		detail, found, err := s.RunDetail(context.Background(), tt.id)
 		if err != nil || !found {
-			t.Fatalf("Run(%d) = %v, %v", tt.id, found, err)
+			t.Fatalf("RunDetail(%d) = %v, %v", tt.id, found, err)
 		}
-		if run.EventsLinked != tt.want {
+		if run := detail.Run; run.EventsLinked != tt.want {
 			t.Errorf("run %d EventsLinked = %v, want %v", tt.id, run.EventsLinked, tt.want)
 		}
 	}

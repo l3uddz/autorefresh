@@ -3,6 +3,7 @@ package refresher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -61,7 +62,7 @@ func TestManualRefreshOfHistoryOnlyItem(t *testing.T) {
 	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
 	row, _ := f.row("home", "1", "1")
 	row.Reasons = 0
-	if _, err := f.store.ApplyCheck("home", row, t0); err != nil {
+	if _, err := f.store.ApplyCheck("home", row, t0, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.r.RefreshItem(t.Context(), "home", "1"); err != nil {
@@ -338,9 +339,9 @@ func TestApplyMatchFailedSkipsRefreshAndCheck(t *testing.T) {
 }
 
 // A run that removes the row during a wait settles the match: the checks
-// stop without a warning.
+// stop without a warning and ask Plex nothing, also when Plex would fail.
 func TestApplyMatchStopsWhenRowLeavesCache(t *testing.T) {
-	f, _, checks := matchCheckFixture(t, checkAnswer{item: incompleteItem("1")})
+	f, _, checks := matchCheckFixture(t, checkAnswer{err: errors.New("item 1: Plex answered 500")})
 	buf := captureLogs(t)
 	f.r.sleep = func(context.Context, time.Duration) error {
 		f.sleeps = append(f.sleeps, time.Second)
@@ -350,11 +351,36 @@ func TestApplyMatchStopsWhenRowLeavesCache(t *testing.T) {
 	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {
 		t.Fatal(err)
 	}
-	if *checks != 1 || len(f.sleeps) != 1 {
-		t.Errorf("checks %d, sleeps %v; want 1 check after 1 wait", *checks, f.sleeps)
+	if *checks != 0 || len(f.sleeps) != 1 {
+		t.Errorf("checks %d, sleeps %v; want no check after 1 wait", *checks, f.sleeps)
 	}
-	if strings.Contains(buf.String(), "Following up a manual match failed") {
+	if strings.Contains(buf.String(), "Following up a match failed") {
 		t.Errorf("log warns about a row that a run removed: %s", buf)
+	}
+}
+
+// An unavailable server ends the follow-up: no check asks it again. The
+// accepted match is no error.
+func TestApplyMatchRefreshUnavailableSkipsChecks(t *testing.T) {
+	f, fake, checks := matchCheckFixture(t, checkAnswer{item: completeItem("1")})
+	fake.refreshErrs["1"] = fmt.Errorf("refresh: %w", plex.ErrUnavailable)
+	cand := plex.Candidate{GUID: "plex://movie/1", Name: "Match", Year: 2020}
+	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {
+		t.Fatal(err)
+	}
+	if *checks != 0 || len(f.sleeps) != 0 {
+		t.Errorf("checks %d, sleeps %v; want none", *checks, f.sleeps)
+	}
+}
+
+func TestApplyMatchStopsCheckingWhenPlexIsUnavailable(t *testing.T) {
+	f, _, checks := matchCheckFixture(t, checkAnswer{err: fmt.Errorf("item 1: %w", plex.ErrUnavailable)}, checkAnswer{item: completeItem("1")})
+	cand := plex.Candidate{GUID: "plex://movie/1", Name: "Match", Year: 2020}
+	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {
+		t.Fatal(err)
+	}
+	if *checks != 1 {
+		t.Errorf("checks = %d, want 1", *checks)
 	}
 }
 

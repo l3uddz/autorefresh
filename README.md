@@ -156,7 +156,8 @@ fails with 1 refresh takes the first place for 4 runs before an item with 5
 refreshes gets it.
 
 Autorefresh handles one due item at a time on each server, and each item
-gets at most one refresh or match request. It waits `refresh-delay` between
+gets at most one refresh or match request. A match that Plex accepts also
+gets the refresh that follows it (see Fix match). It waits `refresh-delay` between
 two items. A run handles at most `max-refreshes-per-run` due items on each
 server. An item whose match search fails also counts, although it gets no
 request. If you set `max-refreshes-per-run` to 0, a run has no limit.
@@ -219,6 +220,19 @@ year of the item, `tmdb_year` if TMDB was checked, and each candidate with
 its year and the web page of the ID that found it. If a match search fails,
 autorefresh sends no request for that item in this run. A match request
 counts as a refresh for the wait.
+
+After Plex accepts a match, the run follows it up as a manual **Match** in
+the dashboard does. It requests a refresh of the item, which counts as one
+more attempt and one more refresh for the wait. Then it checks the item
+after waits of 1, 2, and 4 seconds, while Plex loads the new metadata. A
+check that finds the item complete moves it to the Fixed tab at once and
+counts it in the summary of the run. A check that finds it still
+incomplete updates its metadata, and the next run reads it again. The
+follow-up refresh, and a completion or a removal that a check finds,
+belong to the run, so they show in its details. If the server is
+unavailable for the follow-up refresh or a check, the follow-up stops
+and the run of that server ends, as it does after any request that fails
+that way.
 
 The `Sent request` line of a match, and its `Dry run` line, has these
 fields, so you can check each match in the log:
@@ -546,8 +560,8 @@ address keeps the choice, so a link or a reload shows the same server.
   items that were fixed recently and the recent runs. **Run now** starts a
   run. Its menu also has **Full cache refresh, then run**, which reads
   every library in full before it refreshes the due items. If it cannot
-  read a library, the run of that server fails and refreshes no item.
-  With several servers, it can start either kind of run for one server or for all
+  read a library, the run of that server fails and refreshes no item. The
+  runs of the other servers continue. With several servers, it can start either kind of run for one server or for all
   servers. A manual run or bulk refresh has a **Cancel** button. The item
   count on a server card opens the items of that server. The header shows
   when the next scheduled run starts, for example "Next run in 33m ·
@@ -567,7 +581,9 @@ address keeps the choice, so a link or a reload shows the same server.
   Its **Sort** menu sorts by the same columns as Table mode, such as tries
   or next due. A new sort starts in its natural direction, for example the
   most tries first, and the arrow button beside it reverses it. Both modes
-  share the sort of each tab.
+  share the sort of each tab. **Default order** lists the items with the
+  most tries first on Attention, the most recently stopped first on
+  Stopped, and the most recently fixed first on Fixed.
   **Table** mode shows the items as text rows. It renders only the rows on
   screen, so it stays fast with many items. It can sort the items and
   select several items, or every item that matches the filters, for a bulk
@@ -591,8 +607,10 @@ address keeps the choice, so a link or a reload shows the same server.
   Below the actions, the history of the item lists each event, newest
   first: requests by autorefresh or by hand and whether Plex accepted them,
   fix match decisions with their searches, stops and resumes, and when
-  the item was fixed or removed. On a phone, the list fills the screen and
-  an item opens on its own screen.
+  the item was fixed or removed. An item that autorefresh no longer knows,
+  because its history expired, says so without its old details, and other
+  load errors offer **Try again**. On a phone, the list fills the screen
+  and an item opens on its own screen.
 - **Runs** lists the runs of every server, or of the chosen server, newest
   first: the start, the duration, the server, the source (schedule or
   manual), the kind, the status, and the items read,
@@ -609,8 +627,9 @@ address keeps the choice, so a link or a reload shows the same server.
   is one row with its summary.
 - A click on a run opens its details in a drawer, also from **Recent
   runs** on the Status page. In the table, Enter or Space on a row opens
-  it too. On a narrow screen, the details replace the list, as on the
-  Items page. The details show the kind, the status, the start, the
+  it too. The head of the drawer, with its close button, stays in view
+  while the items scroll. On a narrow screen, the details replace the
+  list, as on the Items page. The details show the kind, the status, the start, the
   duration, the libraries read, the error, and the counts. The counts of
   refreshes and matches are the requests sent, so they include the
   requests that failed. Below, the details list the items of the run by
@@ -618,11 +637,12 @@ address keeps the choice, so a link or a reload shows the same server.
   accepted, **Failed** for rejected requests and failed fix match
   searches, **Fixed**, **Completed by Plex**, **Removed**, and **Not
   sent** for a fix match decision whose request the end of the run
-  stopped. While the run works, a decision whose request is next is
-  **In progress**. Each item shows its library and what happened to it, such as
+  stopped or that a later decision of the item replaced. While the run
+  works, a decision whose request is next is **In progress**. Each item shows its library and what happened to it, such as
   the fix match decision before a request, and opens its item details. A
   bulk refresh lists its selected items as **Refreshed**, **Failed**,
-  **Removed**, **Skipped**, and **Not reached**. Runs from before this
+  **Removed**, **Skipped**, and **Not reached**, each with its poster and
+  library when autorefresh still knows the item. Runs from before this
   version recorded no items, so their details say that the item details
   were not recorded. The read and due counts stay numbers. A running run
   shows its counts when it ends, and reloads its items every 5 seconds,
@@ -644,8 +664,8 @@ the folder IDs that found it, the year compared with the item, and the
 searches of the last automatic fix match that found it. The current match of the item in Plex
 is marked, and you cannot apply it again. For a series, a candidate that
 a search by one TMDB ID found as its only candidate can compare the
-episode numbers of the item with that TMDB series. This needs a
-`tmdb-token`. The comparison changes nothing. **Match** asks before it
+episode numbers of the item with that TMDB series, if no search by that
+TMDB ID found another candidate. This needs a `tmdb-token`. The comparison changes nothing. **Match** asks before it
 applies the candidate. After Plex accepts the match, autorefresh also
 requests a refresh of the item. The refresh counts as one more attempt of
 the item, and as an accepted refresh it lengthens the wait before the next
@@ -653,10 +673,19 @@ automatic refresh, like any refresh. Then, for an item in the cache, autorefresh
 checks the item as **Check now** does, after waits of 1, 2, and 4 seconds,
 while Plex loads the new metadata. An item that a check finds complete
 moves to the Fixed tab at once. Otherwise the next run reads it again.
+If the server is unavailable for the refresh or a check, autorefresh
+stops checking.
 Beside the candidates, the dialog explains the last automatic fix match:
-its searches, their candidates, and why it picked one or none. Searches in
-the dialog call Plex but record nothing. An applied match is recorded in
-the history of the item.
+its searches, their candidates, and why it picked one or none. When the
+history holds no automatic fix match of the item, **Try automatic fix
+match** runs one now as a preview. The preview uses the same code as a
+run, also for an item that a run would not try, and shows its decision in
+the same way. It asks TMDB even when a TMDB lookup failed earlier in a
+run, as the next run does. It marks the candidate that it picked, which
+you can then apply with **Match**. The pick gets a card even when the
+opening search of its folder ID failed. The preview records nothing, saves nothing to the
+cache, and sends no match to Plex. Searches in the dialog call Plex but
+record nothing. An applied match is recorded in the history of the item.
 
 The dashboard asks before it stops work on an item, applies a match, or
 refreshes items in bulk. It updates live while the event stream is
@@ -789,7 +818,7 @@ summary line:
 - You stop the run.
 
 Before the summary, autorefresh logs one `Item complete` line for each item
-that the reads of the run found complete. The line has the server, the
+that the reads of the run, or the checks after its matches, found complete. The line has the server, the
 library, the title, and the number of refreshes. These lines come after the
 refresh step, so they stay next to the summary in the log. A run without a
 summary line also logs them.
@@ -814,14 +843,14 @@ The summary line has these fields:
 | --- | --- |
 | `full_read_items` | The movies and series that the full reads of the run listed. If the run did no full read, the value is 0. |
 | `incremental_read_items` | The movies and series that the incremental reads of the run listed. If the run did only full reads, the value is 0. |
-| `incomplete_items` | The incomplete items in the cache after the run, without the items whose reasons are all ignored. An item that the run refreshed stays in this count until a later read finds it complete. |
+| `incomplete_items` | The incomplete items in the cache after the run, without the items whose reasons are all ignored. An item that the run refreshed stays in this count until a later read finds it complete, unless a check after its match found it complete. |
 | `due_items` | The incomplete items that were due for a request |
 | `refresh_requests` | The refresh requests that the run sent, also failed ones |
 | `match_requests` | The fix match requests that the run sent, also failed ones |
 | `failed_requests` | The failed requests, match searches, and TMDB lookups. A `404 Not Found` answer of Plex is not a failure. |
 | `remaining_items` | The due items that the run did not reach, because of `max-refreshes-per-run` or because the server became unavailable. They stay due for later runs. |
-| `completed_items` | The items in the cache that the reads of the run found complete. The run removes them from the cache. Each one also has an `Item complete` line. |
-| `completed_after_request` | The items in `completed_items` that had at least one request from autorefresh that Plex accepted. Plex runs a refresh in the background, so the effect of a request shows in a later run. |
+| `completed_items` | The items in the cache that the reads of the run, or the checks after its matches, found complete. The run removes them from the cache. Each one also has an `Item complete` line. |
+| `completed_after_request` | The items in `completed_items` that had at least one request from autorefresh that Plex accepted. Plex runs a refresh in the background, so the effect of a refresh usually shows in a later run. A match can show in the same run, through the checks after it. |
 | `completed_after_match` | The items in `completed_items` that had a match request that Plex accepted. Each one has a `last_match` field on its `Item complete` line. |
 | `duration` | The time of the run of the server, with the reads, rounded to milliseconds, such as `11m3.814s` |
 

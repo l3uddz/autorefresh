@@ -132,7 +132,9 @@ func writeManual(tx *sql.Tx, m ManualRecord) error {
 }
 
 // ApplyCheck updates an existing item from an individual metadata check.
-func (s *Store) ApplyCheck(server string, it Item, at time.Time) (bool, error) {
+// runID is the run that checked the item, which a completed event names;
+// 0: none.
+func (s *Store) ApplyCheck(server string, it Item, at time.Time, runID int64) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return false, fmt.Errorf("begin item check: %w", err)
@@ -148,7 +150,7 @@ func (s *Store) ApplyCheck(server string, it Item, at time.Time) (bool, error) {
 	if it.Type == "" {
 		it.Type = prev.Type
 	}
-	r := Read{Server: server, Section: prev.Section, At: at}
+	r := Read{Server: server, Section: prev.Section, At: at, RunID: runID}
 	in := readKey{meta: it, present: true, inItems: true}
 	fixed, err := writeExisting(tx, r, prev, in)
 	if err != nil {

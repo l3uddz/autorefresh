@@ -1,5 +1,6 @@
 import type { Candidate, MatchSearch, TimelineEvent } from './api';
 import { maxSearchBytes } from './bulk';
+import { verdictName } from './timeline';
 
 // The evidence of the Fix match dialog: candidates grouped by Plex GUID,
 // with the searches that found each one. Every Plex field stays text.
@@ -84,16 +85,24 @@ interface Builder {
 /** Groups the candidates of the opening and the typed searches by GUID.
  * Candidates without a GUID stay apart, because Plex cannot apply them.
  * Groups that the typed search found come first, then those that more
- * folder IDs found, then the higher Plex score. typedYear is the year
- * that the typed search sent, which its answer does not carry. */
+ * folder IDs found, then the higher Plex score. A candidate ties to a TMDB
+ * ID only when a search of that ID found it as the only candidate and no
+ * search of that ID found another candidate.
+ * typedYear is the year that the typed search sent, which its answer does
+ * not carry. */
 export function groupCandidates(opening: MatchSearch[], typed: MatchSearch[] = [], typedYear?: number): CandidateGroup[] {
   const groups = new Map<string, Builder>();
   const loose: Builder[] = [];
+  // The GUIDs that the searches of each TMDB ID found. Searches that
+  // disagree tie no candidate to the ID.
+  const found = new Map<string, Set<string>>();
   let order = 0;
   const add = (search: MatchSearch, isTyped: boolean) => {
     const year = isTyped && search.source === 'title' ? typedYear : undefined;
     const evidence: Evidence = { query: search.query, source: search.source, fromId: search.fromId, isTyped, ...(year ? { year } : {}) };
     const tie = tmdbTie(search);
+    const id = tmdbIdOf(search);
+    if (id) found.set(id, new Set([...(found.get(id) ?? []), ...search.candidates.map(c => c.guid)]));
     for (const candidate of search.candidates) {
       let entry = candidate.guid ? groups.get(candidate.guid) : undefined;
       if (!entry) {
@@ -120,7 +129,10 @@ export function groupCandidates(opening: MatchSearch[], typed: MatchSearch[] = [
       const [x, y] = [rank(a), rank(b)];
       return y[0] - x[0] || y[1] - x[1] || y[2] - x[2] || a.order - b.order;
     })
-    .map(({ group, tmdbIds }) => (tmdbIds.size === 1 ? { ...group, tmdbId: [...tmdbIds][0] } : group));
+    .map(({ group, tmdbIds }) => {
+      const [id] = tmdbIds;
+      return tmdbIds.size === 1 && found.get(id)?.size === 1 ? { ...group, tmdbId: id } : group;
+    });
 }
 
 /** Reports whether group is the current match of the item in Plex. */
@@ -147,8 +159,8 @@ export function compareYear(itemYear: number | undefined, candidateYear: number 
   return { kind: diff === 0 ? 'same' : diff === 1 ? 'off' : 'differs', year: candidateYear, diff };
 }
 
-/** What the last automatic fix match did with a candidate: the searches
- * that found it and the verdict of each. */
+/** What an automatic fix match, the last one or a preview, did with a
+ * candidate: the searches that found it and the verdict of each. */
 export interface AutoEvidence {
   query: string;
   verdict?: string;
@@ -160,6 +172,23 @@ export function autoEvidence(decision: TimelineEvent | undefined, guid: string):
   return decision.searches.flatMap(search =>
     search.candidates.filter(c => c.guid === guid).map(c => ({ query: search.query, verdict: c.verdict })),
   );
+}
+
+/** Returns the folder ID searches of a preview decision: the kinds of
+ * search that the opening search also makes. Grouped with the opening
+ * searches, they give the pick of the preview a card, also when the
+ * opening search of its folder ID failed. A tie search only confirms a
+ * pick that a folder ID search found. */
+export function previewSearches(decision: TimelineEvent | undefined): MatchSearch[] {
+  return decision?.searches.filter(search => search.source === 'path' || search.source === 'tmdb') ?? [];
+}
+
+/** Returns the line of a candidate for one search of the last automatic
+ * fix match, or of a preview. */
+export function autoEvidenceText(evidence: AutoEvidence, isPreview: boolean): string {
+  const by = isPreview ? 'The automatic fix match preview' : 'The last automatic fix match';
+  const verdict = verdictName(evidence.verdict);
+  return `${by} found it via ${evidence.query}${verdict ? `: ${verdict}` : ''}`;
 }
 
 const imdbValue = /^tt\d+$/i;
@@ -222,6 +251,12 @@ export function matchesPath(params: string, search?: TypedSearch): string {
     if (search.year) query.set('year', String(search.year));
   }
   return `item/matches?${query}`;
+}
+
+/** Returns the query of GET /api/item/auto-match, the automatic fix match
+ * preview of the item params. */
+export function autoMatchPath(params: string): string {
+  return `item/auto-match?${new URLSearchParams(params)}`;
 }
 
 /** The body of POST /api/item/match: exactly the fields that the API

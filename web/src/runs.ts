@@ -68,7 +68,7 @@ export interface RunEntry {
   year?: number;
   type?: string;
   thumb?: string;
-  /** The library of the item, absent for a bulk refresh. */
+  /** The title of the library of the item. */
   library?: string;
   /** What happened to the item, such as "Refresh accepted". */
   summary: string;
@@ -139,7 +139,21 @@ function grouped(order: [string, string][], entries: [group: string, entry: RunE
 
 function itemEntry(item: RunItem, index: number): [string, RunEntry] {
   const outcome = itemOutcomes[item.outcome] ?? { group: 'skipped', summary: item.outcome };
-  return [outcome.group, { id: `item-${index}`, key: item.key, title: item.title, summary: outcome.summary, detail: item.error, tab: outcome.tab ?? 'attention' }];
+  return [
+    outcome.group,
+    {
+      id: `item-${index}`,
+      key: item.key,
+      title: item.title,
+      year: item.year,
+      type: item.type,
+      thumb: item.thumb,
+      library: item.library,
+      summary: outcome.summary,
+      detail: item.error,
+      tab: outcome.tab ?? 'attention',
+    },
+  ];
 }
 
 function eventEntries(events: RunEvent[], isRunning: boolean): [string, RunEntry][] {
@@ -149,7 +163,7 @@ function eventEntries(events: RunEvent[], isRunning: boolean): [string, RunEntry
   for (const event of events) {
     if (event.kind === 'match-decision') {
       const earlier = decisions.get(event.key);
-      if (earlier) entries.push(pendingEntry(earlier, false));
+      if (earlier) entries.push(replacedEntry(earlier));
       decisions.set(event.key, event);
       continue;
     }
@@ -173,6 +187,13 @@ function pendingEntry(decision: RunEvent, isWaiting: boolean): [string, RunEntry
   if (decision.outcome === 'failed') return ['failed', eventEntry(decision)];
   if (isWaiting) return ['in-progress', { ...eventEntry(decision), detail: 'Its request is not sent yet' }];
   return ['not-sent', { ...eventEntry(decision), detail: 'The run ended before the request' }];
+}
+
+/** Returns the entry of a decision that a later decision of its item
+ * replaced before a request. A failed search keeps its error. */
+function replacedEntry(decision: RunEvent): [string, RunEntry] {
+  if (decision.outcome === 'failed') return ['failed', eventEntry(decision)];
+  return ['not-sent', { ...eventEntry(decision), detail: 'A later decision replaced it' }];
 }
 
 /** How often the details of a running run reload. */

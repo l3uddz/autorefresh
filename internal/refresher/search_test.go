@@ -40,7 +40,7 @@ func TestHistorySearchDoesNotCacheTMDBForRowCreatedMidSearch(t *testing.T) {
 	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
 	row, _ := f.row("home", "1", "1")
 	row.Reasons = 0
-	if _, err := f.store.ApplyCheck("home", row, t0); err != nil {
+	if _, err := f.store.ApplyCheck("home", row, t0, 0); err != nil {
 		t.Fatal(err)
 	}
 	f.r.opts.TMDB = tmdbFindHook{fakeTMDB: &fakeTMDB{ids: map[string]string{"imdb tt123 false": "77"}}, onFind: func() {

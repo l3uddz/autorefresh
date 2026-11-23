@@ -151,9 +151,57 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	if err := r.store.RecordRequest(req); err != nil {
 		return err
 	}
-	r.itemDone(run, it.RatingKey, req.Outcome())
 	requestEvent(log.Info(), run.server.Name, lib, it, action, fm).Msg("Sent request")
 	r.warnAtLongestWait(run.server.Name, lib, it)
+	// The run follows up its match as a manual match is followed up, so a
+	// match that fixed the item moves it to Fixed now.
+	var stop error
+	if fm != nil {
+		stop = r.settleMatch(ctx, manualItem{server: run.server, row: it, cached: true}, run)
+		if errors.Is(stop, ErrStore) {
+			return stop
+		}
+	}
+	// Plex accepted the request, so the item is done also when the follow-up
+	// of its match ends the run of the server.
+	r.itemDone(run, it.RatingKey, req.Outcome())
+	return stop
+}
+
+// runRefresh sends the refresh after a match that Plex accepted in the run
+// and records it as a request of the run. A 404 answer records the item as
+// gone. It returns the error of the request, or a store error (ErrStore).
+func (r *Refresher) runRefresh(ctx context.Context, run *serverRun, it store.Item) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	run.refreshes++
+	err := run.server.Plex.Refresh(ctx, it.RatingKey)
+	if errors.Is(err, plex.ErrNotFound) {
+		if recErr := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, run.id); recErr != nil {
+			return fmt.Errorf("%w: %w", ErrStore, recErr)
+		}
+		return err
+	}
+	req := r.request(run, it, store.ActionRefresh, nil)
+	req.Accepted = err == nil
+	if err != nil {
+		run.failures++
+		req.Error = err.Error()
+	}
+	if recErr := r.store.RecordRequest(req); recErr != nil {
+		return fmt.Errorf("%w: %w", ErrStore, recErr)
+	}
+	lib := run.library(it.Section)
+	if err != nil {
+		itemEvent(log.Warn(), run.server.Name, lib, it).Err(err).Str("action", string(store.ActionRefresh)).Msg("Request failed")
+		return err
+	}
+	requestEvent(log.Info(), run.server.Name, lib, it, store.ActionRefresh, nil).Msg("Sent request")
+	// The match counted one refresh already.
+	matched := it
+	matched.Refreshes++
+	r.warnAtLongestWait(run.server.Name, lib, matched)
 	return nil
 }
 
@@ -281,12 +329,21 @@ func (r *Refresher) findMatch(ctx context.Context, run *serverRun, lib plex.Libr
 	if it.Reasons&store.Unmatched == 0 || r.opts.IgnoreReasons&store.Unmatched != 0 || it.Refreshes < 1 {
 		return nil, nil
 	}
-	d := &decisionLog{}
-	ev, err := r.evaluateMatch(ctx, run, lib, it, d)
-	if recErr := r.recordDecision(ctx, run, it, d, ev, err); recErr != nil {
+	ev, dec, err := r.autoMatch(ctx, run, lib, it)
+	if recErr := r.recordDecision(ctx, run, it, dec, err); recErr != nil {
 		return nil, recErr
 	}
 	return ev.fm, err
+}
+
+// autoMatch runs the automatic fix match of the item and returns its
+// evaluation and its decision. A run and a preview both decide through it,
+// so they always choose the same way. err is the error of evaluateMatch,
+// which the decision also holds.
+func (r *Refresher) autoMatch(ctx context.Context, run *serverRun, lib plex.Library, it store.Item) (evaluation, store.MatchDecision, error) {
+	d := &decisionLog{}
+	ev, err := r.evaluateMatch(ctx, run, lib, it, d)
+	return ev, d.decision(ev, err), err
 }
 
 // evaluateMatch searches the fix match of the item and logs each search in
@@ -359,7 +416,8 @@ func (r *Refresher) resolveMatch(ctx context.Context, run *serverRun, mc matchCo
 // itemPaths returns the paths of the item: the movie files from the reads
 // of the run, or else the paths that Plex gives for the item. It saves the
 // folder of a series as the path of its row, also in a dry run, because the
-// path is cache metadata. A failed save returns an errCache error.
+// path is cache metadata, but not in a preview. A failed save returns an
+// errCache error.
 func (r *Refresher) itemPaths(ctx context.Context, run *serverRun, it store.Item) ([]string, error) {
 	if it.Type == plex.MovieLibrary {
 		if paths := run.files[it.RatingKey]; len(paths) > 0 {
@@ -370,7 +428,7 @@ func (r *Refresher) itemPaths(ctx context.Context, run *serverRun, it store.Item
 	if err != nil {
 		return nil, err
 	}
-	if folder := seriesFolder(it.Type, paths); folder != "" {
+	if folder := seriesFolder(it.Type, paths); folder != "" && !run.preview {
 		if err := r.store.SetPath(run.server.Name, it.RatingKey, folder); err != nil {
 			return nil, fmt.Errorf("%w: %w", errCache, err)
 		}
@@ -425,7 +483,7 @@ func foundLinks(results []searchResult, show bool) []string {
 // pass found no candidate, so the item then gets a plain refresh, as
 // without a TMDB client.
 func (r *Refresher) tmdbFallback(ctx context.Context, run *serverRun, lib plex.Library, it store.Item, ids []pathID, d *decisionLog) ([]searchResult, error) {
-	results, err := r.tmdbResults(ctx, run.server, lib, it, ids, d)
+	results, err := r.tmdbResults(ctx, run, lib, it, ids, d)
 	if !errors.Is(err, ErrTMDB) || ctx.Err() != nil {
 		return results, err
 	}

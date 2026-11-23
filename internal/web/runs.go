@@ -165,9 +165,20 @@ func (s *Server) toRunJSON(run store.Run) runJSON {
 
 // runDetailJSON is a run with its events and, for a bulk job, its items.
 type runDetailJSON struct {
-	Run    runJSON        `json:"run"`
-	Events []runEventJSON `json:"events"`
-	Items  []runItemJSON  `json:"items"`
+	Run    runJSON             `json:"run"`
+	Events []runEventJSON      `json:"events"`
+	Items  []runDetailItemJSON `json:"items"`
+}
+
+// runItemFacts are the facts of the item that an event or a bulk item of a
+// run names.
+type runItemFacts struct {
+	Year  int    `json:"year,omitempty"`
+	Type  string `json:"type,omitempty"`
+	Thumb string `json:"thumb,omitempty"`
+	// Library is the title of the library of the item, which tells apart
+	// the same title in several libraries.
+	Library string `json:"library,omitempty"`
 }
 
 // runEventJSON is an event of a run with the item that it names.
@@ -175,12 +186,13 @@ type runEventJSON struct {
 	eventJSON
 	Key   string `json:"key"`
 	Title string `json:"title,omitempty"`
-	Year  int    `json:"year,omitempty"`
-	Type  string `json:"type,omitempty"`
-	Thumb string `json:"thumb,omitempty"`
-	// Library is the title of the library of the item, which tells apart
-	// the same title in several libraries.
-	Library string `json:"library,omitempty"`
+	runItemFacts
+}
+
+// runDetailItemJSON is a bulk item of a run with the facts of its item.
+type runDetailItemJSON struct {
+	runItemJSON
+	runItemFacts
 }
 
 // serveRunDetail answers GET /api/runs/detail with one run of a configured
@@ -191,40 +203,40 @@ func (s *Server) serveRunDetail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	run, found, err := s.store.Run(r.Context(), id)
+	detail, found, err := s.store.RunDetail(r.Context(), id)
 	if err != nil {
 		writeStoreError(w, r, err)
 		return
 	}
-	srv, configured := s.srvIndex[run.Server]
+	srv, configured := s.srvIndex[detail.Run.Server]
 	if !found || !configured {
 		writeError(w, http.StatusNotFound, "no such run")
 		return
 	}
-	events, err := s.store.RunEvents(r.Context(), id)
+	libraries, err := s.libraryTitles(r.Context(), detail.Run.Server)
 	if err != nil {
 		writeStoreError(w, r, err)
 		return
 	}
-	items, err := s.store.RunItems(r.Context(), id)
-	if err != nil {
-		writeStoreError(w, r, err)
-		return
+	facts := func(key, section, typ, thumb string, year int) runItemFacts {
+		return runItemFacts{Year: year, Type: typ, Thumb: imageURL("thumb", srv, key, thumb), Library: libraries[section]}
 	}
-	libraries, err := s.libraryTitles(r.Context(), run.Server)
-	if err != nil {
-		writeStoreError(w, r, err)
-		return
+	out := runDetailJSON{
+		Run:    s.toRunJSON(detail.Run),
+		Events: make([]runEventJSON, 0, len(detail.Events)),
+		Items:  make([]runDetailItemJSON, 0, len(detail.Items)),
 	}
-	out := runDetailJSON{Run: s.toRunJSON(run), Events: make([]runEventJSON, 0, len(events)), Items: make([]runItemJSON, 0, len(items))}
-	for _, e := range events {
+	for _, e := range detail.Events {
 		out.Events = append(out.Events, runEventJSON{
-			eventJSON: s.toEventJSON(e), Key: e.RatingKey, Title: e.Title, Year: e.Year, Type: e.Type,
-			Thumb: imageURL("thumb", srv, e.RatingKey, e.Thumb), Library: libraries[e.Section],
+			eventJSON: s.toEventJSON(e), Key: e.RatingKey, Title: e.Title,
+			runItemFacts: facts(e.RatingKey, e.Section, e.Type, e.Thumb, e.Year),
 		})
 	}
-	for _, item := range items {
-		out.Items = append(out.Items, s.toRunItemJSON(item))
+	for _, item := range detail.Items {
+		out.Items = append(out.Items, runDetailItemJSON{
+			runItemJSON:  s.toRunItemJSON(item),
+			runItemFacts: facts(item.RatingKey, item.Section, item.Type, item.Thumb, item.Year),
+		})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

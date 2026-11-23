@@ -50,14 +50,15 @@ func (r *Refresher) useTMDB(ids []pathID, results []searchResult) bool {
 // tmdbResults translates the imdb path IDs, and the tvdb path IDs of a
 // series, to TMDB IDs and searches Plex once for each different TMDB ID. It
 // logs each search in d.
-func (r *Refresher) tmdbResults(ctx context.Context, srv Server, lib plex.Library, it store.Item, ids []pathID, d *decisionLog) ([]searchResult, error) {
+func (r *Refresher) tmdbResults(ctx context.Context, run *serverRun, lib plex.Library, it store.Item, ids []pathID, d *decisionLog) ([]searchResult, error) {
+	srv := run.server
 	var results []searchResult
 	searched := map[string]bool{}
 	for _, from := range ids {
 		if from.Source != "imdb" && (from.Source != "tvdb" || it.Type != plex.ShowLibrary) {
 			continue
 		}
-		tmdbID, ok, err := r.tmdbID(ctx, srv.Name, it, from, true)
+		tmdbID, ok, err := r.tmdbID(ctx, srv.Name, it, from, !run.preview)
 		if err != nil {
 			return nil, err
 		}
@@ -146,7 +147,7 @@ func (r *Refresher) confirmYear(ctx context.Context, run *serverRun, mc matchCon
 // resolves tmdb-<id> to the same candidate GUID if not already searched, and
 // compares the local years or regular episode numbers with TMDB's.
 func (r *Refresher) confirmWithTMDB(ctx context.Context, run *serverRun, mc matchContext, pathYear int) (yearResolution, error) {
-	tmdbID, needSearch, err := r.resolveOneTMDBID(ctx, run.server.Name, mc)
+	tmdbID, needSearch, err := r.resolveOneTMDBID(ctx, run, mc)
 	if err != nil {
 		if errors.Is(err, ErrTMDB) && ctx.Err() == nil {
 			r.recordTMDBFailure(run, mc.lib, mc.it, mc.d, err)
@@ -205,14 +206,14 @@ func yearConfirms(itemYear, pathYear, tmdbYear int) bool {
 
 // resolveOneTMDBID returns the single TMDB ID associated with the item's
 // match, and whether Plex still needs a tmdb-<id> search to verify the GUID.
-func (r *Refresher) resolveOneTMDBID(ctx context.Context, server string, mc matchContext) (string, bool, error) {
+func (r *Refresher) resolveOneTMDBID(ctx context.Context, run *serverRun, mc matchContext) (string, bool, error) {
 	id, found := singleTMDBResult(mc.results)
 	// A fallback search already considered the external IDs. A search of a
 	// direct path ID can still disagree with a translated IMDb or TVDB ID.
 	if found && (id == "" || !slices.Contains(mc.ids, pathID{"tmdb", id})) {
 		return id, false, nil
 	}
-	only, err := r.singlePathTMDBID(ctx, server, mc, id)
+	only, err := r.singlePathTMDBID(ctx, run, mc, id)
 	if err != nil || only == "" {
 		return "", false, err
 	}
@@ -221,12 +222,12 @@ func (r *Refresher) resolveOneTMDBID(ctx context.Context, server string, mc matc
 
 // singlePathTMDBID checks that the item's translated path IDs agree with
 // each other and with only, the TMDB ID already found, if any.
-func (r *Refresher) singlePathTMDBID(ctx context.Context, server string, mc matchContext, only string) (string, error) {
+func (r *Refresher) singlePathTMDBID(ctx context.Context, run *serverRun, mc matchContext, only string) (string, error) {
 	for _, id := range mc.ids {
 		if id.Source != "imdb" && (id.Source != "tvdb" || mc.it.Type != plex.ShowLibrary) {
 			continue
 		}
-		tmdbID, ok, err := r.tmdbID(ctx, server, mc.it, id, true)
+		tmdbID, ok, err := r.tmdbID(ctx, run.server.Name, mc.it, id, !run.preview)
 		if err != nil {
 			return "", err
 		}
