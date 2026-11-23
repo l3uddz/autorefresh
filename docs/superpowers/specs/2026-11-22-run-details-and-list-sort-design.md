@@ -102,9 +102,11 @@ Frontend:
   to the item detail.
 - A run from before this version says that its items were not recorded,
   also when its counts are zero, because its counts leave out changes such
-  as removed items. A newer run with counts but no recorded events says
-  that its events were removed. A newer run with no items says that
-  nothing happened to an item.
+  as removed items. A newer run with no recorded events says that its
+  item details were not recorded because their history expired when one
+  of its outcome counts (refreshed, matched, failed, or completed; selected
+  for a bulk job) is not zero. The read and due counts do not count.
+  Otherwise it says that no item changed in the run.
 - A running run refreshes its events with the live status, like the runs
   list.
 

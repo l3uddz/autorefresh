@@ -251,9 +251,12 @@ refresher checks an item after Plex accepts a manual match.
   `eventView(...).detail`, and a link to `itemHash('attention' or 'fixed',
   …)`. A bulk job lists `items` grouped by outcome. Empty states: "Item
   details were not recorded for this run" for a run from before runs
-  linked their events (`eventsLinked` false), also with zero counts, or
-  when counts are not zero and there are no events, "No item changed in
-  this run" otherwise, and "This run no longer exists" on 404. Run table rows open with click, Enter, and
+  linked their events (`eventsLinked` false), also with zero counts, and
+  with "Their history expired." for a newer run with no events whose
+  outcome counts (refreshed, matched, failed, completed; `selected` for a
+  bulk job) are not all zero. The read and due counts do not count. "No
+  item changed in this run" otherwise, and "This run no longer exists" on
+  404. `noEntries` in `runs.ts` holds these rules. Run table rows open with click, Enter, and
   Space (the row plugin of `items.tsx`, moved to a shared module), and list
   rows link to `#/runs/<id>`.
 - [ ] **Step 4:** Run `mise run web-lint`, `mise run web-test`,
