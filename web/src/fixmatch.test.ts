@@ -1,7 +1,7 @@
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TimelineEvent } from './api';
-import { newerDecision, previewQuery } from './match';
+import { candidateQuery, newerDecision, previewQuery } from './match';
 
 // The Fix match dialog reads the preview through previewQuery. Mounting
 // the dialog subscribes an observer, and closing it unsubscribes, so these
@@ -82,14 +82,65 @@ describe('fix match preview', () => {
   });
 
   it('shows the newer of the preview and the last automatic decision', () => {
-    const preview = decision('2026-11-23T10:00:00.5Z');
-    const older = decision('2026-11-23T09:00:00Z');
-    const newer = decision('2026-11-23T11:00:00Z');
+    const preview = decision('2026-11-23T10:00:00Z');
+    const older = decision('2026-11-23T09:59:59Z');
+    const newer = decision('2026-11-23T10:00:01Z');
     expect(newerDecision(preview, older)).toBe(preview);
     expect(newerDecision(preview, newer)).toBe(newer);
-    expect(newerDecision(preview, decision('2026-11-23T10:00:00.5Z'))).toBe(preview);
+    // Both keep whole seconds, so the recorded decision wins a tie.
+    const sameSecond = decision('2026-11-23T10:00:00Z');
+    expect(newerDecision(preview, sameSecond)).toBe(sameSecond);
     expect(newerDecision(undefined, older)).toBe(older);
     expect(newerDecision(preview, undefined)).toBe(preview);
     expect(newerDecision(undefined, undefined)).toBeUndefined();
+  });
+});
+
+// Each card of a series candidate reads candidateQuery. The provider is a
+// remote service, so the dialog asks it once per GUID while the page is
+// open, whatever happens to the dialog.
+describe('candidate series', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const guid = 'plex://show/000000000000000000000001';
+
+  function openCard(client: QueryClient) {
+    const observer = new QueryObserver(client, candidateQuery(params, guid));
+    const close = observer.subscribe(() => {});
+    return { observer, close };
+  }
+
+  it('does not ask again when the dialog reopens after a failure', async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ error: 'Plex metadata provider unavailable' }), { status: 502 }));
+    vi.stubGlobal('fetch', fetch);
+    const client = new QueryClient();
+
+    const first = openCard(client);
+    await vi.waitFor(() => expect(first.observer.getCurrentResult().isError).toBe(true));
+    first.close();
+
+    const second = openCard(client);
+    expect(second.observer.getCurrentResult().isFetching).toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    second.close();
+    client.clear();
+  });
+
+  it('lets a lookup finish into the cache when the dialog closes mid-flight', async () => {
+    let answer: (response: Response) => void = () => {};
+    const fetch = vi.fn(() => new Promise<Response>(resolve => { answer = resolve; }));
+    vi.stubGlobal('fetch', fetch);
+    const client = new QueryClient();
+
+    const first = openCard(client);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    first.close();
+    answer(new Response(JSON.stringify({ tmdbId: '48213', seasons: 1, episodes: 10 })));
+
+    await vi.waitFor(() => expect(client.getQueryData(candidateQuery(params, guid).queryKey)).toEqual({ tmdbId: '48213', seasons: 1, episodes: 10 }));
+    const second = openCard(client);
+    expect(second.observer.getCurrentResult().data).toEqual({ tmdbId: '48213', seasons: 1, episodes: 10 });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    second.close();
+    client.clear();
   });
 });

@@ -168,15 +168,19 @@ export function episodeCheckId(group: CandidateGroup, itemType: string | undefin
 
 /** The series of a candidate from the metadata provider of the server of
  * the item params. The provider is a remote service, so each GUID is asked
- * once while the page is open: no refetch, no retry, and the answer stays in
- * the cache. Its key is outside the item prefix. */
+ * once while the page is open: no refetch, no retry, also not when the
+ * dialog opens again after a failure, and the answer stays in the cache.
+ * The request takes no abort signal, so closing the dialog lets it finish
+ * into the cache instead of starting it again on the next open. Its key is
+ * outside the item prefix. */
 export function candidateQuery(params: string, guid: string) {
   return queryOptions({
     queryKey: ['candidate', new URLSearchParams(params).get('srv'), guid],
-    queryFn: ({ signal }) => api<CandidateSeries>(`item/candidate?${new URLSearchParams([...new URLSearchParams(params), ['guid', guid]])}`, { signal }),
+    queryFn: () => api<CandidateSeries>(`item/candidate?${new URLSearchParams([...new URLSearchParams(params), ['guid', guid]])}`),
     staleTime: Infinity,
     gcTime: Infinity,
     retry: false,
+    retryOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
@@ -321,10 +325,12 @@ export function previewQuery(params: string) {
 }
 
 /** Returns the newer of the preview and the last automatic decision, so a
- * run that decided after the preview replaces it. A tie keeps the preview. */
+ * run that decided after the preview replaces it. Both times have whole
+ * seconds, so a decision of the same second as the preview cannot be
+ * ordered; the recorded decision then wins. */
 export function newerDecision(preview: TimelineEvent | undefined, last: TimelineEvent | undefined): TimelineEvent | undefined {
   if (!preview || !last) return preview ?? last;
-  return Date.parse(last.at ?? '') > Date.parse(preview.at ?? '') ? last : preview;
+  return Date.parse(last.at ?? '') >= Date.parse(preview.at ?? '') ? last : preview;
 }
 
 /** The body of POST /api/item/match: exactly the fields that the API

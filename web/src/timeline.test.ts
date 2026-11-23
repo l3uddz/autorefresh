@@ -109,6 +109,18 @@ describe('decision evidence', () => {
     );
   });
 
+  it('names the candidate year that differs when a search found the candidate with another year', () => {
+    const twoYears = beechgrove({ searches: [
+      { query: 'tvdb-248824', source: 'path', failed: false, candidates: [{ guid: 'plex://show/b', year: 2009, score: 0, verdict: 'year differs' }] },
+      { query: 'imdb-tt1', source: 'path', failed: false, candidates: [{ guid: 'plex://show/b', year: 1997, score: 0, verdict: 'year differs' }] },
+    ] });
+    expect(decisionView(twoYears).detail).toBe('Plex has 1997 and the item has 2009. So nothing confirmed the candidate.');
+  });
+
+  it('shows a stored TMDB year without the TMDB ID of older decisions', () => {
+    expect(decisionView(beechgrove({ tmdbYear: 1978 })).detail).toBe('Plex has 1997, the item has 2009, and TMDB has 1978. So nothing confirmed the candidate.');
+  });
+
   it('keeps the general text of a year conflict without the item year', () => {
     expect(decisionView(beechgrove({ itemYear: undefined })).detail).toBe('The candidate has another year than the folder or TMDB, and nothing confirmed it.');
   });
@@ -120,6 +132,10 @@ describe('decision evidence', () => {
     expect(none({ tmdbSkip: 'tmdb-id' })).toContain('the folder names hold a tmdb ID');
     expect(none({ tmdbSkip: 'no-source' })).toContain('translates only imdb IDs and the tvdb IDs of series');
     expect(none({})).toBe('No search found a candidate.');
+    const outcome = (fields: Partial<TimelineEvent>) => decisionView(event(1, 'match-decision', fields)).detail;
+    expect(outcome({ outcome: 'matched', tmdbMissing: ['imdb-tt1'] })).toBe('The folder ID searches agreed on one candidate. TMDB has no entry for imdb-tt1.');
+    expect(outcome({ outcome: 'failed', error: 'tmdb lookup: tvdb-6: 500', tmdbMissing: ['tvdb-5'] })).toBe('tmdb lookup: tvdb-6: 500 TMDB has no entry for tvdb-5.');
+    expect(outcome({ outcome: 'failed', tmdbMissing: ['tvdb-5'] })).toBe('TMDB has no entry for tvdb-5.');
   });
 
   it('explains an episode comparison that differs', () => {

@@ -1,5 +1,6 @@
 import type { EpisodeDiff, ItemDetail, MatchSearch, TimelineEvent } from './api';
 import { actionText, fixedBy, plural, titleYear } from './format';
+import { compareYear } from './match';
 
 // Facts of an item that come from its timeline, newest event first. The
 // item detail of the API has no completion fields: a fixed item has no
@@ -123,10 +124,12 @@ function listText(words: string[]): string {
   return `${words.slice(0, -1).join(', ')}, and ${words[words.length - 1]}`;
 }
 
-/** Returns the year of the candidate that the year check rejected. */
-function rejectedYear(event: TimelineEvent): number | undefined {
+/** Returns the year of the candidate that the year check rejected: its
+ * verdict is "year differs", and its year differs from the item year. A
+ * search can return the same candidate with another year. */
+function rejectedYear(event: TimelineEvent, itemYear: number): number | undefined {
   for (const search of event.searches) {
-    const candidate = search.candidates.find(c => c.verdict === 'year differs' && c.year);
+    const candidate = search.candidates.find(c => c.verdict === 'year differs' && compareYear(itemYear, c.year).kind === 'differs');
     if (candidate) return candidate.year;
   }
   return undefined;
@@ -136,11 +139,12 @@ function rejectedYear(event: TimelineEvent): number | undefined {
  * episode comparison. A decision from before autorefresh kept these
  * values gets the general text. */
 function yearConflict(event: TimelineEvent): string {
-  const candidateYear = rejectedYear(event);
+  const candidateYear = event.itemYear && rejectedYear(event, event.itemYear);
   if (!event.itemYear || !candidateYear) return conflictText['year differs'];
   const years = [`Plex has ${candidateYear}`, `the item has ${event.itemYear}`];
   if (event.pathYear) years.push(`the folder has ${event.pathYear}`);
-  if (event.tmdbId) years.push(event.tmdbYear ? `TMDB has ${event.tmdbYear}` : 'TMDB has no year');
+  if (event.tmdbYear) years.push(`TMDB has ${event.tmdbYear}`);
+  else if (event.tmdbId) years.push('TMDB has no year');
   const sentences = [`${listText(years)}.`];
   if (event.episodeDiff) sentences.push(episodeDiffText(event.episodeDiff, event.tmdbId));
   sentences.push('So nothing confirmed the candidate.');
@@ -178,8 +182,15 @@ function noMatchDetail(event: TimelineEvent): string {
   return (event.conflict && conflictText[event.conflict]) || 'No search found a candidate.';
 }
 
-/** Returns the outcome of a fix match decision and why. */
+/** Returns the outcome of a fix match decision and why, with what the
+ * TMDB steps did not do. */
 export function decisionView(event: TimelineEvent): EventView {
+  const view = outcomeView(event);
+  const notes = tmdbNotes(event);
+  return notes.length ? { ...view, detail: [view.detail, ...notes].filter(Boolean).join(' ') } : view;
+}
+
+function outcomeView(event: TimelineEvent): EventView {
   switch (event.outcome) {
     case 'matched':
       return { title: 'Fix match: matched', tone: 'success', detail: confirmation(event) ?? 'The folder ID searches agreed on one candidate.' };
@@ -187,7 +198,7 @@ export function decisionView(event: TimelineEvent): EventView {
       return {
         title: `Fix match: not matched${event.conflict ? ` · ${event.conflict}` : ''}`,
         tone: 'error',
-        detail: [noMatchDetail(event), ...tmdbNotes(event)].join(' '),
+        detail: noMatchDetail(event),
       };
     case 'no-ids':
       return {
