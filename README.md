@@ -213,12 +213,16 @@ match also before the first refresh. If `ignore-reasons` holds
      earliest release date for a movie) against the item's year or its
      unambiguous path year.
    - If TMDB's year cannot confirm a series match, autorefresh reads the
-     episode numbers Plex found in the files. Every local regular season
-     must have the same episode count and numbers as that season in TMDB.
-     At least one regular season must match. Specials and seasons absent
-     from the library do not affect the check.
-     This can confirm a match even when the folder year disagrees with TMDB.
-     An incomplete season or differences in episode numbering still prevent
+     episode numbers Plex found in the files. Every episode number in each
+     local regular season must exist in that season in TMDB (no extra or
+     duplicate episode numbers), and at least 90% of TMDB's episodes across
+     the local regular seasons must be present locally. At least one regular
+     episode must match. Specials and seasons absent from the library do not
+     affect the check.
+     This can confirm a match even when the folder year disagrees with TMDB
+     or a few episodes are missing (for example 9 of 10, or 39 of 41 across
+     two seasons). Any extra episode number in Plex, or too many missing
+     episodes (below 90% across the local seasons), still prevents
      confirmation by episode numbers.
 
 The decision of a year conflict keeps the years that autorefresh compared:
@@ -228,7 +232,9 @@ candidate year differs from the item gets the verdict "year differs"; a
 search that returned the same candidate with an agreeing year gets "year
 agrees", and one without a year "not compared". A decision that failed
 after a year conflict keeps the conflict. It also keeps the TMDB ID that it checked and, for a
-series, the first local season whose episode numbers differ from TMDB,
+series, the local season that kept episode confirmation from passing (the first
+season with extra or invalid numbers, or the first season missing episodes when
+coverage is below 90%),
 with the episode count of Plex and of TMDB and the episode numbers that
 only one of them has. The Fix match dialog shows them.
 
@@ -348,10 +354,12 @@ nothing. Autorefresh applies a match only if all of these are true:
    ID, and the TMDB ID that TMDB gives for each `imdb` ID and each `tvdb`
    ID. An ID that TMDB has several entries for names no single series.
    Otherwise the conflict is `folder id differs`.
-3. Every local regular season has the same episode count and numbers as
-   that season in TMDB, as in the year check above. Otherwise the conflict
-   is `not confirmed`, and the decision keeps the first season that
-   differs.
+3. Every episode number in each local regular season exists in that season
+   in TMDB, with no extra or duplicate numbers, and at least 90% of TMDB's
+   episodes across the local regular seasons are present locally, as in the
+   year check above. Otherwise the conflict is `not confirmed`, and the
+   decision keeps the first season with extra or invalid numbers, or the
+   first season missing episodes when coverage is too low.
 
 The match request has the action `title-match`. If the provider does not
 know the candidate (`404 Not Found`), or gives it no TMDB ID, the conflict
@@ -767,8 +775,10 @@ episode numbers of the item with that TMDB series. The TMDB ID comes from
 a search by one TMDB ID that found the candidate as its only candidate, if
 no search by that TMDB ID found another candidate, or else from the
 metadata provider, so a candidate of a title search can compare too. This
-needs a `tmdb-token`. When the numbers differ, the comparison names the
-first season that differs, the episode counts of Plex and TMDB, and the
+needs a `tmdb-token`. When the episode numbers do not confirm the series, the
+comparison names the season that kept it from confirming (the first season with
+extra or invalid numbers, or the first season missing episodes when coverage is
+below 90%), the episode counts of Plex and TMDB, and the
 episode numbers that only one of them has. The comparison changes nothing. **Match** asks before it
 applies the candidate. After Plex accepts the match, autorefresh also
 requests a refresh of the item. The refresh counts as one more attempt of
@@ -908,7 +918,7 @@ The image declares port `7380`. Nothing listens on it until you set
 | `api/item/live` | What Plex tells about one item now |
 | `api/candidate` | The TMDB ID and the season and episode counts that the Plex metadata provider gives for the `plex://` GUID of a series candidate, in the `guid` query parameter, asked with the token of the server `srv` |
 | `api/item/auto-match` | The automatic fix match preview of one item, as a match decision event. A decision event can also have the optional fields `itemYear`, `tmdbId`, `tmdbSkip`, `tmdbMissing`, and `episodeDiff`, which the API leaves out when they are empty |
-| `api/item/episode-check` | `POST`: compares the episode numbers of one series with the TMDB ID in the `tmdb` query parameter. `diff` names the first season that differs, with the counts and the episode numbers that only TMDB (`missing`) or only Plex (`extra`) has |
+| `api/item/episode-check` | `POST`: compares the episode numbers of one series with the TMDB ID in the `tmdb` query parameter. `diff` names the season that kept the comparison from confirming (extra or invalid numbers, or missing episodes below 90% coverage), with the counts and the episode numbers that only TMDB (`missing`) or only Plex (`extra`) has |
 | `api/items/thumb`, `api/items/art` | The poster and the background art of one item |
 | `api/runs` | One page of the runs, newest first |
 | `api/runs/detail` | One run with the events that it wrote, or the items of a bulk refresh |
