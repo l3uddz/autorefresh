@@ -68,7 +68,8 @@ type Run struct {
 	ReadItems, Refreshed, Matched, Failed int
 	Completed, Fixed, Incomplete          int
 	Due, Selected, Skipped                int
-	FullReads, IncrementalReads           int // the libraries read fully and incrementally
+	FullReads, IncrementalReads           int  // the libraries read fully and incrementally
+	EventsLinked                          bool // false for a run from before runs linked their events
 }
 
 // StartRun records a run with the status running and returns its ID.
@@ -254,7 +255,8 @@ type RunQuery struct {
 }
 
 const runColumns = `id, server, kind, source, status, started_at, finished_at, error, read_items,
-	refreshed, matched, failed, completed, fixed, incomplete, due, selected, skipped, full_reads, incremental_reads`
+	refreshed, matched, failed, completed, fixed, incomplete, due, selected, skipped, full_reads, incremental_reads,
+	events_linked`
 
 // runsQuery builds the query of q.
 func runsQuery(q RunQuery) (string, []any) {
@@ -294,7 +296,7 @@ func scanRun(row scanner) (Run, error) {
 	)
 	if err := row.Scan(&r.ID, &r.Server, &r.Kind, &r.Source, &r.Status, &started, &finished, &r.Error,
 		&r.ReadItems, &r.Refreshed, &r.Matched, &r.Failed, &r.Completed, &r.Fixed, &r.Incomplete,
-		&r.Due, &r.Selected, &r.Skipped, &r.FullReads, &r.IncrementalReads); err != nil {
+		&r.Due, &r.Selected, &r.Skipped, &r.FullReads, &r.IncrementalReads, &r.EventsLinked); err != nil {
 		return Run{}, err
 	}
 	r.StartedAt, r.FinishedAt = time.Unix(started, 0), timeFrom(finished)

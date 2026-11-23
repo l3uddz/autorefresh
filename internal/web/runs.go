@@ -58,6 +58,8 @@ type runJSON struct {
 	// read fully and incrementally.
 	FullReads        int `json:"fullReads"`
 	IncrementalReads int `json:"incrementalReads"`
+	// EventsLinked is false for a run from before runs linked their events.
+	EventsLinked bool `json:"eventsLinked"`
 }
 
 // serveRuns answers GET /api/runs with one page of the runs of the
@@ -157,7 +159,7 @@ func (s *Server) toRunJSON(run store.Run) runJSON {
 		ReadItems: run.ReadItems, Refreshed: run.Refreshed, Matched: run.Matched, Failed: run.Failed,
 		Completed: run.Completed, Fixed: run.Fixed, Incomplete: run.Incomplete, Due: run.Due,
 		Selected: run.Selected, Skipped: run.Skipped,
-		FullReads: run.FullReads, IncrementalReads: run.IncrementalReads,
+		FullReads: run.FullReads, IncrementalReads: run.IncrementalReads, EventsLinked: run.EventsLinked,
 	}
 }
 
