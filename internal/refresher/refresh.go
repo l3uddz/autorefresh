@@ -61,9 +61,12 @@ func (r *Refresher) pace(ctx context.Context, run *serverRun, next ProgressItem,
 	return r.sleep(ctx, r.opts.RefreshDelay)
 }
 
-// shownItem returns the ProgressItem of the due item it of run.
+// shownItem returns the ProgressItem of the due item it of run, without the
+// reasons that the run ignores.
 func (r *Refresher) shownItem(run *serverRun, it store.Item) ProgressItem {
-	return progressItem(it, run.library(it.Section).Title)
+	shown := progressItem(it, run.library(it.Section).Title)
+	shown.Reasons &^= r.opts.IgnoreReasons
+	return shown
 }
 
 func (r *Refresher) runItem(ctx context.Context, run *serverRun, batch store.Item) error {

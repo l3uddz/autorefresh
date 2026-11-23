@@ -491,6 +491,22 @@ func TestRunReportsNextItemBeforePace(t *testing.T) {
 	}
 }
 
+func TestRunReportsNoIgnoredReasons(t *testing.T) {
+	it := incompleteItem("101")
+	it.Art = ""
+	fp := newFakePlex(moviesLib)
+	fp.lists["1?type=1"] = []plex.Item{it}
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.r.opts.IgnoreReasons = store.NoArt
+	p := withProgress(f)
+
+	f.run(t0)
+
+	if items := p.startedItems(); len(items) != 1 || items[0].Reasons != store.NoSummary {
+		t.Errorf("started items = %+v, want one with only the no-summary reason", items)
+	}
+}
+
 func TestDryRunReportsNoNextItem(t *testing.T) {
 	fp := newFakePlex(moviesLib)
 	fp.lists["1?type=1"] = []plex.Item{incompleteItem("101"), incompleteItem("102")}
