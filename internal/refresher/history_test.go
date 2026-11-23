@@ -496,6 +496,9 @@ func TestRunLinksDecisionsFailuresAndRemovals(t *testing.T) {
 			t.Errorf("event %s %s has run %d, want %d", e.RatingKey, e.Kind, e.RunID, run.ID)
 		}
 		got[e.RatingKey+" "+string(e.Kind)] = true
+		if e.RatingKey == "102" && e.Kind == store.EventRequest && (e.Accepted || e.Error == "") {
+			t.Errorf("request of 102 = accepted %v, error %q; want a failed request", e.Accepted, e.Error)
+		}
 	}
 	for _, want := range []string{"101 match-decision", "101 request", "102 request", "103 gone"} {
 		if !got[want] {
