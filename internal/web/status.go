@@ -2,6 +2,7 @@ package web
 
 import (
 	"errors"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -70,7 +71,52 @@ type RunProgress struct {
 	Matched       int             `json:"matched"`
 	Failed        int             `json:"failed"`
 	Skipped       int             `json:"skipped"`
-	Current       string          `json:"current,omitempty"` // the title in work
+	Current       *LiveItem       `json:"current,omitempty"` // the item in work
+	Next          *LiveItem       `json:"next,omitempty"`    // the item after the pace wait
+	NextAt        time.Time       `json:"nextAt,omitzero"`   // the end of the pace wait
+	Last          *LiveItem       `json:"last,omitempty"`    // the last finished item
+}
+
+// LiveItem is an item of a run as the dashboard shows it. Thumb is the
+// poster proxy URL. Outcome and FinishedAt are set on the last item only.
+type LiveItem struct {
+	Key        string    `json:"key"`
+	Title      string    `json:"title,omitempty"`
+	Year       int       `json:"year,omitempty"`
+	Type       string    `json:"type,omitempty"`
+	Library    string    `json:"library,omitempty"`
+	Reasons    []string  `json:"reasons,omitempty"`
+	Thumb      string    `json:"thumb,omitempty"`
+	Outcome    string    `json:"outcome,omitempty"`
+	FinishedAt time.Time `json:"finishedAt,omitzero"`
+}
+
+// liveItem returns the LiveItem of item of the server at index srv.
+func liveItem(srv int, item refresher.ProgressItem) *LiveItem {
+	var reasons []string
+	if item.Reasons != 0 {
+		reasons = reasonNames(item.Reasons)
+	}
+	return &LiveItem{
+		Key: item.RatingKey, Title: item.Title, Year: item.Year, Type: item.Type, Library: item.Library,
+		Reasons: reasons, Thumb: imageURL("thumb", srv, item.RatingKey, item.Thumb),
+	}
+}
+
+// copy returns a deep copy of the items of run.
+func (run RunProgress) copy() *RunProgress {
+	run.Current, run.Next, run.Last = run.Current.copy(), run.Next.copy(), run.Last.copy()
+	return &run
+}
+
+// copy returns a deep copy of it, or nil for nil.
+func (it *LiveItem) copy() *LiveItem {
+	if it == nil {
+		return nil
+	}
+	c := *it
+	c.Reasons = slices.Clone(it.Reasons)
+	return &c
 }
 
 // Status keeps the live status of each server and of TMDB, and signals each
@@ -84,6 +130,7 @@ type Status struct {
 	tmdb    string
 	subs    map[chan struct{}]struct{}
 	nextRun time.Time
+	now     func() time.Time // the clock of the finish times of items
 }
 
 var _ refresher.Progress = (*Status)(nil)
@@ -97,6 +144,7 @@ func NewStatus(servers []string, tmdb bool) *Status {
 		index:   make(map[string]int, len(servers)),
 		tmdb:    tmdbOff,
 		subs:    make(map[chan struct{}]struct{}),
+		now:     time.Now,
 	}
 	for i, name := range servers {
 		s.servers[i] = ServerStatus{Srv: i, Name: name, Health: HealthUnknown}
@@ -132,12 +180,10 @@ func (s *Status) Snapshot() StatusView {
 	servers := make([]ServerStatus, len(s.servers))
 	for i, srv := range s.servers {
 		if srv.Run != nil {
-			run := *srv.Run
-			srv.Run = &run
+			srv.Run = srv.Run.copy()
 		}
 		if srv.Last != nil {
-			last := *srv.Last
-			srv.Last = &last
+			srv.Last = srv.Last.copy()
 		}
 		servers[i] = srv
 	}
@@ -172,7 +218,7 @@ func (s *Status) RunStarted(id int64, start store.RunStart) {
 
 // LibraryRead counts a library that the run of server read.
 func (s *Status) LibraryRead(server, library string) {
-	s.updateRun(server, func(run *RunProgress) {
+	s.updateRun(server, func(_ int, run *RunProgress) {
 		run.LibrariesRead++
 		run.Library = library
 	})
@@ -181,34 +227,52 @@ func (s *Status) LibraryRead(server, library string) {
 // Batch records the items that the run of server selected out of the due
 // items.
 func (s *Status) Batch(server string, selected, due int) {
-	s.updateRun(server, func(run *RunProgress) {
+	s.updateRun(server, func(_ int, run *RunProgress) {
 		run.Selected = selected
 		run.Due = due
 	})
 }
 
-// ItemStarted records the item that the run of server works on.
-func (s *Status) ItemStarted(server string, item refresher.ProgressItem) {
-	s.updateRun(server, func(run *RunProgress) {
-		run.Current = item.Title
+// ItemNext records the item that the run of server works on after its
+// pace wait, which ends at at.
+func (s *Status) ItemNext(server string, item refresher.ProgressItem, at time.Time) {
+	s.updateRun(server, func(srv int, run *RunProgress) {
+		run.Next, run.NextAt = liveItem(srv, item), at
 	})
 }
 
-// ItemNext records the item that the run of server works on after its
-// pace wait.
-func (s *Status) ItemNext(string, refresher.ProgressItem, time.Time) {}
+// ItemStarted records the item that the run of server works on.
+func (s *Status) ItemStarted(server string, item refresher.ProgressItem) {
+	s.updateRun(server, func(srv int, run *RunProgress) {
+		run.Current, run.Next, run.NextAt = liveItem(srv, item), nil, time.Time{}
+	})
+}
 
-// ItemDone counts a finished item of the run of server and takes the
-// request counts of the run so far from the refresher.
-func (s *Status) ItemDone(server, _, _ string, counts refresher.Counts) {
-	s.updateRun(server, func(run *RunProgress) {
+// ItemDone counts a finished item of the run of server, keeps it as the
+// last item with its outcome, and takes the request counts of the run so
+// far from the refresher.
+func (s *Status) ItemDone(server, ratingKey, outcome string, counts refresher.Counts) {
+	s.updateRun(server, func(_ int, run *RunProgress) {
 		run.Done++
-		run.Current = ""
+		run.Last = finishedItem(run.Current, ratingKey, outcome, s.now())
+		run.Current = nil
 		run.Refreshed = counts.Refreshed
 		run.Matched = counts.Matched
 		run.Failed = counts.Failed
 		run.Skipped = counts.Skipped
 	})
+}
+
+// finishedItem returns the last item of a run: current, the item in work,
+// with the outcome and the finish time at. An item that did not start, or
+// another one, keeps only its key.
+func finishedItem(current *LiveItem, key, outcome string, at time.Time) *LiveItem {
+	last := &LiveItem{Key: key}
+	if current != nil && current.Key == key {
+		last = current.copy()
+	}
+	last.Outcome, last.FinishedAt = outcome, at
+	return last
 }
 
 // RunFinished ends the progress of the run of server and updates its health
@@ -217,7 +281,7 @@ func (s *Status) RunFinished(server string, res store.RunResult, err error, reco
 	s.updateServer(server, func(srv *ServerStatus) {
 		if srv.Run != nil {
 			last := *srv.Run
-			last.Current = ""
+			last.Current, last.Next, last.NextAt = nil, nil, time.Time{}
 			last.Refreshed, last.Matched, last.Failed, last.Skipped = res.Refreshed, res.Matched, res.Failed, res.Skipped
 			last.Selected, last.Due = res.Selected, res.Due
 			last.Status, last.FinishedAt, last.Error, last.Recorded = res.Status, res.FinishedAt, res.Error, recorded
@@ -241,12 +305,12 @@ func (s *Status) updateServer(server string, change func(*ServerStatus)) {
 	s.notify()
 }
 
-// updateRun applies change to the run of server. It ignores a server that
-// has no run.
-func (s *Status) updateRun(server string, change func(*RunProgress)) {
+// updateRun applies change to the run of server, with the index of the
+// server. It ignores a server that has no run.
+func (s *Status) updateRun(server string, change func(srv int, run *RunProgress)) {
 	s.updateServer(server, func(srv *ServerStatus) {
 		if srv.Run != nil {
-			change(srv.Run)
+			change(srv.Srv, srv.Run)
 		}
 	})
 }

@@ -59,10 +59,16 @@ func TestStatusTracksRun(t *testing.T) {
 	if got.Servers[0].Run != nil {
 		t.Errorf("idle server run = %+v, want nil", got.Servers[0].Run)
 	}
-	if got.Servers[1].Run == nil || *got.Servers[1].Run != want {
+	// The last item is Brazil, whose dry run ended the run so far.
+	last := got.Servers[1].Run.Last
+	if last == nil || last.Key != "6" || last.Title != "Brazil" || last.Outcome != refresher.OutcomeDryRun {
+		t.Errorf("last = %+v, want Brazil with the dry-run outcome", last)
+	}
+	want.Last = last
+	if got.Servers[1].Run == nil || !reflect.DeepEqual(*got.Servers[1].Run, want) {
 		t.Fatalf("run = %+v, want %+v", got.Servers[1].Run, want)
 	}
-	if run := inWork.Servers[1].Run; run.Current != "Alien" || run.Done != 0 {
+	if run := inWork.Servers[1].Run; run.Current == nil || run.Current.Title != "Alien" || run.Done != 0 {
 		t.Errorf("earlier snapshot = %+v, want Current Alien and Done 0", run)
 	}
 
@@ -209,7 +215,7 @@ func TestFinishedStatusRetainsRunIdentity(t *testing.T) {
 	s.ItemStarted("a", refresher.ProgressItem{RatingKey: "1", Title: "Current"})
 	s.RunFinished("a", store.RunResult{Status: store.RunCanceled}, nil, true)
 	got := s.Snapshot().Servers[0]
-	if got.Run != nil || got.Last == nil || got.Last.ID != 42 || got.Last.Current != "" || !got.Last.Recorded || got.Last.Status != store.RunCanceled {
+	if got.Run != nil || got.Last == nil || got.Last.ID != 42 || got.Last.Current != nil || !got.Last.Recorded || got.Last.Status != store.RunCanceled {
 		t.Fatalf("finished status = %+v, last = %+v", got, got.Last)
 	}
 }
@@ -237,5 +243,116 @@ func TestStatusNextRun(t *testing.T) {
 	st.SetNextRun(next.Add(-time.Hour))
 	if late := st.Snapshot(); !late.NextRun.Equal(next) || late.Seq != after.Seq {
 		t.Fatalf("after an older time: next %v seq %d, want %v and %d", late.NextRun, late.Seq, next, after.Seq)
+	}
+}
+
+// fixedStatus returns a status of the servers "one" and "two" whose clock
+// stands at now.
+func fixedStatus(now time.Time) *Status {
+	st := NewStatus([]string{"one", "two"}, false)
+	st.now = func() time.Time { return now }
+	st.RunStarted(1, store.RunStart{Server: "two", StartedAt: now})
+	return st
+}
+
+// The run of server two at index 1 shows the next item while it waits,
+// then the item in work, and then the item as the last one.
+func TestStatusShowsNextCurrentAndLast(t *testing.T) {
+	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	st := fixedStatus(now)
+	item := refresher.ProgressItem{RatingKey: "1", Title: "Alien", Type: "movie", Library: "Movies", Year: 1979,
+		Thumb: "/library/metadata/1/thumb/170", Reasons: store.NoSummary | store.NoPoster}
+	wantItem := LiveItem{Key: "1", Title: "Alien", Year: 1979, Type: "movie", Library: "Movies",
+		Reasons: reasonNames(store.NoSummary | store.NoPoster), Thumb: imageURL("thumb", 1, "1", "/library/metadata/1/thumb/170")}
+	at := now.Add(5 * time.Second)
+
+	st.ItemNext("two", item, at)
+	run := st.Snapshot().Servers[1].Run
+	if run.Current != nil || run.Next == nil || !reflect.DeepEqual(*run.Next, wantItem) || !run.NextAt.Equal(at) {
+		t.Fatalf("waiting run = %+v, next %+v, want next %+v at %v", run, run.Next, wantItem, at)
+	}
+
+	st.ItemStarted("two", item)
+	run = st.Snapshot().Servers[1].Run
+	if run.Next != nil || !run.NextAt.IsZero() || run.Current == nil || !reflect.DeepEqual(*run.Current, wantItem) {
+		t.Fatalf("working run = %+v, current %+v, want current %+v and no next", run, run.Current, wantItem)
+	}
+
+	st.ItemDone("two", "1", "refresh", refresher.Counts{Refreshed: 1})
+	run = st.Snapshot().Servers[1].Run
+	wantLast := wantItem
+	wantLast.Outcome, wantLast.FinishedAt = "refresh", now
+	if run.Current != nil || run.Last == nil || !reflect.DeepEqual(*run.Last, wantLast) {
+		t.Fatalf("done run = %+v, last %+v, want last %+v", run, run.Last, wantLast)
+	}
+}
+
+// ItemDone without an ItemStarted of that item keeps its key and outcome.
+func TestStatusLastWithoutStart(t *testing.T) {
+	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	st := fixedStatus(now)
+	st.ItemStarted("two", refresher.ProgressItem{RatingKey: "4", Title: "Other"})
+
+	st.ItemDone("two", "5", refresher.OutcomeGone, refresher.Counts{})
+
+	want := LiveItem{Key: "5", Outcome: refresher.OutcomeGone, FinishedAt: now}
+	if last := st.Snapshot().Servers[1].Run.Last; last == nil || !reflect.DeepEqual(*last, want) {
+		t.Errorf("last = %+v, want %+v", last, want)
+	}
+}
+
+// An item without a thumb or reasons has no thumb URL and no reasons in
+// the JSON.
+func TestStatusItemWithoutThumb(t *testing.T) {
+	st := fixedStatus(time.Now())
+	st.ItemStarted("two", refresher.ProgressItem{RatingKey: "1", Title: "Alien"})
+
+	current := st.Snapshot().Servers[1].Run.Current
+	if current == nil || current.Thumb != "" || current.Reasons != nil {
+		t.Fatalf("current = %+v, want no thumb and no reasons", current)
+	}
+	body, err := json.Marshal(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(body); strings.Contains(s, "thumb") || strings.Contains(s, "reasons") || strings.Contains(s, "finishedAt") {
+		t.Errorf("json = %s, want no thumb, reasons, or finishedAt", s)
+	}
+}
+
+// A snapshot is a deep copy, also of the items of a run.
+func TestStatusSnapshotCopiesItems(t *testing.T) {
+	st := fixedStatus(time.Now())
+	item := refresher.ProgressItem{RatingKey: "1", Title: "Alien", Reasons: store.NoSummary}
+	st.ItemNext("two", item, time.Now())
+	st.ItemStarted("two", item)
+	st.ItemDone("two", "1", "refresh", refresher.Counts{})
+	st.ItemNext("two", item, time.Now())
+
+	first := st.Snapshot().Servers[1].Run
+	first.Last.Title = "Changed"
+	first.Last.Reasons[0] = "changed"
+	first.Next.Title = "Changed"
+
+	again := st.Snapshot().Servers[1].Run
+	if again.Last.Title != "Alien" || again.Last.Reasons[0] == "changed" || again.Next.Title != "Alien" {
+		t.Errorf("snapshot after a change of an earlier copy = last %+v, next %+v", again.Last, again.Next)
+	}
+}
+
+// RunFinished keeps the last item of the run and drops the current and the
+// next item.
+func TestStatusFinishedRunKeepsLastItem(t *testing.T) {
+	st := fixedStatus(time.Now())
+	item := refresher.ProgressItem{RatingKey: "1", Title: "Alien"}
+	st.ItemStarted("two", item)
+	st.ItemDone("two", "1", "refresh", refresher.Counts{})
+	st.ItemNext("two", refresher.ProgressItem{RatingKey: "2", Title: "Brazil"}, time.Now())
+
+	st.RunFinished("two", store.RunResult{Status: store.RunCanceled}, nil, true)
+
+	last := st.Snapshot().Servers[1].Last
+	if last == nil || last.Current != nil || last.Next != nil || !last.NextAt.IsZero() || last.Last == nil || last.Last.Title != "Alien" {
+		t.Errorf("finished run = %+v, want the last item Alien and no current or next", last)
 	}
 }
