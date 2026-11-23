@@ -545,8 +545,9 @@ address keeps the choice, so a link or a reload shows the same server.
   progress of a run, and the result of the last run. It also lists the
   items that were fixed recently and the recent runs. **Run now** starts a
   run. Its menu also has **Full cache refresh, then run**, which reads
-  every library in full before it refreshes the due items. With several
-  servers, it can start either kind of run for one server or for all
+  every library in full before it refreshes the due items. If it cannot
+  read a library, the run of that server fails and refreshes no item.
+  With several servers, it can start either kind of run for one server or for all
   servers. A manual run or bulk refresh has a **Cancel** button. The item
   count on a server card opens the items of that server. The header shows
   when the next scheduled run starts, for example "Next run in 33m ·
