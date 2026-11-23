@@ -21,15 +21,15 @@ import { askThen } from './confirm';
 import { actionError } from './errors';
 import { plural, titleYear, typeName } from './format';
 import { DecisionPanel } from './history';
-import { autoEvidence, autoEvidenceText, autoMatchPath, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isFolderEvidence, listView, matchBody, matchesPath, offersEpisodeCheck, sameSearch, type CandidateGroup, type Evidence, type TypedSearch, type YearCheck } from './match';
+import { autoEvidence, autoEvidenceText, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isFolderEvidence, listView, matchBody, matchesPath, newerDecision, offersEpisodeCheck, previewQuery, sameSearch, type CandidateGroup, type Evidence, type TypedSearch, type YearCheck } from './match';
 import { RemotePoster } from './media';
 import { episodeDiffText, lastDecision } from './timeline';
 
 // The Fix match dialog of one item: candidates with their evidence on the
-// left, the last automatic fix match on the right. Without a last one, a
-// preview runs the automatic fix match on request and marks its pick. The
-// dialog never applies a match without a confirmation that names the item
-// and the candidate.
+// left, the newer of the last automatic fix match and the preview on the
+// right. Without a last one, a preview runs the automatic fix match on
+// request and marks its pick. The dialog never applies a match without a
+// confirmation that names the item and the candidate.
 
 const wideQuery = `(min-width: ${DEFAULT_WIDTH_BREAKPOINTS.lg}px)`;
 
@@ -54,7 +54,8 @@ export function FixMatchDialog({ isOpen, onClose, ...props }: Props) {
   return (
     <Dialog isOpen={isOpen} onOpenChange={open => !open && onClose()} width={1120} maxHeight="90dvh" variant={isWide ? 'standard' : 'fullscreen'} purpose="form" padding={0}>
       {/* The body mounts only while the dialog is open, so closing it
-          aborts its searches and forgets their answers. */}
+          aborts its searches and forgets their answers. Only the
+          preview stays in the cache. */}
       {/* Another item gets a new body, so no search or episode check of
           the previous item carries over. */}
       {isOpen && <FixMatchBody key={props.params} {...props} isWide={isWide} onClose={onClose} />}
@@ -87,7 +88,6 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
   const confirm = useImperativeAlertDialog();
   const isTMDBOn = (useStatus().data?.tmdb ?? 'off') !== 'off';
   const [typed, setTyped] = useState<TypedSearch>();
-  const [isPreviewAsked, setPreviewAsked] = useState(false);
 
   const opening = useQuery({
     queryKey: ['matches', params],
@@ -100,17 +100,10 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
     enabled: typed !== undefined,
     ...searchOptions,
   });
-  // The preview searches like a run, so it runs only on request.
-  const preview = useQuery({
-    queryKey: ['auto-match', params],
-    queryFn: ({ signal }) => api<TimelineEvent>(autoMatchPath(params), { signal }),
-    enabled: isPreviewAsked,
-    ...searchOptions,
-  });
-  const runPreview = () => {
-    if (isPreviewAsked) void preview.refetch({ cancelRefetch: false });
-    else setPreviewAsked(true);
-  };
+  // The preview searches like a run, so it runs only on request. A
+  // preview that still runs is joined, not restarted.
+  const preview = useQuery(previewQuery(params));
+  const runPreview = () => void preview.refetch({ cancelRefetch: false });
 
   const apply = useMutation({
     mutationFn: (target: Applying) => post(`item/match?${target.params}`, matchBody(target.candidate)),
@@ -123,15 +116,15 @@ function FixMatchBody({ item, params, timeline, liveGuid, isWide, onClose }: Bod
     onSettled: () => invalidateLists(client),
   });
 
-  // A preview exists only without a last decision, and then marks the
-  // candidates instead.
-  const isPreview = preview.data !== undefined;
-  const decision = preview.data ?? lastDecision(timeline);
+  // The newer of the preview and the last decision explains the item and
+  // marks the candidates.
+  const decision = newerDecision(preview.data, lastDecision(timeline));
+  const isPreview = decision !== undefined && decision === preview.data;
   const decisionTitle = isPreview ? 'Automatic fix match preview' : 'Last automatic fix match';
   const decisionPanel = (hasHeading: boolean) => (
-    <AutoMatchPanel decision={decision} title={decisionTitle} hasHeading={hasHeading} preview={preview} onRun={runPreview} />
+    <AutoMatchPanel decision={decision} isPreview={isPreview} title={decisionTitle} hasHeading={hasHeading} preview={preview} onRun={runPreview} />
   );
-  const groups = groupCandidates([...(opening.data?.searches ?? []), ...previewSearches(preview.data)], typed ? search.data?.searches : [], typed?.year);
+  const groups = groupCandidates([...(opening.data?.searches ?? []), ...previewSearches(isPreview ? decision : undefined)], typed ? search.data?.searches : [], typed?.year);
   const title = titleYear(item.title ?? `Item ${item.key}`, item.year);
   const isTypedPending = typed !== undefined && search.isPending;
   const view = listView(groups.length, opening.isPending || isTypedPending, opening.isSuccess || (typed !== undefined && search.isSuccess));
@@ -355,8 +348,10 @@ function evidenceLabel(evidence: Evidence): string {
 }
 
 interface AutoMatchProps {
-  /** The preview, or else the last automatic decision. */
+  /** The newer of the preview and the last automatic decision. */
   decision?: TimelineEvent;
+  /** The decision is the preview. */
+  isPreview: boolean;
   title: string;
   hasHeading: boolean;
   preview: UseQueryResult<TimelineEvent>;
@@ -365,14 +360,14 @@ interface AutoMatchProps {
 
 /** The last automatic fix match, or the preview that runs it now. The
  * preview records nothing and sends nothing to Plex. */
-function AutoMatchPanel({ decision, title, hasHeading, preview, onRun }: AutoMatchProps) {
+function AutoMatchPanel({ decision, isPreview, title, hasHeading, preview, onRun }: AutoMatchProps) {
   const run = (label: string, variant: 'primary' | 'secondary') => (
     <Button label={label} variant={variant} size="sm" isLoading={preview.isFetching} onClick={onRun} />
   );
   const failure = preview.error && (
     <Banner status="error" title="The preview failed" description={actionError(preview.error)} />
   );
-  if (!preview.data) {
+  if (!isPreview) {
     return (
       <VStack gap={4}>
         <DecisionPanel decision={decision} hasHeading={hasHeading} emptyAction={run('Try automatic fix match', 'primary')} />

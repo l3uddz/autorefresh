@@ -1,4 +1,5 @@
-import type { Candidate, MatchSearch, TimelineEvent } from './api';
+import { queryOptions } from '@tanstack/react-query';
+import { api, type Candidate, type MatchSearch, type TimelineEvent } from './api';
 import { maxSearchBytes } from './bulk';
 import { verdictName } from './timeline';
 
@@ -257,6 +258,32 @@ export function matchesPath(params: string, search?: TypedSearch): string {
  * preview of the item params. */
 export function autoMatchPath(params: string): string {
   return `item/auto-match?${new URLSearchParams(params)}`;
+}
+
+/** The automatic fix match preview of the item params. It calls Plex and
+ * maybe TMDB, so it runs only on request (refetch), never by itself: not
+ * on mount, focus, or a reconnect, and with no retry. Its answer stays in
+ * the cache while the page is open, so the Fix match dialog shows it again
+ * when it reopens for the item. Its key is outside the item prefix, which
+ * invalidateLists refreshes. */
+export function previewQuery(params: string) {
+  return queryOptions({
+    queryKey: ['auto-match', params],
+    queryFn: ({ signal }) => api<TimelineEvent>(autoMatchPath(params), { signal }),
+    enabled: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+}
+
+/** Returns the newer of the preview and the last automatic decision, so a
+ * run that decided after the preview replaces it. A tie keeps the preview. */
+export function newerDecision(preview: TimelineEvent | undefined, last: TimelineEvent | undefined): TimelineEvent | undefined {
+  if (!preview || !last) return preview ?? last;
+  return Date.parse(last.at ?? '') > Date.parse(preview.at ?? '') ? last : preview;
 }
 
 /** The body of POST /api/item/match: exactly the fields that the API
