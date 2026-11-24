@@ -352,6 +352,7 @@ func TestEpisodeCheckAnswersTheDiff(t *testing.T) {
 		want   string
 	}{
 		{"match", refresher.EpisodeResult{Match: true, Episodes: 10}, `{"match":true,"episodes":10}`},
+		{"match via group", refresher.EpisodeResult{Match: true, Episodes: 14, EpisodeGroup: "DVD Order"}, `{"match":true,"episodes":14,"episodeGroup":"DVD Order"}`},
 		{"no episodes", refresher.EpisodeResult{}, `{"match":false,"episodes":0}`},
 		{"differs", refresher.EpisodeResult{Diff: store.EpisodeDiff{Season: 3, Plex: 8, TMDB: 10, Missing: []int{9, 10}}},
 			`{"match":false,"episodes":0,"diff":{"season":3,"plex":8,"tmdb":10,"missing":[9,10]}}`},

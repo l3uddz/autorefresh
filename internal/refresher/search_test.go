@@ -2,11 +2,13 @@ package refresher
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
+	"github.com/l3uddz/autorefresh/internal/tmdb"
 )
 
 func TestManualSearchRecognizesTypedID(t *testing.T) {
@@ -69,13 +71,22 @@ func TestEpisodeCheckComparesNumbers(t *testing.T) {
 	f := newRefreshFixture(t, Server{Name: "home", Plex: p})
 	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
 	f.seed("home", lib, incompleteItem("2"), store.NoSummary, 0)
-	f.r.opts.TMDB = &fakeTMDB{seasons: map[string][]int{
-		"77 1": {1, 2},
-		"78 1": {1, 3, 4},
-		"79 1": {1, 3},
-		"80 1": seq(10),
-		"81 1": seq(11),
-	}}
+	f.r.opts.TMDB = &fakeTMDB{
+		seasons: map[string][]int{
+			"77 1": {1, 2},
+			"78 1": {1, 3, 4},
+			"79 1": {1, 3},
+			"80 1": seq(10),
+			"81 1": seq(11),
+			"82 1": {1},
+		},
+		episodeGroups: map[string][]tmdb.EpisodeGroup{
+			"82": {{ID: "5e9077d2e640d600151f32bd", Name: "DVD Order", Type: tmdb.EpisodeGroupDVD, EpisodeCount: 2}},
+		},
+		groupSeasons: map[string]map[int][]int{
+			"5e9077d2e640d600151f32bd": {1: {1, 2}},
+		},
+	}
 	for _, tc := range []struct {
 		key  string
 		id   string
@@ -86,9 +97,19 @@ func TestEpisodeCheckComparesNumbers(t *testing.T) {
 		{"1", "79", EpisodeResult{Diff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 2, Missing: []int{3}, Extra: []int{2}}}},
 		{"2", "80", EpisodeResult{Match: true, Episodes: 9}},
 		{"2", "81", EpisodeResult{Diff: store.EpisodeDiff{Season: 1, Plex: 9, TMDB: 11, Missing: []int{10, 11}}}},
+		{"1", "82", EpisodeResult{Match: true, Episodes: 2, EpisodeGroup: "DVD Order"}},
 	} {
 		if got, err := f.r.EpisodeCheck(t.Context(), "home", tc.key, tc.id); err != nil || !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s/%s: got %+v, %v, want %+v", tc.key, tc.id, got, err, tc.want)
 		}
+	}
+	f.r.opts.TMDB = &fakeTMDB{
+		seasons:       map[string][]int{"83 1": {1}},
+		groupListErrs: map[string]error{"83": tmdb.ErrRateLimited},
+	}
+	got, err := f.r.EpisodeCheck(t.Context(), "home", "1", "83")
+	wantDiff := store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 1, Extra: []int{2}}
+	if !errors.Is(err, tmdb.ErrRateLimited) || !reflect.DeepEqual(got.Diff, wantDiff) {
+		t.Errorf("83: got %+v, %v, want ErrRateLimited with diff %+v", got, err, wantDiff)
 	}
 }

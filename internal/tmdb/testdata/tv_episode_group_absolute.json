@@ -1,0 +1,21 @@
+{
+  "description": "Single-season absolute episode order.",
+  "episode_count": 3,
+  "group_count": 1,
+  "groups": [
+    {
+      "id": "5eb7353b0cb3350020ce4021",
+      "name": "Season 1",
+      "order": 1,
+      "episodes": [
+        {"season_number": 1, "episode_number": 1, "order": 0},
+        {"season_number": 1, "episode_number": 2, "order": 1},
+        {"season_number": 2, "episode_number": 1, "order": 2}
+      ],
+      "locked": true
+    }
+  ],
+  "id": "5eb7353b0cb3350020ce402e",
+  "name": "Absolute Order",
+  "type": 2
+}

@@ -498,7 +498,10 @@ function CandidateCard({ group, item, params, decision, isPreview, isCurrent, it
 
 /** Returns the result of the episode check of the TMDB ID tmdbId. */
 function episodeCheckText(check: EpisodeCheck, tmdbId: string): string {
-  if (check.match) return `The episode numbers match tmdb-${tmdbId} (${plural(check.episodes, 'episode')} compared).`;
+  if (check.match) {
+    const viaGroup = check.episodeGroup ? ` via episode group “${check.episodeGroup}”` : '';
+    return `The episode numbers confirm tmdb-${tmdbId}${viaGroup} (${plural(check.episodes, 'episode')} compared).`;
+  }
   if (check.diff) return episodeDiffText(check.diff, tmdbId);
   // The API does not say why: Plex listed no regular episode, an entry
   // lacked a file or a number, or the listing changed while it was read.

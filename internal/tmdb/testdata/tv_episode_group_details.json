@@ -1,0 +1,62 @@
+{
+  "description": "Comedians in Cars organized in Netflix's collections.",
+  "episode_count": 4,
+  "group_count": 2,
+  "groups": [
+    {
+      "id": "5acf93efc3a368739a0000a9",
+      "name": "First Cup",
+      "order": 1,
+      "episodes": [
+        {
+          "air_date": "2015-06-17",
+          "episode_number": 3,
+          "id": 1078262,
+          "name": "Episode A",
+          "season_number": 6,
+          "show_id": 59717,
+          "order": 0
+        },
+        {
+          "air_date": "2014-12-18",
+          "episode_number": 7,
+          "id": 1033379,
+          "name": "Episode B",
+          "season_number": 5,
+          "show_id": 59717,
+          "order": 1
+        },
+        {
+          "air_date": "2014-12-18",
+          "episode_number": 8,
+          "id": 1033380,
+          "name": "Episode C",
+          "season_number": 5,
+          "show_id": 59717,
+          "order": 2
+        }
+      ],
+      "locked": true
+    },
+    {
+      "id": "5acf93f69251413b390000dd",
+      "name": "Light & Sweet",
+      "order": 2,
+      "episodes": [
+        {
+          "air_date": "2015-12-30",
+          "episode_number": 1,
+          "id": 1149915,
+          "name": "Episode D",
+          "season_number": 7,
+          "show_id": 59717,
+          "order": 0
+        }
+      ],
+      "locked": true
+    }
+  ],
+  "id": "5acf93e60e0a26346d0000ce",
+  "name": "Netflix Collections",
+  "type": 4
+}

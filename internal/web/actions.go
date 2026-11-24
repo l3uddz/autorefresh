@@ -322,10 +322,11 @@ func (s *Server) serveEpisodeCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := struct {
-		Match    bool             `json:"match"`
-		Episodes int              `json:"episodes"`
-		Diff     *episodeDiffJSON `json:"diff,omitempty"`
-	}{Match: result.Match, Episodes: result.Episodes, Diff: toEpisodeDiffJSON(result.Diff)}
+		Match        bool             `json:"match"`
+		Episodes     int              `json:"episodes"`
+		EpisodeGroup string           `json:"episodeGroup,omitempty"`
+		Diff         *episodeDiffJSON `json:"diff,omitempty"`
+	}{Match: result.Match, Episodes: result.Episodes, EpisodeGroup: result.EpisodeGroup, Diff: toEpisodeDiffJSON(result.Diff)}
 	writeJSON(w, http.StatusOK, out)
 }
 

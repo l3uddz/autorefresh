@@ -218,8 +218,11 @@ function numbersText(numbers: number[] | undefined): string | undefined {
  * numbers that only one of them has. */
 export function episodeDiffText(diff: EpisodeDiff, tmdbId?: string): string {
   const from = tmdbId ? ` from tmdb-${tmdbId}` : '';
+  const hasOnly = Boolean(diff.missing?.length || diff.extra?.length);
   const counts = diff.plex === diff.tmdb
-    ? `Plex and TMDB both have ${plural(diff.plex, 'episode')}, but with other numbers`
+    ? hasOnly
+      ? `Plex and TMDB both have ${plural(diff.plex, 'episode')}, but with other numbers`
+      : `Plex and TMDB both have ${plural(diff.plex, 'episode')}, but with invalid or duplicate numbers`
     : `Plex has ${plural(diff.plex, 'episode')}, and TMDB has ${diff.tmdb.toLocaleString()}`;
   const only = [
     numbersText(diff.missing) && `Only TMDB has episode ${numbersText(diff.missing)}.`,
@@ -312,10 +315,11 @@ function outcomeView(event: TimelineEvent): EventView {
 
 /** Returns how the years of a decision confirmed its match, if they did. */
 function confirmation(event: TimelineEvent): string | undefined {
+  const viaGroup = event.episodeGroup ? ` via episode group “${event.episodeGroup}”` : '';
   if (event.episodeCount && searchedTitle(event)) {
-    return `The title search found one series with the same title and a year within 1, and the episode numbers of ${event.episodeCount} episodes from tmdb-${event.tmdbId ?? '?'} confirmed it.`;
+    return `The title search found one series with the same title and a year within 1, and the episode numbers of ${event.episodeCount} episodes from tmdb-${event.tmdbId ?? '?'}${viaGroup} confirmed it.`;
   }
-  if (event.episodeCount) return `The episode numbers of ${event.episodeCount} episodes confirmed the candidate.`;
+  if (event.episodeCount) return `The episode numbers of ${event.episodeCount} episodes${viaGroup} confirmed the candidate.`;
   if (event.tmdbYear) return `TMDB confirmed the year ${event.tmdbYear}.`;
   if (event.pathYear) return `The folder year ${event.pathYear} confirmed the candidate.`;
   return undefined;

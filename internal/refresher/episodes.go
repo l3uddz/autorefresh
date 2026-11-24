@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
+	"time"
 
 	"github.com/rs/zerolog/log"
 
 	"github.com/l3uddz/autorefresh/internal/store"
+	"github.com/l3uddz/autorefresh/internal/tmdb"
 )
 
 const (
@@ -20,15 +23,40 @@ const (
 	// 9 of 10 or 18 of 20). Exact matches always satisfy the ratio.
 	minCoverageNum = 9
 	minCoverageDen = 10
+
+	// maxEpisodeGroups bounds the number of TMDB episode group detail requests
+	// made when default seasons do not confirm a series.
+	maxEpisodeGroups = 10
+
+	// maxEpisodeGroupName bounds stored episode group names.
+	maxEpisodeGroupName = 120
+
+	// episodeGroupFallbackBudget caps total wall time spent on optional episode
+	// group lookups without extending the caller's deadline.
+	episodeGroupFallbackBudget = 15 * time.Second
 )
+
+// withEpisodeGroupBudget derives the bounded fallback context. Tests may
+// replace it to expire the fallback budget deterministically.
+var withEpisodeGroupBudget = func(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, episodeGroupFallbackBudget)
+}
 
 // confirmEpisodeNumbers requires every locally represented regular season to
 // contain only valid TMDB episode numbers (no extra or duplicate numbers) and
-// at least 90% of TMDB's episodes across the local regular seasons. A season
-// that the local library lacks supplies no evidence. It logs a differing
-// season in mc.d when the comparison does not confirm the candidate.
+// at least 90% of TMDB's episodes across the local regular seasons, checking
+// TMDB's default seasons first and then TVDB-aligned TMDB episode groups. A
+// season that the local library lacks supplies no evidence. It logs a
+// differing season in mc.d when the comparison does not confirm the candidate,
+// and records the confirming episode group name when an alternate group
+// confirmed it.
 func (r *Refresher) confirmEpisodeNumbers(ctx context.Context, run *serverRun, mc matchContext, tmdbID string) (int, error) {
 	result, err := compareEpisodes(ctx, run.server.Plex, r.opts.TMDB, mc.it.RatingKey, tmdbID)
+	if result.diff.Season > 0 && ctx.Err() == nil {
+		mc.d.evidence.EpisodeDiff = result.diff
+		itemEvent(log.Debug(), run.server.Name, mc.lib, mc.it).Int("season", result.diff.Season).
+			Int("local_episode_count", result.diff.Plex).Int("tmdb_episode_count", result.diff.TMDB).Msg("Episode numbers differ")
+	}
 	if errors.Is(err, ErrTMDB) {
 		if ctx.Err() != nil {
 			return 0, ctx.Err()
@@ -39,40 +67,72 @@ func (r *Refresher) confirmEpisodeNumbers(ctx context.Context, run *serverRun, m
 	if err != nil {
 		return 0, err
 	}
-	if result.diff.Season > 0 {
-		mc.d.evidence.EpisodeDiff = result.diff
-		itemEvent(log.Debug(), run.server.Name, mc.lib, mc.it).Int("season", result.diff.Season).
-			Int("local_episode_count", result.diff.Plex).Int("tmdb_episode_count", result.diff.TMDB).Msg("Episode numbers differ")
+	if result.group != "" {
+		mc.d.evidence.EpisodeGroup = result.group
+		itemEvent(log.Debug(), run.server.Name, mc.lib, mc.it).Str("episode_group", result.group).
+			Int("episode_count", result.count).Msg("Episode numbers confirmed via episode group")
 	}
 	return result.count, nil
 }
 
 // episodeComparison is the result of compareEpisodes. count is the number
 // of matched regular episodes when the local seasons confirm the series.
-// Otherwise diff is the first season with extra or invalid episode numbers,
-// or the first season missing episodes when overall coverage is too low.
-// Both are zero when Plex lists no complete regular episodes.
+// group is non-empty when an alternate TMDB episode group confirmed it.
+// Otherwise diff is the first default season with extra or invalid episode
+// numbers, or the first default season missing episodes when overall coverage
+// is too low. Both are zero when Plex lists no complete regular episodes.
 type episodeComparison struct {
 	count int
+	group string
 	diff  store.EpisodeDiff
 }
 
 // compareEpisodes compares the regular episode numbers of the series key in
-// Plex with those of the TMDB ID id, season by season. It stops at the first
-// season with extra, duplicate, or non-positive episode numbers (or a missing
-// TMDB season). Otherwise it confirms the series when at least 90% of TMDB's
-// episodes across the local seasons are present locally.
+// Plex with those of the TMDB ID id. It checks TMDB's default seasons first.
+// When default seasons do not confirm valid local episodes, it checks
+// TVDB-aligned TMDB episode groups in priority order (Original air date, DVD,
+// Absolute, TV) within episodeGroupFallbackBudget and stops at the first group
+// that confirms. Isolated group failures keep trying later groups and fall
+// back to the default seasons' diff; caller cancellation and service-wide TMDB
+// failures (401, 429) stop immediately.
 func compareEpisodes(ctx context.Context, p Plex, t TMDB, key, id string) (episodeComparison, error) {
 	local, err := p.EpisodeNumbers(ctx, key)
 	if err != nil {
 		return episodeComparison{}, err
 	}
+	def, err := compareSeasons(local, func(season int) ([]int, error) {
+		catalog, err := t.SeasonEpisodes(ctx, id, season)
+		if err != nil {
+			return nil, fmt.Errorf("%w: tmdb-%s: %w", ErrTMDB, id, err)
+		}
+		return catalog, nil
+	})
+	if err != nil || def.count > 0 {
+		return def, err
+	}
+	// Pre-check to avoid episode group requests when local numbers are empty,
+	// duplicate, or non-positive (no group could ever confirm them).
+	localTotal, ok := validLocalTotal(local)
+	if !ok {
+		return def, nil
+	}
+	grp, err := compareEpisodeGroups(ctx, t, id, local, localTotal)
+	if err != nil {
+		return def, err
+	}
+	if grp.count > 0 {
+		return grp, nil
+	}
+	return def, nil
+}
+
+func compareSeasons(local map[int][]int, catalogOf func(season int) ([]int, error)) (episodeComparison, error) {
 	var localTotal, catalogTotal int
 	var firstMissing store.EpisodeDiff
 	for _, season := range slices.Sorted(maps.Keys(local)) {
-		catalog, err := t.SeasonEpisodes(ctx, id, season)
+		catalog, err := catalogOf(season)
 		if err != nil {
-			return episodeComparison{}, fmt.Errorf("%w: tmdb-%s: %w", ErrTMDB, id, err)
+			return episodeComparison{}, err
 		}
 		numbers := local[season]
 		if !episodeNumbersSubset(numbers, catalog) {
@@ -91,6 +151,177 @@ func compareEpisodes(ctx context.Context, p Plex, t TMDB, key, id string) (episo
 		return episodeComparison{diff: firstMissing}, nil
 	}
 	return episodeComparison{count: localTotal}, nil
+}
+
+func compareEpisodeGroups(ctx context.Context, t TMDB, id string, local map[int][]int, localTotal int) (episodeComparison, error) {
+	gctx, cancel := withEpisodeGroupBudget(ctx)
+	defer cancel()
+
+	groups, err := t.EpisodeGroups(gctx, id)
+	if err != nil {
+		return episodeComparison{}, fallbackGroupError(ctx, gctx, id, "", err)
+	}
+	for _, g := range selectEpisodeGroups(groups, localTotal) {
+		if ctx.Err() != nil {
+			return episodeComparison{}, ctx.Err()
+		}
+		if gctx.Err() != nil {
+			return episodeComparison{}, nil
+		}
+		res, stop, err := tryEpisodeGroup(ctx, gctx, t, id, g, local)
+		if err != nil || stop || res.count > 0 {
+			return res, err
+		}
+	}
+	return episodeComparison{}, nil
+}
+
+func tryEpisodeGroup(ctx, gctx context.Context, t TMDB, id string, g tmdb.EpisodeGroup, local map[int][]int) (episodeComparison, bool, error) {
+	seasons, err := t.EpisodeGroupSeasons(gctx, g.ID)
+	if err != nil {
+		if fatal := fallbackGroupError(ctx, gctx, id, g.ID, err); fatal != nil {
+			return episodeComparison{}, true, fatal
+		}
+		return episodeComparison{}, gctx.Err() != nil, nil
+	}
+	if len(seasons) == 0 {
+		return episodeComparison{}, false, nil
+	}
+	res, _ := compareSeasons(local, func(season int) ([]int, error) { return seasons[season], nil })
+	if res.count > 0 {
+		return episodeComparison{count: res.count, group: groupLabel(g)}, true, nil
+	}
+	return episodeComparison{}, false, nil
+}
+
+// fallbackGroupError separates fatal errors (parent cancellation, 401, 429)
+// from isolated optional-lookup failures, which are logged and ignored so
+// later groups can run and the default diff stays intact.
+func fallbackGroupError(ctx, gctx context.Context, tmdbID, groupID string, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if errors.Is(err, tmdb.ErrUnauthorized) || errors.Is(err, tmdb.ErrRateLimited) {
+		return fmt.Errorf("%w: tmdb-%s: %w", ErrTMDB, tmdbID, err)
+	}
+	if gctx.Err() != nil {
+		log.Debug().Str("tmdb_id", tmdbID).Str("group_id", groupID).Msg("Episode group fallback budget exhausted")
+		return nil
+	}
+	log.Warn().Str("tmdb_id", tmdbID).Str("group_id", groupID).Err(err).Msg("TMDB episode group lookup failed")
+	return nil
+}
+
+// groupLabel returns the trimmed group name bounded to maxEpisodeGroupName
+// runes, falling back to the validated group ID when TMDB omits the name.
+func groupLabel(g tmdb.EpisodeGroup) string {
+	name := strings.TrimSpace(g.Name)
+	if name == "" {
+		return g.ID
+	}
+	runes := []rune(name)
+	if len(runes) > maxEpisodeGroupName {
+		return string(runes[:maxEpisodeGroupName])
+	}
+	return name
+}
+
+// selectEpisodeGroups deduplicates TVDB-aligned episode groups, orders each
+// type's groups by episode_count plausibility (plausible >= localTotal first,
+// then unknown 0, then undersized), picks round-robin across the 4 types up to
+// maxEpisodeGroups so no single type consumes the whole budget, and returns
+// the chosen groups sorted by (plausibility tier, type priority).
+func selectEpisodeGroups(groups []tmdb.EpisodeGroup, localTotal int) []tmdb.EpisodeGroup {
+	var byType [4][]tmdb.EpisodeGroup
+	seen := make(map[string]struct{}, len(groups))
+	for _, g := range groups {
+		prio := episodeGroupPriority(g.Type)
+		if prio == 0 || g.ID == "" {
+			continue
+		}
+		if _, dup := seen[g.ID]; dup {
+			continue
+		}
+		seen[g.ID] = struct{}{}
+		byType[prio-1] = append(byType[prio-1], g)
+	}
+	for i := range byType {
+		slices.SortStableFunc(byType[i], func(a, b tmdb.EpisodeGroup) int {
+			return countTier(a.EpisodeCount, localTotal) - countTier(b.EpisodeCount, localTotal)
+		})
+	}
+	selected := pickAcrossTypes(&byType, maxEpisodeGroups)
+	slices.SortStableFunc(selected, func(a, b tmdb.EpisodeGroup) int {
+		if d := countTier(a.EpisodeCount, localTotal) - countTier(b.EpisodeCount, localTotal); d != 0 {
+			return d
+		}
+		return episodeGroupPriority(a.Type) - episodeGroupPriority(b.Type)
+	})
+	return selected
+}
+
+func countTier(episodeCount, localTotal int) int {
+	switch {
+	case episodeCount >= localTotal:
+		return 0
+	case episodeCount == 0:
+		return 1
+	default:
+		return 2
+	}
+}
+
+func pickAcrossTypes(byType *[4][]tmdb.EpisodeGroup, limit int) []tmdb.EpisodeGroup {
+	out := make([]tmdb.EpisodeGroup, 0, limit)
+	for progress := true; progress && len(out) < limit; {
+		progress = false
+		for p := range byType {
+			if len(byType[p]) == 0 || len(out) >= limit {
+				continue
+			}
+			out = append(out, byType[p][0])
+			byType[p] = byType[p][1:]
+			progress = true
+		}
+	}
+	return out
+}
+
+// episodeGroupPriority returns the priority rank (1..4) of TMDB episode group
+// types that align with TheTVDB's season/episode formats, or 0 for other types
+// (Digital, Story arc, Production).
+func episodeGroupPriority(groupType int) int {
+	switch groupType {
+	case tmdb.EpisodeGroupOriginalAirDate:
+		return 1
+	case tmdb.EpisodeGroupDVD:
+		return 2
+	case tmdb.EpisodeGroupAbsolute:
+		return 3
+	case tmdb.EpisodeGroupTV:
+		return 4
+	default:
+		return 0
+	}
+}
+
+// validLocalTotal returns the total number of local regular episodes when
+// every local season has at least one valid, distinct positive episode number.
+func validLocalTotal(local map[int][]int) (int, bool) {
+	if len(local) == 0 {
+		return 0, false
+	}
+	total := 0
+	for _, numbers := range local {
+		if len(numbers) == 0 {
+			return 0, false
+		}
+		if _, ok := positiveSet(numbers); !ok {
+			return 0, false
+		}
+		total += len(numbers)
+	}
+	return total, true
 }
 
 func episodeDiff(season int, local, catalog []int) store.EpisodeDiff {

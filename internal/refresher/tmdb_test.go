@@ -18,13 +18,17 @@ var _ TMDB = (*tmdb.Client)(nil)
 // fakeTMDB records each Find and Year call and answers from its maps.
 // Find keys are "<source> <id> <show>"; Year keys are "<id> <show>".
 type fakeTMDB struct {
-	ids        map[string]string
-	errs       map[string]error
-	years      map[string]int
-	yearErrs   map[string]error
-	seasons    map[string][]int
-	seasonErrs map[string]error
-	calls      []string
+	ids             map[string]string
+	errs            map[string]error
+	years           map[string]int
+	yearErrs        map[string]error
+	seasons         map[string][]int
+	seasonErrs      map[string]error
+	episodeGroups   map[string][]tmdb.EpisodeGroup
+	groupListErrs   map[string]error
+	groupSeasons    map[string]map[int][]int
+	groupSeasonErrs map[string]error
+	calls           []string
 }
 
 func (f *fakeTMDB) Find(_ context.Context, source, id string, show bool) (string, bool, error) {
@@ -51,6 +55,16 @@ func (f *fakeTMDB) SeasonEpisodes(_ context.Context, id string, season int) ([]i
 	key := fmt.Sprintf("%s %d", id, season)
 	f.calls = append(f.calls, "SeasonEpisodes "+key)
 	return f.seasons[key], f.seasonErrs[key]
+}
+
+func (f *fakeTMDB) EpisodeGroups(_ context.Context, id string) ([]tmdb.EpisodeGroup, error) {
+	f.calls = append(f.calls, "EpisodeGroups "+id)
+	return f.episodeGroups[id], f.groupListErrs[id]
+}
+
+func (f *fakeTMDB) EpisodeGroupSeasons(_ context.Context, groupID string) (map[int][]int, error) {
+	f.calls = append(f.calls, "EpisodeGroupSeasons "+groupID)
+	return f.groupSeasons[groupID], f.groupSeasonErrs[groupID]
 }
 
 // newTMDBFixture returns a refresh fixture with the fake TMDB, and the
@@ -350,6 +364,16 @@ func (c cancelTMDB) Year(context.Context, string, bool) (int, bool, error) {
 }
 
 func (c cancelTMDB) SeasonEpisodes(context.Context, string, int) ([]int, error) {
+	c.cancel()
+	return nil, context.Canceled
+}
+
+func (c cancelTMDB) EpisodeGroups(context.Context, string) ([]tmdb.EpisodeGroup, error) {
+	c.cancel()
+	return nil, context.Canceled
+}
+
+func (c cancelTMDB) EpisodeGroupSeasons(context.Context, string) (map[int][]int, error) {
 	c.cancel()
 	return nil, context.Canceled
 }

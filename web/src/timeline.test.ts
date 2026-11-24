@@ -189,6 +189,12 @@ describe('decision evidence', () => {
     expect(decisionView(title({ outcome: 'matched', episodeCount: 6, tmdbId: '88' })).detail).toBe(
       'The title search found one series with the same title and a year within 1, and the episode numbers of 6 episodes from tmdb-88 confirmed it.',
     );
+    expect(decisionView(title({ outcome: 'matched', episodeCount: 14, tmdbId: '88', episodeGroup: 'DVD Order' })).detail).toBe(
+      'The title search found one series with the same title and a year within 1, and the episode numbers of 14 episodes from tmdb-88 via episode group “DVD Order” confirmed it.',
+    );
+    expect(decisionView(event(1, 'match-decision', { outcome: 'matched', episodeCount: 14, episodeGroup: 'Aired Order' })).detail).toBe(
+      'The episode numbers of 14 episodes via episode group “Aired Order” confirmed the candidate.',
+    );
     expect(decisionView(title({ outcome: 'no-match', conflict: 'not confirmed', tmdbId: '88', episodeDiff: { season: 1, plex: 3, tmdb: 2, extra: [3] } })).detail).toBe(
       'The title search found one series with the same title and a year within 1, but nothing confirmed it. The episode numbers differ from tmdb-88 in season 1: Plex has 3 episodes, and TMDB has 2. Only Plex has episode 3.',
     );
@@ -219,6 +225,9 @@ describe('decision evidence', () => {
   it('explains an episode comparison that differs', () => {
     expect(episodeDiffText({ season: 1, plex: 10, tmdb: 10, missing: [11], extra: [0] }, '5')).toBe(
       'The episode numbers differ from tmdb-5 in season 1: Plex and TMDB both have 10 episodes, but with other numbers. Only TMDB has episode 11. Only Plex has episode 0.',
+    );
+    expect(episodeDiffText({ season: 1, plex: 3, tmdb: 3 }, '5')).toBe(
+      'The episode numbers differ from tmdb-5 in season 1: Plex and TMDB both have 3 episodes, but with invalid or duplicate numbers.',
     );
     const many = Array.from({ length: 12 }, (_, i) => i + 1);
     expect(episodeDiffText({ season: 2, plex: 1, tmdb: 13, missing: many })).toBe(
