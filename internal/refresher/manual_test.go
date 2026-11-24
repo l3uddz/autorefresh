@@ -195,8 +195,8 @@ func TestManualRefreshCheckGoneRemovesRowAndRecordsManualEvent(t *testing.T) {
 	if _, found := f.row("home", "1", "1"); found {
 		t.Fatal("gone item still cached")
 	}
-	if event := f.newestEvent("1"); event.Kind != store.EventGone || event.Source != store.SourceManual {
-		t.Fatalf("gone event = %+v", event)
+	if event := f.newestEvent("1"); event.Kind != store.EventGone || event.Source != store.SourceManual || event.Action != "" {
+		t.Fatalf("gone event = %+v, want a manual gone event of the check", event)
 	}
 	if len(f.sleeps) != 1 {
 		t.Fatalf("sleeps = %v, want one wait before the check", f.sleeps)
@@ -357,7 +357,7 @@ func TestApplyMatchStopsWhenRowLeavesCache(t *testing.T) {
 	buf := captureLogs(t)
 	f.r.sleep = func(context.Context, time.Duration) error {
 		f.sleeps = append(f.sleeps, time.Second)
-		return f.store.RecordGone("home", "1", t0, store.SourceAuto, 0)
+		return f.store.RecordGone("home", "1", t0, store.SourceAuto, "", 0)
 	}
 	cand := plex.Candidate{GUID: "plex://movie/1", Name: "Match", Year: 2020}
 	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {
@@ -411,8 +411,8 @@ func TestApplyMatchRefreshGoneSkipsChecks(t *testing.T) {
 	if _, found := f.row("home", "1", "1"); found {
 		t.Error("gone item still cached")
 	}
-	if e := f.newestEvent("1"); e.Kind != store.EventGone {
-		t.Errorf("newest event = %+v, want gone", e)
+	if e := f.newestEvent("1"); e.Kind != store.EventGone || e.Action != store.ActionRefresh {
+		t.Errorf("newest event = %+v, want gone by the refresh", e)
 	}
 }
 

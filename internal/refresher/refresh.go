@@ -187,7 +187,7 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 
 // runRefresh sends the refresh after a match that Plex accepted in the run
 // and records it as a request of the run. A 404 answer records the item as
-// gone. It returns the error of the request, or a store error (ErrStore).
+// gone by the refresh. It returns the error of the request, or a store error (ErrStore).
 func (r *Refresher) runRefresh(ctx context.Context, run *serverRun, it store.Item) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -195,7 +195,7 @@ func (r *Refresher) runRefresh(ctx context.Context, run *serverRun, it store.Ite
 	run.refreshes++
 	err := run.server.Plex.Refresh(ctx, it.RatingKey)
 	if errors.Is(err, plex.ErrNotFound) {
-		if recErr := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, run.id); recErr != nil {
+		if recErr := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, store.ActionRefresh, run.id); recErr != nil {
 			return fmt.Errorf("%w: %w", ErrStore, recErr)
 		}
 		return err
@@ -226,8 +226,8 @@ func (r *Refresher) runRefresh(ctx context.Context, run *serverRun, it store.Ite
 // request, with its action and its fix match fm, or a failed match search,
 // with no action and no fm.
 //
-//   - A 404 answer removes the row and records a gone event. A dry run keeps
-//     the row and logs a warning.
+//   - A 404 answer removes the row and records a gone event, with the action
+//     of a sent request. A dry run keeps the row and logs a warning.
 //   - Each other failure counts and records an attempt, also when it stops
 //     the server. Plex can apply a request before its response fails, and
 //     the attempt moves the item to the end of the queue, so it cannot stop
@@ -247,7 +247,7 @@ func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Ite
 	notFound := ctx.Err() == nil && errors.Is(err, plex.ErrNotFound)
 	switch {
 	case notFound && !r.opts.DryRun:
-		if err := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, run.id); err != nil {
+		if err := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, action, run.id); err != nil {
 			return err
 		}
 		r.itemDone(run, it.RatingKey, OutcomeGone)

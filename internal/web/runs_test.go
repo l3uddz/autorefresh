@@ -367,3 +367,45 @@ func TestRunDetailErrors(t *testing.T) {
 		}
 	}
 }
+
+// A removal that a request found carries the action of the request, so the
+// details can list it under its count. A removal of a read has none.
+func TestRunDetailGivesTheActionOfARemoval(t *testing.T) {
+	db := openStore(t)
+	if err := db.SaveLibraries("home", []store.LibraryInfo{{Section: "1", Title: "Movies"}}); err != nil {
+		t.Fatal(err)
+	}
+	items := []store.Item{movie("1", "One", store.NoSummary, testNow), movie("2", "Two", store.NoSummary, testNow)}
+	if _, err := db.ApplyRead(store.Read{Server: "home", Section: "1", At: testNow, Items: items}); err != nil {
+		t.Fatal(err)
+	}
+	start := store.RunStart{Server: "home", Kind: store.RunKindRun, Source: store.RunSourceSchedule, StartedAt: testNow}
+	id, err := db.StartRun(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := testNow.Add(time.Minute)
+	if err := db.RecordGone("home", "1", at, store.SourceAuto, store.ActionTMDBMatch, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ApplyRead(store.Read{Server: "home", Section: "1", At: at, Full: true, Gone: []string{"2"}, RunID: id}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.FinishRun(id, start, store.RunResult{FinishedAt: at, Status: store.RunFinished, Matched: 1}); err != nil {
+		t.Fatal(err)
+	}
+	s := New(Options{Store: db, Servers: []PlexServer{{Name: "home"}}})
+
+	var got runDetailAnswer
+	getJSON(t, s, fmt.Sprintf("/api/runs/detail?id=%d", id), &got)
+	actions := map[any]any{}
+	for _, e := range got.Events {
+		if e["kind"] != "gone" {
+			t.Errorf("event = %v, want only removals", e)
+		}
+		actions[e["key"]] = e["action"]
+	}
+	if want := map[any]any{"1": "tmdb-match", "2": nil}; !reflect.DeepEqual(actions, want) {
+		t.Errorf("actions by key = %v, want %v", actions, want)
+	}
+}
