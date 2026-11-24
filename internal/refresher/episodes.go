@@ -28,13 +28,13 @@ const (
 	// made when default seasons do not confirm a series.
 	maxEpisodeGroups = 10
 
-	// episodeGroupFallbackBudget caps total wall time spent on optional
-	// episode group lookups without extending the caller's deadline.
-	episodeGroupFallbackBudget = 15 * time.Second
-
 	// maxEpisodeGroupName bounds stored episode group names.
 	maxEpisodeGroupName = 120
 )
+
+// episodeGroupFallbackBudget caps total wall time spent on optional episode
+// group lookups without extending the caller's deadline. Tests may shorten it.
+var episodeGroupFallbackBudget = 15 * time.Second
 
 // confirmEpisodeNumbers requires every locally represented regular season to
 // contain only valid TMDB episode numbers (no extra or duplicate numbers) and

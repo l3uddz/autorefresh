@@ -362,13 +362,13 @@ func TestEpisodeGroupsFallback(t *testing.T) {
 			wantDecision:   store.DecisionMatched,
 		},
 		{
-			name:           "prioritizes plausible episode counts before unknown or undersized summaries and deduplicates IDs",
+			name:           "prioritizes plausible episode counts before unknown summaries and deduplicates failing IDs",
 			local:          map[int][]int{1: seq(14)},
 			defaultSeasons: map[string][]int{"77 1": seq(11)},
 			groups: []tmdb.EpisodeGroup{
 				{ID: "air0", Name: "Stale Count Aired", Type: tmdb.EpisodeGroupOriginalAirDate, EpisodeCount: 0},
-				{ID: "air0", Name: "Duplicate Stale", Type: tmdb.EpisodeGroupOriginalAirDate, EpisodeCount: 0},
 				{ID: "dvd1", Name: "DVD Order", Type: tmdb.EpisodeGroupDVD, EpisodeCount: 14},
+				{ID: "dvd1", Name: "Duplicate DVD", Type: tmdb.EpisodeGroupDVD, EpisodeCount: 14},
 			},
 			groupSeasons: map[string]map[int][]int{
 				"dvd1": {1: seq(12)},
@@ -668,7 +668,7 @@ func TestEpisodeGroupCancellationStopsWithoutTMDBFailure(t *testing.T) {
 }
 
 // End-to-end parser-to-comparison test using a real *tmdb.Client to verify
-// omitted/null episode orders never confirm S01E01 while explicit order 0 does.
+// omitted/null/negative orders never confirm S01E01 while explicit order 0 does.
 func TestEpisodeGroupParserToComparisonOrderPresence(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -677,6 +677,7 @@ func TestEpisodeGroupParserToComparisonOrderPresence(t *testing.T) {
 	}{
 		{"missing episode order cannot confirm S01E01", `{"groups":[{"order":1,"episodes":[{}]}]}`, false},
 		{"null episode order cannot confirm S01E01", `{"groups":[{"order":1,"episodes":[{"order":null}]}]}`, false},
+		{"negative subgroup order cannot confirm S01E01", `{"groups":[{"order":-1,"episodes":[{"order":0}]},{"order":1,"episodes":[{"order":0}]}]}`, false},
 		{"explicit order 0 confirms S01E01", `{"groups":[{"order":1,"episodes":[{"order":0}]}]}`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -712,5 +713,66 @@ func TestEpisodeGroupParserToComparisonOrderPresence(t *testing.T) {
 				t.Fatalf("EpisodeCheck = %+v, want Match=%v", got, tc.wantMatch)
 			}
 		})
+	}
+}
+
+type slowGroupLookup struct {
+	*fakeTMDB
+	slowID string
+}
+
+func (s slowGroupLookup) EpisodeGroupSeasons(ctx context.Context, groupID string) (map[int][]int, error) {
+	s.calls = append(s.calls, "EpisodeGroupSeasons "+groupID)
+	if groupID == s.slowID {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return s.groupSeasons[groupID], nil
+}
+
+func TestEpisodeGroupFallbackBudgetExpiresCleanly(t *testing.T) {
+	old := episodeGroupFallbackBudget
+	episodeGroupFallbackBudget = 20 * time.Millisecond
+	t.Cleanup(func() { episodeGroupFallbackBudget = old })
+
+	fp := newFakePlex(showsLib)
+	fp.paths["201"] = []string{"/tv/First (2003) {tmdb-77}"}
+	fp.paths["202"] = []string{"/tv/Second (2003) {tmdb-88}"}
+	fp.candidates["201 tmdb-77"] = []plex.Candidate{{GUID: "plex://show/first", Name: "First", Year: 2011}}
+	fp.candidates["202 tmdb-88"] = []plex.Candidate{{GUID: "plex://show/second", Name: "Second", Year: 2011}}
+	fp.episodeNumbers = map[string]map[int][]int{
+		"201": {1: seq(14)},
+		"202": {1: seq(10)},
+	}
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	ft := &fakeTMDB{
+		years:   map[string]int{"77 true": 2011, "88 true": 2011},
+		seasons: map[string][]int{"77 1": seq(11), "88 1": seq(10)},
+		episodeGroups: map[string][]tmdb.EpisodeGroup{
+			"77": {
+				{ID: "air1", Name: "Slow Aired", Type: tmdb.EpisodeGroupOriginalAirDate, EpisodeCount: 14},
+				{ID: "dvd1", Name: "Later DVD", Type: tmdb.EpisodeGroupDVD, EpisodeCount: 14},
+			},
+		},
+		groupSeasons: map[string]map[int][]int{"dvd1": {1: seq(14)}},
+	}
+	f.r.opts.TMDB = slowGroupLookup{fakeTMDB: ft, slowID: "air1"}
+	for _, id := range []string{"201", "202"} {
+		it := unmatchedItem(id)
+		it.Year = 2003
+		f.seed(testServer, showsLib, it, store.Unmatched, 1)
+	}
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 201", "Match 202 plex://show/second", "Refresh 202")
+	if slices.Contains(ft.calls, "EpisodeGroupSeasons dvd1") {
+		t.Errorf("calls = %v, should stop after fallback budget expired", ft.calls)
+	}
+	if diff := f.decision("201").EpisodeDiff; diff.Season != 1 || diff.Plex != 14 || diff.TMDB != 11 {
+		t.Errorf("first item diff = %+v, want default season diff (14 vs 11)", diff)
+	}
+	if len(f.logLines("warn", "TMDB lookup failed")) != 0 {
+		t.Error("fallback budget expiry should not log a run-wide TMDB failure")
 	}
 }
