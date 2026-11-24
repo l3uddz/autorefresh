@@ -30,11 +30,17 @@ const (
 
 	// maxEpisodeGroupName bounds stored episode group names.
 	maxEpisodeGroupName = 120
+
+	// episodeGroupFallbackBudget caps total wall time spent on optional episode
+	// group lookups without extending the caller's deadline.
+	episodeGroupFallbackBudget = 15 * time.Second
 )
 
-// episodeGroupFallbackBudget caps total wall time spent on optional episode
-// group lookups without extending the caller's deadline. Tests may shorten it.
-var episodeGroupFallbackBudget = 15 * time.Second
+// withEpisodeGroupBudget derives the bounded fallback context. Tests may
+// replace it to expire the fallback budget deterministically.
+var withEpisodeGroupBudget = func(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, episodeGroupFallbackBudget)
+}
 
 // confirmEpisodeNumbers requires every locally represented regular season to
 // contain only valid TMDB episode numbers (no extra or duplicate numbers) and
@@ -148,7 +154,7 @@ func compareSeasons(local map[int][]int, catalogOf func(season int) ([]int, erro
 }
 
 func compareEpisodeGroups(ctx context.Context, t TMDB, id string, local map[int][]int, localTotal int) (episodeComparison, error) {
-	gctx, cancel := context.WithTimeout(ctx, episodeGroupFallbackBudget)
+	gctx, cancel := withEpisodeGroupBudget(ctx)
 	defer cancel()
 
 	groups, err := t.EpisodeGroups(gctx, id)

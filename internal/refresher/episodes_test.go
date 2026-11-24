@@ -740,22 +740,33 @@ func TestEpisodeGroupParserToComparisonOrderPresence(t *testing.T) {
 
 type slowGroupLookup struct {
 	*fakeTMDB
-	slowID string
+	slowID   string
+	onSlowID func()
 }
 
 func (s slowGroupLookup) EpisodeGroupSeasons(ctx context.Context, groupID string) (map[int][]int, error) {
 	s.calls = append(s.calls, "EpisodeGroupSeasons "+groupID)
 	if groupID == s.slowID {
-		<-ctx.Done()
-		return nil, ctx.Err()
+		s.onSlowID()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			return nil, errors.New("expected fallback budget context to expire")
+		}
 	}
 	return s.groupSeasons[groupID], nil
 }
 
 func TestEpisodeGroupFallbackBudgetExpiresCleanly(t *testing.T) {
-	old := episodeGroupFallbackBudget
-	episodeGroupFallbackBudget = 50 * time.Millisecond
-	t.Cleanup(func() { episodeGroupFallbackBudget = old })
+	var expireBudget context.CancelFunc
+	old := withEpisodeGroupBudget
+	withEpisodeGroupBudget = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		gctx, cancel := context.WithCancel(ctx)
+		expireBudget = cancel
+		return gctx, cancel
+	}
+	t.Cleanup(func() { withEpisodeGroupBudget = old })
 
 	fp := newFakePlex(showsLib)
 	fp.paths["201"] = []string{"/tv/First (2003) {tmdb-77}"}
@@ -778,7 +789,16 @@ func TestEpisodeGroupFallbackBudgetExpiresCleanly(t *testing.T) {
 		},
 		groupSeasons: map[string]map[int][]int{"dvd1": {1: seq(14)}},
 	}
-	f.r.opts.TMDB = slowGroupLookup{fakeTMDB: ft, slowID: "air1"}
+	f.r.opts.TMDB = slowGroupLookup{
+		fakeTMDB: ft,
+		slowID:   "air1",
+		onSlowID: func() {
+			if expireBudget == nil {
+				t.Fatal("withEpisodeGroupBudget was not called before EpisodeGroupSeasons")
+			}
+			expireBudget()
+		},
+	}
 	for _, id := range []string{"201", "202"} {
 		it := unmatchedItem(id)
 		it.Year = 2003
