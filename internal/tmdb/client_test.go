@@ -57,6 +57,7 @@ func serve(t *testing.T, handler func(w http.ResponseWriter, r *http.Request)) *
 	t.Cleanup(srv.Close)
 	c := New(token, 5*time.Second)
 	c.base = mustURL(t, srv.URL)
+	c.sleep = func(ctx context.Context, _ time.Duration) error { return ctx.Err() }
 	return c
 }
 
@@ -512,6 +513,7 @@ func TestEpisodeGroupSeasonsRejectsAmbiguousOrders(t *testing.T) {
 		"duplicate episode order": `{"groups":[{"order":1,"episodes":[{"order":0},{"order":0}]}]}`,
 		"missing subgroup order":  `{"groups":[{"episodes":[{"order":0}]},{"order":1,"episodes":[{"order":0}]}]}`,
 		"null subgroup order":     `{"groups":[{"order":null,"episodes":[{"order":0}]},{"order":1,"episodes":[{"order":0}]}]}`,
+		"negative subgroup order": `{"groups":[{"order":-1,"episodes":[{"order":0}]},{"order":1,"episodes":[{"order":0}]}]}`,
 		"duplicate group order":   `{"groups":[{"order":1,"episodes":[{"order":0}]},{"order":1,"episodes":[{"order":0}]}]}`,
 	}
 	for name, body := range cases {
@@ -523,6 +525,92 @@ func TestEpisodeGroupSeasonsRejectsAmbiguousOrders(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRateLimitBackoffRetry(t *testing.T) {
+	t.Run("retries transient 429 with exponential backoff and succeeds", func(t *testing.T) {
+		var attempts atomic.Int32
+		c := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+			if attempts.Add(1) <= 2 {
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			w.Write([]byte(`{"episodes":[{"episode_number":1},{"episode_number":2}]}`))
+		})
+		var waits []time.Duration
+		c.sleep = func(_ context.Context, d time.Duration) error {
+			waits = append(waits, d)
+			return nil
+		}
+
+		got, err := c.SeasonEpisodes(t.Context(), "77", 1)
+		if err != nil || !slices.Equal(got, []int{1, 2}) {
+			t.Fatalf("SeasonEpisodes = %v, %v, want [1 2]", got, err)
+		}
+		wantWaits := []time.Duration{500 * time.Millisecond, 1 * time.Second}
+		if !slices.Equal(waits, wantWaits) {
+			t.Fatalf("waits = %v, want %v", waits, wantWaits)
+		}
+	})
+
+	t.Run("honors Retry-After seconds and HTTP-date clamped to max wait", func(t *testing.T) {
+		now := time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC)
+		var attempts atomic.Int32
+		c := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+			switch attempts.Add(1) {
+			case 1:
+				w.Header().Set("Retry-After", "3")
+				w.WriteHeader(http.StatusTooManyRequests)
+			case 2:
+				w.Header().Set("Retry-After", "300")
+				w.WriteHeader(http.StatusTooManyRequests)
+			case 3:
+				w.Header().Set("Retry-After", now.Add(4*time.Second).Format(http.TimeFormat))
+				w.WriteHeader(http.StatusTooManyRequests)
+			default:
+				w.WriteHeader(http.StatusTooManyRequests)
+			}
+		})
+		c.now = func() time.Time { return now }
+		var waits []time.Duration
+		c.sleep = func(_ context.Context, d time.Duration) error {
+			waits = append(waits, d)
+			return nil
+		}
+
+		_, err := c.SeasonEpisodes(t.Context(), "77", 1)
+		if !errors.Is(err, ErrRateLimited) {
+			t.Fatalf("err = %v, want ErrRateLimited", err)
+		}
+		wantWaits := []time.Duration{3 * time.Second, maxRateLimitWait, 4 * time.Second}
+		if !slices.Equal(waits, wantWaits) {
+			t.Fatalf("waits = %v, want %v", waits, wantWaits)
+		}
+		if got := attempts.Load(); got != maxRateLimitRetries+1 {
+			t.Fatalf("attempts = %d, want %d", got, maxRateLimitRetries+1)
+		}
+	})
+
+	t.Run("stops retry when context cancels during backoff", func(t *testing.T) {
+		var attempts atomic.Int32
+		c := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+			attempts.Add(1)
+			w.WriteHeader(http.StatusTooManyRequests)
+		})
+		ctx, cancel := context.WithCancel(t.Context())
+		c.sleep = func(ctx context.Context, _ time.Duration) error {
+			cancel()
+			return sleepContext(ctx, time.Second)
+		}
+
+		_, err := c.SeasonEpisodes(ctx, "77", 1)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+		if got := attempts.Load(); got != 1 {
+			t.Fatalf("attempts = %d, want 1", got)
+		}
+	})
 }
 
 func TestEpisodeGroupSeasonsRejectsInvalidID(t *testing.T) {
