@@ -369,6 +369,24 @@ nothing. Autorefresh applies a match only if all of these are true:
    `(2012)`, if it has one. Symbols such as `+` count, and a title without
    letters or digits matches nothing. Other candidates get the verdict
    "other title or year".
+
+   Plex can keep a stale year for a series, such as the year of an
+   earlier pilot. So if no candidate's year agrees, autorefresh checks
+   the candidates with the same title and another Plex year, at most 3.
+   For each one, the Plex metadata provider gives its TMDB ID, and TMDB
+   gives the premiere year of that ID: the year of the air date of its
+   season 1. A later season's year never stands in for a season 1 that
+   TMDB does not list or gives no valid date. That year must
+   equal the year of the item and the year of the series folder, if it
+   has one. A difference of 1 is not enough here. Exactly one candidate
+   must pass this check, and it then takes steps 2 and 3. A candidate
+   that fails the check gets the conflict `year differs`. Two candidates
+   that pass, or more than 3 candidates to check, give
+   `several candidates`. A candidate without a Plex year is not checked.
+   Autorefresh does not check when the folder year differs from the year
+   of the item, because no TMDB year can equal both. The decision keeps
+   the TMDB year next to the Plex year of the candidate, and the
+   dashboard explains why it accepted a candidate with another Plex year.
 2. The Plex metadata provider gives one TMDB ID for that candidate. If it
    gives several different ones, nothing confirms the candidate. If the
    folder names give TMDB IDs, each of them must be that ID: each `tmdb`
@@ -383,9 +401,11 @@ nothing. Autorefresh applies a match only if all of these are true:
    first season missing episodes when coverage is too low.
 
 The match request has the action `title-match`. If the provider does not
-know the candidate (`404 Not Found`), or gives it no TMDB ID, the conflict
-is `not confirmed`. A failed title search,
-provider request, episode read, or TMDB request is a failed decision: the
+know a candidate whose Plex year agrees (`404 Not Found`), or gives it no
+TMDB ID, the conflict is `not confirmed`. For a candidate with another
+Plex year, the conflict is then `year differs`. A failed title search,
+provider request, episode read, or TMDB request, also of the TMDB year
+check, is a failed decision: the
 item gets a plain refresh, and the run goes on. Only a `404 Not Found`
 answer of the title search or of the episode read keeps its meaning: the
 item is gone.
@@ -405,7 +425,9 @@ Autorefresh keeps a history in the database. The API of the
 - An event when an item becomes complete. If a request that Plex accepted
   came before, the event names the last action and the last match that fixed
   the item.
-- An event when an item is gone from Plex.
+- An event when an item is gone from Plex. If a refresh or match request
+  found it gone (`404 Not Found`), the event keeps the action of that
+  request. A removal that a read or a check found has no action.
 - One run record for each server in each check, with its status, its times,
   and its counts. The status is `running`, `finished`, `failed`, `canceled`,
   or `interrupted`.
@@ -764,11 +786,14 @@ address keeps the choice, so a link or a reload shows the same server.
   **Refreshes sent** and **Matches sent** show every request of their kind,
   also the failed ones under **Failed**. **Failed** shows its group and the
   items whose fix match decision failed before a refresh, such as a failed
-  TMDB lookup, and **Fixed** and **Skipped** show their group. A filter
-  shows only the items that the history of the run lists, and the history
-  does not list every counted request: a request that found its item gone
-  shows under **Removed**, and one item can carry two failures. A count
-  without listed items cannot filter. Below, the details list the items of the run by
+  TMDB lookup, and **Fixed** and **Skipped** show their group. A request
+  that found its item gone counts as sent: its count shows it under
+  **Removed**. A filter shows only the items that the history of the run
+  lists, and the history does not list every counted request. Runs from
+  before this version recorded no request on a removal, so their removals
+  show only under **Removed**. One item can carry two failures, such as a
+  failed TMDB lookup and a rejected refresh, and it is one item under
+  **Failed**. A count without listed items cannot filter. Below, the details list the items of the run by
   outcome: **Refreshed** and **Matched** for the requests that Plex
   accepted, **Failed** for rejected requests and failed fix match
   searches, **Fixed**, **Completed by Plex**, **Removed**, and **Not
