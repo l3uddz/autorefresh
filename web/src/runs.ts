@@ -1,7 +1,7 @@
-import { useToast } from '@astryxdesign/core/Toast';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ApiError, post, type RunDetail, type RunEvent, type RunItem, type RunRecord } from './api';
 import { fixedBy, plural } from './format';
+import { useNotify } from './notify';
 import { cancelQueueOfJob } from './queue';
 import type { TabName } from './route';
 import { decisionView, eventView, type EventView } from './timeline';
@@ -16,15 +16,15 @@ export interface RunRequest {
 /** Starts a manual run of the server srv, or of every server for null. A
  * busy run answers 409, which the toast explains. */
 export function useRunNow() {
-  const showToast = useToast();
+  const notify = useNotify();
   const client = useQueryClient();
   return useMutation({
     mutationFn: ({ srv, full }: RunRequest) => post<{ ids: number[] }>('runs', { srv, full }),
     onSuccess: (_, { full }) => {
-      showToast({ body: full ? 'Full cache refresh started' : 'Run started', uniqueID: 'run-now' });
+      notify('success', full ? 'Full cache refresh started' : 'Run started', { uniqueID: 'run-now' });
       void client.invalidateQueries({ queryKey: ['status'] });
     },
-    onError: error => showToast({ body: runError(error), type: 'error', uniqueID: 'run-now' }),
+    onError: error => notify('error', runError(error), { uniqueID: 'run-now' }),
   });
 }
 
@@ -32,7 +32,7 @@ export function useRunNow() {
  * job of the bulk refresh queue also cancels the rest of the queue, before
  * the request, so the rest stays canceled when the job ended first. */
 export function useCancelRun() {
-  const showToast = useToast();
+  const notify = useNotify();
   return useMutation({
     mutationFn: async (id: number) => {
       const isQueued = cancelQueueOfJob(id);
@@ -44,8 +44,8 @@ export function useCancelRun() {
       }
       return { isQueued, hasEnded: false };
     },
-    onSuccess: ({ isQueued, hasEnded }) => showToast({ body: cancelText(isQueued, hasEnded), uniqueID: 'cancel-run' }),
-    onError: error => showToast({ body: runError(error), type: 'error', uniqueID: 'cancel-run' }),
+    onSuccess: ({ isQueued, hasEnded }) => notify(hasEnded ? 'notice' : 'success', cancelText(isQueued, hasEnded), { uniqueID: 'cancel-run' }),
+    onError: error => notify('error', runError(error), { uniqueID: 'cancel-run' }),
   });
 }
 

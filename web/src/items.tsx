@@ -19,7 +19,6 @@ import { Tab, TabList } from '@astryxdesign/core/TabList';
 import { Table, pixel, proportional, useTableRowsVirtualization, useTableSelection, useTableSortable, type TableColumn, type TablePlugin } from '@astryxdesign/core/Table';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
-import { useToast } from '@astryxdesign/core/Toast';
 import { colorVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { BarsArrowDownIcon, BarsArrowUpIcon, InboxIcon } from '@heroicons/react/24/outline';
 import * as stylex from '@stylexjs/stylex';
@@ -33,6 +32,7 @@ import { ItemDetail } from './detail';
 import { fixedBy, label, plural, queueState, relative } from './format';
 import { Poster, Reasons } from './media';
 import { useShown } from './presence';
+import { useNotify } from './notify';
 import { NothingMatched, startBulkRefresh, useIsRefreshBusy } from './queue';
 import { itemHash, navigate, tabNames, type ItemKey, type TabName } from './route';
 import { useRowOpen } from './rowopen';
@@ -633,7 +633,7 @@ interface Submitted {
 /** The band that replaces the tabs while rows are selected. */
 function BulkBand({ tab, scope, selection, total, inventory, isInventoryKnown, onClear, onDone }: BulkProps) {
   const client = useQueryClient();
-  const showToast = useToast();
+  const notify = useNotify();
   const confirm = useImperativeAlertDialog();
   const isRefreshBusy = useIsRefreshBusy();
   const count = selection.kind === 'matching' ? total : selection.items.length;
@@ -645,18 +645,18 @@ function BulkBand({ tab, scope, selection, total, inventory, isInventoryKnown, o
         if (error instanceof NothingMatched) return undefined;
         throw error;
       });
-      if (!started) return { text: 'No items match the filters.', isError: false };
+      if (!started) return { text: 'No items match the filters.', outcome: 'notice' as const };
       const first = started.steps.find(step => step.state === 'running')!;
       const rest = started.steps.filter(step => step.state === 'waiting');
       const next = rest.length ? ` on ${first.server}. Then ${rest.map(step => step.server).join(', ')}, one server at a time` : started.steps.length > 1 ? ` on ${first.server}` : '';
       const text = `Bulk refresh started for ${plural(first.count ?? 0, 'item')}${next}. Progress shows on the Status page.`;
-      return { text, isError: false };
+      return { text, outcome: 'success' as const };
     },
-    onSuccess: ({ text, isError }, submitted) => {
-      showToast({ body: text, type: isError ? 'error' : 'info' });
+    onSuccess: ({ text, outcome }, submitted) => {
+      notify(outcome, text);
       onDone(submitted.selection);
     },
-    onError: error => showToast({ body: bulkError(error), type: 'error' }),
+    onError: error => notify('error', bulkError(error)),
     onSettled: () => invalidateLists(client),
   });
 

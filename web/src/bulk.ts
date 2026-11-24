@@ -1,5 +1,6 @@
 import { ApiError, isNoItems, post } from './api';
 import { plural } from './format';
+import type { Outcome } from './notify';
 import type { ItemKey, TabName } from './route';
 
 // The list filters, and the requests that a bulk action sends for them.
@@ -95,7 +96,7 @@ export function bulkError(error: Error): string {
  * also when a later one fails. A server without matching items is no
  * failure. It throws when no server changed anything and one failed, so
  * the selection stays for another try. */
-export async function stopOrResume(action: 'stop' | 'resume', requests: BulkRequest[], names: Record<number, string>): Promise<{ text: string; isError: boolean }> {
+export async function stopOrResume(action: 'stop' | 'resume', requests: BulkRequest[], names: Record<number, string>): Promise<{ text: string; outcome: Outcome }> {
   if (!requests.length) throw new Error('The servers are not loaded yet. Try again in a moment.');
   let changed = 0;
   let skipped = 0;
@@ -112,8 +113,9 @@ export async function stopOrResume(action: 'stop' | 'resume', requests: BulkRequ
     }
   }
   if (failures.length && failures.length + empty === requests.length) throw new Error(failures.join('; '));
-  if (empty === requests.length) return { text: 'No items match the filters.', isError: false };
+  if (empty === requests.length) return { text: 'No items match the filters.', outcome: 'notice' };
   const verb = action === 'stop' ? 'Stopped' : 'Resumed';
   const done = `${verb} ${plural(changed, 'item')}${skipped ? ` · ${skipped.toLocaleString()} skipped` : ''}`;
-  return { text: failures.length ? `${done} · failed on ${failures.join('; ')}` : done, isError: failures.length > 0 };
+  if (failures.length) return { text: `${done} · failed on ${failures.join('; ')}`, outcome: 'error' };
+  return { text: done, outcome: skipped ? 'notice' : 'success' };
 }

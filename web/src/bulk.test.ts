@@ -52,12 +52,17 @@ describe('bulk stop and resume', () => {
 
   it('goes on to a later server when the first one has no matching items', async () => {
     fakeApi({ 0: noItems, 1: changed(3) });
-    expect(await stopOrResume('stop', requests, names)).toEqual({ text: 'Stopped 3 items', isError: false });
+    expect(await stopOrResume('stop', requests, names)).toEqual({ text: 'Stopped 3 items', outcome: 'success' });
+  });
+
+  it('reports skipped items as a notice', async () => {
+    fakeApi({ 0: { status: 200, body: { changed: 0, skipped: [{ key: '1' }, { key: '2' }] } }, 1: noItems });
+    expect(await stopOrResume('stop', requests, names)).toEqual({ text: 'Stopped 0 items · 2 skipped', outcome: 'notice' });
   });
 
   it('reports no match when no server has matching items', async () => {
     fakeApi({ 0: noItems, 1: noItems });
-    expect(await stopOrResume('resume', requests, names)).toEqual({ text: 'No items match the filters.', isError: false });
+    expect(await stopOrResume('resume', requests, names)).toEqual({ text: 'No items match the filters.', outcome: 'notice' });
   });
 
   it('throws when a server failed and none changed anything', async () => {
@@ -67,7 +72,7 @@ describe('bulk stop and resume', () => {
 
   it('reports a failed server beside the servers that changed items', async () => {
     fakeApi({ 0: changed(2), 1: { status: 500, body: { error: 'internal error' } } });
-    expect(await stopOrResume('stop', requests, names)).toEqual({ text: 'Stopped 2 items · failed on Cabin: internal error', isError: true });
+    expect(await stopOrResume('stop', requests, names)).toEqual({ text: 'Stopped 2 items · failed on Cabin: internal error', outcome: 'error' });
   });
 });
 

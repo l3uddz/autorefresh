@@ -11,13 +11,13 @@ import { Selector } from '@astryxdesign/core/Selector';
 import { Skeleton } from '@astryxdesign/core/Skeleton';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Text } from '@astryxdesign/core/Text';
-import { useToast } from '@astryxdesign/core/Toast';
 import { TopNav, TopNavHeading, TopNavItem } from '@astryxdesign/core/TopNav';
 import { ChevronDownIcon } from '@heroicons/react/24/outline';
 import { lazy, Suspense, useEffect } from 'react';
 import { useLiveStatus, useStatus, type Connection, type ServerStatus } from './api';
 import { plural } from './format';
-import { onQueueDone, queueFailed, queueText } from './queue';
+import { useNotify } from './notify';
+import { onQueueDone, queueOutcome, queueText } from './queue';
 import { navigate, routeHash, routeScope, useRoute, withScope, type Route } from './route';
 import { useRunNow } from './runs';
 import { StatusPage } from './status';
@@ -27,8 +27,8 @@ const RunsPage = lazy(async () => ({ default: (await import('./runspage')).RunsP
 
 export function App() {
   const connection = useLiveStatus();
-  const showToast = useToast();
-  useEffect(() => onQueueDone(queue => showToast({ body: queueText(queue), type: queueFailed(queue) ? 'error' : 'info', autoHideDuration: 10_000 })), [showToast]);
+  const notify = useNotify();
+  useEffect(() => onQueueDone(queue => notify(queueOutcome(queue), queueText(queue), { autoHideDuration: 10_000 })), [notify]);
   const route = useRoute();
   const status = useStatus();
   const srv = routeScope(route, status.data?.servers.length);

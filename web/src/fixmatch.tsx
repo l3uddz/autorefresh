@@ -12,7 +12,6 @@ import { Link } from '@astryxdesign/core/Link';
 import { Skeleton } from '@astryxdesign/core/Skeleton';
 import { Heading, Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
-import { useToast } from '@astryxdesign/core/Toast';
 import { Token } from '@astryxdesign/core/Token';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -21,6 +20,7 @@ import { askThen } from './confirm';
 import { actionError } from './errors';
 import { plexCounts, plural, titleYear, typeName } from './format';
 import { EpisodeCheckRow } from './episodecheck';
+import { useNotify } from './notify';
 import { DecisionPanel } from './history';
 import { autoEvidence, autoEvidenceText, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isFolderEvidence, listView, matchBody, matchesPath, newerDecision, previewQuery, sameSearch, asksProvider, candidateQuery, compareEpisodeCount, episodeCheckId, type CandidateGroup, type EpisodeCountCheck, type Evidence, type TypedSearch, type YearCheck } from './match';
 import { RemotePoster } from './media';
@@ -85,7 +85,7 @@ function candidateTitle(candidate: Candidate): string {
 
 function FixMatchBody({ item, params, timeline, live, isWide, onClose }: BodyProps) {
   const client = useQueryClient();
-  const showToast = useToast();
+  const notify = useNotify();
   const confirm = useImperativeAlertDialog();
   const status = useStatus().data;
   const isTMDBOn = (status?.tmdb ?? 'off') !== 'off';
@@ -115,10 +115,10 @@ function FixMatchBody({ item, params, timeline, live, isWide, onClose }: BodyPro
   const apply = useMutation({
     mutationFn: (target: Applying) => post(`item/match?${target.params}`, matchBody(target.candidate)),
     onSuccess: (_, target) => {
-      showToast({ body: `Plex accepted the match of ${target.title} to ${candidateTitle(target.candidate)}. Plex now refreshes its metadata.` });
+      notify('success', `Plex accepted the match of ${target.title} to ${candidateTitle(target.candidate)}. Plex now refreshes its metadata.`);
       onClose();
     },
-    onError: error => showToast({ body: actionError(error), type: 'error' }),
+    onError: error => notify('error', actionError(error)),
     // A failed match is recorded too, and a Plex 404 removes the item.
     onSettled: () => invalidateLists(client),
   });

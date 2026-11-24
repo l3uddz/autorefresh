@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ItemDetail, ItemRecord, RefreshAnswer, TimelineEvent } from './api';
-import { decisionView, refreshResult, refreshText, disposition, episodeDiffText, eventView, lastDecision, rowVerdict, searchSource, verdictName } from './timeline';
+import { decisionView, refreshOutcome, refreshResult, refreshText, disposition, episodeDiffText, eventView, lastDecision, rowVerdict, searchSource, verdictName } from './timeline';
 
 const item = (change: Partial<ItemRecord> = {}): ItemRecord => ({ srv: 0, key: '7', cached: false, attempts: 0, refreshes: 0, ...change });
 const event = (id: number, kind: string, change: Partial<TimelineEvent> = {}): TimelineEvent => ({ id, kind, accepted: false, at: `2026-11-${10 + id}T00:00:00Z`, searches: [], ...change });
@@ -50,6 +50,13 @@ describe('refresh result', () => {
     // A fixed item that was not cached: only the refresh was sent.
     expect(refreshResult(answer({}, [event(3, 'request'), event(2, 'completed')], false))).toEqual({ kind: 'sent' });
     expect(refreshResult(answer({ cached: true, reasons: ['no-art'] }, [event(1, 'request')]))).toEqual({ kind: 'missing', reasons: ['no-art'] });
+  });
+
+  it('gives a success outcome only when no check found the item incomplete or gone', () => {
+    expect(refreshOutcome(answer({}, [event(2, 'completed'), event(1, 'request')]))).toBe('success');
+    expect(refreshOutcome(answer({}, [event(1, 'request')]))).toBe('success');
+    expect(refreshOutcome(answer({ cached: true, reasons: ['no-art'] }, [event(1, 'request')]))).toBe('notice');
+    expect(refreshOutcome(answer({}, [event(2, 'gone'), event(1, 'request')]))).toBe('notice');
   });
 
   it('reports only the request when no check saved the reasons', () => {
