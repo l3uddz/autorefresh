@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"time"
 
@@ -208,20 +209,12 @@ func (c *Client) Year(ctx context.Context, id string, show bool) (year int, ok b
 }
 
 func (c *Client) seriesYear(ctx context.Context, id string) (int, bool, error) {
-	var resp struct {
-		Seasons []struct {
-			Number  int    `json:"season_number"`
-			AirDate string `json:"air_date"`
-		} `json:"seasons"`
-	}
-	if err := c.get(ctx, []string{"3", "tv", id}, nil, &resp); err != nil {
-		if errors.Is(err, errNotFound) {
-			return 0, false, nil
-		}
+	seasons, err := c.seriesSeasons(ctx, id)
+	if err != nil {
 		return 0, false, err
 	}
 	var earliest int
-	for _, s := range resp.Seasons {
+	for _, s := range seasons {
 		if s.Number < 1 {
 			continue
 		}
@@ -230,6 +223,50 @@ func (c *Client) seriesYear(ctx context.Context, id string) (int, bool, error) {
 		}
 	}
 	return earliest, earliest > 0, nil
+}
+
+// PremiereYear returns the premiere year of a TMDB series: the year of the
+// air date of its season 1. ok is false if TMDB lists no season 1 or no
+// valid YYYY-MM-DD date for it. A later season's date never stands in for
+// it.
+func (c *Client) PremiereYear(ctx context.Context, id string) (year int, ok bool, err error) {
+	if !tmdbIDPattern.MatchString(id) {
+		return 0, false, errors.New("premiere year: invalid tmdb id")
+	}
+	seasons, err := c.seriesSeasons(ctx, id)
+	if err != nil {
+		return 0, false, err
+	}
+	i := slices.IndexFunc(seasons, func(s seriesSeason) bool { return s.Number == 1 })
+	if i < 0 {
+		return 0, false, nil
+	}
+	date, err := time.Parse(time.DateOnly, seasons[i].AirDate)
+	if err != nil || date.Year() <= 0 {
+		return 0, false, nil
+	}
+	return date.Year(), true, nil
+}
+
+// seriesSeason is a season of a TMDB series with its air date.
+type seriesSeason struct {
+	Number  int    `json:"season_number"`
+	AirDate string `json:"air_date"`
+}
+
+// seriesSeasons returns the seasons of the TMDB series id. A series that
+// TMDB does not know has none.
+func (c *Client) seriesSeasons(ctx context.Context, id string) ([]seriesSeason, error) {
+	var resp struct {
+		Seasons []seriesSeason `json:"seasons"`
+	}
+	if err := c.get(ctx, []string{"3", "tv", id}, nil, &resp); err != nil {
+		if errors.Is(err, errNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return resp.Seasons, nil
 }
 
 // SeasonEpisodes returns the catalog episode numbers for one regular season.
