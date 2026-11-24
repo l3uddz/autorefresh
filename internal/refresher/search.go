@@ -37,12 +37,19 @@ type MatchResult struct {
 // confirmed the series. Without a match, Diff is the first default season with
 // extra or invalid numbers, or the first default season missing episodes when
 // coverage is too low. Diff is zero when Plex lists no complete regular
-// episodes.
+// episodes. Seasons are the seasons that the deciding comparison read: those
+// of the confirming episode group, or else the default seasons up to the one
+// that differs. Stopped is true when that season ended the check before
+// the later seasons of Plex. EpisodeGroups names each episode group whose
+// seasons the check read.
 type EpisodeResult struct {
-	Match        bool
-	Episodes     int
-	EpisodeGroup string
-	Diff         store.EpisodeDiff
+	Match         bool
+	Episodes      int
+	EpisodeGroup  string
+	Diff          store.EpisodeDiff
+	Seasons       []SeasonEpisodes
+	Stopped       bool
+	EpisodeGroups []string
 }
 
 func (r *Refresher) lookupItem(server, key string) (manualItem, error) {
@@ -180,5 +187,8 @@ func (r *Refresher) EpisodeCheck(ctx context.Context, server, key, id string) (E
 		return EpisodeResult{}, ErrUnknownItem
 	}
 	result, err := compareEpisodes(ctx, it.server.Plex, r.opts.TMDB, key, id)
-	return EpisodeResult{Match: result.count > 0, Episodes: result.count, EpisodeGroup: result.group, Diff: result.diff}, err
+	return EpisodeResult{
+		Match: result.count > 0, Episodes: result.count, EpisodeGroup: result.group, Diff: result.diff,
+		Seasons: result.seasons, Stopped: result.stopped, EpisodeGroups: result.groups,
+	}, err
 }

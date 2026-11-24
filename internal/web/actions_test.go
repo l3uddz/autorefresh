@@ -351,11 +351,14 @@ func TestEpisodeCheckAnswersTheDiff(t *testing.T) {
 		result refresher.EpisodeResult
 		want   string
 	}{
-		{"match", refresher.EpisodeResult{Match: true, Episodes: 10}, `{"match":true,"episodes":10}`},
-		{"match via group", refresher.EpisodeResult{Match: true, Episodes: 14, EpisodeGroup: "DVD Order"}, `{"match":true,"episodes":14,"episodeGroup":"DVD Order"}`},
-		{"no episodes", refresher.EpisodeResult{}, `{"match":false,"episodes":0}`},
+		{"match", refresher.EpisodeResult{Match: true, Episodes: 10}, `{"match":true,"episodes":10,"seasons":[]}`},
+		{"match via group", refresher.EpisodeResult{Match: true, Episodes: 14, EpisodeGroup: "DVD Order", EpisodeGroups: []string{"Aired Order", "DVD Order"}},
+			`{"match":true,"episodes":14,"episodeGroup":"DVD Order","seasons":[],"episodeGroups":["Aired Order","DVD Order"]}`},
+		{"no episodes", refresher.EpisodeResult{}, `{"match":false,"episodes":0,"seasons":[]}`},
 		{"differs", refresher.EpisodeResult{Diff: store.EpisodeDiff{Season: 3, Plex: 8, TMDB: 10, Missing: []int{9, 10}}},
-			`{"match":false,"episodes":0,"diff":{"season":3,"plex":8,"tmdb":10,"missing":[9,10]}}`},
+			`{"match":false,"episodes":0,"diff":{"season":3,"plex":8,"tmdb":10,"missing":[9,10]},"seasons":[]}`},
+		{"seasons sorted, never null", refresher.EpisodeResult{Seasons: []refresher.SeasonEpisodes{{Season: 2, Plex: []int{3, 1, 2}}}, Stopped: true},
+			`{"match":false,"episodes":0,"seasons":[{"season":2,"plex":[1,2,3],"tmdb":[]}],"stopped":true}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := New(Options{Actions: fakeEpisodeCheck{result: tc.result}, Servers: []PlexServer{{Name: "home"}}})
