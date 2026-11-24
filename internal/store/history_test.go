@@ -134,7 +134,7 @@ func TestRecordGoneWritesEventAndDeletesRow(t *testing.T) {
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
 	at := base.Add(time.Hour)
 
-	if err := s.RecordGone(srv, "a", at, SourceAuto, 0); err != nil {
+	if err := s.RecordGone(srv, "a", at, SourceAuto, ActionRefresh, 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := rows(t, s)["a"]; ok {
@@ -142,10 +142,10 @@ func TestRecordGoneWritesEventAndDeletesRow(t *testing.T) {
 	}
 	events, _ := s.Timeline(srv, "a")
 	if len(events) != 1 || events[0].Kind != EventGone || events[0].Title != "Title a" || events[0].Section != sec ||
-		!events[0].At.Equal(at) || events[0].Source != SourceAuto {
+		!events[0].At.Equal(at) || events[0].Source != SourceAuto || events[0].Action != ActionRefresh {
 		t.Fatalf("events = %+v", events)
 	}
-	if err := s.RecordGone(srv, "a", at, SourceAuto, 0); err != nil {
+	if err := s.RecordGone(srv, "a", at, SourceAuto, "", 0); err != nil {
 		t.Fatalf("missing row: %v", err)
 	}
 	if events, _ := s.Timeline(srv, "a"); len(events) != 1 {
@@ -574,6 +574,10 @@ func TestRecordManualUsesAdmissionSnapshotAcrossRowChanges(t *testing.T) {
 			events, err := s.Timeline(srv, "1")
 			if err != nil || len(events) != 1 || events[0].Kind != tc.kind || events[0].Title != snapshot.Title || events[0].Source != SourceManual {
 				t.Fatalf("events = %+v, %v", events, err)
+			}
+			// Each event keeps the action of the request, also a gone event.
+			if events[0].Action != ActionRefresh {
+				t.Errorf("event action = %q, want %q", events[0].Action, ActionRefresh)
 			}
 		})
 	}

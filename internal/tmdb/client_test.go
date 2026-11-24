@@ -351,6 +351,74 @@ func TestYearSeries(t *testing.T) {
 	}
 }
 
+func TestPremiereYear(t *testing.T) {
+	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/3/tv/75367" || r.URL.RawQuery != "" {
+			t.Errorf("request = %s, want /3/tv/75367", r.URL)
+		}
+		file(t, "tv_seasons.json")(w, r)
+	})
+
+	year, ok, err := c.PremiereYear(context.Background(), "75367")
+	if err != nil || !ok || year != 2022 {
+		t.Fatalf("PremiereYear = %d, %v, %v, want 2022 of season 1, ignoring Season 0", year, ok, err)
+	}
+}
+
+// Only season 1 gives the premiere year: a later season's date never
+// stands in for a missing one.
+func TestPremiereYearNothing(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		body string
+	}{
+		{"only specials", `{"seasons":[{"season_number":0,"air_date":"2017-11-27"}]}`},
+		{"first season undated", `{"seasons":[{"season_number":2,"air_date":"2022-01-01"},{"season_number":1,"air_date":null}]}`},
+		{"no season 1", `{"seasons":[{"season_number":3,"air_date":"2021-01-01"},{"season_number":2,"air_date":"2019-01-01"}]}`},
+		{"bad date format", `{"seasons":[{"season_number":1,"air_date":"20220101"}]}`},
+		{"invalid date", `{"seasons":[{"season_number":1,"air_date":"2022-99-99"}]}`},
+		{"year 0", `{"seasons":[{"season_number":1,"air_date":"0000-01-01"}]}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := serve(t, func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte(tt.body)) })
+			year, ok, err := c.PremiereYear(context.Background(), "1")
+			if err != nil || ok || year != 0 {
+				t.Fatalf("PremiereYear = %d, %v, %v, want nothing", year, ok, err)
+			}
+		})
+	}
+	t.Run("season 1 between specials and a later season", func(t *testing.T) {
+		c := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Write([]byte(`{"seasons":[{"season_number":0,"air_date":"2016-01-01"},{"season_number":2,"air_date":"2020-01-01"},{"season_number":1,"air_date":"2019-01-01"}]}`))
+		})
+		if year, ok, err := c.PremiereYear(context.Background(), "1"); err != nil || !ok || year != 2019 {
+			t.Fatalf("PremiereYear = %d, %v, %v, want 2019 of season 1", year, ok, err)
+		}
+	})
+	t.Run("404", func(t *testing.T) {
+		c := serve(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) })
+		if year, ok, err := c.PremiereYear(context.Background(), "999999"); err != nil || ok || year != 0 {
+			t.Fatalf("PremiereYear on 404 = %d, %v, %v, want nothing without error", year, ok, err)
+		}
+	})
+	t.Run("invalid id", func(t *testing.T) {
+		if _, _, err := noRequests(t).PremiereYear(context.Background(), "1/2"); err == nil {
+			t.Error("PremiereYear(1/2) returned no error")
+		}
+	})
+	t.Run("500", func(t *testing.T) {
+		c := serve(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) })
+		_, _, err := c.PremiereYear(context.Background(), "75367")
+		checkError(t, err, false)
+	})
+}
+
+// noRequests returns a client whose server fails the test on any request.
+func noRequests(t *testing.T) *Client {
+	t.Helper()
+	return serve(t, func(_ http.ResponseWriter, r *http.Request) { t.Errorf("unexpected request %s", r.URL) })
+}
+
 func TestYearMovie(t *testing.T) {
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/3/movie/272165/release_dates" || r.URL.RawQuery != "" {

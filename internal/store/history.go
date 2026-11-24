@@ -333,9 +333,10 @@ func snapshotEvent(row Item, at time.Time, kind EventKind, source Source) Event 
 }
 
 // RecordGone writes a gone event of the run runID (0: none) with a snapshot
-// of the row and deletes the row, in one transaction. It writes nothing for
-// a missing row.
-func (s *Store) RecordGone(server, ratingKey string, at time.Time, source Source, runID int64) error {
+// of the row and deletes the row, in one transaction. action is the action
+// of the request that found the item gone, or empty for a removal that no
+// request found. It writes nothing for a missing row.
+func (s *Store) RecordGone(server, ratingKey string, at time.Time, source Source, action Action, runID int64) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin gone: %w", err)
@@ -347,7 +348,7 @@ func (s *Store) RecordGone(server, ratingKey string, at time.Time, source Source
 		return err
 	}
 	e := snapshotEvent(snap, at, EventGone, source)
-	e.RunID = runID
+	e.Action, e.RunID = action, runID
 	if _, err := insertEvent(tx, e); err != nil {
 		return err
 	}

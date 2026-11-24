@@ -44,7 +44,7 @@ type Store interface {
 	Due(q store.DueQuery) (items []store.Item, total int, err error)
 	CountIncomplete(server string, sections []string, ignored store.Reasons) (int, error)
 	RecordRequest(r store.Request) error
-	RecordGone(server, ratingKey string, at time.Time, source store.Source, runID int64) error
+	RecordGone(server, ratingKey string, at time.Time, source store.Source, action store.Action, runID int64) error
 	RecordMatchDecision(d store.MatchDecision) error
 	SaveLibraries(server string, libs []store.LibraryInfo) error
 	SetPath(server, ratingKey, path string) error

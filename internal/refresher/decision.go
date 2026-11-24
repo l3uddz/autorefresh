@@ -25,7 +25,7 @@ const (
 	verdictDifferent   = "different candidate"
 	verdictNotCompared = "not compared"
 	verdictYearAgrees  = "year agrees" // of a year conflict that another search's year caused
-	verdictOtherTitle  = "other title" // a title search candidate with another title or year
+	verdictOtherTitle  = "other title" // a title search candidate with another title or year that TMDB did not check
 )
 
 // decisionLog collects one fix match evaluation as it happens.
@@ -137,17 +137,23 @@ func verdict(m store.MatchSearch, c store.MatchCandidate, guid, conflict string,
 }
 
 // judgeTitle sets the verdict of each candidate of the title search at pos
-// of a series it with the folder year pathYear. A candidate with another
-// title or year gets "other title". Of the others, picked is the GUID of the
-// match, and conflict the conflict of no match. A handled failure leaves
-// every verdict empty.
-func (d *decisionLog) judgeTitle(pos int, it store.Item, pathYear int, picked, conflict string) {
+// of a series it with the folder year pathYear. A candidate whose TMDB year
+// the title fallback checked gets its verdict of checked, by GUID, but only
+// in a row that the check could select (staleYear): Plex can list one GUID
+// in several rows. Any
+// other candidate with another title or year gets "other title". Of the
+// others, picked is the GUID of the match, and conflict the conflict of no
+// match. A handled failure leaves every verdict empty.
+func (d *decisionLog) judgeTitle(pos int, it store.Item, pathYear int, picked, conflict string, checked map[string]string) {
 	if d.err != nil {
 		return
 	}
 	m := &d.searches[pos]
 	for i, c := range m.Candidates {
+		v, ok := checked[c.GUID]
 		switch {
+		case ok && staleYear(it, pathYear, c.GUID, c.Name, c.Year):
+			m.Candidates[i].Verdict = v
 		case !titleAgrees(it, pathYear, c.Name, c.Year):
 			m.Candidates[i].Verdict = verdictOtherTitle
 		case conflict != "":

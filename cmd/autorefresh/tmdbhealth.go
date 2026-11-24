@@ -30,6 +30,12 @@ func (h tmdbHealth) Year(ctx context.Context, id string, show bool) (int, bool, 
 	return year, found, err
 }
 
+func (h tmdbHealth) PremiereYear(ctx context.Context, id string) (int, bool, error) {
+	year, found, err := h.tmdb.PremiereYear(ctx, id)
+	h.report(ctx, err)
+	return year, found, err
+}
+
 func (h tmdbHealth) SeasonEpisodes(ctx context.Context, id string, season int) ([]int, error) {
 	episodes, err := h.tmdb.SeasonEpisodes(ctx, id, season)
 	h.report(ctx, err)

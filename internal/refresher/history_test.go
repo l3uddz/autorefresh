@@ -152,8 +152,29 @@ func TestNotFoundRecordsGoneEvent(t *testing.T) {
 	}
 	events := f.timeline("101")
 	if len(events) != 1 || events[0].Kind != store.EventGone || events[0].Source != store.SourceAuto ||
-		events[0].Title != "Title 101" || !events[0].At.Equal(t0) {
-		t.Errorf("events = %+v, want one gone event at %v", events, t0)
+		events[0].Title != "Title 101" || !events[0].At.Equal(t0) || events[0].Action != store.ActionRefresh {
+		t.Fatalf("events = %+v, want one gone event of the refresh at %v", events, t0)
+	}
+	if run := f.onlyRun(); run.Refreshed != 1 || events[0].RunID != run.ID {
+		t.Errorf("run = %+v, want the refresh of its gone event counted", run)
+	}
+}
+
+// A match request that Plex answers with a 404 records the action of the
+// match on the gone event, so the history lists it under its count.
+func TestMatchNotFoundRecordsGoneEventWithTheAction(t *testing.T) {
+	f, fp := matchFixture(t)
+	fp.matchErrs["101"] = errNotFound
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/m")
+	events := f.timeline("101")
+	if len(events) == 0 || events[0].Kind != store.EventGone || events[0].Action != store.ActionMatch {
+		t.Fatalf("events = %+v, want a gone event of the match first", events)
+	}
+	if run := f.onlyRun(); run.Matched != 1 || events[0].RunID != run.ID {
+		t.Errorf("run = %+v, want the match of its gone event counted", run)
 	}
 }
 

@@ -158,8 +158,9 @@ export function runCounts(run: RunRecord): RunCount[] {
 
 /** Returns the groups with only the entries that shows selects, without
  * empty groups. The history of a run does not list every counted item, such
- * as a refresh that Plex answered with a 404, which it lists as removed, so
- * the entries can be fewer than the count. */
+ * as a request that found its item gone in a run from before autorefresh
+ * recorded its action, or a second failure of one item, so the entries can
+ * be fewer than the count. */
 export function filterGroups(groups: RunGroup[], shows: CountFilter): RunGroup[] {
   return groups
     .map(group => ({ ...group, entries: group.entries.filter(entry => shows(group.id, entry)) }))
@@ -308,9 +309,17 @@ function eventEntry(event: RunEvent, decision?: RunEvent): RunEntry {
     detail,
     at: event.at,
     tab: event.kind === 'completed' ? 'fixed' : 'attention',
-    sent: event.kind === 'request' ? (event.action === 'refresh' ? 'refresh' : 'match') : undefined,
+    sent: sentKind(event),
     hasFailedDecision: decision?.outcome === 'failed',
   };
+}
+
+/** Returns the kind of request that event counts as sent: a request, or a
+ * removal that a request found, which keeps its action. A removal that a
+ * read or a check found has no action and counts as none. */
+function sentKind(event: RunEvent): RunEntry['sent'] {
+  if (event.kind !== 'request' && !(event.kind === 'gone' && event.action)) return undefined;
+  return event.action === 'refresh' ? 'refresh' : 'match';
 }
 
 /** Returns why a run lists no item: it is still at work, it is from before

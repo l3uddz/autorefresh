@@ -298,14 +298,19 @@ func TestTitleMatchFolderIDWithSeveralTMDBEntries(t *testing.T) {
 }
 
 // A title candidate whose year differs from the year of the series folder
-// is another series, such as a remake.
+// is another series, such as a remake. No TMDB year can equal both the
+// folder year and the other year of the item, so TMDB is not asked.
 func TestTitleMatchFolderYearDiffers(t *testing.T) {
-	f, fp, _ := titleFixture(t)
+	f, fp, ft := titleFixture(t)
 	fp.paths["201"] = []string{"/tv/Title 201 (2012)"}
 
 	f.run(t0)
 
 	wantCalls(t, sends(fp.calls), "Refresh 201")
+	if slices.ContainsFunc(fp.calls, func(c string) bool { return strings.HasPrefix(c, "ProviderSeries ") }) {
+		t.Errorf("calls = %q, want no provider lookup", fp.calls)
+	}
+	wantCalls(t, ft.calls)
 	e := f.decision("201")
 	wantDecision(t, e, store.DecisionNoMatch, "",
 		"title Title 201: plex://show/t=other title plex://show/o=other title plex://show/y=other title")
@@ -549,4 +554,286 @@ func TestRefreshItemAppliesTheTitleMatch(t *testing.T) {
 	if e := f.newestEvent("201"); e.Kind != store.EventCompleted || e.FixedMatch != store.ActionTitleMatch || e.FixedMatchEventID != req.ID {
 		t.Errorf("newest event = %+v, want a completion credited to title match %d", e, req.ID)
 	}
+}
+
+// staleTitleFixture returns the show 201 ("Title 201", 2020, in a folder of
+// 2020) whose title search finds the series only with the stale Plex year
+// 2016, and one series with another title. The provider gives tmdb-88 for it, TMDB gives
+// that ID the year 2020, and the local and TMDB episodes 1 to 3 of season 1
+// agree.
+func staleTitleFixture(t *testing.T) (*fixture, *fakePlex, *fakeTMDB) {
+	t.Helper()
+	f, fp, ft := titleFixture(t)
+	fp.candidates[titleSearch] = []plex.Candidate{
+		{GUID: "plex://show/s", Name: "Title 201", Year: 2016, Type: "show"},
+		{GUID: "plex://show/o", Name: "Title 2010", Year: 2020, Type: "show"},
+	}
+	fp.series = map[string]plex.Series{"plex://show/s": {TMDBID: "88"}}
+	ft.premiereYears = map[string]int{"88": 2020}
+	return f, fp, ft
+}
+
+// TMDB's year of the TMDB ID that the provider gives stands in for a stale
+// Plex year, and the episode numbers confirm the series.
+func TestTitleMatchStalePlexYearConfirmedByTMDB(t *testing.T) {
+	f, fp, ft := staleTitleFixture(t)
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s", "Refresh 201")
+	wantCalls(t, ft.calls, "PremiereYear 88", "SeasonEpisodes 88 1")
+	e := f.decision("201")
+	wantDecision(t, e, store.DecisionMatched, "", "title Title 201: plex://show/s=picked plex://show/o=other title")
+	wantYears(t, e, 2020, 2020, 3)
+	wantEvidence(t, e, store.MatchEvidence{TMDBID: "88"})
+	req := f.matchRequest("201")
+	if req.Action != store.ActionTitleMatch || !req.Accepted || req.MatchYear != 2016 || req.TMDBYear != 2020 {
+		t.Errorf("match request = %+v, want an accepted title-match of the 2016 candidate with the TMDB year 2020", req)
+	}
+}
+
+// Without a folder year, TMDB's year must equal the year of the item.
+func TestTitleMatchStalePlexYearWithoutFolderYear(t *testing.T) {
+	f, fp, _ := staleTitleFixture(t)
+	fp.paths["201"] = []string{"/tv/Title 201"}
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s", "Refresh 201")
+	wantYears(t, f.decision("201"), 0, 2020, 3)
+}
+
+// A Plex year that differs is still another series when TMDB's year does
+// not equal the year of the item, also when it is within 1 of it.
+func TestTitleMatchStalePlexYearNotConfirmedByTMDB(t *testing.T) {
+	for _, year := range []int{2016, 2021} {
+		t.Run(fmt.Sprint(year), func(t *testing.T) {
+			f, fp, ft := staleTitleFixture(t)
+			ft.premiereYears["88"] = year
+
+			f.run(t0)
+
+			wantCalls(t, sends(fp.calls), "Refresh 201")
+			wantCalls(t, ft.calls, "PremiereYear 88")
+			e := f.decision("201")
+			wantDecision(t, e, store.DecisionNoMatch, "year differs",
+				"title Title 201: plex://show/s=year differs plex://show/o=other title")
+			wantYears(t, e, 2020, year, 0)
+			wantEvidence(t, e, store.MatchEvidence{TMDBID: "88"})
+		})
+	}
+}
+
+// Without a TMDB ID from the provider, or a year from TMDB, nothing stands
+// in for the stale Plex year.
+func TestTitleMatchStalePlexYearWithoutTMDBYear(t *testing.T) {
+	for name, c := range map[string]struct {
+		series map[string]plex.Series
+		tmdbID string
+		calls  []string
+	}{
+		"unknown GUID": {series: map[string]plex.Series{}},
+		"no TMDB ID":   {series: map[string]plex.Series{"plex://show/s": {}}},
+		"no TMDB year": {series: map[string]plex.Series{"plex://show/s": {TMDBID: "77"}}, tmdbID: "77", calls: []string{"PremiereYear 77"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, fp, ft := staleTitleFixture(t)
+			fp.series = c.series
+
+			f.run(t0)
+
+			wantCalls(t, sends(fp.calls), "Refresh 201")
+			wantCalls(t, ft.calls, c.calls...)
+			e := f.decision("201")
+			wantDecision(t, e, store.DecisionNoMatch, "year differs",
+				"title Title 201: plex://show/s=year differs plex://show/o=other title")
+			wantYears(t, e, 2020, 0, 0)
+			wantEvidence(t, e, store.MatchEvidence{TMDBID: c.tmdbID})
+		})
+	}
+}
+
+// A row of the search with the GUID of the checked candidate but another
+// title is not the checked candidate, so it keeps "other title".
+func TestTitleMatchStalePlexYearVerdictByRow(t *testing.T) {
+	f, fp, _ := staleTitleFixture(t)
+	fp.candidates[titleSearch] = append([]plex.Candidate{{GUID: "plex://show/s", Name: "Title 201 Special", Year: 2018}}, fp.candidates[titleSearch]...)
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s", "Refresh 201")
+	wantDecision(t, f.decision("201"), store.DecisionMatched, "",
+		"title Title 201: plex://show/s=other title plex://show/s=picked plex://show/o=other title")
+}
+
+// Plex can list one series in two rows. It is one candidate: checked once,
+// and not several candidates.
+func TestTitleMatchStalePlexYearSameGUIDTwice(t *testing.T) {
+	f, fp, ft := staleTitleFixture(t)
+	fp.candidates[titleSearch] = append(fp.candidates[titleSearch], plex.Candidate{GUID: "plex://show/s", Name: "Title 201", Year: 2017})
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Match 201 plex://show/s", "Refresh 201")
+	wantCalls(t, ft.calls, "PremiereYear 88", "SeasonEpisodes 88 1")
+	wantDecision(t, f.decision("201"), store.DecisionMatched, "",
+		"title Title 201: plex://show/s=picked plex://show/o=other title plex://show/s=picked")
+}
+
+// A candidate without a Plex year has no year that could be stale, so
+// TMDB's year does not stand in for it.
+func TestTitleMatchCandidateWithoutPlexYear(t *testing.T) {
+	f, fp, ft := staleTitleFixture(t)
+	fp.candidates[titleSearch][0].Year = 0
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 201")
+	wantCalls(t, ft.calls)
+	wantDecision(t, f.decision("201"), store.DecisionNoMatch, "", "title Title 201: plex://show/s=other title plex://show/o=other title")
+}
+
+// TMDB's year alone does not confirm the series: its episode numbers must
+// agree too.
+func TestTitleMatchStalePlexYearEpisodesDiffer(t *testing.T) {
+	f, fp, ft := staleTitleFixture(t)
+	ft.seasons["88 1"] = []int{1, 2}
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 201")
+	e := f.decision("201")
+	wantDecision(t, e, store.DecisionNoMatch, "not confirmed",
+		"title Title 201: plex://show/s=not confirmed plex://show/o=other title")
+	wantYears(t, e, 2020, 2020, 0)
+	wantEvidence(t, e, store.MatchEvidence{TMDBID: "88",
+		EpisodeDiff: store.EpisodeDiff{Season: 1, Plex: 3, TMDB: 2, Extra: []int{3}}})
+}
+
+// The folder TMDB IDs still apply to a candidate that TMDB's year confirms.
+func TestTitleMatchStalePlexYearFolderTMDBIDDiffers(t *testing.T) {
+	f, fp, ft := staleTitleFixture(t)
+	fp.paths["201"] = []string{"/tv/Title 201 (2020) {tmdb-99}"}
+	ft.premiereYears["99"] = 2020
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 201")
+	wantCalls(t, ft.calls, "PremiereYear 88")
+	wantDecision(t, f.decision("201"), store.DecisionNoMatch, "folder id differs",
+		"path tmdb-99:", "title Title 201: plex://show/s=folder id differs plex://show/o=other title")
+}
+
+// Of the candidates with the title of the item, TMDB's year must confirm
+// only one.
+func TestTitleMatchStalePlexYearOfSeveralCandidates(t *testing.T) {
+	for name, c := range map[string]struct {
+		year     int
+		outcome  store.DecisionOutcome
+		conflict string
+		verdicts string
+		sends    []string
+	}{
+		"one agrees": {2016, store.DecisionMatched, "",
+			"title Title 201: plex://show/s=picked plex://show/o=other title plex://show/r=year differs",
+			[]string{"Match 201 plex://show/s", "Refresh 201"}},
+		"both agree": {2020, store.DecisionNoMatch, "several candidates",
+			"title Title 201: plex://show/s=several candidates plex://show/o=other title plex://show/r=several candidates",
+			[]string{"Refresh 201"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, fp, ft := staleTitleFixture(t)
+			fp.candidates[titleSearch] = append(fp.candidates[titleSearch], plex.Candidate{GUID: "plex://show/r", Name: "Title 201", Year: 2005})
+			fp.series["plex://show/r"] = plex.Series{TMDBID: "55"}
+			ft.premiereYears["55"] = c.year
+
+			f.run(t0)
+
+			wantCalls(t, sends(fp.calls), c.sends...)
+			e := f.decision("201")
+			wantDecision(t, e, c.outcome, c.conflict, c.verdicts)
+		})
+	}
+}
+
+// More candidates with the title of the item than maxTitleYearChecks are
+// not checked.
+func TestTitleMatchTooManyStaleCandidates(t *testing.T) {
+	f, fp, ft := staleTitleFixture(t)
+	var verdicts []string
+	cands := []plex.Candidate{}
+	for i := range maxTitleYearChecks + 1 {
+		guid := fmt.Sprintf("plex://show/s%d", i)
+		cands = append(cands, plex.Candidate{GUID: guid, Name: "Title 201", Year: 2000 + i})
+		verdicts = append(verdicts, guid+"=several candidates")
+	}
+	fp.candidates[titleSearch] = cands
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 201")
+	if slices.ContainsFunc(fp.calls, func(c string) bool { return strings.HasPrefix(c, "ProviderSeries ") }) {
+		t.Errorf("calls = %q, want no provider lookup", fp.calls)
+	}
+	wantCalls(t, ft.calls)
+	wantDecision(t, f.decision("201"), store.DecisionNoMatch, "several candidates",
+		"title Title 201: "+strings.Join(verdicts, " "))
+}
+
+// A failed TMDB year request is a handled failure that turns TMDB off for
+// the run: the item gets a plain refresh.
+func TestTitleMatchStalePlexYearTMDBFailure(t *testing.T) {
+	f, fp, ft := staleTitleFixture(t)
+	ft.premiereErrs = map[string]error{"88": fmt.Errorf("GET /3/tv/88: 500 Internal Server Error")}
+	second := unmatchedItem("202")
+	second.AddedAt = addedAt.Add(time.Hour)
+	f.seed(testServer, showsLib, second, store.Unmatched, 1)
+	fp.candidates["202 Title 202"] = []plex.Candidate{{GUID: "plex://show/t2", Name: "Title 202", Year: 2016}}
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 201", "Refresh 202")
+	e := f.decision("201")
+	if store.DecisionOutcome(e.Outcome) != store.DecisionFailed || !strings.Contains(e.Error, "tmdb-88") {
+		t.Errorf("decision = %q (%q), want failed with the TMDB error", e.Outcome, e.Error)
+	}
+	if slices.ContainsFunc(fp.calls, func(c string) bool { return strings.HasPrefix(c, "SearchMatches 202 Title 202") }) {
+		t.Errorf("calls = %q, want no title search of 202 after TMDB was turned off", fp.calls)
+	}
+	if run := f.onlyRun(); run.Status != store.RunFinished || run.Failed != 1 {
+		t.Errorf("run = %+v, want a finished run with 1 failure", run)
+	}
+}
+
+// A failed provider lookup of a candidate with a stale Plex year is a
+// handled failure too.
+func TestTitleMatchStalePlexYearProviderFailure(t *testing.T) {
+	f, fp, ft := staleTitleFixture(t)
+	fp.seriesErrs = map[string]error{"plex://show/s": fmt.Errorf("provider series: %w", plex.ErrUnavailable)}
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 201")
+	wantCalls(t, ft.calls)
+	if e := f.decision("201"); store.DecisionOutcome(e.Outcome) != store.DecisionFailed || e.Error == "" {
+		t.Errorf("decision = %q (%q), want failed with the error", e.Outcome, e.Error)
+	}
+}
+
+// A failed episode read after TMDB's year confirmed a stale Plex year is a
+// failed decision that keeps the TMDB year, so the dashboard can say which
+// check passed.
+func TestTitleMatchStalePlexYearEpisodeReadFailure(t *testing.T) {
+	f, fp, _ := staleTitleFixture(t)
+	fp.episodeReadErr = fmt.Errorf("504 Gateway Timeout: %w", plex.ErrUnavailable)
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Refresh 201")
+	e := f.decision("201")
+	if store.DecisionOutcome(e.Outcome) != store.DecisionFailed || !strings.Contains(e.Error, "504") {
+		t.Errorf("decision = %q (%q), want failed with the read error", e.Outcome, e.Error)
+	}
+	wantYears(t, e, 2020, 2020, 0)
+	wantEvidence(t, e, store.MatchEvidence{TMDBID: "88"})
 }

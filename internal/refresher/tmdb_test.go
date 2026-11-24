@@ -22,6 +22,8 @@ type fakeTMDB struct {
 	errs            map[string]error
 	years           map[string]int
 	yearErrs        map[string]error
+	premiereYears   map[string]int // by TMDB ID
+	premiereErrs    map[string]error
 	seasons         map[string][]int
 	seasonErrs      map[string]error
 	episodeGroups   map[string][]tmdb.EpisodeGroup
@@ -48,6 +50,15 @@ func (f *fakeTMDB) Year(_ context.Context, id string, show bool) (int, bool, err
 		return 0, false, err
 	}
 	y, ok := f.years[key]
+	return y, ok, nil
+}
+
+func (f *fakeTMDB) PremiereYear(_ context.Context, id string) (int, bool, error) {
+	f.calls = append(f.calls, "PremiereYear "+id)
+	if err := f.premiereErrs[id]; err != nil {
+		return 0, false, err
+	}
+	y, ok := f.premiereYears[id]
 	return y, ok, nil
 }
 
@@ -361,6 +372,11 @@ func (c cancelTMDB) Find(context.Context, string, string, bool) (string, bool, e
 func (c cancelTMDB) Year(context.Context, string, bool) (int, bool, error) {
 	c.cancel()
 	return 0, false, fmt.Errorf("GET /3/tv/77: %w", context.Canceled)
+}
+
+func (c cancelTMDB) PremiereYear(context.Context, string) (int, bool, error) {
+	c.cancel()
+	return 0, false, context.Canceled
 }
 
 func (c cancelTMDB) SeasonEpisodes(context.Context, string, int) ([]int, error) {

@@ -116,7 +116,9 @@ func writeManual(tx *sql.Tx, m ManualRecord) error {
 		row = m.Snapshot
 	}
 	if m.Gone {
-		if _, err := insertEvent(tx, snapshotEvent(row, m.At, EventGone, SourceManual)); err != nil {
+		e := snapshotEvent(row, m.At, EventGone, SourceManual)
+		e.Action = m.Action
+		if _, err := insertEvent(tx, e); err != nil {
 			return err
 		}
 		if found {

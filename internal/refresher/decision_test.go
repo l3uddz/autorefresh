@@ -607,8 +607,8 @@ func TestPathLookupErrorRecordsFailed(t *testing.T) {
 		f.run(t0)
 
 		events := f.timeline("201")
-		if len(events) == 0 || events[0].Kind != store.EventGone {
-			t.Fatalf("events = %+v, want a gone event first", events)
+		if len(events) == 0 || events[0].Kind != store.EventGone || events[0].Action != "" {
+			t.Fatalf("events = %+v, want a gone event without a request first", events)
 		}
 		if got := f.decisions("201"); len(got) != 0 {
 			t.Errorf("decisions = %+v, want none", got)
@@ -797,8 +797,8 @@ func TestRunMatchStopsSettlingWhenTheItemIsGone(t *testing.T) {
 	if _, found := f.row(testServer, "1", "101"); found {
 		t.Error("gone item still in the cache")
 	}
-	if e := f.timeline("101")[0]; e.Kind != store.EventGone || e.Source != store.SourceAuto || e.RunID == 0 {
-		t.Errorf("newest event = %+v, want a gone event of the run", e)
+	if e := f.timeline("101")[0]; e.Kind != store.EventGone || e.Source != store.SourceAuto || e.RunID == 0 || e.Action != store.ActionRefresh {
+		t.Errorf("newest event = %+v, want a gone event of the refresh of the run", e)
 	}
 	if got := f.onlyRun(); got.Status != store.RunFinished {
 		t.Errorf("run = %+v, want a finished run", got)
