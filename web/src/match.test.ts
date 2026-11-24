@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Candidate, MatchSearch, TimelineEvent } from './api';
-import { autoEvidence, autoEvidenceText, autoMatchPath, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isIDSearch, listView, matchBody, matchesPath, asksProvider, candidateQuery, compareEpisodeCount, episodeCheckId, sameSearch, tmdbIdOf } from './match';
+import type { Candidate, EpisodeCheck, MatchSearch, TimelineEvent } from './api';
+import { autoEvidence, autoEvidenceText, autoMatchPath, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isIDSearch, listView, matchBody, matchesPath, asksProvider, candidateQuery, compareEpisodeCount, episodeCheckId, sameSearch, seasonView, tmdbIdOf, episodeCheckText, comparisonNotes } from './match';
 
 const cand = (guid: string, change: Partial<Candidate> = {}): Candidate => ({ guid, score: 0, ...change });
 const search = (query: string, candidates: Candidate[], change: Partial<MatchSearch> = {}): MatchSearch => ({ query, failed: false, candidates, ...change });
@@ -246,5 +246,75 @@ describe('checkSearch', () => {
     expect(matchesPath('srv=0&key=7', { q: 'A & B', year: 2019 })).toBe('item/matches?srv=0&key=7&q=A+%26+B&year=2019');
     expect(matchBody(cand('plex://a', { name: 'A', year: 2019, summary: 'S', score: 9, verdict: 'picked' }))).toEqual({ guid: 'plex://a', name: 'A', year: 2019 });
     expect(matchBody(cand('plex://a'))).toEqual({ guid: 'plex://a', name: '', year: 0 });
+  });
+});
+
+describe('seasonView', () => {
+  it('lists each number once in order with the side that has it', () => {
+    expect(seasonView({ season: 2, plex: [1, 2, 5], tmdb: [1, 2, 3, 4] })).toEqual({
+      season: 2,
+      plex: 3,
+      tmdb: 4,
+      episodes: [
+        { number: 1, place: 'both' },
+        { number: 2, place: 'both' },
+        { number: 3, place: 'missing' },
+        { number: 4, place: 'missing' },
+        { number: 5, place: 'extra' },
+      ],
+      duplicates: [],
+    });
+  });
+
+  it('keeps a number that Plex lists twice once, and names it', () => {
+    const view = seasonView({ season: 1, plex: [1, 1, 1, 2], tmdb: [1] });
+    expect(view.episodes).toEqual([{ number: 1, place: 'both' }, { number: 2, place: 'extra' }]);
+    expect(view.duplicates).toEqual([1]);
+    expect(view.plex).toBe(4);
+  });
+
+  it('shows every TMDB number as missing when Plex lists none', () => {
+    expect(seasonView({ season: 1, plex: [], tmdb: [1, 2] }).episodes.map(e => e.place)).toEqual(['missing', 'missing']);
+  });
+});
+
+describe('episode check texts', () => {
+  const check = (change: Partial<EpisodeCheck>): EpisodeCheck => ({ match: false, episodes: 0, seasons: [], ...change });
+  const seasons = [{ season: 1, plex: [1, 2], tmdb: [1, 2] }];
+
+  it('names the TMDB seasons that confirmed the series', () => {
+    const answer = check({ match: true, episodes: 4, seasons });
+    expect(episodeCheckText(answer, '156686')).toBe('The episode numbers of the TMDB seasons of tmdb-156686 confirm it (4 episodes compared).');
+    expect(comparisonNotes(answer, '156686')).toEqual(['Compared with the TMDB seasons of tmdb-156686.']);
+  });
+
+  it('names the confirming episode group and the groups that did not confirm it', () => {
+    const answer = check({ match: true, episodes: 2, seasons, episodeGroup: 'DVD Order', episodeGroups: ['Aired Order', 'DVD Order'] });
+    expect(episodeCheckText(answer, '9')).toBe('The episode numbers of the TMDB episode group “DVD Order” of tmdb-9 confirm it (2 episodes compared).');
+    expect(comparisonNotes(answer, '9')).toEqual([
+      'Compared with the TMDB episode group “DVD Order” of tmdb-9.',
+      'The TMDB seasons did not confirm it, so the check read the TVDB-aligned episode groups of TMDB.',
+      'Episode groups that did not confirm it: “Aired Order”.',
+    ]);
+  });
+
+  it('shows the summary of an answer without seasons from an older server', () => {
+    const answer: EpisodeCheck = { match: true, episodes: 4 };
+    expect(episodeCheckText(answer, '9')).toBe('The episode numbers of the TMDB seasons of tmdb-9 confirm it (4 episodes compared).');
+    expect(comparisonNotes(answer, '9')).toEqual(['Compared with the TMDB seasons of tmdb-9.']);
+  });
+
+  it('keeps a group that did not confirm it but has the name of the confirming one', () => {
+    const answer = check({ match: true, episodes: 2, seasons, episodeGroup: 'DVD Order', episodeGroups: ['DVD Order', 'DVD Order'] });
+    expect(comparisonNotes(answer, '9')).toContain('Episode groups that did not confirm it: “DVD Order”.');
+  });
+
+  it('says where a check that differs stopped', () => {
+    const answer = check({ seasons: [{ season: 1, plex: [1, 5], tmdb: [1, 2] }], stopped: true, diff: { season: 1, plex: 2, tmdb: 2, missing: [2], extra: [5] } });
+    expect(episodeCheckText(answer, '9')).toBe('The episode numbers differ from tmdb-9 in season 1: Plex and TMDB both have 2 episodes, but with other numbers. Only TMDB has episode 2. Only Plex has episode 5.');
+    expect(comparisonNotes(answer, '9')).toEqual([
+      'Compared with the TMDB seasons of tmdb-9.',
+      'The check stopped at season 1, so it lists no later season of Plex.',
+    ]);
   });
 });

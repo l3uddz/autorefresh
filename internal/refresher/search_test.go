@@ -67,10 +67,12 @@ func TestEpisodeCheckComparesNumbers(t *testing.T) {
 	p.episodeNumbers = map[string]map[int][]int{
 		"1": {1: {1, 2}},
 		"2": {1: seq(10, 10)},
+		"3": {1: {1, 2}, 2: {1}},
 	}
 	f := newRefreshFixture(t, Server{Name: "home", Plex: p})
 	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
 	f.seed("home", lib, incompleteItem("2"), store.NoSummary, 0)
+	f.seed("home", lib, incompleteItem("3"), store.NoSummary, 0)
 	f.r.opts.TMDB = &fakeTMDB{
 		seasons: map[string][]int{
 			"77 1": {1, 2},
@@ -79,12 +81,17 @@ func TestEpisodeCheckComparesNumbers(t *testing.T) {
 			"80 1": seq(10),
 			"81 1": seq(11),
 			"82 1": {1},
+			"84 1": {1, 3},
+			"84 2": {1},
+			"85 1": {1},
 		},
 		episodeGroups: map[string][]tmdb.EpisodeGroup{
 			"82": {{ID: "5e9077d2e640d600151f32bd", Name: "DVD Order", Type: tmdb.EpisodeGroupDVD, EpisodeCount: 2}},
+			"85": {{ID: "5e9077d2e640d600151f32be", Name: "Aired Order", Type: tmdb.EpisodeGroupOriginalAirDate, EpisodeCount: 2}},
 		},
 		groupSeasons: map[string]map[int][]int{
 			"5e9077d2e640d600151f32bd": {1: {1, 2}},
+			"5e9077d2e640d600151f32be": {1: {1, 3}},
 		},
 	}
 	for _, tc := range []struct {
@@ -92,12 +99,35 @@ func TestEpisodeCheckComparesNumbers(t *testing.T) {
 		id   string
 		want EpisodeResult
 	}{
-		{"1", "77", EpisodeResult{Match: true, Episodes: 2}},
-		{"1", "78", EpisodeResult{Diff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 3, Missing: []int{3, 4}, Extra: []int{2}}}},
-		{"1", "79", EpisodeResult{Diff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 2, Missing: []int{3}, Extra: []int{2}}}},
-		{"2", "80", EpisodeResult{Match: true, Episodes: 9}},
-		{"2", "81", EpisodeResult{Diff: store.EpisodeDiff{Season: 1, Plex: 9, TMDB: 11, Missing: []int{10, 11}}}},
-		{"1", "82", EpisodeResult{Match: true, Episodes: 2, EpisodeGroup: "DVD Order"}},
+		{"1", "77", EpisodeResult{Match: true, Episodes: 2, Seasons: []SeasonEpisodes{{1, []int{1, 2}, []int{1, 2}}}}},
+		{"1", "78", EpisodeResult{
+			Diff:    store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 3, Missing: []int{3, 4}, Extra: []int{2}},
+			Seasons: []SeasonEpisodes{{1, []int{1, 2}, []int{1, 3, 4}}},
+		}},
+		{"1", "79", EpisodeResult{
+			Diff:    store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 2, Missing: []int{3}, Extra: []int{2}},
+			Seasons: []SeasonEpisodes{{1, []int{1, 2}, []int{1, 3}}},
+		}},
+		{"2", "80", EpisodeResult{Match: true, Episodes: 9, Seasons: []SeasonEpisodes{{1, seq(10, 10), seq(10)}}}},
+		{"2", "81", EpisodeResult{
+			Diff:    store.EpisodeDiff{Season: 1, Plex: 9, TMDB: 11, Missing: []int{10, 11}},
+			Seasons: []SeasonEpisodes{{1, seq(10, 10), seq(11)}},
+		}},
+		// The confirming group gives the seasons.
+		{"1", "82", EpisodeResult{
+			Match: true, Episodes: 2, EpisodeGroup: "DVD Order",
+			Seasons: []SeasonEpisodes{{1, []int{1, 2}, []int{1, 2}}}, EpisodeGroups: []string{"DVD Order"},
+		}},
+		// The check stops at the first season that differs.
+		{"3", "84", EpisodeResult{
+			Diff:    store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 2, Missing: []int{3}, Extra: []int{2}},
+			Seasons: []SeasonEpisodes{{1, []int{1, 2}, []int{1, 3}}}, Stopped: true,
+		}},
+		// A group that does not confirm is named, and the default seasons stay.
+		{"1", "85", EpisodeResult{
+			Diff:    store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 1, Extra: []int{2}},
+			Seasons: []SeasonEpisodes{{1, []int{1, 2}, []int{1}}}, EpisodeGroups: []string{"Aired Order"},
+		}},
 	} {
 		if got, err := f.r.EpisodeCheck(t.Context(), "home", tc.key, tc.id); err != nil || !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s/%s: got %+v, %v, want %+v", tc.key, tc.id, got, err, tc.want)

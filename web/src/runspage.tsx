@@ -57,7 +57,8 @@ export function RunsPage({ srv, run }: { srv?: number; run?: number }) {
   const close = () => navigate({ page: 'runs', srv });
   // A narrow screen shows the open run on its own screen, as the Items page
   // shows an open item.
-  if (!isTable && run !== undefined) return <RunDetails id={run} isMulti={isMulti} srv={srv} onClose={close} />;
+  // The key starts each run with its own state, such as its group filter.
+  if (!isTable && run !== undefined) return <RunDetails key={run} id={run} isMulti={isMulti} srv={srv} onClose={close} />;
   return (
     <>
       <VStack gap={6} padding={6}>

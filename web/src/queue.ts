@@ -2,6 +2,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import { useSyncExternalStore } from 'react';
 import { ApiError, api, invalidateLists, isNoItems, post, statusQuery, type RunItem, type RunRecord, type Status } from './api';
 import type { BulkRequest } from './bulk';
+import type { Outcome } from './notify';
 import { plural } from './format';
 
 // A bulk refresh job works on one server, and the run lock is global, so a
@@ -427,6 +428,22 @@ export function queueFailed(queue: BulkQueue): boolean {
   return queue.steps.some(
     step => step.state === 'failed' || step.state === 'interrupted' || step.state === 'unknown' || (step.state === 'not-started' && step.note !== 'canceled'),
   );
+}
+
+/** Returns the outcome of an ended queue: an error when it failed
+ * (queueFailed). Otherwise, when every server had no matching items or
+ * finished with known item results, and at least one finished, an error
+ * when Plex refused every refresh and a success when it accepted every
+ * refresh. Anything else is a notice, such as a cancel, a refused or
+ * skipped item, or results that are unavailable or empty. */
+export function queueOutcome(queue: BulkQueue): Outcome {
+  if (queueFailed(queue)) return 'error';
+  const finished = queue.steps.filter(step => step.state === 'finished');
+  const isKnown = queue.steps.every(step => step.state === 'empty' || (step.state === 'finished' && step.items?.length));
+  if (!isKnown || finished.length === 0) return 'notice';
+  const items = finished.flatMap(step => step.items ?? []);
+  if (items.every(item => item.outcome === 'failed')) return 'error';
+  return items.every(item => item.outcome === 'accepted') ? 'success' : 'notice';
 }
 
 /** Returns the line that describes a running queue, such as "Cabin

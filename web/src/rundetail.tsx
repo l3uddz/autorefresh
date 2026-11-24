@@ -9,17 +9,19 @@ import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, Layout, LayoutContent, LayoutHeader, StackItem, VStack } from '@astryxdesign/core/Layout';
 import { List, ListItem } from '@astryxdesign/core/List';
+import { SelectableCard } from '@astryxdesign/core/SelectableCard';
 import { Skeleton } from '@astryxdesign/core/Skeleton';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Heading, Text } from '@astryxdesign/core/Text';
 import { ClockIcon, InboxIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { ApiError, api, type RunDetail, type RunRecord } from './api';
 import { dateTime, label, plural, runDuration, runTitle, titleYear } from './format';
 import { Poster } from './media';
 import { itemHash } from './route';
 import { useShown } from './presence';
-import { noEntries, runCounts, runGroups, runPollInterval, type RunEntry, type RunGroup } from './runs';
+import { filterGroups, nextCountFilter, noEntries, runCounts, runGroups, runPollInterval, type RunCount, type RunEntry, type RunGroup } from './runs';
 import { statusDots } from './status';
 
 interface Props {
@@ -153,6 +155,12 @@ function RunHead({ run, isMulti }: { run: RunRecord; isMulti: boolean }) {
 function RunBody({ detail, scope }: { detail: RunDetail; scope?: number }) {
   const { run } = detail;
   const groups = runGroups(detail);
+  const counts = runCounts(run);
+  const [filter, setFilter] = useState<string>();
+  const active = counts.find(count => count.name === filter);
+  const filtered = active?.shows ? filterGroups(groups, active.shows) : [];
+  // A filter whose items the run no longer lists shows every item.
+  const isFiltered = filtered.length > 0;
   return (
     <>
       {run.error && <Banner status="error" title={`The run ${run.status === 'canceled' ? 'was canceled' : 'failed'}`} description={run.error} />}
@@ -160,26 +168,56 @@ function RunBody({ detail, scope }: { detail: RunDetail; scope?: number }) {
         // The run writes its counts when it ends.
         <Text type="supporting" color="secondary">The counts show when the run ends.</Text>
       ) : (
-        <RunCounts run={run} />
+        <RunCounts counts={counts} groups={groups} filter={isFiltered ? filter : undefined} onFilter={setFilter} />
       )}
-      {groups.length > 0 ? groups.map(group => <EntryGroup key={group.id} group={group} srv={run.srv} scope={scope} />) : <NoEntries run={run} />}
+      {isFiltered && <Text type="supporting" color="secondary">{`Only the listed items of ${filter} are shown. Click the count again to show every item.`}</Text>}
+      {groups.length > 0 ? (
+        (isFiltered ? filtered : groups).map(group => <EntryGroup key={group.id} group={group} srv={run.srv} scope={scope} />)
+      ) : (
+        <NoEntries run={run} />
+      )}
     </>
   );
 }
 
-function RunCounts({ run }: { run: RunRecord }) {
-  const counts = runCounts(run);
+interface CountsProps {
+  counts: RunCount[];
+  groups: RunGroup[];
+  /** The name of the count that filters the items. */
+  filter?: string;
+  onFilter: (name: string | undefined) => void;
+}
+
+/** The counts of a run. A click on a count whose items the run lists
+ * shows only those items, and a second click shows every item again
+ * (nextCountFilter). */
+function RunCounts({ counts, groups, filter, onFilter }: CountsProps) {
   return (
     <Grid columns={{ minWidth: 112, repeat: 'fit' }} gap={2}>
-      {counts.map(([name, value]) => (
-        <Card key={name} variant="muted" padding={3}>
-          <VStack gap={0.5}>
-            <Text size="lg" weight="semibold" hasTabularNumbers>{value.toLocaleString()}</Text>
-            <Text type="supporting" color="secondary">{name}</Text>
-          </VStack>
-        </Card>
-      ))}
+      {counts.map(count => {
+        if (!count.shows || filterGroups(groups, count.shows).length === 0) {
+          return (
+            <Card key={count.name} variant="muted" padding={3}>
+              <CountText count={count} />
+            </Card>
+          );
+        }
+        return (
+          <SelectableCard key={count.name} label={`Show only the items of ${count.name}, ${count.value.toLocaleString()}`} variant="muted" padding={3} isSelected={filter === count.name} onChange={() => onFilter(nextCountFilter(filter, count.name))}>
+            <CountText count={count} />
+          </SelectableCard>
+        );
+      })}
     </Grid>
+  );
+}
+
+function CountText({ count }: { count: RunCount }) {
+  return (
+    <VStack gap={0.5}>
+      <Text size="lg" weight="semibold" hasTabularNumbers>{count.value.toLocaleString()}</Text>
+      <Text type="supporting" color="secondary">{count.name}</Text>
+    </VStack>
   );
 }
 

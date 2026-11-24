@@ -9,7 +9,6 @@ import { MetadataList, MetadataListItem } from '@astryxdesign/core/MetadataList'
 import { Skeleton } from '@astryxdesign/core/Skeleton';
 import { Heading, Text } from '@astryxdesign/core/Text';
 import { spacingVars } from '@astryxdesign/core/theme/tokens.stylex';
-import { useToast } from '@astryxdesign/core/Toast';
 import { ArrowTopRightOnSquareIcon, QuestionMarkCircleIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import * as stylex from '@stylexjs/stylex';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -22,7 +21,8 @@ import { Backdrop, Poster, Reasons } from './media';
 import { actionError } from './errors';
 import { FixMatchDialog } from './fixmatch';
 import { ItemTimeline } from './history';
-import { disposition, refreshText } from './timeline';
+import { useNotify } from './notify';
+import { disposition, refreshOutcome, refreshText } from './timeline';
 import type { ItemKey } from './route';
 
 const styles = stylex.create({
@@ -193,7 +193,7 @@ interface ActionProps {
 function DetailActions({ item, server, params, timeline, live }: ActionProps) {
   const [isMatching, setIsMatching] = useState(false);
   const client = useQueryClient();
-  const showToast = useToast();
+  const notify = useNotify();
   const confirm = useImperativeAlertDialog();
   const title = item.title ?? `Item ${item.key}`;
   const action = useMutation({
@@ -202,13 +202,13 @@ function DetailActions({ item, server, params, timeline, live }: ActionProps) {
       if (operation === 'refresh') {
         const answer = result as RefreshAnswer;
         if (answer.item && answer.timeline) client.setQueryData<Detail>(['item', params], { item: answer.item, timeline: answer.timeline });
-        showToast({ body: refreshText(answer, title) });
+        notify(refreshOutcome(answer), refreshText(answer, title));
       } else {
-        showToast({ body: successText(operation, title) });
+        notify('success', successText(operation, title));
       }
     },
     onError: error => {
-      showToast({ body: actionError(error), type: 'error' });
+      notify('error', actionError(error));
     },
     // A failed request can change the store too: a Plex 404 removes the
     // item and records that Plex no longer has it.

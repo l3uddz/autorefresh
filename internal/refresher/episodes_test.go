@@ -821,3 +821,28 @@ func TestEpisodeGroupFallbackBudgetExpiresCleanly(t *testing.T) {
 		t.Error("fallback budget expiry should not log a run-wide TMDB failure")
 	}
 }
+
+func TestTryEpisodeGroupNamesOnlyAConfirmingGroup(t *testing.T) {
+	t.Parallel()
+	g := tmdb.EpisodeGroup{ID: "aaaa", Name: "DVD Order", Type: tmdb.EpisodeGroupDVD}
+	local := map[int][]int{1: {1, 2}}
+	for _, tc := range []struct {
+		name    string
+		seasons map[int][]int
+		want    episodeComparison
+	}{
+		{"confirms", map[int][]int{1: {1, 2}}, episodeComparison{
+			count: 2, group: "DVD Order", seasons: []SeasonEpisodes{{1, []int{1, 2}, []int{1, 2}}}, groups: []string{"DVD Order"},
+		}},
+		{"differs", map[int][]int{1: {1, 3}}, episodeComparison{groups: []string{"DVD Order"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fake := &fakeTMDB{groupSeasons: map[string]map[int][]int{"aaaa": tc.seasons}}
+			got, stop, err := tryEpisodeGroup(t.Context(), t.Context(), fake, "77", g, local)
+			if err != nil || stop != (tc.want.count > 0) || !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("got %+v, stop %v, %v, want %+v", got, stop, err, tc.want)
+			}
+		})
+	}
+}

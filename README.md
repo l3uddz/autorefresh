@@ -726,7 +726,11 @@ address keeps the choice, so a link or a reload shows the same server.
   accepted the request if no check could read the item. If Plex no longer has
   the item, the message says so and autorefresh removes the item from the
   queue. Each request counts as an attempt of the item, so it restarts
-  the wait before the next automatic refresh.
+  the wait before the next automatic refresh. The message of each action
+  starts with an icon of its outcome: a check when it succeeded, an info
+  icon when it ended without a failure but did not do all that was asked,
+  such as a refresh after which the item still misses metadata, and an
+  alert icon when it failed.
   Below the actions, the history of the item lists each event, newest
   first: requests by autorefresh or by hand and whether Plex accepted them,
   fix match decisions with their searches, stops and resumes, and when
@@ -755,7 +759,16 @@ address keeps the choice, so a link or a reload shows the same server.
   list, as on the Items page. The details show the kind, the status, the start, the
   duration, the libraries read, the error, and the counts. The counts of
   refreshes and matches are the requests sent, so they include the
-  requests that failed. Below, the details list the items of the run by
+  requests that failed. A click on a count whose items the details list
+  shows only those items, and a second click shows every item again.
+  **Refreshes sent** and **Matches sent** show every request of their kind,
+  also the failed ones under **Failed**. **Failed** shows its group and the
+  items whose fix match decision failed before a refresh, such as a failed
+  TMDB lookup, and **Fixed** and **Skipped** show their group. A filter
+  shows only the items that the history of the run lists, and the history
+  does not list every counted request: a request that found its item gone
+  shows under **Removed**, and one item can carry two failures. A count
+  without listed items cannot filter. Below, the details list the items of the run by
   outcome: **Refreshed** and **Matched** for the requests that Plex
   accepted, **Failed** for rejected requests and failed fix match
   searches, **Fixed**, **Completed by Plex**, **Removed**, and **Not
@@ -802,7 +815,12 @@ and TV), naming the confirming group when one matches. When the episode numbers
 do not confirm the series, the comparison names the default season that kept it
 from confirming (the first season with extra or invalid numbers, or the first
 season missing episodes when coverage is below 90%), the episode counts of Plex
-and TMDB, and the episode numbers that only one of them has. The comparison changes nothing. **Match** asks before it
+and TMDB, and the episode numbers that only one of them has. When the
+comparison read seasons, a click on the result opens it: the TMDB seasons or the episode group that it
+compared with, the other episode groups that it read, and, for each compared
+season, every episode number marked as in both, only in TMDB, or only in Plex.
+A comparison that stops at a season that differs lists no later season. The
+comparison changes nothing. **Match** asks before it
 applies the candidate. After Plex accepts the match, autorefresh also
 requests a refresh of the item. The refresh counts as one more attempt of
 the item, and as an accepted refresh it lengthens the wait before the next
@@ -941,7 +959,7 @@ The image declares port `7380`. Nothing listens on it until you set
 | `api/item/live` | What Plex tells about one item now |
 | `api/candidate` | The TMDB ID and the season and episode counts that the Plex metadata provider gives for the `plex://` GUID of a series candidate, in the `guid` query parameter, asked with the token of the server `srv` |
 | `api/item/auto-match` | The automatic fix match preview of one item, as a match decision event. A decision event can also have the optional fields `itemYear`, `tmdbId`, `tmdbSkip`, `tmdbMissing`, `episodeGroup`, and `episodeDiff`, which the API leaves out when they are empty |
-| `api/item/episode-check` | `POST`: compares the episode numbers of one series with the TMDB ID in the `tmdb` query parameter, checking default seasons first and then candidate TVDB-aligned TMDB episode groups. `episodeGroup` names the confirming alternate group when one matched; `diff` names the default season that kept the comparison from confirming (extra or invalid numbers, or missing episodes below 90% coverage), with the counts and the episode numbers that only TMDB (`missing`) or only Plex (`extra`) has |
+| `api/item/episode-check` | `POST`: compares the episode numbers of one series with the TMDB ID in the `tmdb` query parameter, checking default seasons first and then candidate TVDB-aligned TMDB episode groups. `episodeGroup` names the confirming alternate group when one matched; `diff` names the default season that kept the comparison from confirming (extra or invalid numbers, or missing episodes below 90% coverage), with the counts and the episode numbers that only TMDB (`missing`) or only Plex (`extra`) has. `seasons` is always a list: the seasons that the deciding comparison read, each with its sorted `plex` and `tmdb` episode numbers. `stopped` is true when a differing season ended the comparison before the later seasons of Plex, and `episodeGroups` names the episode groups whose seasons the check read |
 | `api/items/thumb`, `api/items/art` | The poster and the background art of one item |
 | `api/runs` | One page of the runs, newest first |
 | `api/runs/detail` | One run with the events that it wrote, or the items of a bulk refresh |

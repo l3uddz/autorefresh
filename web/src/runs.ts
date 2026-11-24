@@ -1,7 +1,7 @@
-import { useToast } from '@astryxdesign/core/Toast';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ApiError, post, type RunDetail, type RunEvent, type RunItem, type RunRecord } from './api';
 import { fixedBy, plural } from './format';
+import { useNotify } from './notify';
 import { cancelQueueOfJob } from './queue';
 import type { TabName } from './route';
 import { decisionView, eventView, type EventView } from './timeline';
@@ -16,15 +16,15 @@ export interface RunRequest {
 /** Starts a manual run of the server srv, or of every server for null. A
  * busy run answers 409, which the toast explains. */
 export function useRunNow() {
-  const showToast = useToast();
+  const notify = useNotify();
   const client = useQueryClient();
   return useMutation({
     mutationFn: ({ srv, full }: RunRequest) => post<{ ids: number[] }>('runs', { srv, full }),
     onSuccess: (_, { full }) => {
-      showToast({ body: full ? 'Full cache refresh started' : 'Run started', uniqueID: 'run-now' });
+      notify('success', full ? 'Full cache refresh started' : 'Run started', { uniqueID: 'run-now' });
       void client.invalidateQueries({ queryKey: ['status'] });
     },
-    onError: error => showToast({ body: runError(error), type: 'error', uniqueID: 'run-now' }),
+    onError: error => notify('error', runError(error), { uniqueID: 'run-now' }),
   });
 }
 
@@ -32,7 +32,7 @@ export function useRunNow() {
  * job of the bulk refresh queue also cancels the rest of the queue, before
  * the request, so the rest stays canceled when the job ended first. */
 export function useCancelRun() {
-  const showToast = useToast();
+  const notify = useNotify();
   return useMutation({
     mutationFn: async (id: number) => {
       const isQueued = cancelQueueOfJob(id);
@@ -44,8 +44,8 @@ export function useCancelRun() {
       }
       return { isQueued, hasEnded: false };
     },
-    onSuccess: ({ isQueued, hasEnded }) => showToast({ body: cancelText(isQueued, hasEnded), uniqueID: 'cancel-run' }),
-    onError: error => showToast({ body: runError(error), type: 'error', uniqueID: 'cancel-run' }),
+    onSuccess: ({ isQueued, hasEnded }) => notify(hasEnded ? 'notice' : 'success', cancelText(isQueued, hasEnded), { uniqueID: 'cancel-run' }),
+    onError: error => notify('error', runError(error), { uniqueID: 'cancel-run' }),
   });
 }
 
@@ -76,6 +76,11 @@ export interface RunEntry {
   at?: string;
   /** The Items tab that the item link opens. */
   tab: TabName;
+  /** The request that the run sent for the item, accepted or not. */
+  sent?: 'refresh' | 'match';
+  /** The fix match decision before the request failed, such as a failed
+   * TMDB lookup before a plain refresh. The run counts it as a failure. */
+  hasFailedDecision?: boolean;
 }
 
 export interface RunGroup {
@@ -114,11 +119,58 @@ const itemOutcomes: Record<string, { group: string; summary: string; tab?: TabNa
   'not-reached': { group: 'not-reached', summary: 'The job ended before this item' },
 };
 
+/** Reports whether the entry of the group group is one of the items that a
+ * count counts. */
+export type CountFilter = (group: string, entry: RunEntry) => boolean;
+
+/** One count of a run. shows selects the listed items that the count
+ * counts, for a count that can filter the run details. */
+export interface RunCount {
+  name: string;
+  value: number;
+  shows?: CountFilter;
+}
+
+const sentAs = (action: RunEntry['sent']): CountFilter => (_, entry) => entry.sent === action;
+const inGroup = (id: string): CountFilter => group => group === id;
+const failed: CountFilter = (group, entry) => group === 'failed' || Boolean(entry.hasFailedDecision);
+
 /** Returns the counts of a run, by name. The refreshes and matches are the
  * requests sent, so they include the ones that failed. */
-export function runCounts(run: RunRecord): [name: string, value: number][] {
-  if (run.kind === 'bulk-refresh') return [['Selected', run.selected], ['Refreshes sent', run.refreshed], ['Failed', run.failed], ['Skipped', run.skipped]];
-  return [['Read', run.readItems], ['Refreshes sent', run.refreshed], ['Matches sent', run.matched], ['Failed', run.failed], ['Fixed', run.fixed], ['Due', run.due]];
+export function runCounts(run: RunRecord): RunCount[] {
+  if (run.kind === 'bulk-refresh') {
+    return [
+      { name: 'Selected', value: run.selected },
+      { name: 'Refreshes sent', value: run.refreshed, shows: sentAs('refresh') },
+      { name: 'Failed', value: run.failed, shows: failed },
+      { name: 'Skipped', value: run.skipped, shows: inGroup('skipped') },
+    ];
+  }
+  return [
+    { name: 'Read', value: run.readItems },
+    { name: 'Refreshes sent', value: run.refreshed, shows: sentAs('refresh') },
+    { name: 'Matches sent', value: run.matched, shows: sentAs('match') },
+    { name: 'Failed', value: run.failed, shows: failed },
+    { name: 'Fixed', value: run.fixed, shows: inGroup('fixed') },
+    { name: 'Due', value: run.due },
+  ];
+}
+
+/** Returns the groups with only the entries that shows selects, without
+ * empty groups. The history of a run does not list every counted item, such
+ * as a refresh that Plex answered with a 404, which it lists as removed, so
+ * the entries can be fewer than the count. */
+export function filterGroups(groups: RunGroup[], shows: CountFilter): RunGroup[] {
+  return groups
+    .map(group => ({ ...group, entries: group.entries.filter(entry => shows(group.id, entry)) }))
+    .filter(group => group.entries.length > 0);
+}
+
+/** Returns the count filter of the run details after a click on the count
+ * name: a click on the count that filters shows every item again, and a
+ * click on another count shows only its items. */
+export function nextCountFilter(current: string | undefined, name: string): string | undefined {
+  return current === name ? undefined : name;
 }
 
 /** Returns the items of a run grouped by outcome, in a fixed group order,
@@ -152,6 +204,8 @@ function itemEntry(item: RunItem, index: number): [string, RunEntry] {
       summary: outcome.summary,
       detail: item.error,
       tab: outcome.tab ?? 'attention',
+      // The outcomes of a bulk item whose refresh the job sent.
+      sent: ['accepted', 'failed', 'gone'].includes(item.outcome) ? 'refresh' : undefined,
     },
   ];
 }
@@ -254,6 +308,8 @@ function eventEntry(event: RunEvent, decision?: RunEvent): RunEntry {
     detail,
     at: event.at,
     tab: event.kind === 'completed' ? 'fixed' : 'attention',
+    sent: event.kind === 'request' ? (event.action === 'refresh' ? 'refresh' : 'match') : undefined,
+    hasFailedDecision: decision?.outcome === 'failed',
   };
 }
 

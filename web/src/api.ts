@@ -139,11 +139,27 @@ export interface CandidateSeries {
   episodes?: number;
 }
 
+/** The answer of the episode check of a candidate. Seasons are the seasons
+ * that the deciding comparison read: those of the confirming episode group,
+ * or else the TMDB seasons up to the one that differs. Stopped is true when
+ * that season ended the check before the later seasons of Plex.
+ * EpisodeGroups names each TMDB episode group whose seasons the check read. */
 export interface EpisodeCheck {
   match: boolean;
   episodes: number;
   episodeGroup?: string;
   diff?: EpisodeDiff;
+  /** Absent in the answer of a server from before the comparison. */
+  seasons?: SeasonEpisodes[];
+  stopped?: boolean;
+  episodeGroups?: string[];
+}
+
+/** The sorted regular episode numbers of one season in Plex and in TMDB. */
+export interface SeasonEpisodes {
+  season: number;
+  plex: number[];
+  tmdb: number[];
 }
 
 export interface ItemDetail {

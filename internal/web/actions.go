@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -322,12 +323,42 @@ func (s *Server) serveEpisodeCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := struct {
-		Match        bool             `json:"match"`
-		Episodes     int              `json:"episodes"`
-		EpisodeGroup string           `json:"episodeGroup,omitempty"`
-		Diff         *episodeDiffJSON `json:"diff,omitempty"`
-	}{Match: result.Match, Episodes: result.Episodes, EpisodeGroup: result.EpisodeGroup, Diff: toEpisodeDiffJSON(result.Diff)}
+		Match         bool                 `json:"match"`
+		Episodes      int                  `json:"episodes"`
+		EpisodeGroup  string               `json:"episodeGroup,omitempty"`
+		Diff          *episodeDiffJSON     `json:"diff,omitempty"`
+		Seasons       []seasonEpisodesJSON `json:"seasons"`
+		Stopped       bool                 `json:"stopped,omitempty"`
+		EpisodeGroups []string             `json:"episodeGroups,omitempty"`
+	}{
+		Match: result.Match, Episodes: result.Episodes, EpisodeGroup: result.EpisodeGroup, Diff: toEpisodeDiffJSON(result.Diff),
+		Seasons: toSeasonEpisodesJSON(result.Seasons), Stopped: result.Stopped, EpisodeGroups: result.EpisodeGroups,
+	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// seasonEpisodesJSON are the regular episode numbers of one season in Plex
+// and in the TMDB listing that the episode check compared them with, each
+// sorted, never null.
+type seasonEpisodesJSON struct {
+	Season int   `json:"season"`
+	Plex   []int `json:"plex"`
+	TMDB   []int `json:"tmdb"`
+}
+
+func toSeasonEpisodesJSON(seasons []refresher.SeasonEpisodes) []seasonEpisodesJSON {
+	out := make([]seasonEpisodesJSON, 0, len(seasons))
+	for _, s := range seasons {
+		out = append(out, seasonEpisodesJSON{Season: s.Season, Plex: sortedCopy(s.Plex), TMDB: sortedCopy(s.TMDB)})
+	}
+	return out
+}
+
+// sortedCopy returns a sorted copy of nums, never nil.
+func sortedCopy(nums []int) []int {
+	out := append(make([]int, 0, len(nums)), nums...)
+	slices.Sort(out)
+	return out
 }
 
 func (s *Server) writeActionError(w http.ResponseWriter, r *http.Request, err error) {

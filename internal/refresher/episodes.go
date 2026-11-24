@@ -81,10 +81,26 @@ func (r *Refresher) confirmEpisodeNumbers(ctx context.Context, run *serverRun, m
 // Otherwise diff is the first default season with extra or invalid episode
 // numbers, or the first default season missing episodes when overall coverage
 // is too low. Both are zero when Plex lists no complete regular episodes.
+// seasons are the seasons that the deciding comparison read, up to the
+// season that differs, and stopped is true when that season ended the
+// comparison before the later local seasons. groups names each episode
+// group whose seasons were read, in the order of the checks.
 type episodeComparison struct {
-	count int
-	group string
-	diff  store.EpisodeDiff
+	count   int
+	group   string
+	diff    store.EpisodeDiff
+	seasons []SeasonEpisodes
+	stopped bool
+	groups  []string
+}
+
+// SeasonEpisodes are the regular episode numbers of one season in Plex and
+// in the TMDB listing that the episode check compared them with: a default
+// season or a season of an episode group.
+type SeasonEpisodes struct {
+	Season int
+	Plex   []int
+	TMDB   []int
 }
 
 // compareEpisodes compares the regular episode numbers of the series key in
@@ -123,20 +139,24 @@ func compareEpisodes(ctx context.Context, p Plex, t TMDB, key, id string) (episo
 	if grp.count > 0 {
 		return grp, nil
 	}
+	def.groups = grp.groups
 	return def, nil
 }
 
 func compareSeasons(local map[int][]int, catalogOf func(season int) ([]int, error)) (episodeComparison, error) {
 	var localTotal, catalogTotal int
 	var firstMissing store.EpisodeDiff
+	var seasons []SeasonEpisodes
 	for _, season := range slices.Sorted(maps.Keys(local)) {
 		catalog, err := catalogOf(season)
 		if err != nil {
 			return episodeComparison{}, err
 		}
 		numbers := local[season]
+		seasons = append(seasons, SeasonEpisodes{Season: season, Plex: numbers, TMDB: catalog})
 		if !episodeNumbersSubset(numbers, catalog) {
-			return episodeComparison{diff: episodeDiff(season, numbers, catalog)}, nil
+			stopped := len(seasons) < len(local)
+			return episodeComparison{diff: episodeDiff(season, numbers, catalog), seasons: seasons, stopped: stopped}, nil
 		}
 		localTotal += len(numbers)
 		catalogTotal += len(catalog)
@@ -148,9 +168,9 @@ func compareSeasons(local map[int][]int, catalogOf func(season int) ([]int, erro
 		return episodeComparison{}, nil
 	}
 	if localTotal*minCoverageDen < catalogTotal*minCoverageNum {
-		return episodeComparison{diff: firstMissing}, nil
+		return episodeComparison{diff: firstMissing, seasons: seasons}, nil
 	}
-	return episodeComparison{count: localTotal}, nil
+	return episodeComparison{count: localTotal, seasons: seasons}, nil
 }
 
 func compareEpisodeGroups(ctx context.Context, t TMDB, id string, local map[int][]int, localTotal int) (episodeComparison, error) {
@@ -161,21 +181,28 @@ func compareEpisodeGroups(ctx context.Context, t TMDB, id string, local map[int]
 	if err != nil {
 		return episodeComparison{}, fallbackGroupError(ctx, gctx, id, "", err)
 	}
+	var checked []string
 	for _, g := range selectEpisodeGroups(groups, localTotal) {
 		if ctx.Err() != nil {
 			return episodeComparison{}, ctx.Err()
 		}
 		if gctx.Err() != nil {
-			return episodeComparison{}, nil
+			return episodeComparison{groups: checked}, nil
 		}
 		res, stop, err := tryEpisodeGroup(ctx, gctx, t, id, g, local)
-		if err != nil || stop || res.count > 0 {
+		checked = append(checked, res.groups...)
+		if err != nil || stop {
+			res.groups = checked
 			return res, err
 		}
 	}
-	return episodeComparison{}, nil
+	return episodeComparison{groups: checked}, nil
 }
 
+// tryEpisodeGroup compares the local seasons with the seasons of the episode
+// group g. A group whose seasons it read gets its label in groups, and only
+// a group that confirms the series also gets it in group. stop is true when
+// the group confirmed the series or the checks must end.
 func tryEpisodeGroup(ctx, gctx context.Context, t TMDB, id string, g tmdb.EpisodeGroup, local map[int][]int) (episodeComparison, bool, error) {
 	seasons, err := t.EpisodeGroupSeasons(gctx, g.ID)
 	if err != nil {
@@ -188,10 +215,13 @@ func tryEpisodeGroup(ctx, gctx context.Context, t TMDB, id string, g tmdb.Episod
 		return episodeComparison{}, false, nil
 	}
 	res, _ := compareSeasons(local, func(season int) ([]int, error) { return seasons[season], nil })
-	if res.count > 0 {
-		return episodeComparison{count: res.count, group: groupLabel(g)}, true, nil
+	label := groupLabel(g)
+	read := episodeComparison{groups: []string{label}}
+	if res.count == 0 {
+		return read, false, nil
 	}
-	return episodeComparison{}, false, nil
+	read.count, read.group, read.seasons = res.count, label, res.seasons
+	return read, true, nil
 }
 
 // fallbackGroupError separates fatal errors (parent cancellation, 401, 429)

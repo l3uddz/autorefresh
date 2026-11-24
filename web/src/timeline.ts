@@ -1,6 +1,7 @@
 import type { Candidate, EpisodeDiff, ItemDetail, MatchSearch, RefreshAnswer, TimelineEvent } from './api';
 import { actionText, fixedBy, label, plural, titleYear } from './format';
 import { compareYear } from './match';
+import type { Outcome } from './notify';
 
 // Facts of an item that come from its timeline, newest event first. The
 // item detail of the API has no completion fields: a fixed item has no
@@ -42,6 +43,14 @@ export function refreshResult(answer: RefreshAnswer): RefreshResult {
   }
   const reasons = answer.item.reasons ?? [];
   return answer.checked && reasons.length ? { kind: 'missing', reasons } : { kind: 'sent' };
+}
+
+/** Returns the outcome of a "Refresh now" answer: a success when Plex
+ * accepted it and no check found the item still incomplete or gone, and
+ * else a notice. */
+export function refreshOutcome(answer: RefreshAnswer): Outcome {
+  const { kind } = refreshResult(answer);
+  return kind === 'missing' || kind === 'gone' ? 'notice' : 'success';
 }
 
 /** Returns the toast text of a "Refresh now" answer: the match that it

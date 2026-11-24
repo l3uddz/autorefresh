@@ -2,7 +2,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RunProgress, RunRecord, Status } from './api';
 import type { BulkRequest } from './bulk';
-import { cancelBulkQueue, cancelQueueOfJob, currentQueue, isQueueActive, NothingMatched, onQueueDone, queueFailed, queueText, queueTiming, resetQueue, startBulkRefresh, type BulkQueue } from './queue';
+import { cancelBulkQueue, cancelQueueOfJob, currentQueue, isQueueActive, NothingMatched, onQueueDone, queueFailed, queueOutcome, queueText, queueTiming, resetQueue, startBulkRefresh, type BulkQueue, type QueueStep } from './queue';
 
 const requests: BulkRequest[] = [
   { srv: 0, path: 'items/refresh?srv=0', body: { keys: ['1', '2'] } },
@@ -111,6 +111,7 @@ describe('bulk refresh queue', () => {
     const result = await done;
     expect(queueText(result)).toBe('Bulk refresh of 2 servers: Home finished: 1 accepted · 1 failed; Cabin finished: 1 accepted');
     expect(queueFailed(result)).toBe(false);
+    expect(queueOutcome(result)).toBe('notice');
   });
 
   it('does not start the waiting servers after a cancel', async () => {
@@ -125,6 +126,7 @@ describe('bulk refresh queue', () => {
     expect(refreshCalls(calls)).toHaveLength(1);
     expect(queueText(result)).toBe('Bulk refresh of 2 servers: Home canceled: 1 accepted; Cabin not started: canceled');
     expect(queueFailed(result)).toBe(false);
+    expect(queueOutcome(result)).toBe('notice');
   });
 
   it('stops the queue when the running job is canceled from its server card', async () => {
@@ -157,6 +159,7 @@ describe('bulk refresh queue', () => {
     const result = await done;
     expect(queueText(result)).toBe('Bulk refresh of 2 servers: Home finished: 1 accepted; Cabin not started: another run is busy');
     expect(queueFailed(result)).toBe(true);
+    expect(queueOutcome(result)).toBe('error');
   });
 
   it('skips a server that refuses its job and starts the next one', async () => {
@@ -460,5 +463,30 @@ describe('queue text', () => {
     const queue = (state: 'finished' | 'canceled', list = items): BulkQueue => ({ isCanceled: false, isDone: true, steps: [{ srv: 0, server: 'Home', state, items: list }] });
     expect(queueText(queue('finished'))).toBe('Bulk refresh finished: 2 accepted · 1 failed · 2 skipped');
     expect(queueText(queue('canceled', items.slice(0, 1)))).toBe('Bulk refresh canceled: 1 accepted');
+  });
+});
+
+describe('queueOutcome', () => {
+  const step = (state: QueueStep['state'], outcomes?: string[]): QueueStep => ({
+    srv: 0, server: 'Home', state, items: outcomes?.map((outcome, i) => ({ key: String(i), title: `Item ${i}`, outcome })),
+  });
+  const queue = (...steps: QueueStep[]): BulkQueue => ({ steps, isCanceled: false, isDone: true });
+
+  it('is a success only when every finished refresh was accepted', () => {
+    expect(queueOutcome(queue(step('finished', ['accepted', 'accepted']), step('empty')))).toBe('success');
+    expect(queueOutcome(queue(step('finished', ['accepted', 'stopped'])))).toBe('notice');
+    expect(queueOutcome(queue(step('finished')))).toBe('notice');
+    expect(queueOutcome(queue(step('empty')))).toBe('notice');
+  });
+
+  it('is an error when Plex refused every refresh', () => {
+    expect(queueOutcome(queue(step('finished', ['failed']), step('finished', ['failed'])))).toBe('error');
+    expect(queueOutcome(queue(step('finished', ['failed', 'accepted'])))).toBe('notice');
+  });
+
+  it('is a notice when the results of a finished server are unavailable or empty', () => {
+    expect(queueOutcome(queue(step('finished', [])))).toBe('notice');
+    expect(queueOutcome(queue(step('finished', ['failed']), step('finished')))).toBe('notice');
+    expect(queueOutcome(queue(step('finished', ['accepted']), step('finished', [])))).toBe('notice');
   });
 });
