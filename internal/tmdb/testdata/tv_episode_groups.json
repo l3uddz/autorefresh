@@ -1,20 +1,27 @@
 {
-  "id": 77,
+  "id": 1399,
   "results": [
     {
-      "description": "Original broadcast order",
-      "episode_count": 49,
-      "group_count": 1,
+      "description": "",
+      "episode_count": 102,
+      "group_count": 9,
       "id": "5e9077d2e640d600151f32bd",
       "name": "Aired Order",
+      "network": {
+        "id": 49,
+        "logo_path": "/tuomPhY2UtuPTqqFnKMVHvSb724.png",
+        "name": "HBO",
+        "origin_country": "US"
+      },
       "type": 1
     },
     {
       "description": "DVD release",
-      "episode_count": 25,
-      "group_count": 1,
+      "episode_count": 73,
+      "group_count": 8,
       "id": "5acf93e60e0a26346d0000ce",
       "name": "DVD Order",
+      "network": null,
       "type": 3
     }
   ]

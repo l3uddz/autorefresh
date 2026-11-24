@@ -1,0 +1,38 @@
+{
+  "description": "DVD release order with specials and a season gap.",
+  "episode_count": 4,
+  "group_count": 3,
+  "groups": [
+    {
+      "id": "5b829bf6c3a368469d0034a0",
+      "name": "Specials",
+      "order": 0,
+      "episodes": [
+        {"season_number": 0, "episode_number": 1, "order": 0}
+      ],
+      "locked": true
+    },
+    {
+      "id": "5b829bf6c3a368469d0034a1",
+      "name": "Season 1",
+      "order": 1,
+      "episodes": [
+        {"season_number": 1, "episode_number": 2, "order": 0},
+        {"season_number": 1, "episode_number": 1, "order": 1}
+      ],
+      "locked": true
+    },
+    {
+      "id": "5b829bf6c3a368469d0034a3",
+      "name": "Season 3",
+      "order": 3,
+      "episodes": [
+        {"season_number": 3, "episode_number": 1, "order": 0}
+      ],
+      "locked": false
+    }
+  ],
+  "id": "5b829bf6c3a368469d0034a7",
+  "name": "DVD Order",
+  "type": 3
+}

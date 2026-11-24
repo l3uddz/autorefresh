@@ -24,6 +24,9 @@ import (
 // ErrUnauthorized marks a 401 status, which means that TMDB rejected the token.
 var ErrUnauthorized = errors.New("tmdb token rejected")
 
+// ErrRateLimited marks a 429 status from TMDB.
+var ErrRateLimited = errors.New("tmdb rate limited")
+
 // ErrSeveral marks a Find answer with several entries, so the external ID
 // names no single TMDB entry. It is no failed request.
 var ErrSeveral = errors.New("tmdb has several entries")
@@ -84,8 +87,13 @@ type Client struct {
 // New returns a Client. token is the API Read Access Token. timeout limits
 // each request, with the response body.
 func New(token string, timeout time.Duration) *Client {
+	return NewWithBaseURL(&url.URL{Scheme: "https", Host: "api.themoviedb.org", Path: "/"}, token, timeout)
+}
+
+// NewWithBaseURL returns a Client pointed at base.
+func NewWithBaseURL(base *url.URL, token string, timeout time.Duration) *Client {
 	return &Client{
-		base:  &url.URL{Scheme: "https", Host: "api.themoviedb.org", Path: "/"},
+		base:  base,
 		token: token,
 		http: &http.Client{
 			Timeout:       timeout,
@@ -269,20 +277,17 @@ func (c *Client) EpisodeGroups(ctx context.Context, id string) ([]EpisodeGroup, 
 }
 
 // EpisodeGroupSeasons returns the regular season-to-episode-numbers map of
-// one TMDB episode group. Each group with order >= 1 maps to that season
-// number, and each episode's 0-based order maps to episode number order+1.
-// A missing or ambiguous group (duplicate positive group order) returns nil.
+// one TMDB episode group. Each group with an explicit order >= 1 maps to that
+// season number, and each episode's explicit 0-based order maps to episode
+// number order+1. Missing or null order fields, negative or duplicate episode
+// orders, or duplicate positive group orders return nil so incomplete payloads
+// can never confirm a match.
 func (c *Client) EpisodeGroupSeasons(ctx context.Context, groupID string) (map[int][]int, error) {
 	if !episodeGroupIDPattern.MatchString(groupID) {
 		return nil, errors.New("episode group: invalid group id")
 	}
 	var resp struct {
-		Groups []struct {
-			Order    int `json:"order"`
-			Episodes []struct {
-				Order int `json:"order"`
-			} `json:"episodes"`
-		} `json:"groups"`
+		Groups []episodeGroupSection `json:"groups"`
 	}
 	if err := c.get(ctx, []string{"3", "tv", "episode_group", groupID}, nil, &resp); err != nil {
 		if errors.Is(err, errNotFound) {
@@ -290,21 +295,54 @@ func (c *Client) EpisodeGroupSeasons(ctx context.Context, groupID string) (map[i
 		}
 		return nil, err
 	}
-	seasons := make(map[int][]int, len(resp.Groups))
-	for _, g := range resp.Groups {
-		if g.Order < 1 {
+	return parseEpisodeGroupSeasons(resp.Groups), nil
+}
+
+type episodeGroupSection struct {
+	Order    *int `json:"order"`
+	Episodes []struct {
+		Order *int `json:"order"`
+	} `json:"episodes"`
+}
+
+func parseEpisodeGroupSeasons(groups []episodeGroupSection) map[int][]int {
+	seasons := make(map[int][]int, len(groups))
+	for _, g := range groups {
+		if g.Order == nil {
+			return nil
+		}
+		if *g.Order < 1 {
 			continue
 		}
-		if _, dup := seasons[g.Order]; dup {
-			return nil, nil
+		if _, dup := seasons[*g.Order]; dup {
+			return nil
 		}
-		nums := make([]int, 0, len(g.Episodes))
-		for _, ep := range g.Episodes {
-			nums = append(nums, ep.Order+1)
+		nums, ok := parseGroupEpisodes(g.Episodes)
+		if !ok {
+			return nil
 		}
-		seasons[g.Order] = nums
+		seasons[*g.Order] = nums
 	}
-	return seasons, nil
+	return seasons
+}
+
+func parseGroupEpisodes(episodes []struct {
+	Order *int `json:"order"`
+}) ([]int, bool) {
+	nums := make([]int, 0, len(episodes))
+	seen := make(map[int]struct{}, len(episodes))
+	for _, ep := range episodes {
+		if ep.Order == nil || *ep.Order < 0 {
+			return nil, false
+		}
+		n := *ep.Order + 1
+		if _, dup := seen[n]; dup {
+			return nil, false
+		}
+		seen[n] = struct{}{}
+		nums = append(nums, n)
+	}
+	return nums, true
 }
 
 func (c *Client) movieYear(ctx context.Context, id string) (int, bool, error) {
@@ -399,6 +437,8 @@ func (c *Client) get(ctx context.Context, segments []string, query url.Values, o
 	switch {
 	case res.StatusCode == http.StatusUnauthorized:
 		return fmt.Errorf("GET %s: %d %s: %w", path, res.StatusCode, http.StatusText(res.StatusCode), ErrUnauthorized)
+	case res.StatusCode == http.StatusTooManyRequests:
+		return fmt.Errorf("GET %s: %d %s: %w", path, res.StatusCode, http.StatusText(res.StatusCode), ErrRateLimited)
 	case res.StatusCode == http.StatusNotFound:
 		return fmt.Errorf("GET %s: %d %s: %w", path, res.StatusCode, http.StatusText(res.StatusCode), errNotFound)
 	case res.StatusCode < 200 || res.StatusCode >= 300:

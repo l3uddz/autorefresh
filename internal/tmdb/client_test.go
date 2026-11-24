@@ -406,12 +406,14 @@ func TestEpisodeGroups(t *testing.T) {
 	fixture := file(t, "tv_episode_groups.json")
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/3/tv/77/episode_groups":
+		case "/3/tv/1399/episode_groups":
 			fixture(w, r)
 		case "/3/tv/78/episode_groups":
 			w.WriteHeader(http.StatusNotFound)
 		case "/3/tv/79/episode_groups":
 			w.WriteHeader(http.StatusUnauthorized)
+		case "/3/tv/81/episode_groups":
+			w.WriteHeader(http.StatusTooManyRequests)
 		case "/3/tv/80/episode_groups":
 			w.Write([]byte(`{"results":[{"id":"../bad","name":"Bad","type":1,"episode_count":10},{"id":"5e9077d2e640d600151f32bd","name":"Good","type":1,"episode_count":10}]}`))
 		default:
@@ -419,10 +421,10 @@ func TestEpisodeGroups(t *testing.T) {
 		}
 	})
 
-	got, err := c.EpisodeGroups(context.Background(), "77")
+	got, err := c.EpisodeGroups(context.Background(), "1399")
 	want := []EpisodeGroup{
-		{ID: "5e9077d2e640d600151f32bd", Name: "Aired Order", Type: EpisodeGroupOriginalAirDate, EpisodeCount: 49},
-		{ID: "5acf93e60e0a26346d0000ce", Name: "DVD Order", Type: EpisodeGroupDVD, EpisodeCount: 25},
+		{ID: "5e9077d2e640d600151f32bd", Name: "Aired Order", Type: EpisodeGroupOriginalAirDate, EpisodeCount: 102},
+		{ID: "5acf93e60e0a26346d0000ce", Name: "DVD Order", Type: EpisodeGroupDVD, EpisodeCount: 73},
 	}
 	if err != nil || !slices.Equal(got, want) {
 		t.Fatalf("EpisodeGroups = %+v, %v, want %+v", got, err, want)
@@ -433,6 +435,10 @@ func TestEpisodeGroups(t *testing.T) {
 	}
 	_, err = c.EpisodeGroups(context.Background(), "79")
 	checkError(t, err, true)
+	_, err = c.EpisodeGroups(context.Background(), "81")
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("EpisodeGroups on 429 = %v, want ErrRateLimited", err)
+	}
 	got, err = c.EpisodeGroups(context.Background(), "80")
 	if err != nil || len(got) != 1 || got[0].ID != "5e9077d2e640d600151f32bd" {
 		t.Fatalf("EpisodeGroups with bad id = %+v, %v, want only valid entry", got, err)
@@ -449,35 +455,73 @@ func TestEpisodeGroupsRejectsInvalidID(t *testing.T) {
 }
 
 func TestEpisodeGroupSeasons(t *testing.T) {
-	fixture := file(t, "tv_episode_group_details.json")
+	details := file(t, "tv_episode_group_details.json")
+	dvd := file(t, "tv_episode_group_dvd.json")
+	abs := file(t, "tv_episode_group_absolute.json")
 	c := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/3/tv/episode_group/5e9077d2e640d600151f32bd":
-			fixture(w, r)
+		case "/3/tv/episode_group/5acf93e60e0a26346d0000ce":
+			details(w, r)
+		case "/3/tv/episode_group/5b829bf6c3a368469d0034a7":
+			dvd(w, r)
+		case "/3/tv/episode_group/5eb7353b0cb3350020ce402e":
+			abs(w, r)
 		case "/3/tv/episode_group/000000000000000000000404":
 			w.WriteHeader(http.StatusNotFound)
 		case "/3/tv/episode_group/000000000000000000000401":
 			w.WriteHeader(http.StatusUnauthorized)
-		case "/3/tv/episode_group/000000000000000000000002":
-			w.Write([]byte(`{"groups":[{"order":1,"episodes":[{"order":0}]},{"order":1,"episodes":[{"order":0}]}]}`))
+		case "/3/tv/episode_group/000000000000000000000429":
+			w.WriteHeader(http.StatusTooManyRequests)
 		default:
 			t.Errorf("unexpected request %s", r.URL)
 		}
 	})
 
-	got, err := c.EpisodeGroupSeasons(context.Background(), "5e9077d2e640d600151f32bd")
+	// Published TMDB example without specials (explicit 0-based episode order).
+	got, err := c.EpisodeGroupSeasons(context.Background(), "5acf93e60e0a26346d0000ce")
 	if err != nil || len(got) != 2 || !slices.Equal(got[1], []int{1, 2, 3}) || !slices.Equal(got[2], []int{1}) {
-		t.Fatalf("EpisodeGroupSeasons = %+v, %v, want {1:[1 2 3], 2:[1]}", got, err)
+		t.Fatalf("details = %+v, %v, want {1:[1 2 3], 2:[1]}", got, err)
+	}
+	// DVD order with explicit Specials (order 0) and a season gap (1, 3).
+	got, err = c.EpisodeGroupSeasons(context.Background(), "5b829bf6c3a368469d0034a7")
+	if err != nil || len(got) != 2 || !slices.Equal(got[1], []int{1, 2}) || !slices.Equal(got[3], []int{1}) {
+		t.Fatalf("dvd = %+v, %v, want {1:[1 2], 3:[1]}", got, err)
+	}
+	// Absolute order with single group order 1 -> Plex season 1.
+	got, err = c.EpisodeGroupSeasons(context.Background(), "5eb7353b0cb3350020ce402e")
+	if err != nil || len(got) != 1 || !slices.Equal(got[1], []int{1, 2, 3}) {
+		t.Fatalf("absolute = %+v, %v, want {1:[1 2 3]}", got, err)
 	}
 	got, err = c.EpisodeGroupSeasons(context.Background(), "000000000000000000000404")
 	if err != nil || len(got) != 0 {
-		t.Fatalf("EpisodeGroupSeasons on 404 = %+v, %v, want nil", got, err)
+		t.Fatalf("404 = %+v, %v, want nil", got, err)
 	}
 	_, err = c.EpisodeGroupSeasons(context.Background(), "000000000000000000000401")
 	checkError(t, err, true)
-	got, err = c.EpisodeGroupSeasons(context.Background(), "000000000000000000000002")
-	if err != nil || len(got) != 0 {
-		t.Fatalf("EpisodeGroupSeasons with duplicate group order = %+v, %v, want nil", got, err)
+	_, err = c.EpisodeGroupSeasons(context.Background(), "000000000000000000000429")
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("429 = %v, want ErrRateLimited", err)
+	}
+}
+
+func TestEpisodeGroupSeasonsRejectsAmbiguousOrders(t *testing.T) {
+	cases := map[string]string{
+		"missing episode order":   `{"groups":[{"order":1,"episodes":[{}]}]}`,
+		"null episode order":      `{"groups":[{"order":1,"episodes":[{"order":null}]}]}`,
+		"negative episode order":  `{"groups":[{"order":1,"episodes":[{"order":-1}]}]}`,
+		"duplicate episode order": `{"groups":[{"order":1,"episodes":[{"order":0},{"order":0}]}]}`,
+		"missing subgroup order":  `{"groups":[{"episodes":[{"order":0}]},{"order":1,"episodes":[{"order":0}]}]}`,
+		"null subgroup order":     `{"groups":[{"order":null,"episodes":[{"order":0}]},{"order":1,"episodes":[{"order":0}]}]}`,
+		"duplicate group order":   `{"groups":[{"order":1,"episodes":[{"order":0}]},{"order":1,"episodes":[{"order":0}]}]}`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := serve(t, func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte(body)) })
+			got, err := c.EpisodeGroupSeasons(context.Background(), "5e9077d2e640d600151f32bd")
+			if err != nil || len(got) != 0 {
+				t.Fatalf("EpisodeGroupSeasons = %+v, %v, want nil", got, err)
+			}
+		})
 	}
 }
 
