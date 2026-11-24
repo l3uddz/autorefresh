@@ -43,11 +43,12 @@ type eventJSON struct {
 	FixedMatchEventID int64        `json:"fixedMatchEventId,omitempty"`
 	Searches          []searchJSON `json:"searches"`
 	// The evidence of a match decision beyond its searches.
-	ItemYear    int              `json:"itemYear,omitempty"`
-	TMDBID      string           `json:"tmdbId,omitempty"`
-	TMDBSkip    string           `json:"tmdbSkip,omitempty"`
-	TMDBMissing []string         `json:"tmdbMissing,omitempty"`
-	EpisodeDiff *episodeDiffJSON `json:"episodeDiff,omitempty"`
+	ItemYear     int              `json:"itemYear,omitempty"`
+	TMDBID       string           `json:"tmdbId,omitempty"`
+	TMDBSkip     string           `json:"tmdbSkip,omitempty"`
+	TMDBMissing  []string         `json:"tmdbMissing,omitempty"`
+	EpisodeGroup string           `json:"episodeGroup,omitempty"`
+	EpisodeDiff  *episodeDiffJSON `json:"episodeDiff,omitempty"`
 }
 
 // episodeDiffJSON is the first season whose regular episode numbers differ
@@ -197,6 +198,7 @@ func (s *Server) toEventJSON(e store.Event) eventJSON {
 	}
 	if e.Kind == store.EventMatchDecision {
 		out.ItemYear, out.TMDBID, out.TMDBSkip, out.TMDBMissing = e.Year, e.TMDBID, e.TMDBSkip, e.TMDBMissing
+		out.EpisodeGroup = e.EpisodeGroup
 		out.EpisodeDiff = toEpisodeDiffJSON(e.EpisodeDiff)
 	}
 	if e.MatchGUID != "" {

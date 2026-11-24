@@ -73,6 +73,8 @@ export interface TimelineEvent {
   tmdbSkip?: string;
   /** The folder IDs that TMDB has no single entry for. */
   tmdbMissing?: string[];
+  /** The alternate TMDB episode group that confirmed a series, if any. */
+  episodeGroup?: string;
   /** The first season whose episode numbers differ from TMDB. */
   episodeDiff?: EpisodeDiff;
 }
@@ -140,6 +142,7 @@ export interface CandidateSeries {
 export interface EpisodeCheck {
   match: boolean;
   episodes: number;
+  episodeGroup?: string;
   diff?: EpisodeDiff;
 }
 
