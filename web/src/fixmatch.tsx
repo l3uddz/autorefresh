@@ -16,14 +16,15 @@ import { useToast } from '@astryxdesign/core/Toast';
 import { Token } from '@astryxdesign/core/Token';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useState } from 'react';
-import { ApiError, api, invalidateLists, post, useStatus, type Candidate, type EpisodeCheck, type ItemRecord, type LiveItem, type Matches, type MatchSearch, type TimelineEvent } from './api';
+import { ApiError, api, invalidateLists, post, useStatus, type Candidate, type ItemRecord, type LiveItem, type Matches, type MatchSearch, type TimelineEvent } from './api';
 import { askThen } from './confirm';
 import { actionError } from './errors';
 import { plexCounts, plural, titleYear, typeName } from './format';
+import { EpisodeCheckRow } from './episodecheck';
 import { DecisionPanel } from './history';
 import { autoEvidence, autoEvidenceText, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isFolderEvidence, listView, matchBody, matchesPath, newerDecision, previewQuery, sameSearch, asksProvider, candidateQuery, compareEpisodeCount, episodeCheckId, type CandidateGroup, type EpisodeCountCheck, type Evidence, type TypedSearch, type YearCheck } from './match';
 import { RemotePoster } from './media';
-import { episodeDiffText, lastDecision } from './timeline';
+import { lastDecision } from './timeline';
 
 // The Fix match dialog of one item: candidates with their evidence on the
 // left, the newer of the last automatic fix match and the preview on the
@@ -493,34 +494,5 @@ function CandidateCard({ group, item, params, decision, isPreview, isCurrent, it
         </HStack>
       )}
     </Card>
-  );
-}
-
-/** Returns the result of the episode check of the TMDB ID tmdbId. */
-function episodeCheckText(check: EpisodeCheck, tmdbId: string): string {
-  if (check.match) {
-    const viaGroup = check.episodeGroup ? ` via episode group “${check.episodeGroup}”` : '';
-    return `The episode numbers confirm tmdb-${tmdbId}${viaGroup} (${plural(check.episodes, 'episode')} compared).`;
-  }
-  if (check.diff) return episodeDiffText(check.diff, tmdbId);
-  // The API does not say why: Plex listed no regular episode, an entry
-  // lacked a file or a number, or the listing changed while it was read.
-  return `The episodes of this item could not be compared with tmdb-${tmdbId}: the episode listing of Plex is empty, incomplete, or has an entry without a file or number.`;
-}
-
-/** Compares the episode numbers of the item with the TMDB series tmdbId.
- * It applies nothing. Its parent keys it by item and TMDB ID, and it shows
- * only an answer for the ID that it sent. */
-function EpisodeCheckRow({ params, tmdbId }: { params: string; tmdbId: string }) {
-  const check = useMutation({
-    mutationFn: (id: string) => post<EpisodeCheck>(`item/episode-check?${params}&${new URLSearchParams({ tmdb: id })}`),
-  });
-  const isThisID = check.variables === tmdbId;
-  return (
-    <HStack gap={3} wrap="wrap" vAlign="center">
-      <Button label="Compare episodes" size="sm" variant="secondary" isLoading={check.isPending} onClick={() => check.mutate(tmdbId)} tooltip={`Compare the episode numbers of this item with TMDB tmdb-${tmdbId}`} />
-      {isThisID && check.data && <Text type="supporting">{episodeCheckText(check.data, tmdbId)}</Text>}
-      {isThisID && check.error && <Text type="supporting">{`The episode check failed: ${actionError(check.error)}`}</Text>}
-    </HStack>
   );
 }

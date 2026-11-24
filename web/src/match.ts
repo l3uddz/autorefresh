@@ -1,7 +1,8 @@
 import { queryOptions } from '@tanstack/react-query';
-import { api, type Candidate, type CandidateSeries, type MatchSearch, type TimelineEvent } from './api';
+import { api, type Candidate, type CandidateSeries, type EpisodeCheck, type MatchSearch, type SeasonEpisodes, type TimelineEvent } from './api';
 import { maxSearchBytes } from './bulk';
-import { rowVerdict, verdictName } from './timeline';
+import { plural } from './format';
+import { episodeDiffText, rowVerdict, verdictName } from './timeline';
 
 // The evidence of the Fix match dialog: candidates grouped by Plex GUID,
 // with the searches that found each one. Every Plex field stays text.
@@ -350,4 +351,66 @@ export function newerDecision(preview: TimelineEvent | undefined, last: Timeline
  * takes, which rejects any other. */
 export function matchBody(candidate: Candidate): { guid: string; name: string; year: number } {
   return { guid: candidate.guid, name: candidate.name ?? '', year: candidate.year ?? 0 };
+}
+
+/** The place of one episode number in a season comparison: both Plex and
+ * TMDB have it, only TMDB has it (missing in Plex), or only Plex has it. */
+export type EpisodePlace = 'both' | 'missing' | 'extra';
+
+export interface SeasonView {
+  season: number;
+  plex: number;
+  tmdb: number;
+  episodes: { number: number; place: EpisodePlace }[];
+  /** The numbers that Plex lists more than once. */
+  duplicates: number[];
+}
+
+/** Returns the episode numbers of a compared season in order, each once,
+ * with the side that has it, and the numbers that Plex lists twice. */
+export function seasonView(season: SeasonEpisodes): SeasonView {
+  const plex = new Set(season.plex);
+  const tmdb = new Set(season.tmdb);
+  const numbers = [...new Set([...plex, ...tmdb])].sort((a, b) => a - b);
+  const place = (n: number): EpisodePlace => (!tmdb.has(n) ? 'extra' : plex.has(n) ? 'both' : 'missing');
+  const duplicates = [...new Set(season.plex.filter((n, i) => season.plex.indexOf(n) !== i))];
+  return {
+    season: season.season,
+    plex: season.plex.length,
+    tmdb: season.tmdb.length,
+    episodes: numbers.map(number => ({ number, place: place(number) })),
+    duplicates,
+  };
+}
+
+/** Returns the result of the episode check of the TMDB ID tmdbId. */
+export function episodeCheckText(check: EpisodeCheck, tmdbId: string): string {
+  if (check.match) {
+    return `The episode numbers of ${listingName(check, tmdbId)} confirm it (${plural(check.episodes, 'episode')} compared).`;
+  }
+  if (check.diff) return episodeDiffText(check.diff, tmdbId);
+  // The API does not say why: Plex listed no regular episode, an entry
+  // lacked a file or a number, or the listing changed while it was read.
+  return `The episodes of this item could not be compared with tmdb-${tmdbId}: the episode listing of Plex is empty, incomplete, or has an entry without a file or number.`;
+}
+
+/** Names the TMDB listing that the seasons of the check come from: the
+ * confirming episode group, or else the TMDB seasons. */
+function listingName(check: EpisodeCheck, tmdbId: string): string {
+  return check.episodeGroup ? `the TMDB episode group “${check.episodeGroup}” of tmdb-${tmdbId}` : `the TMDB seasons of tmdb-${tmdbId}`;
+}
+
+/** Returns the notes of the comparison: the listing it used, the episode
+ * groups it also read, and where it stopped. */
+export function comparisonNotes(check: EpisodeCheck, tmdbId: string): string[] {
+  const notes = [`Compared with ${listingName(check, tmdbId)}.`];
+  if (check.episodeGroup) notes.push('The TMDB seasons did not confirm it, so the check read the TVDB-aligned episode groups of TMDB.');
+  // The confirming group ends the check, so it is the last group read.
+  // Other groups can have the same name.
+  const read = check.episodeGroups ?? [];
+  const others = check.episodeGroup ? read.slice(0, -1) : read;
+  if (others.length) notes.push(`Episode groups that did not confirm it: ${others.map(name => `“${name}”`).join(', ')}.`);
+  const last = check.seasons?.at(-1);
+  if (check.stopped && last) notes.push(`The check stopped at season ${last.season}, so it lists no later season of Plex.`);
+  return notes;
 }
