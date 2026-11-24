@@ -122,7 +122,7 @@ func TestTitleMatchConfirmsViaEpisodeGroup(t *testing.T) {
 	e := f.decision("201")
 	wantDecision(t, e, store.DecisionMatched, "", titleVerdicts)
 	wantYears(t, e, 2020, 0, 49)
-	wantEvidence(t, e, store.MatchEvidence{TMDBID: "88"})
+	wantEvidence(t, e, store.MatchEvidence{TMDBID: "88", EpisodeGroup: "Aired Order"})
 }
 
 func TestTitleMatchSeveralWithTheSameTitle(t *testing.T) {

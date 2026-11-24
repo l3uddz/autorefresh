@@ -90,10 +90,11 @@ type EpisodeDiff struct {
 
 // MatchEvidence is what a fix match decision learned beyond its searches.
 type MatchEvidence struct {
-	TMDBID      string      // the TMDB ID whose year and episodes the year check compared, or that the Plex metadata provider gave for a title candidate
-	TMDBSkip    string      // why TMDB was not asked: TMDBOff, TMDBFailed, TMDBHasID, or TMDBNoSource
-	TMDBMissing []string    // the path IDs, such as tvdb-357542, that TMDB has no single entry for
-	EpisodeDiff EpisodeDiff // the episode comparison that did not confirm the candidate
+	TMDBID       string      // the TMDB ID whose year and episodes the year check compared, or that the Plex metadata provider gave for a title candidate
+	TMDBSkip     string      // why TMDB was not asked: TMDBOff, TMDBFailed, TMDBHasID, or TMDBNoSource
+	TMDBMissing  []string    // the path IDs, such as tvdb-357542, that TMDB has no single entry for
+	EpisodeGroup string      // the alternate TMDB episode group that confirmed a series, if any
+	EpisodeDiff  EpisodeDiff // the episode comparison that did not confirm the candidate
 }
 
 // Event is one thing that happened to an item, with a snapshot of the item.
@@ -124,7 +125,7 @@ type Event struct {
 const eventColumns = `id, server, section, rating_key, at, kind, source, title, year, type, thumb, art, path,
 	action, accepted, outcome, error, match_guid, match_title, match_year, conflict, path_year, tmdb_year,
 	episode_count, links, fixed_action, fixed_match, fixed_match_event_id, run_id, tmdb_id, tmdb_skip, tmdb_missing,
-	episode_season, episode_plex, episode_tmdb, episode_missing, episode_extra`
+	episode_season, episode_plex, episode_tmdb, episode_missing, episode_extra, episode_group`
 
 // Outcome is the outcome of the request: the action, with "-failed" when
 // Plex did not accept it, or "search-failed" without an action.
@@ -408,14 +409,14 @@ func insertEvent(tx *sql.Tx, e Event) (int64, error) {
 	res, err := tx.Exec(`INSERT INTO event (server, section, rating_key, at, kind, source, title, year, type, thumb, art, path,
 		action, accepted, outcome, error, match_guid, match_title, match_year, conflict, path_year, tmdb_year,
 		episode_count, links, fixed_action, fixed_match, fixed_match_event_id, run_id, tmdb_id, tmdb_skip, tmdb_missing,
-		episode_season, episode_plex, episode_tmdb, episode_missing, episode_extra)
+		episode_season, episode_plex, episode_tmdb, episode_missing, episode_extra, episode_group)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT id FROM event WHERE id = ?),
-		(SELECT id FROM run WHERE id = ?), ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(SELECT id FROM run WHERE id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.Server, e.Section, e.RatingKey, e.At.Unix(), e.Kind, e.Source, e.Title, e.Year, e.Type, e.Thumb, e.Art, e.Path,
 		e.Action, e.Accepted, e.Outcome, e.Error, e.MatchGUID, e.MatchTitle, e.MatchYear, e.Conflict,
 		e.PathYear, e.TMDBYear, e.EpisodeCount, strings.Join(e.Links, "\n"), e.FixedAction, e.FixedMatch, e.FixedMatchEventID,
 		e.RunID, e.TMDBID, e.TMDBSkip, strings.Join(e.TMDBMissing, "\n"), e.EpisodeDiff.Season, e.EpisodeDiff.Plex,
-		e.EpisodeDiff.TMDB, joinNumbers(e.EpisodeDiff.Missing), joinNumbers(e.EpisodeDiff.Extra))
+		e.EpisodeDiff.TMDB, joinNumbers(e.EpisodeDiff.Missing), joinNumbers(e.EpisodeDiff.Extra), e.EpisodeGroup)
 	if err != nil {
 		return 0, fmt.Errorf("write event: %w", err)
 	}
@@ -567,7 +568,7 @@ func scanEvent(row scanner) (Event, error) {
 		&e.Thumb, &e.Art, &e.Path, &e.Action, &e.Accepted, &e.Outcome, &e.Error, &e.MatchGUID, &e.MatchTitle,
 		&e.MatchYear, &e.Conflict, &e.PathYear, &e.TMDBYear, &e.EpisodeCount, &links, &e.FixedAction, &e.FixedMatch,
 		&fixedID, &runID, &e.TMDBID, &e.TMDBSkip, &missing, &e.EpisodeDiff.Season, &e.EpisodeDiff.Plex, &e.EpisodeDiff.TMDB,
-		&onlyIn[0], &onlyIn[1])
+		&onlyIn[0], &onlyIn[1], &e.EpisodeGroup)
 	if err != nil {
 		return Event{}, err
 	}
