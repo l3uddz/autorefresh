@@ -221,17 +221,25 @@ match also before the first refresh. If `ignore-reasons` holds
      affect the check.
      This can confirm a match even when the folder year disagrees with TMDB
      or a few episodes are missing (for example 9 of 10, or 39 of 41 across
-     two seasons). Any extra episode number in Plex, or too many missing
-     episodes (below 90% across the local seasons), still prevents
-     confirmation by default TMDB seasons.
+     two seasons). Unaired episodes listed in TMDB still count toward the
+     90% denominator. Any extra episode number in Plex, or too many missing
+     episodes (below 90% across the local seasons), prevents confirmation by
+     default TMDB seasons.
    - If TMDB's default seasons do not confirm valid local episode numbers,
-     autorefresh checks TMDB's alternate episode groups for the series that
-     align with TheTVDB's ordering formats, in priority order: **Original
-     air date**, **DVD**, **Absolute**, and **TV** (skipping Digital,
-     Story arc, and Production groups, groups with fewer episodes than Plex
-     has locally, and checking at most 10 groups). It stops at the first
-     group whose seasons confirm the local episodes under the same 90% and
-     zero-extra rule. If no group confirms, autorefresh keeps the diff from
+     autorefresh checks candidate TMDB episode groups whose type aligns with
+     TheTVDB's ordering formats, in priority order: **Original air date**,
+     **DVD**, **Absolute**, and **TV** (excluding Digital, Story arc, and
+     Production groups). Groups with at least as many episodes as Plex has
+     locally are tried first, with unknown or lower counts competing only for
+     remaining slots, and selection balances across the four types up to 10
+     groups within a 15-second fallback budget. Absolute order confirms only
+     when Plex has one season matching group order `1`. It stops at the first
+     group that confirms under the same 90% and zero-extra rule and records
+     that group's name on the decision. Confirmation neither identifies nor
+     changes the episode ordering configured in Plex. Isolated failures on an
+     optional group lookup are skipped so later groups can still run; only
+     authentication (`401`) or rate-limit (`429`) errors stop TMDB for the
+     rest of the run. If no group confirms, autorefresh keeps the diff from
      TMDB's default seasons.
 
 The decision of a year conflict keeps the years that autorefresh compared:
@@ -784,11 +792,13 @@ episode numbers of the item with that TMDB series. The TMDB ID comes from
 a search by one TMDB ID that found the candidate as its only candidate, if
 no search by that TMDB ID found another candidate, or else from the
 metadata provider, so a candidate of a title search can compare too. This
-needs a `tmdb-token`. When the episode numbers do not confirm the series, the
-comparison names the season that kept it from confirming (the first season with
-extra or invalid numbers, or the first season missing episodes when coverage is
-below 90%), the episode counts of Plex and TMDB, and the
-episode numbers that only one of them has. The comparison changes nothing. **Match** asks before it
+needs a `tmdb-token`. It checks TMDB's default seasons first and then falls back
+to candidate TVDB-aligned TMDB episode groups (Original air date, DVD, Absolute,
+and TV), naming the confirming group when one matches. When the episode numbers
+do not confirm the series, the comparison names the default season that kept it
+from confirming (the first season with extra or invalid numbers, or the first
+season missing episodes when coverage is below 90%), the episode counts of Plex
+and TMDB, and the episode numbers that only one of them has. The comparison changes nothing. **Match** asks before it
 applies the candidate. After Plex accepts the match, autorefresh also
 requests a refresh of the item. The refresh counts as one more attempt of
 the item, and as an accepted refresh it lengthens the wait before the next
@@ -926,8 +936,8 @@ The image declares port `7380`. Nothing listens on it until you set
 | `api/item` | One item and its history, newest event first |
 | `api/item/live` | What Plex tells about one item now |
 | `api/candidate` | The TMDB ID and the season and episode counts that the Plex metadata provider gives for the `plex://` GUID of a series candidate, in the `guid` query parameter, asked with the token of the server `srv` |
-| `api/item/auto-match` | The automatic fix match preview of one item, as a match decision event. A decision event can also have the optional fields `itemYear`, `tmdbId`, `tmdbSkip`, `tmdbMissing`, and `episodeDiff`, which the API leaves out when they are empty |
-| `api/item/episode-check` | `POST`: compares the episode numbers of one series with the TMDB ID in the `tmdb` query parameter. `diff` names the season that kept the comparison from confirming (extra or invalid numbers, or missing episodes below 90% coverage), with the counts and the episode numbers that only TMDB (`missing`) or only Plex (`extra`) has |
+| `api/item/auto-match` | The automatic fix match preview of one item, as a match decision event. A decision event can also have the optional fields `itemYear`, `tmdbId`, `tmdbSkip`, `tmdbMissing`, `episodeGroup`, and `episodeDiff`, which the API leaves out when they are empty |
+| `api/item/episode-check` | `POST`: compares the episode numbers of one series with the TMDB ID in the `tmdb` query parameter, checking default seasons first and then candidate TVDB-aligned TMDB episode groups. `episodeGroup` names the confirming alternate group when one matched; `diff` names the default season that kept the comparison from confirming (extra or invalid numbers, or missing episodes below 90% coverage), with the counts and the episode numbers that only TMDB (`missing`) or only Plex (`extra`) has |
 | `api/items/thumb`, `api/items/art` | The poster and the background art of one item |
 | `api/runs` | One page of the runs, newest first |
 | `api/runs/detail` | One run with the events that it wrote, or the items of a bulk refresh |
