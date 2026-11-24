@@ -31,9 +31,11 @@ type MatchResult struct {
 	TMDBFailed       bool
 }
 
-// EpisodeResult reports whether all locally represented seasons matched TMDB.
-// Without a match, Diff is the first season that differs. Diff is zero when
-// Plex lists no complete regular episodes.
+// EpisodeResult reports whether the locally represented regular seasons
+// confirm the TMDB series. Without a match, Diff is the first season with
+// extra or invalid numbers, or the first season missing episodes when
+// coverage is too low. Diff is zero when Plex lists no complete regular
+// episodes.
 type EpisodeResult struct {
 	Match    bool
 	Episodes int
