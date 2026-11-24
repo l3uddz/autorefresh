@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError, type RunDetail, type RunEvent, type RunItem, type RunRecord } from './api';
-import { noEntries, runCounts, runGroups, runPollInterval } from './runs';
+import { filterGroups, nextCountFilter, noEntries, runCounts, runGroups, runPollInterval } from './runs';
 
 const record = (change: Partial<RunRecord> = {}): RunRecord => ({
   id: 9, srv: 0, server: 'Home', kind: 'run', source: 'schedule', status: 'finished',
@@ -117,10 +117,50 @@ describe('run groups', () => {
 
   it('counts requests sent, which include the ones that failed', () => {
     const run = record({ readItems: 40, refreshed: 2, matched: 1, failed: 1, fixed: 3, due: 5 });
-    expect(runCounts(run)).toEqual([['Read', 40], ['Refreshes sent', 2], ['Matches sent', 1], ['Failed', 1], ['Fixed', 3], ['Due', 5]]);
-    expect(runCounts(record({ kind: 'bulk-refresh', selected: 4, refreshed: 3, failed: 1, skipped: 1 }))).toEqual([
-      ['Selected', 4], ['Refreshes sent', 3], ['Failed', 1], ['Skipped', 1],
+    const values = (r: RunRecord) => runCounts(r).map(count => [count.name, count.value, Boolean(count.shows)]);
+    expect(values(run)).toEqual([
+      ['Read', 40, false], ['Refreshes sent', 2, true], ['Matches sent', 1, true], ['Failed', 1, true], ['Fixed', 3, true], ['Due', 5, false],
     ]);
+    expect(values(record({ kind: 'bulk-refresh', selected: 4, refreshed: 3, failed: 1, skipped: 1 }))).toEqual([
+      ['Selected', 4, false], ['Refreshes sent', 3, true], ['Failed', 1, true], ['Skipped', 1, true],
+    ]);
+  });
+
+  it('filters a request count by every request it counts, also a failed one', () => {
+    const d = detail([
+      event('1', 'request', { action: 'refresh', accepted: true }),
+      event('2', 'request', { action: 'refresh', accepted: false }),
+      event('3', 'request', { action: 'match', accepted: false }),
+      event('4', 'completed', { fixedAction: 'refresh' }),
+    ]);
+    const shown = (name: string) => {
+      const count = runCounts(d.run).find(c => c.name === name)!;
+      return filterGroups(runGroups(d), count.shows!).map(group => [group.title, group.entries.map(entry => entry.key)]);
+    };
+    expect(shown('Refreshes sent')).toEqual([['Refreshed', ['1']], ['Failed', ['2']]]);
+    expect(shown('Matches sent')).toEqual([['Failed', ['3']]]);
+    expect(shown('Failed')).toEqual([['Failed', ['2', '3']]]);
+    expect(shown('Fixed')).toEqual([['Fixed', ['4']]]);
+  });
+
+  it('filters Failed by a failed decision before an accepted refresh too', () => {
+    // A TMDB lookup failed, so the run counted a failure and sent a plain refresh.
+    const d = detail([event('5', 'match-decision', { outcome: 'failed', error: 'TMDB unavailable' }), event('5', 'request', { action: 'refresh', accepted: true })]);
+    const count = runCounts(d.run).find(c => c.name === 'Failed')!;
+    expect(filterGroups(runGroups(d), count.shows!).map(group => [group.title, group.entries.map(entry => entry.key)])).toEqual([['Refreshed', ['5']]]);
+  });
+
+  it('filters the sent refreshes of a bulk refresh by their outcome', () => {
+    const items: RunItem[] = ['accepted', 'failed', 'gone', 'stopped', 'not-reached'].map((outcome, i) => ({ key: String(i), title: `Item ${i}`, outcome }));
+    const d = detail([], { kind: 'bulk-refresh' }, items);
+    const count = runCounts(d.run).find(c => c.name === 'Refreshes sent')!;
+    expect(filterGroups(runGroups(d), count.shows!).flatMap(group => group.entries.map(entry => entry.key))).toEqual(['0', '1', '2']);
+  });
+
+  it('filters by the clicked count until a second click on it', () => {
+    expect(nextCountFilter(undefined, 'Fixed')).toBe('Fixed');
+    expect(nextCountFilter('Fixed', 'Failed')).toBe('Failed');
+    expect(nextCountFilter('Fixed', 'Fixed')).toBeUndefined();
   });
 
   it('keeps the item of each entry', () => {
