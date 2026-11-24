@@ -493,11 +493,19 @@ func parseRetryAfter(header string, now time.Time, fallback time.Duration) time.
 	if header == "" {
 		return fallback
 	}
-	if secs, err := strconv.Atoi(header); err == nil {
+	if secs, err := strconv.ParseInt(header, 10, 64); err == nil {
 		if secs <= 0 {
 			return 0
 		}
-		return min(time.Duration(secs)*time.Second, maxRateLimitWait)
+		if secs >= int64(maxRateLimitWait/time.Second) {
+			return maxRateLimitWait
+		}
+		return time.Duration(secs) * time.Second
+	} else if errors.Is(err, strconv.ErrRange) {
+		if header[0] == '-' {
+			return 0
+		}
+		return maxRateLimitWait
 	}
 	if t, err := http.ParseTime(header); err == nil {
 		d := t.Sub(now)

@@ -562,7 +562,7 @@ func TestRateLimitBackoffRetry(t *testing.T) {
 				w.Header().Set("Retry-After", "3")
 				w.WriteHeader(http.StatusTooManyRequests)
 			case 2:
-				w.Header().Set("Retry-After", "300")
+				w.Header().Set("Retry-After", "10000000000")
 				w.WriteHeader(http.StatusTooManyRequests)
 			case 3:
 				w.Header().Set("Retry-After", now.Add(4*time.Second).Format(http.TimeFormat))
