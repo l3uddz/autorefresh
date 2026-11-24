@@ -2,6 +2,7 @@ package refresher
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -101,5 +102,14 @@ func TestEpisodeCheckComparesNumbers(t *testing.T) {
 		if got, err := f.r.EpisodeCheck(t.Context(), "home", tc.key, tc.id); err != nil || !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%s/%s: got %+v, %v, want %+v", tc.key, tc.id, got, err, tc.want)
 		}
+	}
+	f.r.opts.TMDB = &fakeTMDB{
+		seasons:       map[string][]int{"83 1": {1}},
+		groupListErrs: map[string]error{"83": tmdb.ErrRateLimited},
+	}
+	got, err := f.r.EpisodeCheck(t.Context(), "home", "1", "83")
+	wantDiff := store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 1, Extra: []int{2}}
+	if !errors.Is(err, tmdb.ErrRateLimited) || !reflect.DeepEqual(got.Diff, wantDiff) {
+		t.Errorf("83: got %+v, %v, want ErrRateLimited with diff %+v", got, err, wantDiff)
 	}
 }

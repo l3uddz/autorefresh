@@ -449,16 +449,31 @@ func TestEpisodeGroupsFallback(t *testing.T) {
 			wantDecision:   store.DecisionNoMatch,
 		},
 		{
-			name:           "rate limit listing episode groups fails TMDB lookup",
+			name:           "falls back to group ID when TMDB omits episode group name",
+			local:          map[int][]int{1: seq(14)},
+			defaultSeasons: map[string][]int{"77 1": seq(11)},
+			groups: []tmdb.EpisodeGroup{
+				{ID: "5e9077d2e640d600151f32bd", Name: "   ", Type: tmdb.EpisodeGroupOriginalAirDate, EpisodeCount: 14},
+			},
+			groupSeasons:   map[string]map[int][]int{"5e9077d2e640d600151f32bd": {1: seq(14)}},
+			wantSend:       []string{"Match 201 plex://show/right", "Refresh 201"},
+			wantCount:      14,
+			wantGroup:      "5e9077d2e640d600151f32bd",
+			wantGroupCalls: []string{"EpisodeGroups 77", "EpisodeGroupSeasons 5e9077d2e640d600151f32bd"},
+			wantDecision:   store.DecisionMatched,
+		},
+		{
+			name:           "rate limit listing episode groups fails TMDB lookup and keeps default diff",
 			local:          map[int][]int{1: seq(14)},
 			defaultSeasons: map[string][]int{"77 1": seq(11)},
 			groupListErr:   fmt.Errorf("429: %w", tmdb.ErrRateLimited),
 			wantSend:       []string{"Refresh 201"},
+			wantDiff:       store.EpisodeDiff{Season: 1, Plex: 14, TMDB: 11, Extra: []int{12, 13, 14}},
 			wantGroupCalls: []string{"EpisodeGroups 77"},
 			wantDecision:   store.DecisionFailed,
 		},
 		{
-			name:           "unauthorized error reading group details stops immediately",
+			name:           "unauthorized error reading group details stops immediately and keeps default diff",
 			local:          map[int][]int{1: seq(14)},
 			defaultSeasons: map[string][]int{"77 1": seq(11)},
 			groups: []tmdb.EpisodeGroup{
@@ -468,6 +483,7 @@ func TestEpisodeGroupsFallback(t *testing.T) {
 			groupDetailErr: map[string]error{"air1": fmt.Errorf("401: %w", tmdb.ErrUnauthorized)},
 			groupSeasons:   map[string]map[int][]int{"dvd1": {1: seq(14)}},
 			wantSend:       []string{"Refresh 201"},
+			wantDiff:       store.EpisodeDiff{Season: 1, Plex: 14, TMDB: 11, Extra: []int{12, 13, 14}},
 			wantGroupCalls: []string{"EpisodeGroups 77", "EpisodeGroupSeasons air1"},
 			wantDecision:   store.DecisionFailed,
 		},
@@ -553,6 +569,11 @@ func TestEpisodeGroupIsolatedFailureDoesNotDisableTMDBForLaterItems(t *testing.T
 	f.run(t0)
 
 	wantCalls(t, sends(fp.calls), "Refresh 201", "Match 202 plex://show/second", "Refresh 202")
+	failIdx := slices.Index(ft.calls, "EpisodeGroupSeasons air1")
+	nextIdx := slices.Index(ft.calls, "Year 88 true")
+	if failIdx < 0 || nextIdx < 0 || failIdx > nextIdx {
+		t.Fatalf("calls = %v, want EpisodeGroupSeasons air1 before Year 88 true", ft.calls)
+	}
 	if diff := f.decision("201").EpisodeDiff; diff.Season != 1 || diff.Plex != 14 || diff.TMDB != 11 {
 		t.Errorf("first item diff = %+v, want season 1 (14 vs 11)", diff)
 	}
@@ -568,9 +589,10 @@ func TestEpisodeGroupsCappedAndBalancedAcrossTypes(t *testing.T) {
 		})
 		groupSeasons[id] = map[int][]int{1: seq(20)}
 	}
-	// A DVD group listed after >10 Aired groups must still survive the cap.
+	// A DVD group with an unknown (0) summary count listed after >10 plausible
+	// Aired groups must still survive cross-type balancing under the cap.
 	groups = append(groups, tmdb.EpisodeGroup{
-		ID: "dd01", Name: "DVD Order", Type: tmdb.EpisodeGroupDVD, EpisodeCount: 14,
+		ID: "dd01", Name: "DVD Order", Type: tmdb.EpisodeGroupDVD, EpisodeCount: 0,
 	})
 	groupSeasons["dd01"] = map[int][]int{1: seq(14)}
 
@@ -732,7 +754,7 @@ func (s slowGroupLookup) EpisodeGroupSeasons(ctx context.Context, groupID string
 
 func TestEpisodeGroupFallbackBudgetExpiresCleanly(t *testing.T) {
 	old := episodeGroupFallbackBudget
-	episodeGroupFallbackBudget = 20 * time.Millisecond
+	episodeGroupFallbackBudget = 50 * time.Millisecond
 	t.Cleanup(func() { episodeGroupFallbackBudget = old })
 
 	fp := newFakePlex(showsLib)
@@ -766,6 +788,9 @@ func TestEpisodeGroupFallbackBudgetExpiresCleanly(t *testing.T) {
 	f.run(t0)
 
 	wantCalls(t, sends(fp.calls), "Refresh 201", "Match 202 plex://show/second", "Refresh 202")
+	if !slices.Contains(ft.calls, "EpisodeGroupSeasons air1") {
+		t.Fatalf("calls = %v, expected slow lookup air1 to start before budget expired", ft.calls)
+	}
 	if slices.Contains(ft.calls, "EpisodeGroupSeasons dvd1") {
 		t.Errorf("calls = %v, should stop after fallback budget expired", ft.calls)
 	}

@@ -46,6 +46,11 @@ var episodeGroupFallbackBudget = 15 * time.Second
 // confirmed it.
 func (r *Refresher) confirmEpisodeNumbers(ctx context.Context, run *serverRun, mc matchContext, tmdbID string) (int, error) {
 	result, err := compareEpisodes(ctx, run.server.Plex, r.opts.TMDB, mc.it.RatingKey, tmdbID)
+	if result.diff.Season > 0 && ctx.Err() == nil {
+		mc.d.evidence.EpisodeDiff = result.diff
+		itemEvent(log.Debug(), run.server.Name, mc.lib, mc.it).Int("season", result.diff.Season).
+			Int("local_episode_count", result.diff.Plex).Int("tmdb_episode_count", result.diff.TMDB).Msg("Episode numbers differ")
+	}
 	if errors.Is(err, ErrTMDB) {
 		if ctx.Err() != nil {
 			return 0, ctx.Err()
@@ -60,11 +65,6 @@ func (r *Refresher) confirmEpisodeNumbers(ctx context.Context, run *serverRun, m
 		mc.d.evidence.EpisodeGroup = result.group
 		itemEvent(log.Debug(), run.server.Name, mc.lib, mc.it).Str("episode_group", result.group).
 			Int("episode_count", result.count).Msg("Episode numbers confirmed via episode group")
-	}
-	if result.diff.Season > 0 {
-		mc.d.evidence.EpisodeDiff = result.diff
-		itemEvent(log.Debug(), run.server.Name, mc.lib, mc.it).Int("season", result.diff.Season).
-			Int("local_episode_count", result.diff.Plex).Int("tmdb_episode_count", result.diff.TMDB).Msg("Episode numbers differ")
 	}
 	return result.count, nil
 }
@@ -112,7 +112,7 @@ func compareEpisodes(ctx context.Context, p Plex, t TMDB, key, id string) (episo
 	}
 	grp, err := compareEpisodeGroups(ctx, t, id, local, localTotal)
 	if err != nil {
-		return episodeComparison{}, err
+		return def, err
 	}
 	if grp.count > 0 {
 		return grp, nil
@@ -183,7 +183,7 @@ func tryEpisodeGroup(ctx, gctx context.Context, t TMDB, id string, g tmdb.Episod
 	}
 	res, _ := compareSeasons(local, func(season int) ([]int, error) { return seasons[season], nil })
 	if res.count > 0 {
-		return episodeComparison{count: res.count, group: trimGroupName(g.Name)}, true, nil
+		return episodeComparison{count: res.count, group: groupLabel(g)}, true, nil
 	}
 	return episodeComparison{}, false, nil
 }
@@ -206,10 +206,13 @@ func fallbackGroupError(ctx, gctx context.Context, tmdbID, groupID string, err e
 	return nil
 }
 
-// trimGroupName trims whitespace and bounds a TMDB episode group name to
-// maxEpisodeGroupName runes before storing or returning it.
-func trimGroupName(name string) string {
-	name = strings.TrimSpace(name)
+// groupLabel returns the trimmed group name bounded to maxEpisodeGroupName
+// runes, falling back to the validated group ID when TMDB omits the name.
+func groupLabel(g tmdb.EpisodeGroup) string {
+	name := strings.TrimSpace(g.Name)
+	if name == "" {
+		return g.ID
+	}
 	runes := []rune(name)
 	if len(runes) > maxEpisodeGroupName {
 		return string(runes[:maxEpisodeGroupName])
@@ -217,13 +220,13 @@ func trimGroupName(name string) string {
 	return name
 }
 
-// selectEpisodeGroups deduplicates TVDB-aligned episode groups, ranks them by
-// episode_count plausibility (plausible >= localTotal first, then unknown 0,
-// then undersized), selects fairly across the 4 group types so no single type
-// consumes the entire maxEpisodeGroups budget, and returns the chosen groups
-// ordered by (plausibility tier, type priority).
+// selectEpisodeGroups deduplicates TVDB-aligned episode groups, orders each
+// type's groups by episode_count plausibility (plausible >= localTotal first,
+// then unknown 0, then undersized), picks round-robin across the 4 types up to
+// maxEpisodeGroups so no single type consumes the whole budget, and returns
+// the chosen groups sorted by (plausibility tier, type priority).
 func selectEpisodeGroups(groups []tmdb.EpisodeGroup, localTotal int) []tmdb.EpisodeGroup {
-	var buckets [3][4][]tmdb.EpisodeGroup
+	var byType [4][]tmdb.EpisodeGroup
 	seen := make(map[string]struct{}, len(groups))
 	for _, g := range groups {
 		prio := episodeGroupPriority(g.Type)
@@ -234,10 +237,14 @@ func selectEpisodeGroups(groups []tmdb.EpisodeGroup, localTotal int) []tmdb.Epis
 			continue
 		}
 		seen[g.ID] = struct{}{}
-		tier := countTier(g.EpisodeCount, localTotal)
-		buckets[tier][prio-1] = append(buckets[tier][prio-1], g)
+		byType[prio-1] = append(byType[prio-1], g)
 	}
-	selected := pickAcrossBuckets(&buckets, maxEpisodeGroups)
+	for i := range byType {
+		slices.SortStableFunc(byType[i], func(a, b tmdb.EpisodeGroup) int {
+			return countTier(a.EpisodeCount, localTotal) - countTier(b.EpisodeCount, localTotal)
+		})
+	}
+	selected := pickAcrossTypes(&byType, maxEpisodeGroups)
 	slices.SortStableFunc(selected, func(a, b tmdb.EpisodeGroup) int {
 		if d := countTier(a.EpisodeCount, localTotal) - countTier(b.EpisodeCount, localTotal); d != 0 {
 			return d
@@ -258,19 +265,17 @@ func countTier(episodeCount, localTotal int) int {
 	}
 }
 
-func pickAcrossBuckets(buckets *[3][4][]tmdb.EpisodeGroup, limit int) []tmdb.EpisodeGroup {
+func pickAcrossTypes(byType *[4][]tmdb.EpisodeGroup, limit int) []tmdb.EpisodeGroup {
 	out := make([]tmdb.EpisodeGroup, 0, limit)
-	for tier := range buckets {
-		for progress := true; progress && len(out) < limit; {
-			progress = false
-			for p := range buckets[tier] {
-				if len(buckets[tier][p]) == 0 || len(out) >= limit {
-					continue
-				}
-				out = append(out, buckets[tier][p][0])
-				buckets[tier][p] = buckets[tier][p][1:]
-				progress = true
+	for progress := true; progress && len(out) < limit; {
+		progress = false
+		for p := range byType {
+			if len(byType[p]) == 0 || len(out) >= limit {
+				continue
 			}
+			out = append(out, byType[p][0])
+			byType[p] = byType[p][1:]
+			progress = true
 		}
 	}
 	return out
