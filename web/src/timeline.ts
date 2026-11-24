@@ -181,10 +181,14 @@ export function rowVerdict(candidate: Pick<Candidate, 'verdict' | 'year'>, itemY
 
 /** Returns the year of a candidate that differs from the item year, which
  * caused the year conflict. A failed decision has no verdicts, so this
- * compares the years themselves. */
+ * compares the years themselves. A title search also finds series with
+ * other titles, so of its candidates only one that TMDB's year did not
+ * confirm counts. */
 function conflictingYear(event: TimelineEvent, itemYear: number): number | undefined {
   for (const search of event.searches) {
-    const candidate = search.candidates.find(c => compareYear(itemYear, c.year).kind === 'differs');
+    const candidate = search.source === 'title'
+      ? search.candidates.find(c => c.verdict === 'year differs' && c.year)
+      : search.candidates.find(c => compareYear(itemYear, c.year).kind === 'differs');
     if (candidate) return candidate.year;
   }
   return undefined;
@@ -244,8 +248,12 @@ export function episodeDiffText(diff: EpisodeDiff, tmdbId?: string): string {
  * before the failure: the candidate year of a year conflict, and the years
  * of the item, its folder, and TMDB. */
 function failedDetail(event: TimelineEvent): string | undefined {
-  // A title search compares no years: its candidates only had to agree.
-  if (searchedTitle(event)) return event.error;
+  // A title search compares no years, unless TMDB's year stood in for a
+  // stale Plex year before a later step failed.
+  if (searchedTitle(event)) {
+    const confirmed = event.tmdbYear && `Before the failure, TMDB gave tmdb-${event.tmdbId ?? '?'} the year ${event.tmdbYear} of the item.`;
+    return [event.error, confirmed].filter(Boolean).join(' ') || undefined;
+  }
   const candidateYear = event.conflict === 'year differs' && event.itemYear ? conflictingYear(event, event.itemYear) : undefined;
   const years = [...(candidateYear ? [`Plex has ${candidateYear}`] : []), ...comparedYears(event)];
   // The item year alone was not compared with anything.
@@ -256,6 +264,8 @@ function failedDetail(event: TimelineEvent): string | undefined {
 
 /** Returns why a decision found no match. */
 function noMatchDetail(event: TimelineEvent): string {
+  const staleTitles = titleYearConflicts(event);
+  if (staleTitles > 1) return `TMDB's year confirmed none of the ${staleTitles} series of the title search with the title of the item and another Plex year.`;
   if (event.conflict === 'year differs') return yearConflict(event);
   if (event.conflict === 'not confirmed') return titleUnconfirmed(event);
   if (event.conflict === 'folder id differs') {
@@ -268,6 +278,15 @@ function noMatchDetail(event: TimelineEvent): string {
   return 'No search found a candidate.';
 }
 
+/** Counts the series of a title search whose TMDB year did not stand in
+ * for their other Plex year. Plex can list one series, one GUID, in
+ * several rows, and the check asked about it once. */
+function titleYearConflicts(event: TimelineEvent): number {
+  if (event.conflict !== 'year differs') return 0;
+  const candidates = event.searches.filter(s => s.source === 'title').flatMap(s => s.candidates);
+  return new Set(candidates.filter(c => c.verdict === 'year differs').map(c => c.guid)).size;
+}
+
 /** Names the years that the candidates of a title search had to agree
  * with: the year of the item, and the year of its folder if it differs. */
 function titleYears(event: TimelineEvent): string {
@@ -276,10 +295,31 @@ function titleYears(event: TimelineEvent): string {
   return `the year ${event.itemYear} of the item${folder}`;
 }
 
+/** Describes the series that a title search found: with a year within 1,
+ * or with another Plex year (pickedYear) for which TMDB gave the year of the
+ * item. */
+function titleFound(event: TimelineEvent): string {
+  if (!event.tmdbYear) return 'The title search found one series with the same title and a year within 1';
+  const plexYear = pickedYear(event);
+  return `The title search found a series with the same title${plexYear ? ` that Plex gives the year ${plexYear}` : ''}. TMDB gives tmdb-${event.tmdbId ?? '?'} the year ${event.tmdbYear} of the item`;
+}
+
+/** Returns the Plex year of the candidate that a title search decision
+ * picked or that its TMDB year check confirmed before a later step failed. */
+function pickedYear(event: TimelineEvent): number | undefined {
+  const verdicts = ['picked', event.conflict];
+  for (const search of event.searches) {
+    if (search.source !== 'title') continue;
+    const candidate = search.candidates.find(c => c.verdict && verdicts.includes(c.verdict));
+    if (candidate) return candidate.year;
+  }
+  return undefined;
+}
+
 /** Explains why the TMDB episode numbers did not confirm the series that
  * a title search found. */
 function titleUnconfirmed(event: TimelineEvent): string {
-  const found = 'The title search found one series with the same title and a year within 1, but nothing confirmed it.';
+  const found = `${titleFound(event)}, but nothing confirmed it.`;
   if (event.episodeDiff) return `${found} ${episodeDiffText(event.episodeDiff, event.tmdbId)}`;
   if (event.tmdbId) return `${found} Plex returned no usable episode numbers to compare with tmdb-${event.tmdbId}.`;
   return `${found} The Plex metadata provider has no TMDB ID for it.`;
@@ -326,7 +366,7 @@ function outcomeView(event: TimelineEvent): EventView {
 function confirmation(event: TimelineEvent): string | undefined {
   const viaGroup = event.episodeGroup ? ` via episode group “${event.episodeGroup}”` : '';
   if (event.episodeCount && searchedTitle(event)) {
-    return `The title search found one series with the same title and a year within 1, and the episode numbers of ${event.episodeCount} episodes from tmdb-${event.tmdbId ?? '?'}${viaGroup} confirmed it.`;
+    return `${titleFound(event)}, and the episode numbers of ${event.episodeCount} episodes from tmdb-${event.tmdbId ?? '?'}${viaGroup} confirmed it.`;
   }
   if (event.episodeCount) return `The episode numbers of ${event.episodeCount} episodes${viaGroup} confirmed the candidate.`;
   if (event.tmdbYear) return `TMDB confirmed the year ${event.tmdbYear}.`;

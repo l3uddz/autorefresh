@@ -229,6 +229,43 @@ describe('decision evidence', () => {
     expect(verdictName('other title', { query: 'Show' })).toBe('other title or year');
   });
 
+  it('explains a title search whose TMDB year stood in for a stale Plex year', () => {
+    const search = (verdict: string, year = 2019) => ({ query: 'Lazy Susan', source: 'title', failed: false, candidates: [
+      { guid: 'plex://show/o', year: 2022, score: 0, verdict: 'other title' },
+      { guid: 'plex://show/l', year, score: 0, verdict },
+    ] });
+    const title = (verdict: string, fields: Partial<TimelineEvent>) => event(1, 'match-decision', {
+      searches: [search(verdict)], itemYear: 2022, pathYear: 2022, tmdbId: '156686', ...fields,
+    });
+    expect(decisionView(title('picked', { outcome: 'matched', tmdbYear: 2022, episodeCount: 4 })).detail).toBe(
+      'The title search found a series with the same title that Plex gives the year 2019. TMDB gives tmdb-156686 the year 2022 of the item, and the episode numbers of 4 episodes from tmdb-156686 confirmed it.',
+    );
+    expect(decisionView(title('not confirmed', { outcome: 'no-match', conflict: 'not confirmed', tmdbYear: 2022, episodeDiff: { season: 1, plex: 4, tmdb: 5, missing: [5] } })).detail).toBe(
+      'The title search found a series with the same title that Plex gives the year 2019. TMDB gives tmdb-156686 the year 2022 of the item, but nothing confirmed it. The episode numbers differ from tmdb-156686 in season 1: Plex has 4 episodes, and TMDB has 5. Only TMDB has episode 5.',
+    );
+    // The year conflict names the candidate that TMDB's year did not confirm, not one with another title.
+    expect(decisionView(title('year differs', { outcome: 'no-match', conflict: 'year differs', tmdbYear: 2019 })).detail).toBe(
+      'Plex has 2019, the item has 2022, the folder has 2022, and TMDB has 2019. So nothing confirmed the candidate.',
+    );
+    expect(decisionView(title('', { outcome: 'failed', error: 'episode numbers: 500', tmdbYear: 2022 })).detail).toBe(
+      'episode numbers: 500 Before the failure, TMDB gave tmdb-156686 the year 2022 of the item.',
+    );
+    expect(decisionView(title('year differs', { outcome: 'no-match', conflict: 'year differs', tmdbId: undefined })).detail).toBe(
+      'Plex has 2019, the item has 2022, and the folder has 2022. So nothing confirmed the candidate.',
+    );
+    // One series in two rows was checked once.
+    const twice = search('year differs');
+    twice.candidates.push({ guid: 'plex://show/l', year: 2018, score: 0, verdict: 'year differs' });
+    expect(decisionView(title('year differs', { outcome: 'no-match', conflict: 'year differs', tmdbYear: 2019, searches: [twice] })).detail).toBe(
+      'Plex has 2019, the item has 2022, the folder has 2022, and TMDB has 2019. So nothing confirmed the candidate.',
+    );
+    const two = search('year differs');
+    two.candidates.push({ guid: 'plex://show/m', year: 2015, score: 0, verdict: 'year differs' });
+    expect(decisionView(title('year differs', { outcome: 'no-match', conflict: 'year differs', tmdbId: undefined, searches: [two] })).detail).toBe(
+      'TMDB\'s year confirmed none of the 2 series of the title search with the title of the item and another Plex year.',
+    );
+  });
+
   it('explains an episode comparison that differs', () => {
     expect(episodeDiffText({ season: 1, plex: 10, tmdb: 10, missing: [11], extra: [0] }, '5')).toBe(
       'The episode numbers differ from tmdb-5 in season 1: Plex and TMDB both have 10 episodes, but with other numbers. Only TMDB has episode 11. Only Plex has episode 0.',
