@@ -88,6 +88,7 @@ describe('event views', () => {
     expect(eventView(event(1, 'completed', { fixedAction: 'tmdb-match', fixedMatch: 'tmdb-match' })).detail).toBe('By TMDB match');
     expect(eventView(event(1, 'completed'))).toMatchObject({ title: 'Completed by Plex on its own', tone: 'neutral' });
     expect(eventView(event(1, 'gone'))).toMatchObject({ title: 'Removed: Plex no longer had it', tone: 'warning' });
+    expect(eventView(event(1, 'gone', { action: 'tmdb-match' })).detail).toBe('Its TMDB match request found it gone');
   });
 
   it('explains each decision outcome', () => {

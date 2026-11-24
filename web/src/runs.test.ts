@@ -111,8 +111,25 @@ describe('run groups', () => {
 
   it('joins a match decision to the removal of its item', () => {
     // Plex answered 404 to the match request, so the item is gone.
-    const groups = shape(detail([event('1', 'match-decision', { outcome: 'matched' }), event('1', 'gone')]));
-    expect(groups).toEqual([['Removed', [['1', 'Plex no longer had it', 'Fix match: matched', 'attention']]]]);
+    const groups = shape(detail([event('1', 'match-decision', { outcome: 'matched' }), event('1', 'gone', { action: 'match' })]));
+    expect(groups).toEqual([['Removed', [['1', 'Plex no longer had it', 'Fix match: matched · Its match request found it gone', 'attention']]]]);
+  });
+
+  it('filters a request count by the requests that found their item gone too', () => {
+    const d = detail([
+      event('1', 'request', { action: 'refresh', accepted: true }),
+      event('2', 'gone', { action: 'refresh' }),
+      event('3', 'gone', { action: 'title-match' }),
+      // A read found it gone, and an older run recorded no action.
+      event('4', 'gone'),
+    ]);
+    const shown = (name: string) => {
+      const count = runCounts(d.run).find(c => c.name === name)!;
+      return filterGroups(runGroups(d), count.shows!).map(group => [group.title, group.entries.map(entry => entry.key)]);
+    };
+    expect(shown('Refreshes sent')).toEqual([['Refreshed', ['1']], ['Removed', ['2']]]);
+    expect(shown('Matches sent')).toEqual([['Removed', ['3']]]);
+    expect(shown('Failed')).toEqual([]);
   });
 
   it('counts requests sent, which include the ones that failed', () => {

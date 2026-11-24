@@ -124,7 +124,8 @@ export function eventView(event: TimelineEvent): EventView {
         ? { title: 'Fixed', tone: 'success', detail: `By ${fixedBy(event.fixedAction, event.fixedMatch)}` }
         : { title: 'Completed by Plex on its own', tone: 'neutral' };
     case 'gone':
-      return { title: 'Removed: Plex no longer had it', tone: 'warning', detail: event.error };
+      // A removal that a request found names the request.
+      return { title: 'Removed: Plex no longer had it', tone: 'warning', detail: event.action ? `Its ${actionText(event.action)} request found it gone` : event.error };
     case 'stopped':
       return { title: 'Stopped trying', by, tone: 'warning' };
     case 'resumed':
