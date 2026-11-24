@@ -232,15 +232,19 @@ match also before the first refresh. If `ignore-reasons` holds
      Production groups). Groups with at least as many episodes as Plex has
      locally are tried first, with unknown or lower counts competing only for
      remaining slots, and selection balances across the four types up to 10
-     groups within a 15-second fallback budget. Absolute order confirms only
-     when Plex has one season matching group order `1`. It stops at the first
+     groups within a 15-second fallback budget. All four group types use the
+     same season-number mapping (`group.order` for season, `episode.order + 1`
+     for episode), so a single-season Absolute group at order `1` confirms
+     when Plex has one matching season. It stops at the first
      group that confirms under the same 90% and zero-extra rule and records
      that group's name on the decision. Confirmation neither identifies nor
-     changes the episode ordering configured in Plex. Isolated failures on an
+     changes the episode ordering configured in Plex. TMDB HTTP `429`
+     rate-limit answers are retried with bounded exponential backoff (up to 3
+     retries, honoring `Retry-After` up to 10 seconds). Isolated failures on an
      optional group lookup are skipped so later groups can still run; only
-     authentication (`401`) or rate-limit (`429`) errors stop TMDB for the
-     rest of the run. If no group confirms, autorefresh keeps the diff from
-     TMDB's default seasons.
+     authentication (`401`) or exhausted rate-limit (`429`) errors stop TMDB
+     for the rest of the run. If no group confirms, autorefresh keeps the diff
+     from TMDB's default seasons.
 
 The decision of a year conflict keeps the years that autorefresh compared:
 the year of the item, the year of its folder, if any, and the TMDB year, if
