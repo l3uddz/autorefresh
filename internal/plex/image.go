@@ -78,7 +78,7 @@ func (c *Client) Photo(ctx context.Context, ratingKey, imagePath string, width, 
 	body, err := io.ReadAll(io.LimitReader(res.Body, MaxPhotoBytes+1))
 	if err != nil {
 		res.Body.Close()
-		return nil, bodyError(http.MethodGet, endpoint.Path, err)
+		return nil, fmt.Errorf("photo: %w", readError(ctx, http.MethodGet, endpoint.Path, err))
 	}
 	if len(body) > MaxPhotoBytes {
 		res.Body.Close() // no draining: the server can stall after the limit

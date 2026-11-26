@@ -359,6 +359,24 @@ func TestListRejectsPageWithoutTotalSize(t *testing.T) {
 	}
 }
 
+func TestEpisodeNumbersStopsPagingOnInvalidEpisode(t *testing.T) {
+	rec, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		// Page 1 of 2 items has an episode without a media file; page 2 must never be requested.
+		w.Write([]byte(`{"MediaContainer":{"totalSize":2,"size":1,"Metadata":[{"ratingKey":"10","parentIndex":1,"index":1}]}}`))
+	})
+
+	seasons, err := c.EpisodeNumbers(context.Background(), "100")
+	if err != nil {
+		t.Fatalf("EpisodeNumbers error = %v", err)
+	}
+	if seasons != nil {
+		t.Fatalf("EpisodeNumbers = %v, want nil", seasons)
+	}
+	if got := len(rec.all()); got != 1 {
+		t.Errorf("requests = %d, want 1", got)
+	}
+}
+
 func TestListStopsWhenPageAddsNoNewItems(t *testing.T) {
 	t.Run("empty first page", func(t *testing.T) {
 		rec, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
