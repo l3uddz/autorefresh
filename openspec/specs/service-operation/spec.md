@@ -112,7 +112,7 @@ With `--once`, autorefresh SHALL run the refresher one time at once and then exi
 
 ### Requirement: Startup token checks
 
-Without `--once`, autorefresh SHALL check each Plex server, by a request for its libraries, and the TMDB token, if set, at the same time before the first run. The checks SHALL only log their results. A failed check SHALL NOT stop the start.
+Without `--once`, autorefresh SHALL check each Plex server, by a request for its libraries, and the TMDB token, if set, at the same time before the first run. The checks SHALL log their results and, when the dashboard is on, give them to the dashboard status as health. A failed check SHALL NOT stop the start.
 
 #### Scenario: Token accepted
 
@@ -158,12 +158,22 @@ Without `--once`, autorefresh SHALL check each Plex server, by a request for its
 
 ### Requirement: Scheduled operation
 
-Without `--once`, autorefresh SHALL start one run as soon as the token checks end, and then a run at each time of the `schedule` cron expression in the local time zone, until a signal arrives.
+Without `--once`, autorefresh SHALL try to start one run as soon as the token checks end, and then a run at each time of the `schedule` cron expression, until a signal arrives. The schedule SHALL use the local time zone, unless the expression starts with `TZ=<zone>` or `CRON_TZ=<zone>`. A start while another run is busy, such as a manual run that the dashboard accepted during the checks, SHALL be skipped with the warning `Skipped scheduled start, a run is busy`.
 
 #### Scenario: First run at once
 
-- **WHEN** autorefresh starts without `--once`
+- **WHEN** autorefresh starts without `--once` and no other run is busy
 - **THEN** it sends the first run's requests right after the token checks, without waiting for the schedule
+
+#### Scenario: Manual run during the checks
+
+- **WHEN** the dashboard accepted a manual run during the token checks, and that run is still busy when they end
+- **THEN** autorefresh skips the first scheduled start and logs `Skipped scheduled start, a run is busy`
+
+#### Scenario: Time zone prefix
+
+- **WHEN** `schedule` is `CRON_TZ=UTC 0 3 * * *`
+- **THEN** the runs start at 03:00 UTC, whatever the local time zone is
 
 #### Scenario: Failed scheduled run
 

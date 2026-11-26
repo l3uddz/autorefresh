@@ -325,7 +325,7 @@ A running server entry SHALL show its run with `id`, `kind`, `source`, `status`,
 #### Scenario: Reason on the Fixed tab
 
 - **WHEN** a client requests `/api/items?tab=fixed&reason=no-art`
-- **THEN** the list and the `fixed` count include every fixed item, whatever reasons it had
+- **THEN** the list and the `fixed` count are the same as for `/api/items?tab=fixed`, so they still leave out items fixed without a request
 
 #### Scenario: Show ignored items
 
@@ -594,12 +594,17 @@ An item action that fails SHALL get a fixed status and message: `504` `timed out
 
 ### Requirement: Bulk selection body
 
-The body of a bulk route SHALL be `{"matching":true}`, which selects every item that matches the filters, or a non-empty `keys` list with `matching` absent or false. `matching` true with a `keys` list, also an empty one, and a body without keys and without `matching` true SHALL get `400` with `invalid body`. A matching selection that finds no item SHALL get `400` with `no items`.
+The body of a bulk route SHALL be `{"matching":true}`, also with `"keys":null`, which selects every item that matches the filters, or a non-empty `keys` list with `matching` absent, false, or null. `matching` true with a `keys` list, also an empty one, and a body without keys and without `matching` true SHALL get `400` with `invalid body`. A matching selection that finds no item SHALL get `400` with `no items`.
 
 #### Scenario: Keys with matching false
 
 - **WHEN** the body is `{"keys":["1"],"matching":false}`
 - **THEN** the route selects the item with key `1`
+
+#### Scenario: Null fields
+
+- **WHEN** the body is `{"keys":null,"matching":true}` or `{"keys":["1"],"matching":null}`
+- **THEN** the route selects every matching item, or the item with key `1`
 
 #### Scenario: Empty keys
 
@@ -651,21 +656,26 @@ Every candidate thumb in an answer SHALL be an `https` URL with a host, without 
 
 ### Requirement: Shutdown refuses new requests
 
-When the service stops the dashboard, the server SHALL answer every later request with `503` and `{"error":"shutting down"}`, before auth and the cross-origin check.
+When the service stops the dashboard, the server SHALL answer each request that reaches it during the stop with `503` and `{"error":"shutting down"}`, before auth and the cross-origin check. After the stop closed the listener, the server SHALL accept no new connection.
 
 #### Scenario: Request after stop
 
-- **WHEN** a client sends a request after the stop began
+- **WHEN** a request reaches the server while it stops
 - **THEN** the server answers `503` with `{"error":"shutting down"}` and the security headers
 
 ### Requirement: Shutdown ends event streams
 
-When the service stops the dashboard, the server SHALL end open event streams at once and SHALL NOT wait for them.
+When the service stops the dashboard, the server SHALL tell open event streams to end at once, before it waits for the active requests. A stream that is blocked in a write or a flush SHALL count as an active request, under the stop deadline and the forced close.
 
 #### Scenario: Open event stream
 
-- **WHEN** a client has an open `/api/events` stream and the server stops
-- **THEN** the stream ends and the stop does not wait for it
+- **WHEN** a client has an open, idle `/api/events` stream and the server stops
+- **THEN** the stream ends at once
+
+#### Scenario: Stream blocked in a write
+
+- **WHEN** a stream is blocked in a write when the server stops
+- **THEN** the stop waits for it at most until the stop deadline, and then closes it with the forced close
 
 ### Requirement: Shutdown lets active requests finish
 

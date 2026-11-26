@@ -254,7 +254,7 @@ Autorefresh SHALL compare each local season, in ascending order, with the same T
 
 ### Requirement: Alternate TMDB episode groups
 
-When TMDB's seasons do not confirm valid local numbers, autorefresh SHALL try the series' episode groups of the types Original air date, DVD, Absolute, and TV, each ID once. It SHALL choose at most 10 groups, taken in turn from each type. It SHALL read first those with at least as many episodes as Plex, then unknown counts, then smaller ones, each in type order. The first group that confirms SHALL end the check, and the decision SHALL record its name, trimmed to 120 characters, or its ID.
+When TMDB's seasons do not confirm valid local numbers, autorefresh SHALL try the episode groups of the types Original air date, DVD, Absolute, and TV, each ID once. It SHALL order the groups of each type by count: at least as many episodes as Plex, then unknown, then fewer. It SHALL then take at most 10, in turn from each type, and read them by count, then type. The first group that confirms SHALL end the check, and the decision SHALL record its name, trimmed to 120 characters, or its ID.
 
 #### Scenario: Aired order confirms
 
@@ -265,6 +265,11 @@ When TMDB's seasons do not confirm valid local numbers, autorefresh SHALL try th
 
 - **WHEN** TMDB lists more than 10 groups of the Original air date type and one DVD group
 - **THEN** autorefresh chooses at most 10 groups, and the DVD group is one of them
+
+#### Scenario: Count order before the choice
+
+- **WHEN** TMDB lists 12 Original air date groups, and only the last two have at least as many episodes as Plex
+- **THEN** autorefresh chooses those two groups and reads them first
 
 #### Scenario: DVD group with an unknown count
 
@@ -298,7 +303,7 @@ Autorefresh SHALL read each group part with an order of 1 or higher as that seas
 
 ### Requirement: Episode group bounds and failures
 
-All episode group requests of one comparison SHALL share a 15 second budget that never extends the deadline of the caller. When the budget runs out, the check SHALL stop and keep the result of the default seasons. A failed group request SHALL be logged and skipped. A 401 or 429 answer SHALL count as a TMDB failure.
+All episode group requests of one comparison SHALL share a 15 second budget that never extends the deadline of the caller. When the budget runs out, the check SHALL stop and keep the result of the default seasons. A failed group list SHALL be logged and keep the result of the default seasons. A failed season read of one group SHALL be logged, and the check SHALL try the next group. A 401 or 429 answer SHALL count as a TMDB failure.
 
 #### Scenario: Budget runs out
 
@@ -307,8 +312,13 @@ All episode group requests of one comparison SHALL share a 15 second budget that
 
 #### Scenario: One group fails
 
-- **WHEN** one group request answers 500
+- **WHEN** the season read of one group answers 500
 - **THEN** autorefresh logs a warning and tries the next group, and later items still use TMDB
+
+#### Scenario: Group list fails
+
+- **WHEN** the episode group list of the series answers 500
+- **THEN** autorefresh logs a warning, reads no group, and keeps the result of the default seasons
 
 ### Requirement: TMDB fallback
 
@@ -369,8 +379,13 @@ When a TMDB request of a fix match fails, autorefresh SHALL log `TMDB lookup fai
 
 #### Scenario: Episode group answers 500
 
-- **WHEN** an episode group request of the first item answers 500
+- **WHEN** the season read of one episode group of the first item answers 500
 - **THEN** autorefresh logs a warning, skips that group, and a later item of the same server run still asks TMDB
+
+#### Scenario: Episode group list answers 500
+
+- **WHEN** the episode group list of the first item answers 500
+- **THEN** autorefresh logs a warning, keeps the result of the default seasons, and a later item of the same server run still asks TMDB
 
 #### Scenario: Year request fails
 
@@ -485,12 +500,17 @@ When no candidate has the same title and an agreeing year, and the folder year i
 
 ### Requirement: Failures in the title fallback
 
-When the title search, a provider lookup, or the Plex episode read of the title fallback fails, autorefresh SHALL log a warning, count a failed request, record the decision `failed`, and send a plain refresh. A 404 answer of the title search or the episode read SHALL mean that the item is gone.
+When the title search, a provider lookup, or the Plex episode read of the title fallback fails, autorefresh SHALL log a warning, count a failed request, record the decision `failed`, and send a plain refresh, also after a 401 or 503 answer or a transport failure. A 404 answer of the title search or the episode read SHALL mean that the item is gone.
 
 #### Scenario: Title search answers 500
 
 - **WHEN** the title search fails with a server error
 - **THEN** the item gets a plain refresh, and the run goes on with the next item
+
+#### Scenario: Title search answers 503
+
+- **WHEN** the title search answers `503 Service Unavailable`
+- **THEN** the title search does not end the run, and the item gets a failed decision and a plain refresh
 
 #### Scenario: Episode read answers 404
 

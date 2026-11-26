@@ -29,7 +29,7 @@ An item action SHALL act only on a configured server and on an item that autoref
 
 ### Requirement: Refresh now sends and records one refresh
 
-When the user refreshes one item and no fix match applies, autorefresh SHALL send one refresh request for that item to Plex at once and record it with the source manual. For a cached item, a request that Plex accepts SHALL count as an attempt and a refresh, so the backoff grows. A failed request SHALL count only as an attempt, so a new wait of the same length starts. A 404 of a cached item SHALL remove the item instead.
+When the user refreshes one item and no fix match applies, autorefresh SHALL send one refresh request for that item to Plex at once and record it with the source manual. For a cached item, a request that Plex accepts SHALL count as an attempt and a refresh, and a failed request SHALL count only as an attempt. The next wait SHALL follow the backoff rule of the `refresh-runs` capability. A 404 of a cached item SHALL remove the item instead.
 
 #### Scenario: Refresh a cached item
 
@@ -253,8 +253,13 @@ On request, autorefresh SHALL compare the regular episode numbers that Plex has 
 
 #### Scenario: One episode group fails
 
-- **WHEN** one episode group request of the check answers 500
+- **WHEN** the season read of one episode group of the check answers 500
 - **THEN** autorefresh logs a warning, tries the next group, and the check does not fail
+
+#### Scenario: Episode group list fails
+
+- **WHEN** the episode group list of the check answers 500
+- **THEN** autorefresh logs a warning, the check does not fail, and it reports the result of the default seasons
 
 #### Scenario: Episode group budget runs out
 
@@ -438,12 +443,17 @@ Refresh now SHALL have 90 s in all, with 45 s for its fix match search. The matc
 
 ### Requirement: Time limits after the work started
 
-Refresh now SHALL succeed when its time ends during the checks after Plex accepted its request. Bulk stop and resume SHALL succeed when their time ends after they started on the items, and SHALL skip the remaining items with `timeout`. When their time ends while they still read the matching items, they SHALL fail as timed out.
+Refresh now and Apply match SHALL succeed when their time ends after Plex accepted their refresh or match, also during the follow-up refresh or checks of a match. Bulk stop and resume SHALL succeed when their time ends after they started on the items, and SHALL skip the remaining items with `timeout`. When their time ends while they still read the matching items, they SHALL fail as timed out.
 
 #### Scenario: Time ends during the checks of Refresh now
 
 - **WHEN** Plex accepted the refresh of a cached item and the 90 s end during the checks after it
 - **THEN** the action succeeds and reports the refresh
+
+#### Scenario: Time ends after an accepted match
+
+- **WHEN** Plex accepted the match of Apply match, or the automatic match of Refresh now, and the time ends during the follow-up refresh or checks
+- **THEN** the action succeeds, and Apply match answers `200` with `{"accepted":true}`
 
 #### Scenario: Time ends during bulk stop
 

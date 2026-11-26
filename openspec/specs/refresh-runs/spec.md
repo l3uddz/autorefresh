@@ -38,13 +38,18 @@ When a server becomes unavailable during a run, the run SHALL end for that serve
 
 ### Requirement: A database error ends the runs of all servers
 
-When a database call fails during the run of one server, the run SHALL end for all servers.
+When a database error ends the run of one server, the run SHALL end for all servers. When the run of a server already ended with another error, such as an unavailable server, and recording its end also fails, autorefresh SHALL log `Recording run failed`, and the first error SHALL decide whether the other servers stop.
 
 #### Scenario: Database error on one server
 
-- **WHEN** a database call fails during the run of one server
+- **WHEN** a database error ends the run of one server
 - **THEN** the runs of the other servers stop too
 - **AND** the run returns that error together with the errors of any unavailable server
+
+#### Scenario: Recording fails after an unavailable server
+
+- **WHEN** a server is unavailable and recording the end of its run fails too
+- **THEN** autorefresh logs `Recording run failed`, and the runs of the other servers go on
 
 ### Requirement: Due items
 
@@ -239,7 +244,7 @@ When Plex answers a request of a run with 404, the run SHALL remove the item fro
 
 ### Requirement: Unavailable server
 
-A run SHALL end the run of a server when a Plex request answers 401, 502, 503, or 504, fails in transport, or ends early, and also when the server does not list its libraries. It SHALL log one error `Plex server unavailable` with the server and SHALL send no more requests to that server in this run. An item whose request failed this way SHALL still get its failed attempt. Other errors, such as a 500 answer, SHALL fail only the item.
+Except in the title fallback of the `fix-match` capability, a run SHALL end the run of a server when a Plex request answers 401, 502, 503, or 504, fails in transport, or ends early, and also when the server does not list its libraries. It SHALL log one error `Plex server unavailable` with the server and SHALL send no more requests to that server in this run. An item whose request failed this way SHALL still get its failed attempt. Other errors, such as a 500 answer, SHALL fail only the item.
 
 #### Scenario: Unavailable during the refresh step
 
@@ -252,6 +257,11 @@ A run SHALL end the run of a server when a Plex request answers 401, 502, 503, o
 
 - **WHEN** Plex answers a refresh with `401 Unauthorized`
 - **THEN** the run of that server ends as failed after that item
+
+#### Scenario: Title fallback search answers 503
+
+- **WHEN** Plex answers the title search of the title fallback with `503 Service Unavailable`
+- **THEN** the item gets a failed decision and a plain refresh, and only the answer to that refresh can end the run
 
 ### Requirement: Dry run
 

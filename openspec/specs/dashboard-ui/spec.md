@@ -666,7 +666,7 @@ The dialog SHALL offer a search by title with an optional year, or by an ID such
 
 ### Requirement: Automatic fix match panel and preview
 
-The dialog SHALL explain the newer of the last automatic fix match and the preview: its searches, its candidates with verdicts, and why it picked one or none, and SHALL mark its findings on the candidate cards. Without a last decision, it SHALL offer "Try automatic fix match", which runs the preview on request only. The preview SHALL record nothing and send nothing to Plex.
+The dialog SHALL explain the newer of the last automatic fix match and the preview: its searches, its candidates with verdicts, and why it picked one or none, and SHALL mark its findings on the candidate cards. Without a last decision, it SHALL offer "Try automatic fix match", which runs the preview on request only. The preview SHALL make the same lookups as a run, send no match or refresh request, and write nothing to the store.
 
 #### Scenario: Preview runs
 
@@ -772,8 +772,13 @@ The run details SHALL open in a drawer on a wide screen and replace the list on 
 
 #### Scenario: Decision without a request
 
-- **WHEN** a decision of an ended run has no request after it
+- **WHEN** a decision of an ended run did not fail and has no request or removal after it
 - **THEN** it shows under Not sent with "The run ended before the request"
+
+#### Scenario: Failed decision without a request
+
+- **WHEN** a failed decision has no request or removal after it
+- **THEN** it shows under Failed, also when the run has ended
 
 #### Scenario: No items listed
 
@@ -815,7 +820,7 @@ Every action result SHALL show as a toast with an icon of its outcome: a check f
 
 #### Scenario: Item gone from Plex
 
-- **WHEN** Plex no longer has the item
+- **WHEN** an item action fails with `404` `not found in Plex`
 - **THEN** the toast says "Plex no longer has this item. It was deleted or moved."
 
 ### Requirement: Phone layout

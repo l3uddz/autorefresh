@@ -186,23 +186,23 @@ Autorefresh SHALL read every listing in pages of at most 500 items, sorted by th
 
 ### Requirement: Failed library read
 
-Autorefresh SHALL apply the result of a library read only when every request of that read succeeds. When a request fails, the cache rows and read times of that library SHALL stay unchanged.
+Autorefresh SHALL apply the result of a library read only when each listing of that read succeeds. When a listing fails, the cache rows and read times of that library SHALL stay unchanged. When Plex stays available, a normal run SHALL log `Reading library failed` and read the next library, and a manual full scan SHALL fail the server run with an error that names the library. An unavailable server or the end of the run SHALL stop the read of that server in both modes.
 
 #### Scenario: Request fails part of the way
 
-- **WHEN** the full listing, an incremental listing, or an episode listing of a library fails in a run that is not a manual full scan
+- **WHEN** the full listing, an incremental listing, or an episode listing of a library fails in a run that is not a manual full scan, and Plex stays available
 - **THEN** the rows and read times of that library stay as they were
 - **AND** autorefresh logs `Reading library failed` and reads the next library
 
 #### Scenario: Full scan with a failed read
 
-- **WHEN** a manual full scan cannot read a library
+- **WHEN** a library listing fails in a manual full scan and Plex stays available
 - **THEN** the run of that server fails with an error that names the library, and refreshes no item
 - **AND** the runs of the other servers continue
 
 #### Scenario: Server unavailable
 
-- **WHEN** Plex is unavailable during a library listing or an unseen item check
+- **WHEN** Plex is unavailable during a library listing or an unseen item check, in a normal run or a manual full scan
 - **THEN** autorefresh stops reading that server, keeps its cache, and continues with the other servers
 
 ### Requirement: Cache rows of incomplete items
@@ -260,7 +260,7 @@ When a read leaves a cached row with no reason, autorefresh SHALL delete the row
 
 ### Requirement: Unseen rows in a full read
 
-A full read SHALL ask Plex for each cached row of the library that its listing did not return. It SHALL delete the row only when Plex answers 404. Any other answer or failure SHALL keep the row with its reasons.
+A full read SHALL ask Plex for each cached row of the library that its listing did not return. It SHALL delete the row as gone only when Plex answers 404. After any other answer or failure, the row SHALL keep its item reasons, and its episode reasons SHALL follow the episode listings of the read, as for any row that a read does not list. A row with no reason left SHALL be deleted as complete.
 
 #### Scenario: Item deleted from Plex
 
@@ -270,13 +270,20 @@ A full read SHALL ask Plex for each cached row of the library that its listing d
 #### Scenario: Item still on Plex
 
 - **WHEN** Plex answers with the unseen item
-- **THEN** its row keeps its reasons
+- **THEN** its row keeps its item reasons
 - **AND** for a series, its row gets the first location of the series as its path
 
 #### Scenario: Check fails
 
-- **WHEN** the check of an unseen item fails with another error
-- **THEN** its row stays and autorefresh logs `Checking unseen item failed` with its title
+- **WHEN** the check of an unseen item fails with another error, such as a 500 answer, and Plex stays available
+- **THEN** autorefresh does not delete its row as gone and logs `Checking unseen item failed` with its title
+- **AND** the read of the library still applies
+
+#### Scenario: Unseen series with no reason left
+
+- **GIVEN** an unseen series row that has only `episode-unmatched`
+- **WHEN** Plex answers with the item and the `episode-unmatched` listing of the read does not have it
+- **THEN** autorefresh deletes its row and counts it as complete in the run
 
 #### Scenario: Incremental read
 

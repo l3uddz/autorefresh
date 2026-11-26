@@ -152,7 +152,7 @@ When Plex no longer has a cached item, autorefresh SHALL record a `gone` event a
 
 #### Scenario: Manual request finds the item gone
 
-- **WHEN** Plex answers a manual refresh with 404
+- **WHEN** Plex answers a manual refresh of a cached item with 404
 - **THEN** the `gone` event has source `manual` and action `refresh`
 
 ### Requirement: Stop and resume events
@@ -171,13 +171,18 @@ When a person stops or resumes a cached item, autorefresh SHALL change its stop 
 
 ### Requirement: Manual action events
 
-Events of manual item actions SHALL have source `manual`. A manual request for an item without a cached row SHALL be recorded with the item snapshot that the action took when it started.
+In a manual item action, the `request` event, the `stopped` and `resumed` events, and a `gone` event that the action found SHALL have source `manual`. A fix match decision and a `completed` event SHALL have source `auto`, also in a manual action. A manual request for an item without a cached row SHALL be recorded with the item snapshot that the action took when it started.
 
 #### Scenario: Manual refresh of a history-only item
 
 - **GIVEN** an item that has only history and no cached row when the manual refresh starts
 - **WHEN** Plex accepts the refresh
 - **THEN** a `request` event with source `manual` and the title of the start snapshot is recorded
+
+#### Scenario: Refresh now with an automatic match
+
+- **WHEN** Refresh now records an automatic fix match decision, sends the match, and the check after it completes the item
+- **THEN** the decision and the `completed` event have source `auto`, and the `request` event has source `manual`
 
 #### Scenario: Row removed during a manual action
 
@@ -310,7 +315,7 @@ When retention removes a run, its events SHALL stay in the item history and lose
 
 ### Requirement: Interrupted runs at start
 
-When the scheduled service starts, it SHALL mark each run that is still `running` as `interrupted`, with the start time as its end time, and SHALL log the number of runs that it marked. A process with `--once` or `--dry-run` SHALL leave running runs unchanged, because it can share the database with a running service.
+When the scheduled service starts, it SHALL mark each run that is still `running` as `interrupted`, with the time when it marks the run as its end time, and SHALL log the number of runs that it marked. A process with `--once` or `--dry-run` SHALL leave running runs unchanged, because it can share the database with a running service.
 
 #### Scenario: Service restart
 
