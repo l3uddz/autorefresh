@@ -17,22 +17,30 @@ export function useRowOpen<Row extends Record<string, unknown> & { id: string | 
   return useMemo(
     () => ({
       rowModel: 'flat',
-      transformBodyRow: (props, row) => ({
-        ...props,
-        htmlProps: {
-          ...props.htmlProps,
-          tabIndex: 0,
-          'aria-current': row.id === openID ? true : undefined,
-          onClick: event => {
-            if (isRowItself(event)) onOpen(row);
+      transformBodyRow: (props, row) => {
+        const prevClick = props.htmlProps?.onClick;
+        const prevKeyDown = props.htmlProps?.onKeyDown;
+        return {
+          ...props,
+          htmlProps: {
+            ...props.htmlProps,
+            tabIndex: 0,
+            'aria-current': row.id === openID ? true : undefined,
+            onClick: event => {
+              prevClick?.(event);
+              if (event.defaultPrevented) return;
+              if (isRowItself(event)) onOpen(row);
+            },
+            onKeyDown: event => {
+              prevKeyDown?.(event);
+              if (event.defaultPrevented) return;
+              if ((event.key !== 'Enter' && event.key !== ' ') || !isRowItself(event)) return;
+              event.preventDefault();
+              onOpen(row);
+            },
           },
-          onKeyDown: event => {
-            if ((event.key !== 'Enter' && event.key !== ' ') || !isRowItself(event)) return;
-            event.preventDefault();
-            onOpen(row);
-          },
-        },
-      }),
+        };
+      },
     }),
     [onOpen, openID],
   );

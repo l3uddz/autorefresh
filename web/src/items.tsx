@@ -1,4 +1,3 @@
-import { useImperativeAlertDialog } from '@astryxdesign/core/AlertDialog';
 import { Badge } from '@astryxdesign/core/Badge';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
@@ -10,37 +9,30 @@ import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, Layout, LayoutContent, LayoutHeader, LayoutPanel, StackItem, VStack } from '@astryxdesign/core/Layout';
 import { List, ListItem } from '@astryxdesign/core/List';
 import { ResizeHandle, useResizable } from '@astryxdesign/core/Resizable';
-import { Section } from '@astryxdesign/core/Section';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
 import { Selector } from '@astryxdesign/core/Selector';
 import { Skeleton } from '@astryxdesign/core/Skeleton';
 import { Switch } from '@astryxdesign/core/Switch';
 import { Tab, TabList } from '@astryxdesign/core/TabList';
-import { Table, pixel, proportional, useTableRowsVirtualization, useTableSelection, useTableSortable, type TableColumn, type TablePlugin } from '@astryxdesign/core/Table';
-import { Text } from '@astryxdesign/core/Text';
+import { Heading, Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
-import { colorVars } from '@astryxdesign/core/theme/tokens.stylex';
 import { BarsArrowDownIcon, BarsArrowUpIcon, InboxIcon } from '@heroicons/react/24/outline';
-import * as stylex from '@stylexjs/stylex';
-import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, invalidateLists, itemID, useServers, type ItemPage, type ItemRecord, type ServerInfo } from './api';
-import { bulkError, bulkRequests, isSearchTooLong, listParams, maxSearchBytes, stopOrResume, tabActions, type BulkAction, type BulkRequest, type Filters, type Selection } from './bulk';
+import { api, itemID, useServers, type ItemPage, type ItemRecord, type ServerInfo } from './api';
+import { isSearchTooLong, listParams, maxSearchBytes, type Filters, type Selection } from './bulk';
+import { BulkBand, useBulkAction } from './bulkband';
 import { useNow } from './clock';
-import { askThen } from './confirm';
 import { ItemDetail } from './detail';
 import { fixedBy, label, plural, queueState, relative } from './format';
+import { ItemTable } from './itemtable';
 import { Poster, Reasons } from './media';
 import { useShown } from './presence';
-import { useNotify } from './notify';
-import { NothingMatched, startBulkRefresh, useIsRefreshBusy } from './queue';
 import { itemHash, navigate, tabNames, type ItemKey, type TabName } from './route';
-import { useRowOpen } from './rowopen';
-import { chooseSort, formatSort, parseSort, sortKeys, stableRows, tableRow, type TableRow } from './table';
+import { chooseSort, formatSort, parseSort, sortKeys } from './table';
 
 const tabTitles: Record<TabName, string> = { attention: 'Attention', fixed: 'Fixed', stopped: 'Stopped' };
 const reasonOptions = ['unmatched', 'no-summary', 'no-poster', 'no-art', 'episode-no-summary', 'episode-unmatched'];
-const actionLabels: Record<BulkAction, string> = { refresh: 'Refresh', stop: 'Stop trying', resume: 'Resume' };
 const anyOption = { value: '', label: 'Any' };
 const noReasons: string[] = [];
 
@@ -48,20 +40,6 @@ const noReasons: string[] = [];
 const twoPaneQuery = '(min-width: 1000px)';
 
 type Mode = 'list' | 'table';
-
-// The pitch of a spacious single-line table row, measured in the browser.
-// Astryx windows at the measured pitch when rows grow, as with zoom.
-const tableRowHeight = 57;
-
-const styles = stylex.create({
-  // Astryx 0.7.17 has no sticky table header. The windowed table scrolls
-  // inside its own area, so the header (sort and select all) stays on top.
-  stickyHeader: { position: 'sticky', insetBlockStart: 0, zIndex: 1, backgroundColor: colorVars['--color-background-surface'] },
-});
-
-const stickyHeader: TablePlugin<TableRow> = {
-  transformHeaderCell: props => ({ ...props, xstyle: [...props.xstyle, styles.stickyHeader] }),
-};
 
 function storedMode(): Mode {
   try {
@@ -127,8 +105,13 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
   const q = useDebounced(query, 250);
   const [sorts, setSorts] = useState<Partial<Record<TabName, string>>>({});
   const sort = sorts[tab] ?? '';
-  // A single server is always the scope, so its libraries can be filtered.
-  const scopeSrv = srv ?? (inventory.length === 1 ? 0 : undefined);
+  // A single server still exposes its library filter, while keeping scope.srv
+  // stable (undefined) until a library filter is chosen so initial inventory
+  // load does not double-fetch or clear early selections.
+  const singleServer = srv === undefined && inventory.length === 1 ? inventory[0] : undefined;
+  const libraryServer = srv !== undefined ? inventory.find(entry => entry.srv === srv) : singleServer;
+  const activeLibrary = library && libraryServer && library.srv === libraryServer.srv ? library.section : undefined;
+  const scopeSrv = srv ?? (activeLibrary !== undefined ? libraryServer?.srv : undefined);
   const scope: Filters = {
     type: filters.type,
     // The Fixed tab has no reason filter. The Attention filter stays for
@@ -137,7 +120,7 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
     all: all[tab],
     q,
     srv: scopeSrv,
-    library: library && library.srv === scopeSrv ? library.section : undefined,
+    library: activeLibrary,
   };
   const params = listParams(tab, scope, sort).toString();
   // A selection belongs to a tab and its filters. Sorting keeps it.
@@ -147,6 +130,9 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
   const [selection, setSelection] = useState<{ scope: string; value: Selection }>();
   const selected = mode === 'table' && selection?.scope === selectionScope ? selection.value : undefined;
   const select = (value?: Selection) => setSelection(value && { scope: selectionScope, value });
+  // A bulk action clears the selection that it took, but not a newer one
+  // that the user made while it ran.
+  const bulkAction = useBulkAction(submitted => setSelection(current => (current?.value === submitted ? undefined : current)));
 
   const page = useInfiniteQuery({
     queryKey: ['items', params],
@@ -183,6 +169,7 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
     setMode(value as Mode);
     storeMode(value as Mode);
   };
+  const changeSort = (value: string) => setSorts(previous => ({ ...previous, [tab]: value }));
 
   const header = (
     <ItemsHeader
@@ -191,11 +178,11 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
       mode={mode}
       onMode={changeMode}
       srv={srv}
-      server={inventory.find(entry => entry.srv === scopeSrv)}
+      server={libraryServer}
       filters={scope}
       onFilters={change => {
         const { library: section, all: value, ...rest } = change;
-        if ('library' in change) setLibrary(section !== undefined && scopeSrv !== undefined ? { srv: scopeSrv, section } : undefined);
+        if ('library' in change) setLibrary(section !== undefined && libraryServer !== undefined ? { srv: libraryServer.srv, section } : undefined);
         if ('all' in change) setAll(previous => ({ ...previous, [tab]: value }));
         setFilters(previous => ({ ...previous, ...rest }));
       }}
@@ -203,7 +190,7 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
       isSearchInvalid={isSearchInvalid}
       onSearch={changeSearch}
       sort={sort}
-      onSort={value => setSorts({ ...sorts, [tab]: value })}
+      onSort={changeSort}
       bulk={
         selected && (
           <BulkBand
@@ -213,10 +200,10 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
             total={counts?.[tab] ?? 0}
             inventory={inventory}
             isInventoryKnown={servers.data !== undefined}
+            isPending={bulkAction.isPending}
+            pendingAction={bulkAction.pendingAction}
+            onStart={bulkAction.start}
             onClear={() => select(undefined)}
-            // A bulk action clears the selection that it took, but not a
-            // newer one that the user made while it ran.
-            onDone={submitted => setSelection(current => (current?.value === submitted ? undefined : current))}
           />
         )
       }
@@ -237,7 +224,7 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
         isMulti={isMulti}
         ignored={ignored}
         sort={sort}
-        onSort={value => setSorts({ ...sorts, [tab]: value })}
+        onSort={changeSort}
         selection={selected}
         onSelect={select}
         openItem={item}
@@ -256,16 +243,42 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
         <VStack gap={4} paddingBlockEnd={isTable ? 0 : 6} height={isTable ? '100%' : undefined}>
           {(page.error || servers.error) && (
             <VStack padding={4}>
-              <Banner status="error" title="The items are unavailable" description={(page.error ?? servers.error)?.message} />
+              <Banner
+                status="error"
+                title="The items are unavailable"
+                description={(page.error ?? servers.error)?.message}
+                endContent={
+                  <Button
+                    label="Try again"
+                    onClick={() => {
+                      if (page.error) void page.refetch();
+                      if (servers.error) void servers.refetch();
+                    }}
+                  />
+                }
+              />
             </VStack>
           )}
-          {page.isPending ? <ListSkeleton /> : rows.length === 0 && !page.error ? <NoItems tab={tab} isScanned={scanned || !inventory.length} isFiltered={Boolean(scope.q || scope.reason || scope.type || scope.library)} /> : list}
+          {page.isPending ? (
+            <ListSkeleton />
+          ) : rows.length === 0 ? (
+            !page.error && <NoItems tab={tab} isScanned={scanned || !inventory.length} isFiltered={Boolean(scope.q || scope.reason || scope.type || scope.library)} />
+          ) : (
+            list
+          )}
           {page.hasNextPage && (
             <HStack hAlign="center" gap={3} vAlign="center">
               <Text type="supporting" color="secondary">
                 Showing {rows.length.toLocaleString()} of {(counts?.[tab] ?? rows.length).toLocaleString()}
               </Text>
-              <Button label="Load more" isLoading={page.isFetchingNextPage} onClick={() => void page.fetchNextPage()} />
+              <Button
+                label="Load more"
+                isLoading={page.isFetchingNextPage}
+                isDisabled={page.isFetching}
+                onClick={() => {
+                  if (!page.isFetching) void page.fetchNextPage({ cancelRefetch: false });
+                }}
+              />
             </HStack>
           )}
         </VStack>
@@ -277,6 +290,7 @@ export function ItemsPage({ tab, item, srv }: { tab: TabName; item?: ItemKey; sr
     <>
       <Layout height="fill" header={item && !isTwoPane ? undefined : header} content={content} end={mode === 'list' && isTwoPane ? <DetailPane detail={detail} /> : undefined} />
       {mode === 'table' && isTwoPane && <ItemDrawer item={item} server={server} ignored={ignored} onClose={close} />}
+      {bulkAction.confirmElement}
     </>
   );
 }
@@ -369,25 +383,24 @@ function ItemsHeader({ tab, counts, mode, onMode, srv, server, filters, onFilter
   return (
     <LayoutHeader padding={0} hasDivider={false}>
       <VStack gap={3} paddingInline={4} paddingBlockStart={4}>
-        <HStack gap={3} vAlign="end" wrap="wrap">
-          <StackItem size="fill">
-            <TextInput
-              label="Search"
-              isLabelHidden
-              type="search"
-              placeholder="Search title or path"
-              startIcon="search"
-              hasClear
-              value={search}
-              onChange={onSearch}
-              status={isSearchInvalid ? { type: 'error', message: `The search is too long. Use at most ${maxSearchBytes} bytes; letters with accents and other scripts take more than one.` } : undefined}
-            />
-          </StackItem>
+        <HStack gap={3} vAlign="center" hAlign="between" wrap="wrap">
+          <Heading level={1}>Items</Heading>
           <SegmentedControl label="View" value={mode} onChange={onMode}>
             <SegmentedControlItem value="list" label="List" />
             <SegmentedControlItem value="table" label="Table" />
           </SegmentedControl>
         </HStack>
+        <TextInput
+          label="Search"
+          isLabelHidden
+          type="search"
+          placeholder="Search title or path"
+          startIcon="search"
+          hasClear
+          value={search}
+          onChange={onSearch}
+          status={isSearchInvalid ? { type: 'error', message: `The search is too long. Use at most ${maxSearchBytes} bytes; letters with accents and other scripts take more than one.` } : undefined}
+        />
         <HStack gap={2} vAlign="center" wrap="wrap">
           {server && server.libraries.length > 1 && (
             <Selector
@@ -514,209 +527,5 @@ function ItemList({ tab, rows, isMulti, ignored, openItem, srv }: ListProps) {
         />
       ))}
     </List>
-  );
-}
-
-interface TableProps extends ListProps {
-  sort: string;
-  onSort: (sort: string) => void;
-  selection?: Selection;
-  onSelect: (selection?: Selection) => void;
-}
-
-/** The Space, Enter, or click on a control inside a row, such as the
- * selection checkbox, belongs to that control, not to the row. */
-function ItemTable({ tab, rows, isMulti, ignored, sort, onSort, selection, onSelect, openItem, srv }: TableProps) {
-  const now = useNow();
-  const built = useMemo(() => rows.map(item => tableRow(item, now, isMulti, ignored)), [rows, now, isMulti, ignored]);
-  // A clock tick that changes no cell keeps the data, so the windowed
-  // table does not move.
-  const [data, setData] = useState(built);
-  const next = stableRows(data, built);
-  if (next !== data) setData(next);
-  const keys = new Set(selection?.kind === 'keys' ? selection.items.map(itemID) : []);
-  const isMatching = selection?.kind === 'matching';
-  const virtualization = useTableRowsVirtualization({ rowHeight: tableRowHeight, initialViewportHeight: 640 });
-  const open = useRowOpen(
-    useMemo(() => (row: TableRow) => navigate({ page: 'items', tab, item: { srv: row.srv, key: row.key }, srv }), [tab, srv]),
-    openItem && itemID(openItem),
-  );
-
-  const selectionPlugin = useTableSelection<TableRow>({
-    getRowLabel: row => row.title,
-    getIsItemSelected: row => isMatching || keys.has(row.id),
-    // After "select all", rows stay checked until the selection is cleared,
-    // because the API selects by filter and cannot leave rows out.
-    getIsItemEnabled: () => !isMatching,
-    onSelectItem: ({ item: row, isSelected }) => {
-      const items = selection?.kind === 'keys' ? selection.items : [];
-      const next = isSelected ? [...items, { srv: row.srv, key: row.key }] : items.filter(key => itemID(key) !== row.id);
-      onSelect(next.length ? { kind: 'keys', items: next } : undefined);
-    },
-    onSelectAll: ({ isAllSelected }) => onSelect(isAllSelected ? { kind: 'matching' } : undefined),
-    getIsAllSelected: () => isMatching,
-    getIsIndeterminate: () => keys.size > 0,
-  });
-  const sortPlugin = useTableSortable<TableRow>({
-    sort: sort ? [{ sortKey: parseSort(sort).key, direction: parseSort(sort).desc ? 'descending' : 'ascending' }] : [],
-    onSortChange: next => onSort(next[0] ? formatSort(next[0].sortKey, next[0].direction === 'descending') : ''),
-  });
-
-  // No column has a renderCell: Astryx windows only plain text cells.
-  const isSortable = (key: string) => sortKeys[tab].some(entry => entry.key === key);
-  const title: TableColumn<TableRow> = { key: 'title', header: 'Item', sortable: isSortable('title'), width: proportional(2.4, { minWidth: 200 }) };
-  const kind: TableColumn<TableRow> = { key: 'kind', header: 'Type', width: proportional(0.9, { minWidth: 110 }) };
-  const library: TableColumn<TableRow> = { key: 'library', header: isMulti ? 'Server · library' : 'Library', width: proportional(1.2, { minWidth: 120 }) };
-  const reasons: TableColumn<TableRow> = { key: 'reasons', header: 'Reasons', width: proportional(1.6, { minWidth: 160 }) };
-  const tries: TableColumn<TableRow> = { key: 'tries', header: 'Tries', sortable: isSortable('tries'), align: 'end', width: pixel(88) };
-  const byTab: Record<TabName, TableColumn<TableRow>[]> = {
-    attention: [
-      title,
-      kind,
-      library,
-      reasons,
-      tries,
-      { key: 'last-attempt', header: 'Last action', sortable: isSortable('last-attempt'), width: proportional(1.2, { minWidth: 130 }) },
-      { key: 'due', header: 'Next due', sortable: isSortable('due'), width: proportional(1, { minWidth: 120 }) },
-    ],
-    stopped: [title, kind, library, reasons, tries, { key: 'stopped', header: 'Stopped', sortable: isSortable('stopped'), width: proportional(1, { minWidth: 120 }) }],
-    fixed: [
-      title,
-      kind,
-      library,
-      { key: 'fixed-by', header: 'Fixed by', width: proportional(1.4, { minWidth: 140 }) },
-      { key: 'completed', header: 'Completed', sortable: isSortable('completed'), width: proportional(1, { minWidth: 120 }) },
-    ],
-  };
-  const plugins: Record<string, TablePlugin<TableRow>> = tabActions[tab].length
-    ? { sort: sortPlugin, selection: selectionPlugin, open, stickyHeader }
-    : { sort: sortPlugin, open, stickyHeader };
-  return (
-    <Table<TableRow>
-      data={data}
-      columns={byTab[tab]}
-      idKey="id"
-      density="spacious"
-      textOverflow="truncate"
-      hasHover
-      plugins={plugins}
-      virtualization={virtualization}
-      emptyState={false}
-    />
-  );
-}
-
-interface BulkProps {
-  tab: TabName;
-  scope: Filters;
-  selection: Selection;
-  total: number;
-  inventory: ServerInfo[];
-  /** Whether the servers are loaded. A matching selection waits for them:
-   * it sends one request for each server, to a server that they validate. */
-  isInventoryKnown: boolean;
-  onClear: () => void;
-  /** Gets the selection of a bulk action that succeeded. */
-  onDone: (submitted: Selection) => void;
-}
-
-/** A bulk action as the user submitted it. It keeps the requests, the
- * server names, and the selection of that moment, so a selection change
- * while the confirmation is open or the request waits changes nothing. */
-interface Submitted {
-  action: BulkAction;
-  requests: BulkRequest[];
-  names: Record<number, string>;
-  selection: Selection;
-}
-
-/** The band that replaces the tabs while rows are selected. */
-function BulkBand({ tab, scope, selection, total, inventory, isInventoryKnown, onClear, onDone }: BulkProps) {
-  const client = useQueryClient();
-  const notify = useNotify();
-  const confirm = useImperativeAlertDialog();
-  const isRefreshBusy = useIsRefreshBusy();
-  const count = selection.kind === 'matching' ? total : selection.items.length;
-  const requestsOf = (action: BulkAction) => bulkRequests(action, tab, scope, selection, inventory.map(entry => entry.srv));
-  const run = useMutation({
-    mutationFn: async ({ action, requests, names }: Submitted) => {
-      if (action !== 'refresh') return stopOrResume(action, requests, names);
-      const started = await startBulkRefresh(client, requests, names).catch((error: unknown) => {
-        if (error instanceof NothingMatched) return undefined;
-        throw error;
-      });
-      if (!started) return { text: 'No items match the filters.', outcome: 'notice' as const };
-      const first = started.steps.find(step => step.state === 'running')!;
-      const rest = started.steps.filter(step => step.state === 'waiting');
-      const next = rest.length ? ` on ${first.server}. Then ${rest.map(step => step.server).join(', ')}, one server at a time` : started.steps.length > 1 ? ` on ${first.server}` : '';
-      const text = `Bulk refresh started for ${plural(first.count ?? 0, 'item')}${next}. Progress shows on the Status page.`;
-      return { text, outcome: 'success' as const };
-    },
-    onSuccess: ({ text, outcome }, submitted) => {
-      notify(outcome, text);
-      onDone(submitted.selection);
-    },
-    onError: error => notify('error', bulkError(error)),
-    onSettled: () => invalidateLists(client),
-  });
-
-  const servers = requestsOf('refresh').length;
-  const start = (action: BulkAction) => {
-    const submitted: Submitted = { action, requests: requestsOf(action), names: Object.fromEntries(inventory.map(entry => [entry.srv, entry.name])), selection };
-    if (action === 'resume') {
-      run.mutate(submitted);
-      return;
-    }
-    const items = plural(count, 'item');
-    const order = servers > 1 ? ` The ${plural(servers, 'server')} take turns: each server starts after the previous one ends, and a cancel stops the rest.` : '';
-    askThen(
-      confirm,
-      action === 'refresh'
-        ? {
-            title: `Refresh ${items}?`,
-            description: `Autorefresh sends ${plural(count, 'refresh request')} to Plex in the background, one at a time with the configured refresh delay.${order} Progress shows on the Status page.`,
-            actionLabel: `Refresh ${items}`,
-            actionVariant: 'primary',
-          }
-        : {
-            title: `Stop trying ${items}?`,
-            description: `Autorefresh stops refreshing ${items} until you resume them. They move to Stopped.`,
-            actionLabel: 'Stop trying',
-            actionVariant: 'destructive',
-          },
-      () => run.mutateAsync(submitted),
-    );
-  };
-
-  const isWaiting = selection.kind === 'matching' && !isInventoryKnown;
-  const disabledReason = (action: BulkAction) => {
-    if (isWaiting) return 'Loading the servers';
-    if (action === 'refresh' && isRefreshBusy) return 'A bulk refresh is running. Wait until it ends.';
-    return undefined;
-  };
-  return (
-    <VStack paddingInline={3} paddingBlock={2}>
-      <Section variant="muted" paddingInline={3} paddingBlock={2}>
-        <HStack gap={3} vAlign="center" wrap="wrap">
-          <StackItem size="fill">
-            <Text>{selection.kind === 'matching' ? `All ${plural(count, 'matching item')} selected` : `${plural(count, 'item')} selected`}</Text>
-          </StackItem>
-          {tabActions[tab].map(action => (
-            <Button
-              key={action}
-              label={actionLabels[action]}
-              size="md"
-              variant={action === 'stop' ? 'destructive' : 'secondary'}
-              isLoading={run.isPending && run.variables?.action === action}
-              isDisabled={count === 0 || (run.isPending && run.variables?.action !== action) || disabledReason(action) !== undefined}
-              tooltip={disabledReason(action)}
-              onClick={() => start(action)}
-            />
-          ))}
-          <Button label="Clear selection" variant="ghost" size="md" onClick={onClear} />
-        </HStack>
-      </Section>
-      {confirm.element}
-    </VStack>
   );
 }
