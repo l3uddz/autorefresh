@@ -1,7 +1,5 @@
 # TMDB fallback and store foreign keys: implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Enforce foreign keys in the SQLite store. Give an unmatched item
 a fix match search with the TMDB ID of its `tvdb` or `imdb` path ID.
 
@@ -14,7 +12,7 @@ candidate, the second pass runs.
 **Tech Stack:** Go (version from `go.mod`), `modernc.org/sqlite`, zerolog,
 `net/http/httptest`, mise tasks.
 
-**Spec:** `docs/superpowers/specs/2026-11-20-tmdb-tvdb-fallback-design.md`
+**Spec:** `design.md`
 
 ## Global Constraints
 

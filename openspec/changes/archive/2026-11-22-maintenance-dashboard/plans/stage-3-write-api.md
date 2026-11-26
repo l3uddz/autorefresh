@@ -1,7 +1,5 @@
 # Dashboard Stage 3: Write API Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Add the dashboard's write actions as authenticated JSON endpoints, with item locks so that these actions and the runs never act on the same item at once. No frontend yet. The actions are:
 - refresh one item
 - Check now
@@ -29,7 +27,7 @@
 
 **Tech Stack:** Go (version from `go.mod`), `net/http`, `database/sql` with the existing SQLite driver (one connection), zerolog.
 
-**Spec:** `docs/superpowers/specs/2026-11-22-maintenance-dashboard-design.md`. Read these sections before each task:
+**Spec:** `../design.md`. Read these sections before each task:
 - "Manual run" (with "Background jobs")
 - "Concurrency of manual actions and runs"
 - "Manual actions"
@@ -38,7 +36,7 @@
 - "HTTP API"
 - "Delivery order", stage 3
 
-The stage 2 plan (`docs/superpowers/plans/2026-11-22-dashboard-stage-2-http.md`) lists the read API conventions, which stay.
+The stage 2 plan (`stage-2-http.md`) lists the read API conventions, which stay.
 
 **Branch:** `feat/94-dashboard-write-api` (parent: `main`). Issue: #94. Push with `git push -u origin feat/94-dashboard-write-api`.
 

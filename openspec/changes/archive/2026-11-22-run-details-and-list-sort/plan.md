@@ -1,7 +1,5 @@
 # Run details, list sort, match check, and next run Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Show the items of each run in a drawer, sort the Items list view,
 mark a manually matched item fixed at once, and show the next scheduled run.
 
@@ -13,7 +11,7 @@ refresher checks an item after Plex accepts a manual match.
 
 **Tech Stack:** Go, SQLite, React, TypeScript, TanStack Query, Astryx.
 
-**Spec:** `docs/superpowers/specs/2026-11-22-run-details-and-list-sort-design.md`
+**Spec:** `design.md`
 
 ## Global Constraints
 

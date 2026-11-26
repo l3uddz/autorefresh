@@ -1,7 +1,5 @@
 # Run "now" panel Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** While a run is busy, the server card shows the item in work or the
 next item with a countdown, and the last finished item with its outcome.
 
@@ -14,8 +12,8 @@ frontend renders a `NowPanel` in `RunLive`.
 **Tech Stack:** Go, zerolog, React, TypeScript, Astryx, TanStack Query,
 Vitest.
 
-**Spec:** `docs/superpowers/specs/2026-11-23-run-now-panel-design.md`
-(mockup: `docs/superpowers/specs/2026-11-23-run-now-panel-mockups/now-panel.html`)
+**Spec:** `design.md`
+(mockup: `mockups/now-panel.html`)
 
 ## Global Constraints
 
