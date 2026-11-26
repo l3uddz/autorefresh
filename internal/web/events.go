@@ -31,24 +31,35 @@ func (s *Server) serveStatus(w http.ResponseWriter, _ *http.Request) {
 // comment when idle. It returns when Stop ends the streams, the request
 // ends, or a write fails.
 func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
-	if s.sseCtx.Err() != nil {
+	if s.isSSEClosing() {
 		writeError(w, http.StatusServiceUnavailable, "shutting down")
 		return
 	}
-	if !s.acquireSSE() {
-		writeError(w, http.StatusServiceUnavailable, "too many event streams")
-		return
-	}
-	defer s.releaseSSE()
 	changes, unsubscribe := s.status.subscribe()
 	defer unsubscribe()
 
-	setStreamHeaders(w.Header())
-	rc := http.NewResponseController(w)
-	if s.sendStatus(rc, w) != nil {
+	initial, err := s.statusEvent()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	if s.beforeSSECommit != nil {
+		s.beforeSSECommit()
+	}
+	if code, msg := s.commitSSE(w); code != 0 {
+		writeError(w, code, msg)
+		return
+	}
+	defer s.releaseSSE()
 
+	rc := http.NewResponseController(w)
+	if s.sseCtx.Err() != nil || s.send(rc, w, initial) != nil {
+		return
+	}
+	s.streamEvents(w, r, rc, changes)
+}
+
+func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, rc *http.ResponseController, changes <-chan struct{}) {
 	keepalive := time.NewTicker(s.keepalive)
 	defer keepalive.Stop()
 	for {
@@ -75,14 +86,36 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) acquireSSE() bool {
+func (s *Server) isSSEClosing() bool {
+	s.sseMu.Lock()
+	closing := s.sseClosing || s.sseCtx.Err() != nil
+	s.sseMu.Unlock()
+	return closing
+}
+
+func (s *Server) stopSSE() {
+	s.sseMu.Lock()
+	s.sseClosing = true
+	s.cancelSSE()
+	s.sseMu.Unlock()
+}
+
+// commitSSE serializes the initial 200 SSE response commitment against
+// stopSSE and the concurrent stream cap. It returns a non-zero HTTP status
+// and error message when the stream cannot start.
+func (s *Server) commitSSE(w http.ResponseWriter) (int, string) {
 	s.sseMu.Lock()
 	defer s.sseMu.Unlock()
+	if s.sseClosing || s.sseCtx.Err() != nil {
+		return http.StatusServiceUnavailable, "shutting down"
+	}
 	if s.sseStreams >= s.maxSSEStreams {
-		return false
+		return http.StatusServiceUnavailable, "too many event streams"
 	}
 	s.sseStreams++
-	return true
+	setStreamHeaders(w.Header())
+	w.WriteHeader(http.StatusOK)
+	return 0, ""
 }
 
 func (s *Server) releaseSSE() {
@@ -106,16 +139,25 @@ func setStreamHeaders(h http.Header) {
 	h.Set("X-Accel-Buffering", "no")
 }
 
-// sendStatus sends the live status as a status event.
-func (s *Server) sendStatus(rc *http.ResponseController, w io.Writer) error {
+// statusEvent formats the current live status as one SSE status frame.
+func (s *Server) statusEvent() ([]byte, error) {
 	data, err := json.Marshal(s.redactStatus(s.status.Snapshot()))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	msg := make([]byte, 0, len(data)+len("event: status\ndata: \n\n"))
 	msg = append(msg, "event: status\ndata: "...)
 	msg = append(msg, data...)
 	msg = append(msg, "\n\n"...)
+	return msg, nil
+}
+
+// sendStatus sends the live status as a status event.
+func (s *Server) sendStatus(rc *http.ResponseController, w io.Writer) error {
+	msg, err := s.statusEvent()
+	if err != nil {
+		return err
+	}
 	return s.send(rc, w, msg)
 }
 

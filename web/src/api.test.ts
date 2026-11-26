@@ -1,6 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { newerStatus, statusQuery, type Status } from './api';
+import { newerStatus, parseStatusEvent, statusQuery, type Status } from './api';
 
 const status = (boot: string, seq: number): Status => ({ boot, seq, tmdb: 'off', servers: [] });
 
@@ -85,5 +85,16 @@ describe('status order', () => {
     expect(client.getQueryData(['auto-match', 'a', 'srv=0&key=1'])).toBeUndefined();
     expect(client.getQueryData(['candidate', 'b', '0', 'plex://show/1'])).toEqual({ tmdbId: '2' });
     client.clear();
+  });
+
+  it('ignores malformed JSON and invalid snapshot shapes in SSE status events', () => {
+    expect(parseStatusEvent('{not json')).toBeUndefined();
+    expect(parseStatusEvent('null')).toBeUndefined();
+    expect(parseStatusEvent('{}')).toBeUndefined();
+    expect(parseStatusEvent(JSON.stringify({ boot: 'a', seq: 1, tmdb: 'off' }))).toBeUndefined();
+    expect(parseStatusEvent(JSON.stringify({ boot: 'a', seq: 1, tmdb: 'off', servers: [null] }))).toBeUndefined();
+    expect(parseStatusEvent(JSON.stringify({ boot: 'a', seq: 1, tmdb: 'off', servers: [{ srv: 0, name: 'Home', run: 'bad' }] }))).toBeUndefined();
+    const valid: Status = { boot: 'a', seq: 2, tmdb: 'off', servers: [{ srv: 0, name: 'Home', health: 'ok', run: null }] };
+    expect(parseStatusEvent(JSON.stringify(valid))).toEqual(valid);
   });
 });

@@ -119,10 +119,12 @@ type Server struct {
 	// Shutdown does not wait for open streams.
 	sseCtx    context.Context
 	cancelSSE context.CancelFunc
-	// sseMu guards sseStreams against maxSSEStreams.
-	sseMu         sync.Mutex
-	sseStreams    int
-	maxSSEStreams int
+	// sseMu guards sseStreams and sseClosing against maxSSEStreams and shutdown.
+	sseMu           sync.Mutex
+	sseStreams      int
+	sseClosing      bool
+	maxSSEStreams   int
+	beforeSSECommit func() // test hook invoked before committing SSE headers
 	// writeTimeout bounds each write to an event stream.
 	writeTimeout time.Duration
 	// keepalive is the interval of the keepalive comments of an idle
@@ -259,7 +261,7 @@ func (s *Server) Start(ln net.Listener) {
 func (s *Server) Stop(ctx context.Context) error {
 	defer s.cancelBase()
 	s.closeAdmission()
-	s.cancelSSE()
+	s.stopSSE()
 	err := s.srv.Shutdown(ctx)
 	if err != nil {
 		s.force()

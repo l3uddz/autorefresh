@@ -391,3 +391,76 @@ func TestImageLogsFailureRedacted(t *testing.T) {
 		t.Errorf("log = %q, want redacted warn without secret", out)
 	}
 }
+
+func TestImageCoalescesConcurrentRequestsWhileSemaphoreFull(t *testing.T) {
+	st := openStore(t)
+	it1 := movie("101", "One", store.NoSummary, time.Time{})
+	it1.Thumb = thumbPath
+	it2 := movie("102", "Two", store.NoSummary, time.Time{})
+	it2.Thumb = "/library/metadata/102/thumb/1700000002"
+	readLibrary(t, st, "Home", "1", testNow, it1, it2)
+
+	want := pngBytes(t)
+	firstEntered := make(chan struct{})
+	firstRelease := make(chan struct{})
+	var mu sync.Mutex
+	callsByKey := map[string]int{}
+	fp := &fakePlex{photo: func(_ context.Context, key, _ string, _, _ int) ([]byte, error) {
+		mu.Lock()
+		callsByKey[key]++
+		mu.Unlock()
+		if key == "101" {
+			close(firstEntered)
+			<-firstRelease
+		}
+		return want, nil
+	}}
+	s := newServerWith(st, 0, []PlexServer{{Name: "Home", Plex: fp}})
+	s.imageSem = make(chan struct{}, 1)
+
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		getImage(s, "/api/items/thumb?srv=0&key=101")
+	}()
+	<-firstEntered
+
+	// Saturate with 101 holding the only slot, then send two concurrent
+	// requests for 102 before releasing 101. Both must share one fetch.
+	var wg sync.WaitGroup
+	recs := make([]*httptest.ResponseRecorder, 2)
+	for i := range 2 {
+		wg.Go(func() {
+			recs[i] = getImage(s, "/api/items/thumb?srv=0&key=102")
+		})
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		s.imageMu.Lock()
+		call := s.imageCalls[imageKey{srv: 0, ratingKey: "102", path: it2.Thumb, width: 240, height: 360}]
+		waiters := 0
+		if call != nil {
+			waiters = call.waiters
+		}
+		s.imageMu.Unlock()
+		if waiters == 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(firstRelease)
+	<-firstDone
+	wg.Wait()
+
+	mu.Lock()
+	got102 := callsByKey["102"]
+	mu.Unlock()
+	if got102 != 1 {
+		t.Fatalf("Photo calls for key 102 = %d, want 1", got102)
+	}
+	for i, rec := range recs {
+		if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), want) {
+			t.Errorf("response[%d] = status %d len %d, want 200 len %d", i, rec.Code, rec.Body.Len(), len(want))
+		}
+	}
+}

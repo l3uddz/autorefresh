@@ -30,6 +30,9 @@ type imageKey struct {
 
 type imageCall struct {
 	done        chan struct{}
+	ctx         context.Context
+	cancel      context.CancelFunc
+	waiters     int
 	body        []byte
 	contentType string
 	err         error
@@ -106,54 +109,65 @@ func (s *Server) writeImageError(w http.ResponseWriter, r *http.Request, err err
 }
 
 // fetchImage returns the validated image bytes and content type for key.
-// Identical concurrent requests share one upstream Plex call, and distinct
-// upstream fetches are bounded by s.imageSem.
+// Identical concurrent requests register a shared call before waiting on
+// s.imageSem so only one leader acquires a slot and calls Plex.
 func (s *Server) fetchImage(ctx context.Context, key imageKey) ([]byte, string, error) {
-	if call := s.lookupImageCall(key); call != nil {
-		return waitImageCall(ctx, call)
+	call, leader := s.beginImageCall(key)
+	if leader {
+		go s.runImageCall(key, call)
 	}
 	select {
-	case s.imageSem <- struct{}{}:
+	case <-call.done:
+		return call.body, call.contentType, call.err
 	case <-ctx.Done():
+		s.leaveImageCall(key, call)
 		return nil, "", ctx.Err()
 	}
-	call, leader := s.startImageCall(key)
-	if !leader {
-		<-s.imageSem
-		return waitImageCall(ctx, call)
-	}
-	go s.runImageCall(key, call)
-	return waitImageCall(ctx, call)
 }
 
-func (s *Server) lookupImageCall(key imageKey) *imageCall {
-	s.imageMu.Lock()
-	defer s.imageMu.Unlock()
-	return s.imageCalls[key]
-}
-
-func (s *Server) startImageCall(key imageKey) (*imageCall, bool) {
+func (s *Server) beginImageCall(key imageKey) (*imageCall, bool) {
 	s.imageMu.Lock()
 	defer s.imageMu.Unlock()
 	if call := s.imageCalls[key]; call != nil {
+		call.waiters++
 		return call, false
 	}
-	call := &imageCall{done: make(chan struct{})}
+	ctx, cancel := context.WithTimeout(s.baseCtx, photoTimeout)
+	call := &imageCall{done: make(chan struct{}), ctx: ctx, cancel: cancel, waiters: 1}
 	s.imageCalls[key] = call
 	return call, true
 }
 
+func (s *Server) leaveImageCall(key imageKey, call *imageCall) {
+	s.imageMu.Lock()
+	call.waiters--
+	if call.waiters == 0 {
+		if s.imageCalls[key] == call {
+			delete(s.imageCalls, key)
+		}
+		call.cancel()
+	}
+	s.imageMu.Unlock()
+}
+
 func (s *Server) runImageCall(key imageKey, call *imageCall) {
 	defer func() {
-		<-s.imageSem
+		call.cancel()
 		s.imageMu.Lock()
-		delete(s.imageCalls, key)
+		if s.imageCalls[key] == call {
+			delete(s.imageCalls, key)
+		}
 		s.imageMu.Unlock()
 		close(call.done)
 	}()
-	ctx, cancel := context.WithTimeout(s.baseCtx, photoTimeout)
-	defer cancel()
-	body, err := s.servers[key.srv].Plex.Photo(ctx, key.ratingKey, key.path, key.width, key.height)
+	select {
+	case s.imageSem <- struct{}{}:
+		defer func() { <-s.imageSem }()
+	case <-call.ctx.Done():
+		call.err = call.ctx.Err()
+		return
+	}
+	body, err := s.servers[key.srv].Plex.Photo(call.ctx, key.ratingKey, key.path, key.width, key.height)
 	if err != nil {
 		call.err = err
 		return
@@ -164,15 +178,6 @@ func (s *Server) runImageCall(key imageKey, call *imageCall) {
 		return
 	}
 	call.body, call.contentType = body, ct
-}
-
-func waitImageCall(ctx context.Context, call *imageCall) ([]byte, string, error) {
-	select {
-	case <-call.done:
-		return call.body, call.contentType, call.err
-	case <-ctx.Done():
-		return nil, "", ctx.Err()
-	}
 }
 
 // sizeParam returns the size that the size parameter names in sizes. It

@@ -120,6 +120,37 @@ export type Connection = 'connecting' | 'open' | 'reconnecting' | 'unavailable';
 
 const retryDelay = 3000;
 
+/** Validates that value has the required runtime shape of a Status snapshot
+ * before the SSE handler reads boot, seq, or servers. */
+export function isStatusSnapshot(value: unknown): value is Status {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  if (typeof v.boot !== 'string' || typeof v.seq !== 'number' || !Number.isFinite(v.seq) || typeof v.tmdb !== 'string') {
+    return false;
+  }
+  if (!Array.isArray(v.servers)) return false;
+  return v.servers.every(entry => {
+    if (typeof entry !== 'object' || entry === null) return false;
+    const s = entry as Record<string, unknown>;
+    if (typeof s.srv !== 'number' || typeof s.name !== 'string') return false;
+    if (s.run !== null && typeof s.run !== 'object') return false;
+    if (s.last !== undefined && (typeof s.last !== 'object' || s.last === null)) return false;
+    return true;
+  });
+}
+
+/** Parses and validates one SSE status event payload, returning undefined on
+ * malformed JSON or an unexpected snapshot shape. */
+export function parseStatusEvent(raw: string): Status | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  return isStatusSnapshot(parsed) ? parsed : undefined;
+}
+
 /** Keeps the status query up to date from GET /api/events and refreshes
  * the lists when a run ends, and when a stream connects: a run may have
  * ended before it, after the lists loaded. A run that starts refreshes the
@@ -147,12 +178,8 @@ export function useLiveStatus(): Connection {
       stream = source;
       const onStatus = (event: MessageEvent<string>) => {
         if (disposed || stream !== source) return;
-        let next: Status;
-        try {
-          next = JSON.parse(event.data) as Status;
-        } catch {
-          return;
-        }
+        const next = parseStatusEvent(event.data);
+        if (!next) return;
         const status = newerStatus(client.getQueryData<Status>(['status']), next, client);
         const runs = JSON.stringify(status.servers.map(({ last }) => [last?.id, last?.finishedAt]));
         const running = JSON.stringify(status.servers.map(({ run }) => run?.id));

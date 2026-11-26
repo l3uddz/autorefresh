@@ -331,12 +331,23 @@ func TestEventsClearsDeadlineAfterFlush(t *testing.T) {
 
 func TestEventsAfterStopAnswers503(t *testing.T) {
 	s := New(Options{})
-	s.cancelSSE()
+	s.stopSSE()
 
 	rec := serve(s, httptest.NewRequest(http.MethodGet, "/api/events", nil))
 	assertJSONError(t, rec, http.StatusServiceUnavailable, "shutting down")
 	if got := rec.Header().Get("Content-Type"); got == "text/event-stream" {
 		t.Error("the handler started a stream after Stop")
+	}
+}
+
+func TestEventsShutdownBeforeCommitReturns503(t *testing.T) {
+	s := New(Options{})
+	s.beforeSSECommit = func() { s.stopSSE() }
+
+	rec := serve(s, httptest.NewRequest(http.MethodGet, "/api/events", nil))
+	assertJSONError(t, rec, http.StatusServiceUnavailable, "shutting down")
+	if got := rec.Header().Get("Content-Type"); got == "text/event-stream" {
+		t.Error("the handler committed SSE headers after shutdown started")
 	}
 }
 
