@@ -530,6 +530,12 @@ The item detail SHALL offer Refresh now without a confirmation. The server handl
 - **WHEN** the refresh applied a fix match
 - **THEN** the toast starts with "Matched <title> to <match> (<year>)"
 
+#### Scenario: Answer without the item detail
+
+- **WHEN** Plex accepted the refresh but the answer has no item detail
+- **THEN** the dashboard keeps the detail that it shows and reads it again
+- **AND** a success toast says "Plex accepted the refresh of <title>", or "Matched <title> to <match> (<year>)" after a fix match, with no check result
+
 #### Scenario: Item gone after the refresh
 
 - **WHEN** the refresh succeeds and the answer reports that Plex no longer has the item

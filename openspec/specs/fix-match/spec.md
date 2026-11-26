@@ -234,7 +234,8 @@ Autorefresh SHALL compare each local season, in ascending order, with the same T
 
 #### Scenario: Below 90%
 
-- **WHEN** Plex has 8 of the 9 TMDB episodes of season 1
+- **GIVEN** no alternate TMDB episode group confirms the series
+- **WHEN** Plex has episodes 1 to 4 and 6 to 9 of season 1, and TMDB lists episodes 1 to 9 of season 1
 - **THEN** the episodes do not confirm, and the decision records season 1 with 8 Plex and 9 TMDB episodes and missing episode 5
 
 #### Scenario: Extra episode
@@ -412,6 +413,7 @@ Autorefresh SHALL search Plex by the title and the year of a series when the ser
 
 #### Scenario: Series without folder IDs
 
+- **GIVEN** a TMDB token is set, no TMDB failure turned TMDB off in the run, and the folders of the series hold no different years
 - **WHEN** a series with the year 2020 has no ID in its folder
 - **THEN** autorefresh asks Plex for match candidates with its title and the year 2020
 
@@ -427,7 +429,7 @@ Autorefresh SHALL search Plex by the title and the year of a series when the ser
 
 ### Requirement: Same-title candidate
 
-A title candidate SHALL have the same title as the item, ignoring case, spaces, and punctuation, and a known year within 1 of the item year and of the folder year. A title without letters or digits SHALL match nothing. Exactly one such candidate, with a GUID, SHALL remain. Several such candidates SHALL be the conflict `several candidates`.
+A title candidate SHALL have the same title as the item, ignoring case, spaces, and punctuation, and a known year within 1 of the item year and of the folder year. A title without letters or digits SHALL match nothing. Exactly one such candidate, with a GUID, SHALL remain. Several such candidates SHALL be the conflict `several candidates`. When no candidate meets this year rule, the TMDB premiere year rule for a stale Plex year SHALL apply instead.
 
 #### Scenario: Two candidates with the same title and year
 

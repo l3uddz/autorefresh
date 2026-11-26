@@ -8,7 +8,7 @@ Define how autorefresh reads Plex libraries to find movies and series with missi
 
 ### Requirement: Supported libraries
 
-Autorefresh SHALL read only movie libraries with the agent `tv.plex.agents.movie` and show libraries with the agent `tv.plex.agents.series`. It SHALL skip every other library and log one warning for each skipped library per process.
+Autorefresh SHALL read only movie libraries with the agent `tv.plex.agents.movie` and show libraries with the agent `tv.plex.agents.series`. It SHALL skip every other library and log one warning for each skipped library per process. A library that the `libraries` list of the server leaves out SHALL get no such warning.
 
 #### Scenario: Library with another agent
 
@@ -16,6 +16,12 @@ Autorefresh SHALL read only movie libraries with the agent `tv.plex.agents.movie
 - **WHEN** two runs read the server
 - **THEN** autorefresh lists no item of that library
 - **AND** it logs the warning `Skipping library with unsupported agent` once, with the server, library, type, and agent
+
+#### Scenario: Unlisted library with another agent
+
+- **GIVEN** a server whose `libraries` list is `Movies`, and which also has a library `Other` with the agent `tv.plex.agents.none`
+- **WHEN** a run reads the server
+- **THEN** autorefresh logs no unsupported agent warning for `Other`
 
 #### Scenario: No library list
 
@@ -54,7 +60,7 @@ Autorefresh SHALL give each listed movie or series every reason that applies to 
 
 ### Requirement: Episode reasons
 
-On each read of a show library, autorefresh SHALL send two series listings. The first finds matched series with matched regular episodes that have an empty summary (`episode-no-summary`). The second finds matched series with unmatched regular episodes (`episode-unmatched`). Episodes in season 0 SHALL NOT count.
+On each read of a show library, autorefresh SHALL send a series listing for each episode reason that `ignore-reasons` does not list. The first finds matched series with matched regular episodes that have an empty summary (`episode-no-summary`). The second finds matched series with unmatched regular episodes (`episode-unmatched`). Episodes in season 0 SHALL NOT count.
 
 #### Scenario: Episode listings of a show library
 
@@ -352,7 +358,7 @@ At the start of each scheduled or manual scan, autorefresh SHALL remove the cach
 
 ### Requirement: Cache of libraries that are not selected
 
-After it lists the libraries of a server, autorefresh SHALL remove the cache of each library of that server that the run did not select: a library that Plex no longer has, that the `libraries` list leaves out, or that is not supported. The removal SHALL include the item rows of the library and their history events in that library.
+After it lists the libraries of a server, autorefresh SHALL remove the cache of each library of that server that the run did not select: a library that Plex no longer has, that the `libraries` list leaves out, or that is not supported. When Plex lists no library at all, or the run is a dry run, it SHALL keep that cache. The removal SHALL include the item rows of the library and their history events in that library.
 
 #### Scenario: Unselected and deleted libraries
 

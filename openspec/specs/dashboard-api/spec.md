@@ -8,7 +8,7 @@ Define the HTTP contract of the dashboard server: how it protects and serves the
 
 ### Requirement: Optional Basic auth
 
-When `ui.username` is set, the server SHALL require HTTP Basic auth with the configured username and password on every request, including the page, the assets, the images, the event stream, and the JSON API. A request without the right values SHALL get `401` with the body `{"error":"unauthorized"}` and the header `WWW-Authenticate: Basic realm="autorefresh", charset="UTF-8"`. Without a username, the server SHALL ask for no credentials.
+When `ui.username` is set, the server SHALL require HTTP Basic auth with the configured username and password on every request, including the page, the assets, the images, the event stream, and the JSON API. A request without the right values SHALL get `401` with the body `{"error":"unauthorized"}` and the header `WWW-Authenticate: Basic realm="autorefresh", charset="UTF-8"`, unless a shutdown `503` or a cross-origin `403` comes first. Without a username, the server SHALL ask for no credentials.
 
 #### Scenario: Wrong password
 

@@ -124,7 +124,7 @@ A run SHALL handle at most `max-refreshes-per-run` due items on each server, in 
 #### Scenario: More due items than the limit
 
 - **GIVEN** `max-refreshes-per-run` is `2` and three items are due
-- **WHEN** a run ends
+- **WHEN** Plex accepts a plain refresh of each of the first two items, and the run ends
 - **THEN** it sent two refresh requests, and its summary has `due_items` 3 and `remaining_items` 1
 
 #### Scenario: Failed match search uses a place

@@ -230,7 +230,7 @@ Autorefresh SHALL record one run for each server of a scheduled run or a manual 
 
 ### Requirement: Run status
 
-A run SHALL start with status `running`. It SHALL end as `finished`, as `failed` with its error text, or as `canceled`, and SHALL record its end time.
+A run SHALL start with status `running`. It SHALL end as `finished`, as `failed` with its error text, or as `canceled`, and SHALL record its end time. A run that a stopped process left `running` SHALL become `interrupted` when the scheduled service starts.
 
 #### Scenario: Unavailable server
 

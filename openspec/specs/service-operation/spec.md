@@ -101,7 +101,7 @@ With `--once`, autorefresh SHALL run the refresher one time at once and then exi
 
 #### Scenario: Successful run
 
-- **WHEN** autorefresh starts with `--once` and every Plex server answers
+- **WHEN** autorefresh starts with `--once` and the run succeeds
 - **THEN** it logs the run summary, closes the database, and exits with code 0
 
 #### Scenario: Unavailable server
@@ -205,7 +205,7 @@ Autorefresh SHALL bind the dashboard listener only when `ui.listen` is set and n
 
 #### Scenario: Listener bound
 
-- **WHEN** `ui.listen` is set and the address is free
+- **WHEN** `ui.listen` is set, the address is free, and neither `--once` nor `--dry-run` is set
 - **THEN** autorefresh logs `UI listening` with the address and whether authentication is on, before the token checks
 
 #### Scenario: No authentication
