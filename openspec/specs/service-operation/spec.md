@@ -112,7 +112,7 @@ With `--once`, autorefresh SHALL run the refresher one time at once and then exi
 
 ### Requirement: Startup token checks
 
-Without `--once`, autorefresh SHALL check each Plex server, by a request for its libraries, and the TMDB token, if set, at the same time before the first run. The checks SHALL log their results and, when the dashboard is on, give them to the dashboard status as health. A failed check SHALL NOT stop the start.
+Without `--once`, autorefresh SHALL check each Plex server, by a request for its libraries, and the TMDB token, if set, at the same time before the first scheduled run. The checks SHALL log their results and, when the dashboard is on, give them to the dashboard status as health. A failed check SHALL NOT stop the start.
 
 #### Scenario: Token accepted
 
@@ -163,7 +163,7 @@ Without `--once`, autorefresh SHALL try to start one run as soon as the token ch
 #### Scenario: First run at once
 
 - **WHEN** autorefresh starts without `--once` and no other run is busy
-- **THEN** it sends the first run's requests right after the token checks, without waiting for the schedule
+- **THEN** it sends the first scheduled run's requests right after the token checks, without waiting for the schedule
 
 #### Scenario: Manual run during the checks
 

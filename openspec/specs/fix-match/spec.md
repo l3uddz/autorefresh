@@ -8,7 +8,7 @@ Define how autorefresh chooses, confirms, and applies the automatic fix match of
 
 ### Requirement: Items that seek a fix match
 
-A run SHALL try the automatic fix match only for a cached item that is unmatched itself, whose `unmatched` reason is not in `ignore-reasons`, and that had at least one refresh before. Every other due item SHALL get a plain refresh.
+A run SHALL try the automatic fix match only for a cached item that is unmatched itself, whose `unmatched` reason is not in `ignore-reasons`, and for which Plex accepted at least one request before. Every other due item SHALL get a plain refresh.
 
 #### Scenario: First attempt of an unmatched item
 
@@ -413,7 +413,7 @@ Autorefresh SHALL search Plex by the title and the year of a series when the ser
 
 #### Scenario: Series without folder IDs
 
-- **GIVEN** a TMDB token is set, no TMDB failure turned TMDB off in the run, the folders of the series hold no different years, and in a run the series already had a refresh
+- **GIVEN** the series is unmatched, `unmatched` is not in `ignore-reasons`, a TMDB token is set, no TMDB failure turned TMDB off in the run, the folders hold no different years, and in a run Plex accepted a request for the series before
 - **WHEN** a series with the year 2020 has no ID in its folder
 - **THEN** autorefresh asks Plex for match candidates with its title and the year 2020
 
