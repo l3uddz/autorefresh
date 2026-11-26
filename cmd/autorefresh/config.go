@@ -44,7 +44,7 @@ var (
 // at most maxConfigBytes+1 bytes so a file that grows or is replaced after
 // os.Stat cannot trigger an unbounded allocation.
 func readConfigFile(path string) ([]byte, error) {
-	f, err := os.Open(path)
+	f, err := openConfigFile(path)
 	if err != nil {
 		return nil, err
 	}
