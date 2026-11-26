@@ -186,8 +186,14 @@ In a manual item action, the `request` event, the `stopped` and `resumed` events
 
 #### Scenario: Row removed during a manual action
 
-- **WHEN** the cached row leaves the cache while a manual refresh of that item is in flight
+- **WHEN** the cached row leaves the cache while a manual refresh of that item is in flight, and Plex answers other than 404
 - **THEN** the `request` event is still recorded with the snapshot of the start
+
+#### Scenario: Row removed during a manual action that finds the item gone
+
+- **GIVEN** an item that had a cache row when the manual action started
+- **WHEN** the row leaves the cache while the refresh is in flight, and Plex answers 404
+- **THEN** a `gone` event is recorded with the snapshot of the start, because the action keeps the cache state of its start
 
 ### Requirement: Event order
 
