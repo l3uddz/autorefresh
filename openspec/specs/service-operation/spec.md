@@ -158,7 +158,7 @@ Without `--once`, autorefresh SHALL check each Plex server, by a request for its
 
 ### Requirement: Scheduled operation
 
-Without `--once`, autorefresh SHALL try to start one run as soon as the token checks end, and then one at each time of the `schedule` cron expression, until the schedule stops in the shutdown order, also while the dashboard stops. The schedule SHALL use the local time zone, unless the expression starts with `TZ=<zone>` or `CRON_TZ=<zone>`. A start while another run is busy, such as a manual run from the dashboard, SHALL be skipped with the warning `Skipped scheduled start, a run is busy`.
+Without `--once`, autorefresh SHALL try to start one run as soon as the token checks end, and one at each time of the `schedule` cron expression, until the schedule stops in the shutdown order, also while the dashboard stops. The schedule SHALL use the local time zone, unless the expression starts with `TZ=<zone>` or `CRON_TZ=<zone>`. A start while another run is busy, such as a manual run from the dashboard, SHALL be skipped with the warning `Skipped scheduled start, a run is busy`.
 
 #### Scenario: First run at once
 
