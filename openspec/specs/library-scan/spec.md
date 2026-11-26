@@ -64,7 +64,7 @@ On each read of a show library, autorefresh SHALL send a series listing for each
 
 #### Scenario: Episode listings of a show library
 
-- **WHEN** autorefresh reads a show library
+- **WHEN** autorefresh reads a show library, and `ignore-reasons` lists neither episode reason
 - **THEN** after the item listing it lists series with the filters `unmatched=0&episode.unmatched=0&episode.summary=&episode.addedAt<<=A&season.index>>=1`
 - **AND** then series with the filters `unmatched=0&episode.unmatched=1&episode.addedAt<<=A&season.index>>=1`, where A is the start of the read minus `minimum-age`
 

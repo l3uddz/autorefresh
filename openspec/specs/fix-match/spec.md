@@ -235,7 +235,7 @@ Autorefresh SHALL compare each local season, in ascending order, with the same T
 #### Scenario: Below 90%
 
 - **GIVEN** no alternate TMDB episode group confirms the series
-- **WHEN** Plex has episodes 1 to 4 and 6 to 9 of season 1, and TMDB lists episodes 1 to 9 of season 1
+- **WHEN** season 1 is the only local season, Plex has its episodes 1 to 4 and 6 to 9, and TMDB lists episodes 1 to 9 of season 1
 - **THEN** the episodes do not confirm, and the decision records season 1 with 8 Plex and 9 TMDB episodes and missing episode 5
 
 #### Scenario: Extra episode

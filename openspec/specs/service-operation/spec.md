@@ -101,7 +101,7 @@ With `--once`, autorefresh SHALL run the refresher one time at once and then exi
 
 #### Scenario: Successful run
 
-- **WHEN** autorefresh starts with `--once` and the run succeeds
+- **WHEN** autorefresh starts with `--once`, the run succeeds, and the database closes without an error
 - **THEN** it logs the run summary, closes the database, and exits with code 0
 
 #### Scenario: Unavailable server

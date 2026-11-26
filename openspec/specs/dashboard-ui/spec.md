@@ -513,7 +513,7 @@ The item detail SHALL show the item art faded behind its head, the poster, the t
 
 ### Requirement: Refresh now
 
-The item detail SHALL offer Refresh now without a confirmation. The server handles it by the Refresh now rules of `manual-actions`. When the request ends, the dashboard SHALL show the new item detail at once and a toast that names the match that it applied or the refresh that Plex accepted, and what the check after it found.
+The item detail SHALL offer Refresh now without a confirmation. The server handles it by the Refresh now rules of `manual-actions`. When the request ends, the dashboard SHALL show a toast that names the match that it applied, with its year when known, or the refresh that Plex accepted. When the answer has the item detail, it SHALL show that detail at once and the toast SHALL say what the check after it found.
 
 #### Scenario: Item complete
 
@@ -528,13 +528,13 @@ The item detail SHALL offer Refresh now without a confirmation. The server handl
 #### Scenario: Match applied
 
 - **WHEN** the refresh applied a fix match
-- **THEN** the toast starts with "Matched <title> to <match> (<year>)"
+- **THEN** the toast starts with "Matched <title> to <match>", followed by " (<year>)" when the year is known
 
 #### Scenario: Answer without the item detail
 
 - **WHEN** Plex accepted the refresh but the answer has no item detail
 - **THEN** the dashboard keeps the detail that it shows and reads it again
-- **AND** a success toast says "Plex accepted the refresh of <title>", or "Matched <title> to <match> (<year>)" after a fix match, with no check result
+- **AND** a success toast says "Plex accepted the refresh of <title>", or "Matched <title> to <match>" after a fix match, with the year when known, and no check result
 
 #### Scenario: Item gone after the refresh
 
