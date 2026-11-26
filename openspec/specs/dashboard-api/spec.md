@@ -498,7 +498,7 @@ The image proxy SHALL request only a stored path of the form `/library/metadata/
 
 #### Scenario: Slow refresh
 
-- **WHEN** Plex accepts the refresh, and the action with its follow-up takes longer than the 1 minute write timeout of the server
+- **WHEN** the refresh succeeds, and the action with its follow-up takes longer than the 1 minute write timeout of the server but less than 3 minutes
 - **THEN** the client still receives the `200` answer with `checked`
 
 ### Requirement: Item action route answers
