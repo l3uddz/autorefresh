@@ -517,7 +517,7 @@ The item detail SHALL offer Refresh now without a confirmation; `manual-actions`
 
 #### Scenario: Item complete
 
-- **WHEN** the check after a plain refresh finds the item complete
+- **WHEN** the check after a plain refresh finds the item complete, and the answer has the item detail
 - **THEN** a success toast says "Plex accepted the refresh of <title>. It is complete."
 - **AND** after a fix match, the toast says "Matched <title> to <match>", with the year when known, followed by ". It is complete."
 

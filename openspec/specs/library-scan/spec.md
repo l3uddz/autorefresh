@@ -363,7 +363,7 @@ After it lists the libraries of a server, autorefresh SHALL remove the cache of 
 #### Scenario: Unselected and deleted libraries
 
 - **GIVEN** the `libraries` list is `Movies`, and the cache has `Movies`, `TV`, and a library that Plex no longer lists
-- **WHEN** a run reads the server
+- **WHEN** a run that is not a dry run reads the server, and Plex lists a supported `Movies` library
 - **THEN** only the cache of `Movies` stays
 - **AND** the removal log names the library title when Plex still lists the library
 

@@ -215,7 +215,7 @@ Autorefresh SHALL bind the dashboard listener only when `ui.listen` is set and n
 
 #### Scenario: Port in use
 
-- **WHEN** the address of `ui.listen` is already in use
+- **WHEN** the address of `ui.listen` is already in use, and neither `--once` nor `--dry-run` is set
 - **THEN** autorefresh logs `Failed starting UI listener` at fatal level and exits with code 1
 - **AND** it sends no request to Plex and leaves a database that another process can open
 
@@ -226,7 +226,7 @@ Autorefresh SHALL bind the dashboard listener only when `ui.listen` is set and n
 
 #### Scenario: Requests during the token checks
 
-- **WHEN** the token checks are still pending
+- **WHEN** the dashboard listener has started and the token checks are still pending
 - **THEN** the dashboard already answers requests and accepts a manual scan
 
 ### Requirement: Shutdown order

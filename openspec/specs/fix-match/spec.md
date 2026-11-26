@@ -409,11 +409,11 @@ Without a TMDB token, autorefresh SHALL send no TMDB request. The fix match SHAL
 
 ### Requirement: Title fallback of a series
 
-Autorefresh SHALL search Plex by the title and the year of a series when the series has a year, TMDB is available and not turned off in the run, its folders hold no different years, and no search by ID found a candidate. Only a candidate that the steps below confirm SHALL be applied, with the action `title-match`.
+Autorefresh SHALL search Plex by the title and the year of a series when the series seeks a fix match, has a year, TMDB is available and not turned off in the run, its folders hold no different years, and no search by ID found a candidate. Only a candidate that the steps below confirm SHALL be applied, with the action `title-match`.
 
 #### Scenario: Series without folder IDs
 
-- **GIVEN** a TMDB token is set, no TMDB failure turned TMDB off in the run, and the folders of the series hold no different years
+- **GIVEN** a TMDB token is set, no TMDB failure turned TMDB off in the run, the folders of the series hold no different years, and in a run the series already had a refresh
 - **WHEN** a series with the year 2020 has no ID in its folder
 - **THEN** autorefresh asks Plex for match candidates with its title and the year 2020
 
@@ -429,7 +429,7 @@ Autorefresh SHALL search Plex by the title and the year of a series when the ser
 
 ### Requirement: Same-title candidate
 
-A title candidate SHALL have the same title as the item, ignoring case, spaces, and punctuation, and a known year within 1 of the item year and of the folder year. A title without letters or digits SHALL match nothing. Exactly one such candidate, with a GUID, SHALL remain. Several such candidates SHALL be the conflict `several candidates`. When no candidate meets this year rule, the TMDB premiere year rule for a stale Plex year SHALL apply instead.
+A title candidate SHALL have the same title as the item, ignoring case, spaces, and punctuation, and a known year within 1 of the item year, and also of the folder year when the folder has one. A title without letters or digits SHALL match nothing. Exactly one such candidate, with a GUID, SHALL remain. Several such candidates SHALL be the conflict `several candidates`. When no candidate meets this year rule, the TMDB premiere year rule for a stale Plex year SHALL apply instead.
 
 #### Scenario: Two candidates with the same title and year
 
