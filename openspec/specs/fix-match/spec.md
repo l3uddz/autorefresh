@@ -43,12 +43,17 @@ The fix match SHALL read IDs and years from the paths of the item. For a movie, 
 
 ### Requirement: Path ID format
 
-Autorefresh SHALL read an ID only from one whole group in `{}`, `[]`, or `()`, with the same bracket kind on both sides and no bracket, `/`, or `\` inside. A group SHALL hold `imdb`, `tmdb`, or `tvdb`, in any case, with an optional `id` suffix, then any separator that is not a letter or digit, then the value. An IMDb value is `tt` and digits and is lowercased. A TMDB or TVDB value is digits.
+Autorefresh SHALL read an ID only from one whole group in `{}`, `[]`, or `()`, with the same bracket kind on both sides and no bracket, `/`, or `\` inside. A group SHALL hold `imdb`, `tmdb`, or `tvdb`, in any case, with an optional `id` suffix, then any separator that is not a letter or digit, then the value. An IMDb value is `tt` and digits and is lowercased. A TMDB or TVDB value is positive digits with any leading zeros stripped; zero values SHALL be rejected.
 
 #### Scenario: Accepted forms
 
 - **WHEN** the paths contain `{tmdb-747059}`, `[imdb:tt19120100]`, `(tvdb-463649)`, `{imdbid-tt31289994}`, `{tvdb=1}`, or `{TMDB_2}`
 - **THEN** each group gives one ID with its source and value
+
+#### Scenario: Leading zeros normalized and zero rejected
+
+- **WHEN** the paths contain `{tmdb-001396}` and `{tvdb-0}`
+- **THEN** `{tmdb-001396}` gives TMDB ID `1396` and `{tvdb-0}` gives no ID
 
 #### Scenario: Bare IMDb ID
 
@@ -57,7 +62,7 @@ Autorefresh SHALL read an ID only from one whole group in `{}`, `[]`, or `()`, w
 
 #### Scenario: Rejected forms
 
-- **WHEN** a group is `{12345}`, `{tt}`, `(2020)`, `{imdb-12345}`, `{tmdb-tt1}`, `{tmdb-1 imdb-tt2}`, or `{tmdb-1]`, or the ID is outside brackets
+- **WHEN** a group is `{12345}`, `{tt}`, `(2020)`, `{imdb-12345}`, `{tmdb-tt1}`, `{tmdb-0}`, `{tmdb-1 imdb-tt2}`, or `{tmdb-1]`, or the ID is outside brackets
 - **THEN** it gives no ID
 
 #### Scenario: Same ID twice
@@ -429,12 +434,17 @@ Autorefresh SHALL search Plex by the title and the year of a series when the ser
 
 ### Requirement: Same-title candidate
 
-A title candidate SHALL have the same title as the item, ignoring case, spaces, and punctuation, and a known year within 1 of the item year, and also of the folder year when the folder has one. A title without letters or digits SHALL match nothing. Exactly one such candidate, with a GUID, SHALL remain. Several such candidates SHALL be the conflict `several candidates`. When no candidate meets this year rule, the TMDB premiere year rule for a stale Plex year SHALL apply instead.
+A title candidate SHALL match the item's title (ignoring case, spaces, and punctuation) and have a year within 1 of the item year and any folder year. Titles without letters or digits SHALL match nothing. Duplicate rows with the same non-empty GUID SHALL count as one candidate. Exactly one candidate with a GUID SHALL remain; several SHALL be `several candidates`. Otherwise the stale Plex year TMDB rule SHALL apply.
 
 #### Scenario: Two candidates with the same title and year
 
-- **WHEN** the title search finds two candidates with the title and the year of the item
+- **WHEN** the title search finds two candidates with different GUIDs and the title and year of the item
 - **THEN** the conflict is `several candidates`, and the item gets a plain refresh
+
+#### Scenario: Same series listed twice
+
+- **WHEN** the title search returns two rows with the same non-empty GUID that both match the item title and year
+- **THEN** autorefresh treats them as one candidate and confirms it instead of reporting `several candidates`
 
 #### Scenario: Folder year differs from the item year
 
@@ -606,7 +616,7 @@ Each candidate of a decision SHALL have the GUID, name, year, type, summary, pos
 
 ### Requirement: Preview of the automatic decision
 
-Autorefresh SHALL give a preview of the automatic decision for any known item, also one that a run skips, with the same decision rules as a run. Its inputs differ: it always asks Plex for the item paths, and no earlier TMDB failure turns its TMDB steps off. It SHALL record no decision, send no match, and write no TMDB ID or path to the cache. A failure that a run keeps in its decision SHALL stay in it. The end of the request, a store error, or a 404 of the Plex server SHALL return an error.
+Autorefresh SHALL preview the automatic decision for any known item using run rules, always reading item paths from Plex and ignoring prior run TMDB failures. It SHALL record no decision, send no match, and write nothing to the cache, while reusing TMDB ID translations resolved during the same preview. Handled failures SHALL stay in the decision; cancellation, store errors, or Plex 404 SHALL return an error.
 
 #### Scenario: Item that a run skips
 
@@ -617,6 +627,12 @@ Autorefresh SHALL give a preview of the automatic decision for any known item, a
 
 - **WHEN** the preview runs for an unmatched movie
 - **THEN** it asks Plex for the paths of the movie, also when a run would take them from its library read
+
+#### Scenario: Preview reuses translated TMDB ID in title fallback
+
+- **GIVEN** a series folder holds `{tvdb-5}` whose TMDB translation yields no Plex match, so the title fallback runs
+- **WHEN** the preview confirms the title candidate against folder IDs
+- **THEN** autorefresh reuses the TMDB ID resolved earlier in the same preview and does not call TMDB a second time for `tvdb-5`
 
 #### Scenario: Time of the preview
 

@@ -155,12 +155,17 @@ The API SHALL name a server by `srv`, its index in the configured server list, a
 
 ### Requirement: JSON content type for POST
 
-Every `POST` route under `/api/` SHALL require a `Content-Type` whose media type is `application/json`, with or without parameters such as `charset`. Any other type SHALL get `415` with the message `content type must be application/json`. `GET` routes SHALL NOT require a content type.
+Every known `POST` route under `/api/` SHALL require a `Content-Type` whose media type is `application/json`, with or without parameters such as `charset`. Any other type on a known `POST` route SHALL get `415` with the message `content type must be application/json`. Unknown paths under `/api/` SHALL get `404` with `not found` regardless of content type. `GET` routes SHALL NOT require a content type.
 
 #### Scenario: Plain text type
 
 - **WHEN** a client sends `POST /api/item/refresh?srv=0&key=1` with `Content-Type: text/plain`
 - **THEN** the server answers `415` and does not refresh the item
+
+#### Scenario: Unknown API path on POST
+
+- **WHEN** a client sends `POST /api/does-not-exist` without a `Content-Type` header
+- **THEN** the server answers `404` with `{"error":"not found"}`
 
 #### Scenario: Charset parameter
 
@@ -250,7 +255,7 @@ A running server entry SHALL show its run with `id`, `kind`, `source`, `status`,
 
 ### Requirement: Live status event stream
 
-`GET /api/events` SHALL answer a server-sent event stream with `Content-Type: text/event-stream`, `Cache-Control: no-cache`, and `X-Accel-Buffering: no`. It SHALL send a `status` event with the snapshot of `GET /api/status` at once and after a change, and a `: keepalive` comment every 25 s. Changes close together MAY arrive as one event with the latest snapshot. A stream whose write stalls for 10 s SHALL end. `HEAD /api/events` SHALL answer the same headers without a body and return at once.
+`GET /api/events` SHALL serve SSE (`text/event-stream`, `Cache-Control: no-cache`, `X-Accel-Buffering: no`), sending a `status` snapshot at once and on real changes, plus `: keepalive` every 25 s. Close changes MAY coalesce. Stalled writes (10 s) SHALL end. The server SHALL cap concurrent streams and answer `503` when full or if shutdown begins before headers. `HEAD /api/events` SHALL return only the headers.
 
 #### Scenario: First and later events
 
@@ -262,6 +267,16 @@ A running server entry SHALL show its run with `id`, `kind`, `source`, `status`,
 - **WHEN** the stream stays open for the keepalive interval
 - **THEN** the server sends the comment `: keepalive`
 
+#### Scenario: Concurrent stream limit reached
+
+- **WHEN** the maximum number of open `/api/events` streams is already active and another client connects
+- **THEN** the server answers `503` with a JSON error instead of opening another stream
+
+#### Scenario: Shutdown starts before stream headers
+
+- **WHEN** shutdown begins after a `/api/events` request is admitted but before stream headers are written
+- **THEN** the server answers `503` with `{"error":"shutting down"}`
+
 #### Scenario: HEAD request
 
 - **WHEN** a client sends `HEAD /api/events`
@@ -269,13 +284,25 @@ A running server entry SHALL show its run with `id`, `kind`, `source`, `status`,
 
 ### Requirement: Servers route
 
-`GET /api/servers` SHALL answer `{servers, ignoreReasons}`. Each server SHALL have `srv`, `name`, `scanned`, `libraries` (each with `section`, `title`, `type`, `lastRead`, and `lastFullRead` when set), and, when Plex tells it, `machineIdentifier`. With a cache refresh schedule and libraries, it SHALL add `nextFullRead`, the earliest time a library is due for a full read, and `fullReadDue` when that time is not after now. Empty lists SHALL be `[]`.
+`GET /api/servers` SHALL answer `{servers, ignoreReasons}`. Each server SHALL have `srv`, `name`, `scanned`, `libraries` (`section`, `title`, `type`, `lastRead`, optional `lastFullRead`), and optional `machineIdentifier`. Concurrent uncached identity lookups SHALL share one Plex request; caller cancellation SHALL NOT cancel it or start the 1-minute retry wait. With a cache refresh schedule and libraries, it SHALL add `nextFullRead` and `fullReadDue`. Empty lists SHALL be `[]`.
 
 #### Scenario: Plex identity fails
 
 - **WHEN** the identity request to a server fails
 - **THEN** that server has no `machineIdentifier`, the answer holds no error text, and the server asks Plex again only after one minute
 - **AND** a successful identity is cached and not asked again
+
+#### Scenario: Concurrent identity requests
+
+- **GIVEN** the server identity is not cached yet
+- **WHEN** two clients call `GET /api/servers` at the same time and Plex answers
+- **THEN** Plex receives one identity request and both clients receive `machineIdentifier`
+
+#### Scenario: First caller disconnects during identity lookup
+
+- **GIVEN** the server identity is not cached yet
+- **WHEN** the first client disconnects while the Plex identity request is in flight and Plex succeeds
+- **THEN** the identity is still cached and the next client receives `machineIdentifier` without waiting one minute
 
 #### Scenario: First scan
 
@@ -421,12 +448,17 @@ A running server entry SHALL show its run with `id`, `kind`, `source`, `status`,
 
 ### Requirement: Poster and art proxy
 
-`GET /api/items/thumb` and `GET /api/items/art` with `srv` and `key` SHALL fetch the stored poster or art of a known item through the Plex photo transcoder. `size` SHALL be `sm`, `md` (the default), or `lg`. The answer SHALL be only a JPEG, PNG, or WebP image of at most 10 MB, with `Content-Type` from sniffing, `Content-Length`, `Cache-Control: private, max-age=86400`, and `Cross-Origin-Resource-Policy: same-origin`, and no Plex header.
+`GET /api/items/thumb` and `GET /api/items/art` (`srv`, `key`, `size` `sm`/`md`/`lg`, default `md`) SHALL fetch the item's stored image via Plex's photo transcoder. Concurrent upstream fetches SHALL be bounded, and identical in-flight requests SHALL coalesce. Answers SHALL be JPEG, PNG, or WebP (<= 10 MB) with sniffed `Content-Type`, `Content-Length`, `Cache-Control: private, max-age=86400`, `Cross-Origin-Resource-Policy: same-origin`, and no Plex header.
 
 #### Scenario: Sizes
 
 - **WHEN** a client requests a poster with `size=sm`, `md`, or `lg`
 - **THEN** the server asks Plex for 120x180, 240x360, or 480x720 pixels, and for art 480x270, 960x540, or 1920x1080 pixels
+
+#### Scenario: Duplicate concurrent image requests
+
+- **WHEN** two clients request the same item poster and size at the same time
+- **THEN** Plex receives one photo transcoder request and both clients receive the image
 
 #### Scenario: Invalid size
 
@@ -474,7 +506,7 @@ The image proxy SHALL request only a stored path of the form `/library/metadata/
 
 ### Requirement: Run detail and run items routes
 
-`GET /api/runs/detail?id=` SHALL answer `{run, events, items}`: the run in the runs shape, its events in the timeline shape plus `key`, `title`, `year`, `type`, `thumb`, and `library`, and the items of a bulk job with `key`, `title`, `outcome`, `error`, and the same facts. A run that does not exist, or whose server is not configured, SHALL get `404` with `no such run`. `GET /api/runs/items?id=` SHALL answer `{items}` with the items of a bulk job.
+`GET /api/runs/detail?id=` SHALL answer `{run, events, items}`: the run in the runs shape, its events in the timeline shape plus `key`, `title`, `year`, `type`, `thumb`, and `library`, and the items of a bulk job with `key`, `title`, `outcome`, `error`, and the same facts. `GET /api/runs/items?id=` SHALL answer `{items}` with the items of a bulk job. For both routes, a run that does not exist, or whose server is not configured, SHALL get `404` with `no such run`.
 
 #### Scenario: Invalid ID
 
@@ -484,7 +516,12 @@ The image proxy SHALL request only a stored path of the form `/library/metadata/
 #### Scenario: Run of a removed server
 
 - **WHEN** the run belongs to a server that is no longer configured
-- **THEN** `/api/runs/detail` answers `404`
+- **THEN** both `/api/runs/detail` and `/api/runs/items` answer `404` with `{"error":"no such run"}`
+
+#### Scenario: Missing run on run items
+
+- **WHEN** a client requests `/api/runs/items?id=999999` for a run that does not exist
+- **THEN** the server answers `404` with `{"error":"no such run"}`
 
 ### Requirement: Refresh route answer
 
@@ -503,12 +540,17 @@ The image proxy SHALL request only a stored path of the form `/library/metadata/
 
 ### Requirement: Item action route answers
 
-`POST /api/item/match` with `{guid, name, year}` SHALL answer `200` with `{"accepted":true}`. `POST /api/item/stop` and `POST /api/item/resume` SHALL answer `200` with `{"changed":<bool>}`. `GET /api/item/matches` with optional `q` and `year` SHALL answer `{ids, locations, files, searches, tmdbFailed}`. `GET /api/item/auto-match` SHALL answer the decision as one event in the timeline shape. `POST /api/item/episode-check` with `tmdb` SHALL answer `{match, episodes, seasons}`.
+`POST /api/item/match` (`{guid, name, year}`) SHALL answer `200` `{"accepted":true}` (up to 2 m write deadline). `POST /api/item/stop` and `/resume` SHALL answer `{"changed":<bool>}`. `GET /api/item/matches` (`q`, `year`) SHALL answer `{ids, locations, files, searches, tmdbFailed}`. `GET /api/item/auto-match` SHALL answer one timeline event. `POST /api/item/episode-check` (`tmdb`) SHALL answer `{match, episodes, seasons}`. Search, preview, and episode check SHALL get up to 90 s to write.
 
 #### Scenario: Invalid match body
 
 - **WHEN** `guid` is empty or longer than 1024 bytes, `name` is longer than 1024 bytes, either has a control character, or `year` is outside 0 to 9999
 - **THEN** the server answers `400` with `{"error":"invalid match"}`
+
+#### Scenario: Slow match write
+
+- **WHEN** `POST /api/item/match` finishes after the 1 minute default server write timeout but within 2 minutes
+- **THEN** the client still receives `200` with `{"accepted":true}`
 
 #### Scenario: Invalid search parameters
 
