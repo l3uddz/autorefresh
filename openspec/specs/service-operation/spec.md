@@ -173,7 +173,7 @@ Without `--once`, autorefresh SHALL try to start one run as soon as the token ch
 #### Scenario: Time zone prefix
 
 - **WHEN** `schedule` is `CRON_TZ=UTC 0 3 * * *`
-- **THEN** after the first start, autorefresh tries to start a run at 03:00 UTC, whatever the local time zone is
+- **THEN** autorefresh tries to start a run at each 03:00 UTC, whatever the local time zone is
 
 #### Scenario: Failed scheduled run
 
@@ -231,13 +231,13 @@ Autorefresh SHALL bind the dashboard listener only when `ui.listen` is set and n
 
 ### Requirement: Shutdown order
 
-On SIGINT or SIGTERM without `--once`, autorefresh SHALL stop in this order: the dashboard, with a 5 s limit for a graceful stop; then the schedule, after the busy scheduled run returns; then the manual jobs and item actions, which it cancels and waits for; then the database. It SHALL then log `Stopped` and exit with code 0.
+On SIGINT or SIGTERM without `--once`, autorefresh SHALL stop in this order: the dashboard, with a 5 s limit for a graceful stop, after which it cancels the requests that are still open; then the schedule, whose busy scheduled run it cancels and waits for; then the manual jobs, which it cancels and waits for, and the item actions, which it waits for; then the database. It SHALL then log `Stopped` and exit with code 0.
 
 #### Scenario: Signal during a scheduled run
 
 - **WHEN** a signal arrives while a scheduled run is busy
 - **THEN** the dashboard stops first while the run goes on
-- **AND** then the run is cancelled and returns before the manual jobs stop and the database closes
+- **AND** if the run is still busy after that, it is cancelled and returns before the manual jobs stop and the database closes
 
 #### Scenario: Dashboard does not stop in time
 
