@@ -607,6 +607,7 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 			return err
 		},
 		"KnownItem":     func() error { _, _, _, err := s.KnownItem(srv, "101"); return err },
+		"KnownItems":    func() error { _, err := s.KnownItems(context.Background(), srv, []string{"101"}); return err },
 		"SetStopped":    func() error { _, err := s.SetStopped(context.Background(), srv, "101", base, true); return err },
 		"RecordManual":  func() error { return s.RecordManual(ManualRecord{Request: Request{Source: SourceManual}}) },
 		"ApplyCheck":    func() error { _, err := s.ApplyCheck(srv, item("101", NoSummary), base, 0); return err },
@@ -813,5 +814,29 @@ func TestDeletingEventClearsFixedMatchReference(t *testing.T) {
 	}
 	if id <= 2 {
 		t.Errorf("new event id = %d, want above the deleted highest id 2", id)
+	}
+}
+
+func TestKnownItemsResolvesCachedHistoryAndMissing(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("cached", NoArt), item("history", NoArt)}})
+	// Complete "history" so it leaves the item table but keeps an event snapshot.
+	apply(t, s, Read{Items: []Item{item("cached", NoArt), item("history", 0)}, Full: true})
+
+	got, err := s.KnownItems(context.Background(), srv, []string{"cached", "history", "missing", "cached"})
+	if err != nil {
+		t.Fatalf("KnownItems: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("KnownItems len = %d, want 2: %+v", len(got), got)
+	}
+	if !got["cached"].Cached || got["cached"].Item.RatingKey != "cached" {
+		t.Errorf("cached = %+v", got["cached"])
+	}
+	if got["history"].Cached || got["history"].Item.RatingKey != "history" || got["history"].Item.Title != "Title history" {
+		t.Errorf("history = %+v", got["history"])
+	}
+	if _, ok := got["missing"]; ok {
+		t.Errorf("missing key should not be present: %+v", got["missing"])
 	}
 }

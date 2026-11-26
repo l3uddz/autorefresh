@@ -11,6 +11,14 @@ import (
 // ErrNoItem reports that an action needs an item that is no longer cached.
 var ErrNoItem = errors.New("no item row")
 
+const eventSnapshotColumns = `server, section, rating_key, type, title, year, thumb, art, path`
+
+func scanEventSnapshot(row scanner) (Item, error) {
+	var it Item
+	err := row.Scan(&it.Server, &it.Section, &it.RatingKey, &it.Type, &it.Title, &it.Year, &it.Thumb, &it.Art, &it.Path)
+	return it, err
+}
+
 // KnownItem returns the row, or the latest event snapshot when there is no row.
 func (s *Store) KnownItem(server, ratingKey string) (Item, bool, bool, error) {
 	ctx := context.Background()
@@ -23,7 +31,7 @@ func (s *Store) KnownItem(server, ratingKey string) (Item, bool, bool, error) {
 	if err != nil || found {
 		return it, found, found, err
 	}
-	e, err := scanEvent(tx.QueryRowContext(ctx, `SELECT `+eventColumns+` FROM event
+	snap, err := scanEventSnapshot(tx.QueryRowContext(ctx, `SELECT `+eventSnapshotColumns+` FROM event
  WHERE server = ? AND rating_key = ? ORDER BY at DESC, id DESC LIMIT 1`, server, ratingKey))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Item{}, false, false, nil
@@ -31,8 +39,72 @@ func (s *Store) KnownItem(server, ratingKey string) (Item, bool, bool, error) {
 	if err != nil {
 		return Item{}, false, false, fmt.Errorf("read item snapshot: %w", err)
 	}
-	return Item{Server: e.Server, Section: e.Section, RatingKey: e.RatingKey, Type: e.Type, Title: e.Title,
-		Year: e.Year, Thumb: e.Thumb, Art: e.Art, Path: e.Path}, false, true, nil
+	return snap, false, true, nil
+}
+
+// KnownResult holds a resolved item and whether it came from the item cache.
+type KnownResult struct {
+	Item   Item
+	Cached bool
+}
+
+// KnownItems resolves each rating key of server in one read-only transaction,
+// returning cached rows or latest event snapshots for known keys.
+func (s *Store) KnownItems(ctx context.Context, server string, keys []string) (map[string]KnownResult, error) {
+	out := make(map[string]KnownResult, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("begin known items: %w", err)
+	}
+	defer tx.Rollback()
+	return readKnownItems(ctx, tx, server, keys, out)
+}
+
+func readKnownItems(ctx context.Context, tx *sql.Tx, server string, keys []string, out map[string]KnownResult) (map[string]KnownResult, error) {
+	itemStmt, err := tx.PrepareContext(ctx, `SELECT `+itemColumns+` FROM item WHERE server = ? AND rating_key = ?`)
+	if err != nil {
+		return nil, fmt.Errorf("prepare known item: %w", err)
+	}
+	defer itemStmt.Close()
+	snapStmt, err := tx.PrepareContext(ctx, `SELECT `+eventSnapshotColumns+` FROM event
+ WHERE server = ? AND rating_key = ? ORDER BY at DESC, id DESC LIMIT 1`)
+	if err != nil {
+		return nil, fmt.Errorf("prepare known snapshot: %w", err)
+	}
+	defer snapStmt.Close()
+
+	for _, key := range keys {
+		if _, seen := out[key]; seen {
+			continue
+		}
+		if res, ok, err := readOneKnown(ctx, itemStmt, snapStmt, server, key); err != nil {
+			return nil, err
+		} else if ok {
+			out[key] = res
+		}
+	}
+	return out, nil
+}
+
+func readOneKnown(ctx context.Context, itemStmt, snapStmt *sql.Stmt, server, key string) (KnownResult, bool, error) {
+	it, err := scanItem(itemStmt.QueryRowContext(ctx, server, key))
+	if err == nil {
+		return KnownResult{Item: it, Cached: true}, true, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return KnownResult{}, false, fmt.Errorf("read item %s: %w", key, err)
+	}
+	snap, err := scanEventSnapshot(snapStmt.QueryRowContext(ctx, server, key))
+	if errors.Is(err, sql.ErrNoRows) {
+		return KnownResult{}, false, nil
+	}
+	if err != nil {
+		return KnownResult{}, false, fmt.Errorf("read item snapshot %s: %w", key, err)
+	}
+	return KnownResult{Item: snap, Cached: false}, true, nil
 }
 
 // SetStopped changes the stop state and records the change in the same transaction.

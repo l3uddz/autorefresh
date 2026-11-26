@@ -296,10 +296,17 @@ func insertSearch(tx *sql.Tx, eventID int64, position int, m MatchSearch) error 
 	if err != nil {
 		return fmt.Errorf("write search: %w", err)
 	}
+	if len(m.Candidates) == 0 {
+		return nil
+	}
+	stmt, err := tx.Prepare(`INSERT INTO match_candidate (search_id, position, guid, name, year, type, summary, thumb, score, verdict)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("prepare candidate: %w", err)
+	}
+	defer stmt.Close()
 	for i, c := range m.Candidates {
-		if _, err := tx.Exec(`INSERT INTO match_candidate (search_id, position, guid, name, year, type, summary, thumb, score, verdict)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			searchID, i, c.GUID, c.Name, c.Year, c.Type, c.Summary, c.Thumb, c.Score, c.Verdict); err != nil {
+		if _, err := stmt.Exec(searchID, i, c.GUID, c.Name, c.Year, c.Type, c.Summary, c.Thumb, c.Score, c.Verdict); err != nil {
 			return fmt.Errorf("write candidate: %w", err)
 		}
 	}
@@ -446,17 +453,26 @@ func (s *Store) TimelineContext(ctx context.Context, server, ratingKey string) (
 	defer tx.Rollback()
 
 	events, err := queryEvents(ctx, tx, server, ratingKey)
-	if err != nil {
-		return nil, err
+	if err != nil || !hasMatchDecision(events) {
+		return events, err
 	}
 	searchAt, err := attachSearches(ctx, tx, events, server, ratingKey)
-	if err != nil {
-		return nil, err
+	if err != nil || len(searchAt) == 0 {
+		return events, err
 	}
 	if err := attachCandidates(ctx, tx, events, searchAt, server, ratingKey); err != nil {
 		return nil, err
 	}
 	return events, nil
+}
+
+func hasMatchDecision(events []Event) bool {
+	for _, e := range events {
+		if e.Kind == EventMatchDecision {
+			return true
+		}
+	}
+	return false
 }
 
 func queryEvents(ctx context.Context, tx *sql.Tx, server, ratingKey string) ([]Event, error) {

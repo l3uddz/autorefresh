@@ -342,6 +342,15 @@ func writeExisting(tx *sql.Tx, r Read, prev Item, in readKey) (fixed bool, err e
 // insertNewRows inserts rows for incoming items not in old or settled that
 // have at least one incomplete reason.
 func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]readKey, settled map[string]bool) error {
+	if len(incoming) == 0 {
+		return nil
+	}
+	stmt, err := tx.Prepare(`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons, thumb, art, path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("prepare item insert: %w", err)
+	}
+	defer stmt.Close()
 	for key, in := range incoming {
 		if _, exists := old[key]; exists || settled[key] {
 			continue
@@ -350,9 +359,7 @@ func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]
 		if final == 0 {
 			continue
 		}
-		_, err := tx.Exec(`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons, thumb, art, path)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			r.Server, r.Section, key, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final),
+		_, err := stmt.Exec(r.Server, r.Section, key, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final),
 			in.meta.Thumb, in.meta.Art, in.meta.Path)
 		if err != nil {
 			return fmt.Errorf("write item %s: %w", key, err)
@@ -364,11 +371,19 @@ func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]
 // writeFolders saves the staged folder of each row that the read kept. A key
 // without a row, such as a deleted one, matches nothing.
 func writeFolders(tx *sql.Tx, r Read) error {
+	if len(r.Folders) == 0 {
+		return nil
+	}
+	stmt, err := tx.Prepare(`UPDATE item SET path = ? WHERE server = ? AND rating_key = ?`)
+	if err != nil {
+		return fmt.Errorf("prepare item folder: %w", err)
+	}
+	defer stmt.Close()
 	for key, folder := range r.Folders {
 		if folder == "" {
 			continue
 		}
-		if _, err := tx.Exec(`UPDATE item SET path = ? WHERE server = ? AND rating_key = ?`, folder, r.Server, key); err != nil {
+		if _, err := stmt.Exec(folder, r.Server, key); err != nil {
 			return fmt.Errorf("write item folder %s: %w", key, err)
 		}
 	}

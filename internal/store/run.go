@@ -108,10 +108,17 @@ func (s *Store) FinishJob(id int64, start RunStart, r RunResult, items []RunItem
 	if err != nil || !written {
 		return false, err
 	}
-	for _, item := range items {
-		if _, err := tx.Exec(`INSERT INTO run_item (run_id, position, rating_key, title, outcome, error)
-   VALUES (?, ?, ?, ?, ?, ?)`, id, item.Position, item.RatingKey, item.Title, item.Outcome, item.Error); err != nil {
-			return false, fmt.Errorf("record run item: %w", err)
+	if len(items) > 0 {
+		stmt, err := tx.Prepare(`INSERT INTO run_item (run_id, position, rating_key, title, outcome, error)
+   VALUES (?, ?, ?, ?, ?, ?)`)
+		if err != nil {
+			return false, fmt.Errorf("prepare run item: %w", err)
+		}
+		defer stmt.Close()
+		for _, item := range items {
+			if _, err := stmt.Exec(id, item.Position, item.RatingKey, item.Title, item.Outcome, item.Error); err != nil {
+				return false, fmt.Errorf("record run item: %w", err)
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
