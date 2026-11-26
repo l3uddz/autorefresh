@@ -248,7 +248,12 @@ On request, autorefresh SHALL compare the regular episode numbers that Plex has 
 
 #### Scenario: TMDB fails
 
-- **WHEN** a TMDB request of the check fails, other than an episode group request without a 401, or a 429 left after the retries
+- **WHEN** a TMDB request of the check that is not an episode group request fails
+- **THEN** the check fails with the TMDB error
+
+#### Scenario: Episode group request rejected
+
+- **WHEN** an episode group request of the check answers 401, or still answers 429 after the TMDB retries
 - **THEN** the check fails with the TMDB error
 
 #### Scenario: One episode group fails
