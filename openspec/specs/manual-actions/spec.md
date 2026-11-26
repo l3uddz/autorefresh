@@ -170,8 +170,14 @@ The user SHALL be able to apply a chosen candidate, given by its Plex GUID, name
 
 #### Scenario: Refresh after the match finds the item gone
 
-- **WHEN** Plex answers the refresh after an accepted match with 404
+- **WHEN** Plex answers the refresh after an accepted match of a cached item with 404
 - **THEN** autorefresh records the item as gone by that refresh, makes no check, and the match action succeeds
+
+#### Scenario: Refresh after the match of an item with only history answers 404
+
+- **GIVEN** an item that has history but no cache row
+- **WHEN** Plex accepts the match and answers the refresh after it with 404
+- **THEN** autorefresh records a failed manual refresh request event and no gone event, makes no check, and the match action succeeds
 
 #### Scenario: Server unavailable after the match
 
