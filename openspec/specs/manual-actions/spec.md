@@ -258,7 +258,7 @@ On request, autorefresh SHALL compare the regular episode numbers that Plex has 
 
 #### Scenario: Episode group list fails
 
-- **WHEN** the episode group list of the check answers 500
+- **WHEN** the episode group list of the check answers 500, not 401 or 429
 - **THEN** autorefresh logs a warning, the check does not fail, and it reports the result of the default seasons
 
 #### Scenario: Episode group budget runs out

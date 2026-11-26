@@ -303,7 +303,7 @@ Autorefresh SHALL read each group part with an order of 1 or higher as that seas
 
 ### Requirement: Episode group bounds and failures
 
-All episode group requests of one comparison SHALL share a 15 second budget that never extends the deadline of the caller. When the budget runs out, the check SHALL stop and keep the result of the default seasons. A failed group list SHALL be logged and keep the result of the default seasons. A failed season read of one group SHALL be logged, and the check SHALL try the next group. A 401 or 429 answer SHALL count as a TMDB failure.
+All episode group requests of one comparison SHALL share a 15 second budget within the deadline of the caller. When the budget runs out, the check SHALL stop and keep the result of the default seasons. A 401 or 429 answer to the group list or to a group read SHALL stop the comparison as a TMDB failure. Any other failed group list SHALL be logged and keep the result of the default seasons. Any other failed season read of one group SHALL be logged, and the check SHALL try the next group.
 
 #### Scenario: Budget runs out
 
@@ -604,12 +604,17 @@ Each candidate of a decision SHALL have the GUID, name, year, type, summary, pos
 
 ### Requirement: Preview of the automatic decision
 
-Autorefresh SHALL give a preview of the automatic decision for any known item, with the same searches and checks as a run. A preview SHALL record no decision, send no match, and write no TMDB ID or path to the cache. A failure that a run keeps in its decision SHALL stay in the preview's decision. The end of the request, a store error, or a 404 answer SHALL return an error.
+Autorefresh SHALL give a preview of the automatic decision for any known item, with the same decision rules as a run. Only its inputs differ: it always asks Plex for the item paths, and no earlier TMDB failure turns its TMDB steps off. It SHALL record no decision, send no match, and write no TMDB ID or path to the cache. A failure that a run keeps in its decision SHALL stay in the preview's decision. The end of the request, a store error, or a 404 answer SHALL return an error.
 
 #### Scenario: Item that a run skips
 
 - **WHEN** the preview runs for a matched item that had no refresh yet
 - **THEN** it returns the decision that the searches give, and the item history stays unchanged
+
+#### Scenario: Preview of a movie
+
+- **WHEN** the preview runs for an unmatched movie
+- **THEN** it asks Plex for the paths of the movie, also when a run would take them from its library read
 
 #### Scenario: Time of the preview
 

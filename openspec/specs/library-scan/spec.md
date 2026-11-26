@@ -227,12 +227,18 @@ The cache SHALL hold one row for each incomplete movie or series, with its libra
 
 ### Requirement: Reasons that a read does not list
 
-An item that a read does not list SHALL keep its item reasons. Each read of a show library SHALL replace the episode reasons of every row of that library with the result of its episode listings.
+An item that a read does not list SHALL keep its item reasons. Each read of a show library SHALL set the episode reasons of every row of that library from the episode listings that it sent; an ignored episode reason keeps its earlier value. A row with no reason left SHALL be removed as complete.
 
 #### Scenario: Item missing from an incremental read
 
-- **WHEN** an incremental read does not list a cached item
+- **WHEN** an incremental read does not list a cached movie
 - **THEN** its row keeps its reasons and is not written
+
+#### Scenario: Series missing from an incremental read
+
+- **GIVEN** a cached series with only the reason `episode-no-summary`
+- **WHEN** an incremental read does not list the series, and its `episode-no-summary` listing does not have it
+- **THEN** the row loses that reason and is removed as complete
 
 #### Scenario: Episode reason gone
 

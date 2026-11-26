@@ -666,7 +666,7 @@ The dialog SHALL offer a search by title with an optional year, or by an ID such
 
 ### Requirement: Automatic fix match panel and preview
 
-The dialog SHALL explain the newer of the last automatic fix match and the preview: its searches, its candidates with verdicts, and why it picked one or none, and SHALL mark its findings on the candidate cards. Without a last decision, it SHALL offer "Try automatic fix match", which runs the preview on request only. The preview SHALL make the same lookups as a run, send no match or refresh request, and write nothing to the store.
+The dialog SHALL explain the newer of the last automatic fix match and the preview: its searches, its candidates with verdicts, and why it picked one or none, and SHALL mark its findings on the candidate cards. Without a last decision, it SHALL offer "Try automatic fix match", which runs the preview on request only. The preview SHALL follow the decision rules of a run, as `fix-match` describes, send no match or refresh request, and write nothing to the store.
 
 #### Scenario: Preview runs
 

@@ -130,7 +130,7 @@ A run SHALL handle at most `max-refreshes-per-run` due items on each server, in 
 #### Scenario: Failed match search uses a place
 
 - **GIVEN** `max-refreshes-per-run` is `1`
-- **WHEN** the match search of the first due item fails
+- **WHEN** a `tmdb` path ID search of the first due item answers `500`, which ends its automatic decision
 - **THEN** the run sends no request in this run and leaves the next item for a later run
 
 ### Requirement: Pacing
@@ -265,7 +265,7 @@ Except in the title fallback of the `fix-match` capability, a run SHALL end the 
 
 ### Requirement: Dry run
 
-In a dry run, a run SHALL handle the same items as a normal run, within the same limit, and make the same match search reads. For each item it SHALL log one info line `Dry run` with the action that it would send, and with the match fields for a match. It SHALL send no refresh or match request, SHALL NOT wait between items, SHALL record no attempts. The `history` capability defines what a dry run records and removes.
+In a dry run, a run SHALL handle the same items as a normal run, within the same limit, and make the same match search reads. For each item whose refresh or match it decides, it SHALL log one info line `Dry run` with that action, and with the match fields for a match. An item whose match search fails SHALL log `Match search failed` instead. It SHALL send no refresh or match request, SHALL NOT wait between items, and SHALL record no attempts; `history` defines what else it records.
 
 #### Scenario: Due items in a dry run
 
