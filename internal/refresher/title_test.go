@@ -680,6 +680,22 @@ func TestTitleMatchStalePlexYearSameGUIDTwice(t *testing.T) {
 		"title Title 201: plex://show/s=picked plex://show/o=other title plex://show/s=picked")
 }
 
+// Same-title matching deduplicates identical non-empty Plex GUIDs so one series
+// listed twice does not trigger conflictSeveral.
+func TestTitleMatchSameGUIDTwiceDeduplicates(t *testing.T) {
+	f, fp, _ := titleFixture(t)
+	fp.candidates[titleSearch] = []plex.Candidate{
+		{GUID: "plex://show/t", Name: "Title 201", Year: 2020},
+		{GUID: "plex://show/t", Name: "Title 201", Year: 2020},
+	}
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Match 201 plex://show/t", "Refresh 201")
+	wantDecision(t, f.decision("201"), store.DecisionMatched, "",
+		"title Title 201: plex://show/t=picked plex://show/t=picked")
+}
+
 // A candidate without a Plex year has no year that could be stale, so
 // TMDB's year does not stand in for it.
 func TestTitleMatchCandidateWithoutPlexYear(t *testing.T) {

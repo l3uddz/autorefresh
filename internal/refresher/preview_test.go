@@ -132,3 +132,31 @@ func TestPreviewMatchKeepsTheEvidence(t *testing.T) {
 	want := store.MatchEvidence{TMDBID: "77", EpisodeDiff: store.EpisodeDiff{Season: 1, Plex: 2, TMDB: 3, Missing: []int{3}}}
 	wantEvidence(t, store.Event{MatchEvidence: dec.MatchEvidence}, want)
 }
+
+func TestPreviewMatchReusesTMDBIDInTitleFallback(t *testing.T) {
+	fp := newFakePlex(showsLib)
+	fp.paths["201"] = []string{"/tv/Title 201 (2020) {tvdb-5}"}
+	fp.candidates["201 Title 201"] = []plex.Candidate{{GUID: "plex://show/s", Name: "Title 201", Year: 2020}}
+	fp.series = map[string]plex.Series{"plex://show/s": {TMDBID: "77"}}
+	fp.episodeNumbers = map[string]map[int][]int{"201": {1: {1, 2, 3}}}
+	ft := &fakeTMDB{
+		ids:     map[string]string{"tvdb 5 true": "77"},
+		seasons: map[string][]int{"77 1": {1, 2, 3}},
+	}
+	f := newTMDBFixture(t, fp, ft, "tvdb-5")
+	f.saveLibrary(showsLib)
+
+	dec, err := f.r.PreviewMatch(t.Context(), testServer, "201")
+	if err != nil || dec.Outcome != store.DecisionMatched {
+		t.Fatalf("decision = %+v, %v, want matched", dec, err)
+	}
+	finds := 0
+	for _, c := range ft.calls {
+		if c == "Find tvdb 5 true" {
+			finds++
+		}
+	}
+	if finds != 1 {
+		t.Errorf("TMDB Find calls = %d (%v), want 1", finds, ft.calls)
+	}
+}

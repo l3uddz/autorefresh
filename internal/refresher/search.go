@@ -176,6 +176,7 @@ func (r *Refresher) EpisodeCheck(ctx context.Context, server, key, id string) (E
 	}
 	defer r.actions.Done()
 	it, err := r.lookupItem(server, key)
+	norm, ok := normalizePositiveNumber(id)
 	switch {
 	case err != nil:
 		return EpisodeResult{}, err
@@ -183,10 +184,10 @@ func (r *Refresher) EpisodeCheck(ctx context.Context, server, key, id string) (E
 		return EpisodeResult{}, ErrNotShow
 	case r.opts.TMDB == nil:
 		return EpisodeResult{}, ErrTMDBOff
-	case !numberValue.MatchString(id):
+	case !ok:
 		return EpisodeResult{}, ErrUnknownItem
 	}
-	result, err := compareEpisodes(ctx, it.server.Plex, r.opts.TMDB, key, id)
+	result, err := compareEpisodes(ctx, it.server.Plex, r.opts.TMDB, key, norm)
 	return EpisodeResult{
 		Match: result.count > 0, Episodes: result.count, EpisodeGroup: result.group, Diff: result.diff,
 		Seasons: result.seasons, Stopped: result.stopped, EpisodeGroups: result.groups,

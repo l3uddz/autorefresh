@@ -25,6 +25,8 @@ func TestParseIDs(t *testing.T) {
 		{"year only", []string{"/tv/Show (2020)"}, nil},
 		{"imdb without tt", []string{"/m/Film {imdb-12345}"}, nil},
 		{"tmdb with tt", []string{"/m/Film {tmdb-tt1}"}, nil},
+		{"zero tmdb and tvdb rejected", []string{"/m/Film {tmdb-0} {tvdb-000}"}, nil},
+		{"leading zeros stripped", []string{"/m/Film {tmdb-001396} {tvdb-005}"}, []pathID{{"tmdb", "1396"}, {"tvdb", "5"}}},
 		{"outside brackets", []string{"/m/Film tmdb-1 (2020)/f.mkv"}, nil},
 		{"group spans path parts", []string{"/m/Film {tmdb-/5}"}, nil},
 		{"two IDs in one group", []string{"/m/Film {tmdb-1 imdb-tt2}"}, nil},

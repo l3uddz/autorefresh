@@ -148,8 +148,19 @@ func parseID(text string) (pathID, bool) {
 		}
 		return pathID{source, strings.ToLower(value)}, true
 	}
-	if !numberValue.MatchString(value) {
+	norm, ok := normalizePositiveNumber(value)
+	if !ok {
 		return pathID{}, false
 	}
-	return pathID{source, value}, true
+	return pathID{source, norm}, true
+}
+
+// normalizePositiveNumber strips leading zeros from a decimal digit string and
+// rejects empty, non-digit, or zero values.
+func normalizePositiveNumber(s string) (string, bool) {
+	if !numberValue.MatchString(s) {
+		return "", false
+	}
+	s = strings.TrimLeft(s, "0")
+	return s, s != ""
 }
