@@ -542,14 +542,15 @@ The item detail SHALL offer Refresh now without a confirmation; `manual-actions`
 
 #### Scenario: Answer without the item detail
 
-- **WHEN** Plex accepted the refresh but the answer has no item detail
+- **WHEN** Plex accepted the refresh or the fix match, but the answer has no item detail
 - **THEN** the dashboard keeps the detail that it shows and reads it again
 - **AND** a success toast says "Plex accepted the refresh of <title>", or "Matched <title> to <match>" after a fix match, with the year when known, and no check result
 
 #### Scenario: Item gone after the refresh
 
 - **WHEN** the answer has the item detail, the item is no longer in the queue, and either the answer sets `checked` and the newest completion or removal event is a removal, or it does not and the newest event is a removal
-- **THEN** a notice toast says that Plex no longer has it and autorefresh removed it from the queue
+- **THEN** after a plain refresh, a notice toast says only "Plex no longer has <title>. Autorefresh removed it from the queue."
+- **AND** after a fix match, the notice toast says "Matched <title> to <match>", with the year when known, followed by ". Then Plex no longer has <title>. Autorefresh removed it from the queue."
 
 #### Scenario: Plex answers the refresh with 404
 
