@@ -713,7 +713,7 @@ working.
 
 ## Mockups
 
-The approved mockups (HTML) are kept beside this document. Their posters,
+The approved mockups (HTML) are kept in `mockups/`. Their posters,
 titles, summaries, and paths are placeholders. They define the layout and
 the content of each screen. The final look is stock Astryx, as in the
 prototype screenshot `astryx-prototype.png`.

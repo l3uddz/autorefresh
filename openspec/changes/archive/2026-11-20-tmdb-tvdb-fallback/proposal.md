@@ -1,6 +1,6 @@
 # Proposal: TMDB fallback for TVDB and IMDb IDs, and store foreign keys
 
-> Imported from the retired superpowers workflow (#147). `design.md` is the approved design. The implementation plan is in `plan.md` (or `plans/`), kept as written, and `tasks.md` only points to it, because the plans did not track progress in their checkboxes. `openspec/specs/` describes the current behaviour, which has moved on since this change.
+> Imported from the retired superpowers workflow (#147). `design.md` is the approved design. The implementation plan is in `plan.md`, kept as written, and `tasks.md` only points to it, because the plans did not track progress in their checkboxes. `openspec/specs/` describes the current behaviour, which has moved on since this change.
 
 ## Why
 
