@@ -204,7 +204,7 @@ The Status page SHALL show one card for each server in scope. Each card SHALL sh
 
 ### Requirement: Now panel
 
-While a run works on its items, the now panel SHALL show the item in work as "Working", or the next item as "Up next" with a countdown to its start. Below it, the panel SHALL show the last finished item with its outcome and how long ago it finished. Each item SHALL show a poster, the title, the year, and the library. A scheduled or manual run SHALL also show the reasons, and a bulk refresh SHALL not.
+While a run works on its items, the now panel SHALL show the item in work as "Working", or the next item as "Up next" with a countdown to its start, each with a poster, the title, the year, the library, and, for a scheduled or manual run, the reasons. Below it, the panel SHALL show the last finished item with an outcome icon, the title, the year, the library, the outcome, and how long ago it finished, without a poster or reasons.
 
 #### Scenario: Before the first item
 
@@ -229,7 +229,7 @@ While a run works on its items, the now panel SHALL show the item in work as "Wo
 
 ### Requirement: Recently fixed and recent runs
 
-The Status page SHALL list the 6 newest fixed items and the 6 newest runs of the scope, with links to all fixed items and all runs. A fixed item SHALL show its poster, title, year, server (with several servers), library, what fixed it, and when. A run SHALL show its server, its source or kind, its counts or error, its status, and its start.
+The Status page SHALL list the 6 newest fixed items and the 6 newest runs of the scope, with links to all fixed items and all runs. A fixed item SHALL show its poster, title, year, server (with several servers), library, what fixed it, and when. A run SHALL show its server (with several servers), its source or kind, its counts or error, its status, and its start.
 
 #### Scenario: Nothing yet
 
@@ -254,7 +254,7 @@ The Items page SHALL offer a List and a Table mode, and SHALL remember the choic
 #### Scenario: Row state per tab
 
 - **WHEN** the list shows the Attention tab
-- **THEN** each row shows its queue state, such as "Due" or "Waiting · in 3h", and its number of tries
+- **THEN** each row shows its queue state, such as "Due" or "Waiting · in 3h", and its number of tries when it has at least one
 - **AND** a Fixed row shows what fixed it and when, and a Stopped row shows when it was stopped
 
 #### Scenario: Wide screen
@@ -366,7 +366,7 @@ Bulk Stop trying SHALL ask for a confirmation that names the number of items and
 
 ### Requirement: Bulk refresh start
 
-Bulk Refresh SHALL ask for a confirmation that names the number of refresh requests, says that they run one at a time with the configured refresh delay, and, for several servers, that the servers take turns. After the first server accepts its job, a toast SHALL name the item count, the first server, and the servers that follow, and SHALL point to the Status page.
+Bulk Refresh SHALL ask for a confirmation that names the number of refresh requests, says that they run one at a time with the configured refresh delay, and, for several servers, that the servers take turns. After the first server accepts its job, a toast SHALL name the item count and, for several servers, the first server and the servers that follow, and SHALL point to the Status page.
 
 #### Scenario: Two servers
 
@@ -747,7 +747,7 @@ The Runs page SHALL list the runs of the scope, newest first, 50 at a time, with
 
 ### Requirement: Run details
 
-The run details SHALL open in a drawer on a wide screen and replace the list on a narrow screen, and closing SHALL return to `#/runs`. They SHALL show the run title, status, start, duration, server, libraries read, error, and counts. They SHALL group the items by outcome in a fixed order: In progress, Refreshed, Matched, Failed, Fixed, Completed by Plex, Removed, Not sent; a bulk refresh: Refreshed, Failed, Removed, Skipped, Not reached.
+The run details SHALL open in a drawer on a wide screen and replace the list on a narrow screen, and closing SHALL return to `#/runs`. They SHALL show the run title, status, start, duration, server (with several servers), libraries read, error, and counts. They SHALL group the items by outcome in a fixed order: In progress, Refreshed, Matched, Failed, Fixed, Completed by Plex, Removed, Not sent; a bulk refresh: Refreshed, Failed, Removed, Skipped, Not reached.
 
 #### Scenario: Running run
 

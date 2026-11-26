@@ -126,7 +126,7 @@ Each entry of `ignore-reasons` SHALL be one of `unmatched`, `no-summary`, `no-po
 
 ### Requirement: Plex server validation
 
-The configuration SHALL list at least one Plex server. Each server SHALL have a unique, non-blank name, an `http` or `https` URL with a host and no userinfo, query, or fragment, and a non-empty token without whitespace or control characters. A server timeout SHALL be positive and SHALL default to 30 s. Each listed library title SHALL be non-blank.
+The configuration SHALL list at least one Plex server. Each server SHALL have a unique, non-blank name without control characters, an `http` or `https` URL with a host and no userinfo, query, or fragment, and a non-empty token without whitespace or control characters. A server timeout SHALL be positive and SHALL default to 30 s. Each listed library title SHALL be non-blank and without control characters.
 
 #### Scenario: No server
 
