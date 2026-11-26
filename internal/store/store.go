@@ -50,6 +50,14 @@ func Open(file string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("open database: %w", err)
 	}
+	if err := checkPragma(db, "synchronous", 1); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	if err := enableWAL(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open database: %w", err)
+	}
 
 	if err := migrate(db); err != nil {
 		db.Close()
@@ -77,7 +85,7 @@ func dataSourceName(file string) (string, error) {
 	}
 	query := url.Values{
 		"_foreign_keys": {"1"},
-		"_pragma":       {"temp_store(memory)"},
+		"_pragma":       {"temp_store(memory)", "synchronous(NORMAL)"},
 		"_busy_timeout": {strconv.Itoa(int(busyTimeout.Milliseconds()))},
 		"_txlock":       {"immediate"},
 	}
@@ -98,6 +106,31 @@ func checkPragma(db *sql.DB, pragma string, want int) error {
 		return fmt.Errorf("%s is %d, want %d", pragma, got, want)
 	}
 	return nil
+}
+
+// enableWAL switches the database to WAL journal mode if it is not already.
+// Two processes switching a rollback-journal database to WAL at the same time
+// can hit SQLITE_BUSY without waiting for busy_timeout, so it retries briefly.
+func enableWAL(db *sql.DB) error {
+	deadline := time.Now().Add(busyTimeout)
+	for {
+		var mode string
+		err := db.QueryRow(`PRAGMA journal_mode = WAL`).Scan(&mode)
+		if err == nil {
+			if !strings.EqualFold(mode, "wal") {
+				return fmt.Errorf("journal_mode is %q, want %q", mode, "wal")
+			}
+			return nil
+		}
+		if !isBusy(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func isBusy(err error) bool {
+	return strings.Contains(err.Error(), "SQLITE_BUSY") || strings.Contains(err.Error(), "database is locked")
 }
 
 // Close closes the database.

@@ -171,7 +171,7 @@ Durations use Go units such as `s`, `m`, and `h` (write 7 days as `168h`). Unkno
 | `--once` | `AUTOREFRESH_ONCE` | off | Run one check and exit |
 | `--version` | none | none | Print version information and exit |
 
-Default file paths resolve to the binary directory if `config.yml` is next to it, or to `~/.config/autorefresh` on Linux. In Docker, the image points them to `/config`. Logs are written to stderr and the log file, and tokens and server URLs are never logged.
+Default file paths resolve to the binary directory if `config.yml` is next to it, or to `~/.config/autorefresh` on Linux. In Docker, the image points them to `/config`. Logs are written to stderr and the log file, and tokens and server URLs are never logged. The SQLite database (`autorefresh.db`) uses WAL mode, so keep it on local POSIX storage rather than NFSv3 or SMB mounts.
 
 To test your configuration without changing anything in Plex:
 

@@ -193,7 +193,8 @@ func (s *Store) PruneHistory(before time.Time) (events, runs int, err error) {
 
 	cutoff := before.Unix()
 	if _, err := tx.Exec(`UPDATE item SET last_match_event_id = NULL
-		WHERE last_match_event_id IN (SELECT id FROM event WHERE at < ?)`, cutoff); err != nil {
+		WHERE last_match_event_id IS NOT NULL
+			AND EXISTS (SELECT 1 FROM event WHERE id = item.last_match_event_id AND at < ?)`, cutoff); err != nil {
 		return 0, 0, fmt.Errorf("clear match events: %w", err)
 	}
 	if events, err = deleteBefore(tx, `DELETE FROM event WHERE at < ?`, cutoff); err != nil {

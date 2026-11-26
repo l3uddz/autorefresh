@@ -272,6 +272,58 @@ func TestOpenKeepsTemporaryDataInMemory(t *testing.T) {
 	}
 }
 
+func TestOpenEnablesWALAndIndexesUseQueryPlans(t *testing.T) {
+	s := openTest(t)
+	var mode string
+	if err := s.db.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(mode, "wal") {
+		t.Fatalf("journal_mode = %q, want wal", mode)
+	}
+	var syncMode int
+	if err := s.db.QueryRow(`PRAGMA synchronous`).Scan(&syncMode); err != nil {
+		t.Fatal(err)
+	}
+	if syncMode != 1 {
+		t.Fatalf("synchronous = %d, want 1 (NORMAL)", syncMode)
+	}
+
+	plan := func(query string, args ...any) string {
+		t.Helper()
+		rows, err := s.db.Query(`EXPLAIN QUERY PLAN `+query, args...)
+		if err != nil {
+			t.Fatalf("explain %s: %v", query, err)
+		}
+		defer rows.Close()
+		var lines []string
+		for rows.Next() {
+			var id, parent, notused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			lines = append(lines, detail)
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	cq, cargs := countQuery(ListQuery{Tab: TabFixed, Servers: []string{"home"}})
+	if p := plan(cq, cargs...); !strings.Contains(p, "event_completed_item") || strings.Contains(p, "library") {
+		t.Errorf("fixed count plan:\n%s", p)
+	}
+	rq, rargs := runsQuery(RunQuery{Servers: []string{"home"}, Limit: 1})
+	if p := plan(rq, rargs...); !strings.Contains(p, "run_server_started") || strings.Contains(p, "TEMP B-TREE") {
+		t.Errorf("runs plan:\n%s", p)
+	}
+	if p := plan(`SELECT `+eventColumns+` FROM event WHERE run_id = ? ORDER BY at, id`, 1); !strings.Contains(p, "event_run") || strings.Contains(p, "TEMP B-TREE") {
+		t.Errorf("runEvents plan:\n%s", p)
+	}
+	if p := plan(`DELETE FROM run WHERE status != ? AND COALESCE(finished_at, started_at) < ?`, RunRunning, 100); !strings.Contains(p, "run_prune") {
+		t.Errorf("prune runs plan:\n%s", p)
+	}
+}
+
 // A second process, such as a dry run, waits for the write lock of the
 // first one instead of failing at once.
 func TestSecondStoreWaitsForLock(t *testing.T) {
@@ -643,10 +695,11 @@ func indexNames(t *testing.T, s *Store, table string) map[string]bool {
 func TestMigrateAddsDashboardSchema(t *testing.T) {
 	s := openTest(t)
 	want := map[string][]string{
-		"event":           {"event_item", "event_kind", "event_at", "event_library", "event_fixed_match"},
+		"event":           {"event_item", "event_kind", "event_at", "event_library", "event_fixed_match", "event_completed_item", "event_run"},
+		"item":            {"item_last_match_event"},
 		"match_search":    {"match_search_event"},
 		"match_candidate": {"match_candidate_search"},
-		"run":             {"run_started", "run_server"},
+		"run":             {"run_started", "run_server_started", "run_prune"},
 	}
 	for table, indexes := range want {
 		got := indexNames(t, s, table)
