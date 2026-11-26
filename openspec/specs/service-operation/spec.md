@@ -97,7 +97,7 @@ When it cannot read or decode the configuration, open the database, mark interru
 
 ### Requirement: Run once
 
-With `--once`, autorefresh SHALL run the refresher one time at once and then exit. It SHALL NOT check the tokens, start the dashboard listener, or wait for the schedule. It SHALL exit with code 1 when the run fails or the database does not close, and with code 0 after a successful run.
+With `--once`, autorefresh SHALL run the refresher one time at once and then exit. It SHALL NOT check the tokens, start the dashboard listener, or wait for the schedule. It SHALL exit with code 1 when the run fails or the database does not close, and with code 0 after a successful run and a clean close of the database.
 
 #### Scenario: Successful run
 

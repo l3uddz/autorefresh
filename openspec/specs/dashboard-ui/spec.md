@@ -513,7 +513,7 @@ The item detail SHALL show the item art faded behind its head, the poster, the t
 
 ### Requirement: Refresh now
 
-The item detail SHALL offer Refresh now without a confirmation. The server handles it by the Refresh now rules of `manual-actions`. When the request ends, the dashboard SHALL show a toast that names the match that it applied, with its year when known, or the refresh that Plex accepted. When the answer has the item detail, it SHALL show that detail at once and the toast SHALL say what the check after it found.
+The item detail SHALL offer Refresh now without a confirmation; `manual-actions` gives the server rules. Its toast SHALL name the applied match, with its year when known, or the accepted refresh. When the answer has the item detail, the dashboard SHALL show it at once, and the toast SHALL add what the check found: complete, still missing reasons, or gone. For a plain refresh of a gone item, the toast SHALL be only the removal notice.
 
 #### Scenario: Item complete
 
