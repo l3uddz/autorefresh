@@ -532,7 +532,7 @@ The item detail SHALL offer Refresh now without a confirmation; `manual-actions`
 
 #### Scenario: Still missing
 
-- **WHEN** the check finds reasons that remain
+- **WHEN** the check finds reasons that remain, and the answer has the item detail
 - **THEN** a notice toast says "Still missing:" with the reasons
 
 #### Scenario: Match applied
