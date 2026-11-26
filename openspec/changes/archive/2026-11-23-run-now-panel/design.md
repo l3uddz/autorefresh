@@ -3,7 +3,7 @@
 Date: 2026-11-23
 Status: approved by the maintainer on 2026-11-23
 Issue: #126
-Mockup: `2026-11-23-run-now-panel-mockups/now-panel.html`
+Mockup: `mockups/now-panel.html`
 
 ## Intent
 

@@ -1,14 +1,12 @@
 # Dashboard Stage 2: HTTP Server and Read API Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Serve an optional, authenticated HTTP listener from the autorefresh process with a placeholder page, live status over SSE, the read-only JSON API, and the poster proxy. No write action and no frontend yet.
 
 **Architecture:** A new `internal/web` package holds the HTTP server, the middleware (security headers, cross-origin protection, Basic auth), an in-memory `Status` that the refresher feeds through a new progress hook, and the read handlers. The handlers read the SQLite store through new list queries and call Plex through three new read-only client methods. `cmd/autorefresh` binds the listener before the token checks and stops it before the scheduler and the store.
 
 **Tech Stack:** Go (version from `go.mod`; Go 1.25+ `http.CrossOriginProtection`, Go 1.24+ `omitzero`), `net/http`, `embed`, `database/sql` with the existing SQLite driver (one connection), zerolog.
 
-**Spec:** `docs/superpowers/specs/2026-11-22-maintenance-dashboard-design.md` — sections "Process and configuration", "Live status", "Images", "HTTP API" (with "Item list behaviour" and "Queue state and the item list"), "Item detail data", "Items without a cache row", "Manual action → Open in Plex" (machine identifier only), and "Delivery order" stage 2. Read them before each task.
+**Spec:** `../design.md` — sections "Process and configuration", "Live status", "Images", "HTTP API" (with "Item list behaviour" and "Queue state and the item list"), "Item detail data", "Items without a cache row", "Manual action → Open in Plex" (machine identifier only), and "Delivery order" stage 2. Read them before each task.
 
 **Branch:** `feat/94-dashboard-http-server` (parent: `main`). Issue: #94. The branch was created from `origin/main` and tracks it, so push with `git push -u origin feat/94-dashboard-http-server`.
 

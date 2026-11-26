@@ -1,14 +1,12 @@
 # Dashboard Stage 1: Storage and Recording Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Store everything the maintenance dashboard will show — item history, fix match decisions, runs, library metadata, images, and paths — and record it during normal runs, with no UI yet.
 
 **Architecture:** New SQLite migrations add columns to `library` and `item` and new `event`, `match_search`, `match_candidate`, and `run` tables. History hangs off `library` (not `item`), so it outlives completed items and goes with a pruned library. The store gains write methods that each run in one transaction. The refresher calls them where it already records attempts, applies reads, and evaluates fix matches. Existing log lines do not change.
 
 **Tech Stack:** Go (version from `go.mod`), `database/sql` with the existing SQLite driver (one connection: `SetMaxOpenConns(1)`), zerolog.
 
-**Spec:** `docs/superpowers/specs/2026-11-22-maintenance-dashboard-design.md` — sections "Storage changes", "Completion", "Recording in the refresher", "Process and configuration" (`history-retention` only), "Images" (path and URL validation only), and "Delivery order" stage 1. Read them before each task.
+**Spec:** `../design.md` — sections "Storage changes", "Completion", "Recording in the refresher", "Process and configuration" (`history-retention` only), "Images" (path and URL validation only), and "Delivery order" stage 1. Read them before each task.
 
 **Branch:** `feat/94-maintenance-dashboard` (parent: `main`). Issue: #94.
 

@@ -27,7 +27,7 @@ several Plex servers, but most users have one, so the one-server case must
 look natural and not show server pickers that do nothing.
 
 The approved mockups are in the conversation of 2026-11-22. Copies are in
-`docs/superpowers/specs/2026-11-22-maintenance-dashboard-mockups/` (see
+`mockups/` (see
 "Mockups" below).
 
 ## Goals
@@ -624,7 +624,7 @@ Endpoints (builder may refine names):
   from the live site on 2026-11-22: all 93 colour tokens that the Neutral
   theme defines, each as a `[light, dark]` pair, including the categorical
   colours that badges use. They are in
-  `2026-11-22-maintenance-dashboard-mockups/site-tokens.ts`, ready to pass to
+  `mockups/site-tokens.ts`, ready to pass to
   `defineTheme`. Key dark values: body `#111112`, surface and card
   `#1F1F22`, popover `#28292C`, text `#DFE2E5`, secondary text `#B0B5BB`.
   The accent is the site's near-white (dark) or near-black (light), not a

@@ -1,14 +1,12 @@
 # Autorefresh Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Build autorefresh: a scheduled service that finds Plex movies and series with missing metadata and refreshes or fix-matches them one item at a time.
 
 **Architecture:** One binary. `cmd/autorefresh` wires four packages under `internal/`: `config` (YAML), `plex` (HTTP client), `store` (SQLite cache), and `refresher` (the rules). The refresher reads each library into the cache, then sends paced refresh and match requests for the due items.
 
 **Tech Stack:** Go 1.27, `modernc.org/sqlite`, `github.com/robfig/cron/v3`, `go.yaml.in/yaml/v3`, zerolog, kong, mise.
 
-**Spec:** `docs/superpowers/specs/2026-11-19-autorefresh-design.md` (issue #7, PR #8, merge commit `e2d689e`). The spec is the source of truth. Read it with this plan.
+**Spec:** `design.md` (issue #7, PR #8, merge commit `e2d689e`). The spec is the source of truth. Read it with this plan.
 
 Plan issue: #9.
 
