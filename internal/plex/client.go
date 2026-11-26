@@ -58,7 +58,7 @@ func New(name string, base *url.URL, token string, timeout time.Duration) *Clien
 		base:     &b,
 		provider: &provider,
 		token:    token,
-		http:     &http.Client{Timeout: timeout, CheckRedirect: sameOrigin},
+		http:     &http.Client{Timeout: timeout, CheckRedirect: neterr.SameOrigin},
 	}
 }
 
@@ -80,23 +80,6 @@ func (c *Client) metadataEndpoint(ratingKey string, segments ...string) (*url.UR
 	}
 	return c.endpoint(append([]string{"library", "metadata", ratingKey}, segments...)...), nil
 }
-
-// sameOrigin refuses a redirect to another origin. Go forwards the
-// X-Plex-Token header to the target of a redirect, so a cross-origin redirect
-// would leak the token.
-func sameOrigin(req *http.Request, via []*http.Request) error {
-	if len(via) >= 10 {
-		return fmt.Errorf("too many redirects: %w", neterr.ErrRedirectRefused)
-	}
-	if req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host {
-		return fmt.Errorf("redirect to another origin: %w", neterr.ErrRedirectRefused)
-	}
-	return nil
-}
-
-// maxDrainBytes bounds unread response body draining so normal responses
-// reuse connections without letting a misbehaving server stall a request.
-const maxDrainBytes = 64 << 10
 
 // ValidRatingKey reports whether key is a rating key, by the rule that every
 // request of this package applies.
@@ -131,17 +114,10 @@ func (c *Client) do(ctx context.Context, method string, endpoint *url.URL, query
 	c.trace(req, start).Int("status", res.StatusCode).Msg("Plex request")
 
 	if err := statusError(res); err != nil {
-		drainAndClose(res)
+		neterr.DrainAndClose(res)
 		return nil, fmt.Errorf("%s %s: %w", method, req.URL.Path, err)
 	}
 	return res, nil
-}
-
-// drainAndClose reads a bounded rest of the body, which lets the connection
-// get reused, and closes it.
-func drainAndClose(res *http.Response) {
-	io.Copy(io.Discard, io.LimitReader(res.Body, maxDrainBytes))
-	res.Body.Close()
 }
 
 // send sends a request to endpoint with the query. If out is not nil, it
@@ -151,7 +127,7 @@ func (c *Client) send(ctx context.Context, method string, endpoint *url.URL, que
 	if err != nil {
 		return err
 	}
-	defer drainAndClose(res)
+	defer neterr.DrainAndClose(res)
 
 	if out == nil {
 		return nil

@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/l3uddz/autorefresh/internal/neterr"
 )
 
 var digitsPattern = regexp.MustCompile(`^[0-9]+$`)
@@ -82,6 +84,6 @@ func (c *Client) Photo(ctx context.Context, ratingKey, imagePath string, width, 
 		res.Body.Close() // no draining: the server can stall after the limit
 		return nil, errors.New("photo: larger than 10 MB")
 	}
-	drainAndClose(res)
+	neterr.DrainAndClose(res)
 	return body, nil
 }

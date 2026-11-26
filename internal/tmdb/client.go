@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -34,10 +33,6 @@ var ErrSeveral = errors.New("tmdb has several entries")
 
 // errNotFound marks a 404 for a missing TMDB entry or season.
 var errNotFound = errors.New("tmdb entry not found")
-
-// maxDrainBytes bounds unread response body draining so normal responses
-// reuse connections without letting a misbehaving server stall a request.
-const maxDrainBytes = 64 << 10
 
 const (
 	// maxRateLimitRetries bounds how many times get retries an HTTP 429
@@ -112,7 +107,7 @@ func NewWithBaseURL(base *url.URL, token string, timeout time.Duration) *Client 
 		http: &http.Client{
 			Timeout:       timeout,
 			Transport:     traceTransport{base: http.DefaultTransport},
-			CheckRedirect: sameOrigin,
+			CheckRedirect: neterr.SameOrigin,
 		},
 		sleep: sleepContext,
 		now:   time.Now,
@@ -134,19 +129,6 @@ func (t traceTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	trace(req, start).Int("status", res.StatusCode).Msg("TMDB request")
 	return res, nil
-}
-
-// sameOrigin refuses a redirect to another origin so the bearer token stays
-// pinned to the TMDB API origin (Go's default client still forwards
-// Authorization across subdomains).
-func sameOrigin(req *http.Request, via []*http.Request) error {
-	if len(via) >= 10 {
-		return fmt.Errorf("too many redirects: %w", neterr.ErrRedirectRefused)
-	}
-	if req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host {
-		return fmt.Errorf("redirect to another origin: %w", neterr.ErrRedirectRefused)
-	}
-	return nil
 }
 
 // Find returns the TMDB ID of the series (show true) or the movie with an
@@ -487,11 +469,7 @@ func (c *Client) doGet(ctx context.Context, rawURL, path string, attempt int, ou
 	if err != nil {
 		return 0, false, formatTransportError(ctx, path, err)
 	}
-	defer func() {
-		// Draining the body lets the connection get reused.
-		io.Copy(io.Discard, io.LimitReader(res.Body, maxDrainBytes))
-		res.Body.Close()
-	}()
+	defer neterr.DrainAndClose(res)
 
 	switch {
 	case res.StatusCode == http.StatusUnauthorized:
