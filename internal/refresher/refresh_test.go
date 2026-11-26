@@ -1043,3 +1043,42 @@ func TestFailingItemGivesUpTheSlot(t *testing.T) {
 		})
 	}
 }
+
+func TestRefreshBatchSkipsPaceAfterSkippedItem(t *testing.T) {
+	fp := newFakePlex(moviesLib)
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: fp})
+	f.now = t0
+	for _, key := range []string{"101", "102", "103", "104"} {
+		f.seed(testServer, moviesLib, incompleteItem(key), store.NoSummary, 0)
+	}
+	batch := []store.Item{
+		{RatingKey: "101", Section: "1", Title: "Title 101", Reasons: store.NoSummary},
+		{RatingKey: "102", Section: "1", Title: "Title 102", Reasons: store.NoSummary},
+		{RatingKey: "103", Section: "1", Title: "Title 103", Reasons: store.NoSummary},
+		{RatingKey: "104", Section: "1", Title: "Title 104", Reasons: store.NoSummary},
+	}
+	// Stop 101 and 103 after the batch snapshot so runItem skips them.
+	for _, key := range []string{"101", "103"} {
+		if _, err := f.store.SetStopped(t.Context(), testServer, key, t0, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run := &serverRun{
+		server:    Server{Name: testServer, Plex: fp},
+		source:    store.SourceAuto,
+		libraries: []plex.Library{moviesLib},
+		remaining: len(batch),
+	}
+	if err := f.r.refreshBatch(t.Context(), run, batch); err != nil {
+		t.Fatal(err)
+	}
+	wantCalls(t, sends(fp.calls), "Refresh 102", "Refresh 104")
+	// Only 102 sent a request before another item; 101 and 103 were skipped so
+	// neither triggers a pace wait.
+	if want := []time.Duration{refreshDelay}; !reflect.DeepEqual(f.sleeps, want) {
+		t.Errorf("sleeps = %v, want %v", f.sleeps, want)
+	}
+	if run.skipped != 2 {
+		t.Errorf("skipped = %d, want 2", run.skipped)
+	}
+}

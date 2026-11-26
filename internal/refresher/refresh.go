@@ -39,20 +39,24 @@ func (r *Refresher) refreshDue(ctx context.Context, run *serverRun) error {
 }
 
 func (r *Refresher) refreshBatch(ctx context.Context, run *serverRun, items []store.Item) error {
-	for i, it := range items {
-		if err := r.pace(ctx, run, r.shownItem(run, it), i == 0); err != nil {
+	needPace := false
+	for _, it := range items {
+		if err := r.pace(ctx, run, r.shownItem(run, it), !needPace); err != nil {
 			return err
 		}
-		if err := r.runItem(ctx, run, it); err != nil {
+		needPace = false
+		sent, err := r.runItem(ctx, run, it)
+		if err != nil {
 			return err
 		}
+		needPace = sent
 	}
 	return nil
 }
 
-// pace waits RefreshDelay before the item next, unless it is the first item
-// or the run is a dry run. It reports next as the next item before a wait
-// that is longer than zero, unless the run has ended.
+// pace waits RefreshDelay before the item next, unless no prior item sent a
+// request or the run is a dry run. It reports next as the next item before a
+// wait that is longer than zero, unless the run has ended.
 func (r *Refresher) pace(ctx context.Context, run *serverRun, next ProgressItem, first bool) error {
 	if first || r.opts.DryRun {
 		return nil
@@ -74,24 +78,24 @@ func (r *Refresher) shownItem(run *serverRun, it store.Item) ProgressItem {
 	return shown
 }
 
-func (r *Refresher) runItem(ctx context.Context, run *serverRun, batch store.Item) error {
+func (r *Refresher) runItem(ctx context.Context, run *serverRun, batch store.Item) (bool, error) {
 	run.remaining--
 	server := run.server.Name
 	r.progress().ItemStarted(server, r.shownItem(run, batch))
 	unlock, err := r.locks.lock(ctx, server, batch.RatingKey)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer unlock()
 	row, skip, err := r.recheck(run, batch)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if skip != "" {
 		run.skipped++
 		log.Debug().Str("server", server).Str("title", batch.Title).Str("reason", skip).Msg("Skipped item")
 		r.itemDone(run, batch.RatingKey, OutcomeSkipped)
-		return nil
+		return false, nil
 	}
 	return r.refreshItem(ctx, run, row)
 }
@@ -130,12 +134,12 @@ func (r *Refresher) logSummary(run *serverRun) error {
 }
 
 // refreshItem chooses the action of one due item and sends it, or logs it
-// in a dry run.
-func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.Item) error {
+// in a dry run. It reports whether a refresh or match request was sent to Plex.
+func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.Item) (bool, error) {
 	lib := run.library(it.Section)
 	fm, err := r.findMatch(ctx, run, lib, it)
 	if err != nil {
-		return r.itemFailed(ctx, run, it, "", nil, err)
+		return false, r.itemFailed(ctx, run, it, "", nil, err)
 	}
 
 	action := store.ActionRefresh
@@ -145,12 +149,12 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	if r.opts.DryRun {
 		requestEvent(log.Info(), run.server.Name, lib, it, action, fm).Msg("Dry run")
 		r.itemDone(run, it.RatingKey, OutcomeDryRun)
-		return nil
+		return false, nil
 	}
 
 	// A canceled request still counts as sent and as an attempt.
 	if err := ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
 	if fm != nil {
 		run.matches++
@@ -160,13 +164,13 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 		err = run.server.Plex.Refresh(ctx, it.RatingKey)
 	}
 	if err != nil {
-		return r.itemFailed(ctx, run, it, action, fm, err)
+		return true, r.itemFailed(ctx, run, it, action, fm, err)
 	}
 
 	req := r.request(run, it, action, fm)
 	req.Accepted = true
 	if err := r.store.RecordRequest(req); err != nil {
-		return err
+		return true, err
 	}
 	requestEvent(log.Info(), run.server.Name, lib, it, action, fm).Msg("Sent request")
 	r.warnAtLongestWait(run.server.Name, lib, it)
@@ -176,13 +180,13 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	if fm != nil {
 		_, stop = r.settleMatch(ctx, manualItem{server: run.server, row: it, cached: true}, run)
 		if errors.Is(stop, ErrStore) {
-			return stop
+			return true, stop
 		}
 	}
 	// Plex accepted the request, so the item is done also when the follow-up
 	// of its match ends the run of the server.
 	r.itemDone(run, it.RatingKey, req.Outcome())
-	return stop
+	return true, stop
 }
 
 // runRefresh sends the refresh after a match that Plex accepted in the run

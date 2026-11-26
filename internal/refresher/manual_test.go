@@ -46,8 +46,8 @@ func TestRunRechecksSameSecondManualAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto}
-	if err := f.r.runItem(t.Context(), run, batch); err != nil {
-		t.Fatal(err)
+	if sent, err := f.r.runItem(t.Context(), run, batch); err != nil || sent {
+		t.Fatalf("runItem = sent %v, err %v", sent, err)
 	}
 	current, _ := f.row("home", "1", "1")
 	if run.skipped != 1 || current.Attempts != 2 || !current.LastAttempt.Equal(batch.LastAttempt) {
@@ -222,8 +222,8 @@ func TestManualMatchRecordsTargetAndStoppedRunSkipsItem(t *testing.T) {
 		t.Fatalf("stop = %v, %v", changed, err)
 	}
 	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto}
-	if err := f.r.runItem(t.Context(), run, batch); err != nil || run.skipped != 1 {
-		t.Fatalf("scheduled skip = %d, %v", run.skipped, err)
+	if sent, err := f.r.runItem(t.Context(), run, batch); err != nil || sent || run.skipped != 1 {
+		t.Fatalf("scheduled skip = sent %v, skipped %d, %v", sent, run.skipped, err)
 	}
 	cand := plex.Candidate{GUID: "plex://movie/1", Name: "Match", Year: 2020}
 	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {

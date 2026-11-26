@@ -38,6 +38,7 @@ type Store interface {
 	LibraryInfo(string, string) (store.LibraryInfo, bool, error)
 	RecordManual(store.ManualRecord) error
 	KnownItem(server, ratingKey string) (store.Item, bool, bool, error)
+	KnownItems(ctx context.Context, server string, keys []string) (map[string]store.KnownResult, error)
 	Library(server, section string) (store.Library, error)
 	EventMark() (store.EventMark, error)
 	ApplyRead(r store.Read) (fixed []store.Item, err error)
