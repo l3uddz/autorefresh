@@ -7,13 +7,15 @@ import (
 	"time"
 )
 
-// The defaults of the stream timing.
+// The defaults of the stream timing and concurrency.
 const (
 	// defaultWriteTimeout bounds each write to an event stream.
 	defaultWriteTimeout = 10 * time.Second
 	// defaultKeepalive is the interval of the keepalive comments, which keep
 	// proxies from closing an idle stream.
 	defaultKeepalive = 25 * time.Second
+	// defaultMaxSSEStreams caps concurrent /api/events streams.
+	defaultMaxSSEStreams = 32
 )
 
 // keepaliveComment is the comment that an idle stream sends.
@@ -32,6 +34,11 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	if s.sseCtx.Err() != nil {
 		return
 	}
+	if !s.acquireSSE() {
+		writeError(w, http.StatusServiceUnavailable, "too many event streams")
+		return
+	}
+	defer s.releaseSSE()
 	changes, unsubscribe := s.status.subscribe()
 	defer unsubscribe()
 
@@ -59,6 +66,22 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+func (s *Server) acquireSSE() bool {
+	s.sseMu.Lock()
+	defer s.sseMu.Unlock()
+	if s.sseStreams >= s.maxSSEStreams {
+		return false
+	}
+	s.sseStreams++
+	return true
+}
+
+func (s *Server) releaseSSE() {
+	s.sseMu.Lock()
+	s.sseStreams--
+	s.sseMu.Unlock()
 }
 
 // serveEventsHead answers HEAD /api/events with the headers of the stream

@@ -103,22 +103,35 @@ type Server struct {
 	actionTimeout time.Duration
 
 	// idMu guards identities, the cached machine identifier of each server
-	// ("": not read yet).
+	// ("": not read yet), and in-flight identity lookups.
 	idMu          sync.Mutex
 	identities    []string
 	identityTried []time.Time
+	identityCalls []*identityCall
+
+	// imageMu guards imageCalls for coalescing concurrent identical image
+	// proxy fetches; imageSem bounds concurrent upstream Photo requests.
+	imageMu    sync.Mutex
+	imageCalls map[imageKey]*imageCall
+	imageSem   chan struct{}
 
 	// sseCtx ends the event streams. Stop cancels it first, so that
 	// Shutdown does not wait for open streams.
 	sseCtx    context.Context
 	cancelSSE context.CancelFunc
+	// sseMu guards sseStreams against maxSSEStreams.
+	sseMu         sync.Mutex
+	sseStreams    int
+	maxSSEStreams int
 	// writeTimeout bounds each write to an event stream.
 	writeTimeout time.Duration
 	// keepalive is the interval of the keepalive comments of an idle
 	// event stream.
 	keepalive time.Duration
 
-	// cancelBase cancels the base context of every request.
+	// baseCtx and cancelBase are the base context of requests and
+	// background coalesced lookups (identity and image proxy).
+	baseCtx    context.Context
 	cancelBase context.CancelFunc
 	// forceWait bounds the wait for the active handlers after a failed
 	// Shutdown.
@@ -162,10 +175,15 @@ func New(opts Options) *Server {
 		actionTimeout: defaultActionTimeout,
 		identities:    make([]string, len(opts.Servers)),
 		identityTried: make([]time.Time, len(opts.Servers)),
+		identityCalls: make([]*identityCall, len(opts.Servers)),
+		imageCalls:    map[imageKey]*imageCall{},
+		imageSem:      make(chan struct{}, defaultMaxImageFetches),
 		sseCtx:        sseCtx,
 		cancelSSE:     cancelSSE,
+		maxSSEStreams: defaultMaxSSEStreams,
 		writeTimeout:  defaultWriteTimeout,
 		keepalive:     defaultKeepalive,
+		baseCtx:       baseCtx,
 		cancelBase:    cancelBase,
 		forceWait:     defaultForceWait,
 	}
