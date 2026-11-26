@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -33,6 +35,10 @@ var ErrSeveral = errors.New("tmdb has several entries")
 
 // errNotFound marks a 404 for a missing TMDB entry or season.
 var errNotFound = errors.New("tmdb entry not found")
+
+// maxJSONBytes bounds JSON response decoding so a misconfigured proxy cannot
+// exhaust memory. Tests may lower it.
+var maxJSONBytes int64 = 8 << 20
 
 const (
 	// maxRateLimitRetries bounds how many times get retries an HTTP 429
@@ -124,7 +130,7 @@ func (t traceTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	start := time.Now()
 	res, err := t.base.RoundTrip(req)
 	if err != nil {
-		trace(req, start).Err(err).Msg("TMDB request")
+		trace(req, start).Str("error", neterr.Reason(err)).Msg("TMDB request")
 		return nil, err
 	}
 	trace(req, start).Int("status", res.StatusCode).Msg("TMDB request")
@@ -460,7 +466,7 @@ func (c *Client) get(ctx context.Context, segments []string, query url.Values, o
 func (c *Client) doGet(ctx context.Context, rawURL, path string, attempt int, out any) (time.Duration, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return 0, false, fmt.Errorf("GET %s: %w", path, err)
+		return 0, false, fmt.Errorf("GET %s: invalid request URL", path)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "application/json")
@@ -469,8 +475,16 @@ func (c *Client) doGet(ctx context.Context, rawURL, path string, attempt int, ou
 	if err != nil {
 		return 0, false, formatTransportError(ctx, path, err)
 	}
-	defer neterr.DrainAndClose(res)
 
+	wait, retry, err := c.checkStatus(res, path, attempt)
+	if err != nil || retry || out == nil {
+		neterr.DrainAndClose(res)
+		return wait, retry, err
+	}
+	return 0, false, decodeJSONBody(ctx, res, path, out)
+}
+
+func (c *Client) checkStatus(res *http.Response, path string, attempt int) (time.Duration, bool, error) {
 	switch {
 	case res.StatusCode == http.StatusUnauthorized:
 		return 0, false, fmt.Errorf("GET %s: %d %s: %w", path, res.StatusCode, http.StatusText(res.StatusCode), ErrUnauthorized)
@@ -484,13 +498,27 @@ func (c *Client) doGet(ctx context.Context, rawURL, path string, attempt int, ou
 		return 0, false, fmt.Errorf("GET %s: %d %s: %w", path, res.StatusCode, http.StatusText(res.StatusCode), errNotFound)
 	case res.StatusCode < 200 || res.StatusCode >= 300:
 		return 0, false, fmt.Errorf("GET %s: %d %s", path, res.StatusCode, http.StatusText(res.StatusCode))
-	case out == nil:
+	default:
 		return 0, false, nil
 	}
-	if err := json.NewDecoder(res.Body).Decode(out); err != nil {
-		return 0, false, fmt.Errorf("GET %s: decoding response: %w", path, err)
+}
+
+func decodeJSONBody(ctx context.Context, res *http.Response, path string, out any) error {
+	lr := &io.LimitedReader{R: res.Body, N: maxJSONBytes + 1}
+	err := json.NewDecoder(lr).Decode(out)
+	if lr.N == 0 {
+		res.Body.Close()
+		return fmt.Errorf("GET %s: response too large", path)
 	}
-	return 0, false, nil
+	neterr.DrainAndClose(res)
+	if err != nil {
+		var netErr net.Error
+		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &netErr) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return formatTransportError(ctx, path, err)
+		}
+		return fmt.Errorf("GET %s: decoding response: %w", path, err)
+	}
+	return nil
 }
 
 func formatTransportError(ctx context.Context, path string, err error) error {

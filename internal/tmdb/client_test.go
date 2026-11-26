@@ -774,3 +774,38 @@ func TestClientTimeoutPreservesDeadlineWithoutTransportDetails(t *testing.T) {
 		t.Fatalf("timeout exposed transport details: %v", err)
 	}
 }
+
+func TestBodyReadErrorsSanitizedAndBounded(t *testing.T) {
+	t.Run("timeout after headers", func(t *testing.T) {
+		release := make(chan struct{})
+		c := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			<-release
+		})
+		t.Cleanup(func() { close(release) })
+		c.http.Timeout = 50 * time.Millisecond
+
+		_, _, err := c.Find(t.Context(), "tvdb", "1", true)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+		}
+		if strings.Contains(err.Error(), c.base.Host) || strings.Contains(err.Error(), token) {
+			t.Fatalf("error exposed transport details: %v", err)
+		}
+	})
+
+	t.Run("oversized response rejected", func(t *testing.T) {
+		old := maxJSONBytes
+		maxJSONBytes = 32
+		t.Cleanup(func() { maxJSONBytes = old })
+
+		c := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.Write([]byte(`{"tv_results":[{"id":1,"pad":"` + strings.Repeat("a", 64) + `"}]}`))
+		})
+		_, _, err := c.Find(t.Context(), "tvdb", "1", true)
+		if err == nil || !strings.Contains(err.Error(), "response too large") {
+			t.Fatalf("err = %v, want response too large", err)
+		}
+	})
+}
