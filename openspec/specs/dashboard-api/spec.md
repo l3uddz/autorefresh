@@ -488,7 +488,7 @@ The image proxy SHALL request only a stored path of the form `/library/metadata/
 
 ### Requirement: Refresh route answer
 
-`POST /api/item/refresh?srv=&key=` SHALL answer `200` with the item detail after the refresh (`item` and `timeline`), `match` with `guid`, `title`, and `year` when the refresh applied a fix match, and `checked`, whether a check after the request saved the current reasons. When the detail read fails after Plex accepted the request, the answer SHALL leave out `item` and `timeline` and keep the rest. The answer SHALL get up to 3 minutes to write.
+`POST /api/item/refresh?srv=&key=` SHALL answer `200` with the item detail after the refresh (`item` and `timeline`), `match` with `guid`, `title`, and `year` when the refresh applied a fix match, and `checked`, whether a check after the request saved the current reasons or found that a run completed or removed the item. When the detail read fails after Plex accepted the request, the answer SHALL leave out `item` and `timeline` and keep the rest. The answer SHALL get up to 3 minutes to write.
 
 #### Scenario: Detail read fails
 

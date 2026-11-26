@@ -513,26 +513,26 @@ The item detail SHALL show the item art faded behind its head, the poster, the t
 
 ### Requirement: Refresh now
 
-The item detail SHALL offer Refresh now without a confirmation; `manual-actions` gives the server rules. Its toast SHALL name the applied match, with its year when known, or the accepted refresh. When the answer has the item detail, the dashboard SHALL show it at once. The toast SHALL add a check result, read from that detail, only when the answer gives one: complete, still missing reasons, or gone. For a plain refresh of a gone item, the toast SHALL be only the removal notice.
+The item detail SHALL offer Refresh now without a confirmation; `manual-actions` gives the server rules. Its toast SHALL name the applied match, with its year when known, or the accepted refresh. When the answer has the item detail, the dashboard SHALL show it at once. The toast SHALL add a check result, read from the answer, only when the answer gives one: complete, still missing reasons, or gone. For a plain refresh of a gone item, the toast SHALL be only the removal notice.
 
 #### Scenario: Item complete
 
-- **WHEN** the check after a plain refresh finds the item complete, and the item detail in the answer still shows it as fixed
+- **WHEN** after a plain refresh, the answer has the item detail and sets `checked`, the item is no longer in the queue, and its newest completion or removal event is a completion
 - **THEN** a success toast says "Plex accepted the refresh of <title>. It is complete."
 
 #### Scenario: Item complete after a fix match
 
-- **WHEN** the refresh applied a fix match, the check after it finds the item complete, and the item detail in the answer still shows it as fixed
+- **WHEN** the refresh applied a fix match, and the answer has the item detail and sets `checked`, the item is no longer in the queue, and its newest completion or removal event is a completion
 - **THEN** a success toast says "Matched <title> to <match>", with the year when known, followed by ". It is complete."
 
 #### Scenario: Answer without a check result
 
-- **WHEN** the answer has the item detail, no check saved the reasons of the item, and its timeline shows no removal
+- **WHEN** the answer has the item detail, and it fits none of the cases complete, still missing, or gone
 - **THEN** the dashboard shows the detail at once, and a success toast names only the accepted refresh or the applied match
 
 #### Scenario: Still missing
 
-- **WHEN** the check saved the reasons of the item, and the answer has the item detail with the item still in the queue and reasons that remain
+- **WHEN** the answer has the item detail and sets `checked`, and the item is still in the queue with reasons
 - **THEN** a notice toast says "Still missing:" with the reasons
 
 #### Scenario: Match applied
@@ -548,7 +548,7 @@ The item detail SHALL offer Refresh now without a confirmation; `manual-actions`
 
 #### Scenario: Item gone after the refresh
 
-- **WHEN** the refresh succeeds and the answer reports that Plex no longer has the item
+- **WHEN** the answer has the item detail, the item is no longer in the queue, and either the answer sets `checked` and the newest completion or removal event is a removal, or it does not and the newest event is a removal
 - **THEN** a notice toast says that Plex no longer has it and autorefresh removed it from the queue
 
 #### Scenario: Plex answers the refresh with 404
