@@ -172,6 +172,11 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 	if opts.Once {
 		return runOnce(ctx, r, st)
 	}
+	if ctx.Err() != nil {
+		closeStore(st)
+		log.Info().Msg("Stopped")
+		return nil
+	}
 
 	// The UI binds before the token checks, so a bind error stops the start
 	// before any request to Plex.

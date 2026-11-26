@@ -145,7 +145,7 @@ func TestCheckTMDBLogsResult(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.msg, func(t *testing.T) {
 			buf := captureLog(t)
-			checkTMDB(context.Background(), checkerFunc(func(context.Context) error { return tt.err }), nil)
+			checkTMDB(context.Background(), context.Background(), checkerFunc(func(context.Context) error { return tt.err }), nil)
 
 			var ev map[string]any
 			if err := json.Unmarshal(buf.Bytes(), &ev); err != nil {
@@ -247,5 +247,36 @@ func TestCheckTokensRecordsNothingWhenCanceled(t *testing.T) {
 
 	if len(rec.servers) != 0 || len(rec.tmdb) != 0 {
 		t.Errorf("recorded servers %v and TMDB %v, want nothing", rec.servers, rec.tmdb)
+	}
+}
+
+func TestCheckTokensTimesOutSlowServer(t *testing.T) {
+	buf := captureLog(t)
+	old := checkTimeout
+	checkTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { checkTimeout = old })
+
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		<-release
+	}))
+	t.Cleanup(func() {
+		close(release)
+		srv.Close()
+	})
+	rec := newHealthLog()
+
+	start := time.Now()
+	checkTokens(context.Background(), []refresher.Server{
+		{Name: "slow", Plex: plex.New("slow", mustURL(t, srv.URL), "token", 5*time.Minute)},
+	}, nil, rec)
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("checkTokens took %v, want about 50ms", took)
+	}
+	if err := rec.servers["slow"]; err == nil {
+		t.Fatal("slow server recorded nil error, want timeout")
+	}
+	if got := logEvents(t, buf); !got["warn Checking Plex server failed slow"] {
+		t.Errorf("log events = %v, want warn Checking Plex server failed slow", got)
 	}
 }

@@ -118,11 +118,11 @@ type scheduledJobs interface {
 }
 
 // serveUntilStopped runs the schedule until ctx ends. If ctx already ended,
-// for example during the token checks, the schedule never starts. Then it
-// stops in this order: the UI, so that no request still reads the store,
-// then the schedule and the busy run. The schedule has its own context, so
-// a busy run goes on while the UI stops. ui and onNext can be nil; serve
-// gives onNext the next time of the schedule.
+// for example during the token checks, the schedule never starts. On shutdown
+// it cancels the schedule at once so no new cron tick starts and any active
+// scheduled run unblocks, stops the UI, waits for the scheduled run to return,
+// and closes manual jobs. ui and onNext can be nil; serve gives onNext the
+// next time of the schedule.
 func serveUntilStopped(ctx context.Context, ui uiStopper, r scheduledJobs, sched cron.Schedule, onNext func(time.Time)) {
 	schedCtx, cancelSched := context.WithCancel(context.Background())
 	defer cancelSched()
@@ -131,8 +131,8 @@ func serveUntilStopped(ctx context.Context, ui uiStopper, r scheduledJobs, sched
 		served.Go(func() { serve(schedCtx, r, sched, onNext) })
 	}
 	<-ctx.Done()
-	stopUI(ui)
 	cancelSched()
+	stopUI(ui)
 	served.Wait()
 	r.Close()
 }
