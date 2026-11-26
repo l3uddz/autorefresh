@@ -265,7 +265,7 @@ Except in the title fallback of the `fix-match` capability, a run SHALL end the 
 
 ### Requirement: Dry run
 
-In a dry run, a run SHALL handle the same items as a normal run, within the same limit, and make the same match search reads. For each item whose refresh or match it decides, it SHALL log one info line `Dry run` with that action, and with the match fields for a match. An item whose match search fails SHALL log `Match search failed` instead. It SHALL send no refresh or match request, SHALL NOT wait between items, and SHALL record no attempts; `history` defines what else it records.
+A dry run SHALL handle the same items as a normal run, within the same limit, with the same match search reads. For each item whose action it decides, it SHALL log one info line `Dry run` with that action and the match fields of a match; a search error that ends the decision logs `Match search failed` instead. It SHALL send no refresh or match, SHALL NOT wait between items, and SHALL record no attempts; `history` covers the rest.
 
 #### Scenario: Due items in a dry run
 

@@ -303,7 +303,7 @@ Autorefresh SHALL read each group part with an order of 1 or higher as that seas
 
 ### Requirement: Episode group bounds and failures
 
-All episode group requests of one comparison SHALL share a 15 second budget within the deadline of the caller. When the budget runs out, the check SHALL stop and keep the result of the default seasons. A 401 or 429 answer to the group list or to a group read SHALL stop the comparison as a TMDB failure. Any other failed group list SHALL be logged and keep the result of the default seasons. Any other failed season read of one group SHALL be logged, and the check SHALL try the next group.
+Episode group requests of one comparison SHALL share a 15 second budget within the caller's deadline. When it runs out, the check SHALL keep the result of the default seasons. A 401, or a 429 left after the TMDB retries, SHALL stop the comparison as a TMDB failure. Any other failure SHALL be logged: a failed group list keeps the result of the default seasons, and a failed read of one group makes the check try the next group.
 
 #### Scenario: Budget runs out
 
@@ -370,7 +370,7 @@ Autorefresh SHALL read a TMDB ID from its cache of the item and the external ID 
 
 ### Requirement: TMDB failure during a fix match
 
-When a TMDB request of a fix match fails, autorefresh SHALL log `TMDB lookup failed`, count a failed request, record the decision `failed` with the error, and turn TMDB off for the rest of the run of that server. The item SHALL get a plain refresh. The end of the run SHALL not count as a TMDB failure. An episode group request SHALL count only with a 401 or 429 answer; its other errors and the end of the group budget follow the episode group rules.
+When a TMDB request of a fix match fails, autorefresh SHALL log `TMDB lookup failed`, count a failed request, record the decision `failed` with the error, and turn TMDB off for the rest of the run of that server. The item SHALL get a plain refresh. The end of the run SHALL not count as a TMDB failure. An episode group request SHALL count only with a 401, or a 429 left after the retries; its other errors and the end of the group budget follow the episode group rules.
 
 #### Scenario: Lookup answers 500 or 401
 
