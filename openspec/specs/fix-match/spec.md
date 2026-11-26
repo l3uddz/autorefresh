@@ -12,7 +12,7 @@ A run SHALL try the automatic fix match only for a cached item that is unmatched
 
 #### Scenario: First attempt of an unmatched item
 
-- **GIVEN** an unmatched item with no refresh yet
+- **GIVEN** an unmatched item for which Plex has accepted no refresh or match request yet
 - **WHEN** a run handles it
 - **THEN** the run sends a plain refresh and makes no match search
 
@@ -610,7 +610,7 @@ Autorefresh SHALL give a preview of the automatic decision for any known item, w
 
 #### Scenario: Item that a run skips
 
-- **WHEN** the preview runs for a matched item that had no refresh yet
+- **WHEN** the preview runs for a matched item for which Plex accepted no request yet
 - **THEN** it returns the decision that the searches give, and the item history stays unchanged
 
 #### Scenario: Preview of a movie
