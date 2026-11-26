@@ -334,6 +334,28 @@ func TestReadConfigRejectsOversizedFile(t *testing.T) {
 	}
 }
 
+func TestReadConfigFileCapsReadAndValidatesType(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := readConfigFile(dir); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("readConfigFile(dir) = %v, want not a regular file", err)
+	}
+	big := filepath.Join(dir, "big.yml")
+	if err := os.WriteFile(big, make([]byte, maxConfigBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readConfigFile(big); err == nil || !strings.Contains(err.Error(), "larger than 1 MiB") {
+		t.Fatalf("readConfigFile(big) = %v, want larger than 1 MiB", err)
+	}
+	ok := filepath.Join(dir, "ok.yml")
+	if err := os.WriteFile(ok, []byte("plex: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := readConfigFile(ok)
+	if err != nil || string(data) != "plex: []\n" {
+		t.Fatalf("readConfigFile(ok) = %q, %v", data, err)
+	}
+}
+
 // captureLog sends the global logger to a buffer until the test ends. The
 // caller reads the buffer only after every logging goroutine is done.
 func captureLog(t *testing.T) *bytes.Buffer {

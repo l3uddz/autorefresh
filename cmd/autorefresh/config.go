@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -35,9 +36,38 @@ func applyDefaultPaths(config, database, logFile *string) {
 
 // Tests replace these functions.
 var (
-	sleepFunc    = sleepContext // waits between two checks of the config file
-	readFileFunc = os.ReadFile  // reads the config file
+	sleepFunc    = sleepContext   // waits between two checks of the config file
+	readFileFunc = readConfigFile // reads the config file with a 1 MiB cap
 )
+
+// readConfigFile opens path, validates the opened file's metadata, and reads
+// at most maxConfigBytes+1 bytes so a file that grows or is replaced after
+// os.Stat cannot trigger an unbounded allocation.
+func readConfigFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	if info.Size() > maxConfigBytes {
+		return nil, fmt.Errorf("%s is larger than 1 MiB", path)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxConfigBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxConfigBytes {
+		return nil, fmt.Errorf("%s is larger than 1 MiB", path)
+	}
+	return data, nil
+}
 
 // sleepContext waits for d. It returns the error of ctx if ctx ends first.
 func sleepContext(ctx context.Context, d time.Duration) error {
