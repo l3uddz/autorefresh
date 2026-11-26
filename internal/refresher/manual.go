@@ -156,7 +156,12 @@ func (r *Refresher) manualMatch(ctx context.Context, item manualItem) (*fixMatch
 	}
 	searchCtx, cancel := context.WithTimeout(ctx, manualSearchTimeout)
 	defer cancel()
-	run := &serverRun{server: item.server, source: store.SourceManual, files: map[string][]string{}}
+	run := &serverRun{server: item.server, files: map[string][]string{}}
+	paths, ok, err := r.preCheckUnmatched(ctx, searchCtx, run, lib, item)
+	if err != nil || !ok {
+		return nil, err
+	}
+	run.prePaths = map[string]plex.Paths{item.row.RatingKey: paths}
 	ev, dec, err := r.autoMatch(searchCtx, run, lib, item.row)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
@@ -175,6 +180,32 @@ func (r *Refresher) manualMatch(ctx context.Context, item manualItem) (*fixMatch
 		return nil, nil
 	}
 	return r.keepMatch(ctx, item, lib, ev.fm), nil
+}
+
+// preCheckUnmatched reads the item and its paths once before autoMatch. If
+// Plex already matched the item, it skips autoMatch without recording a
+// decision. On 404 it records no decision so the plain refresh records the
+// item gone once; other failures record a failed decision.
+func (r *Refresher) preCheckUnmatched(ctx, searchCtx context.Context, run *serverRun, lib plex.Library, item manualItem) (plex.Paths, bool, error) {
+	live, paths, err := item.server.Plex.ItemWithPaths(searchCtx, item.row.RatingKey)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return plex.Paths{}, false, ctxErr
+	}
+	if err != nil {
+		dec := store.MatchDecision{ItemYear: item.row.Year, Outcome: store.DecisionFailed, Error: err.Error()}
+		if recErr := r.recordDecision(ctx, run, item.row, dec, err); recErr != nil {
+			return plex.Paths{}, false, fmt.Errorf("%w: %w", ErrStore, recErr)
+		}
+		if !errors.Is(err, plex.ErrNotFound) {
+			itemEvent(log.Warn(), item.server.Name, lib, item.row).Err(err).Msg("Match search failed")
+		}
+		return plex.Paths{}, false, nil
+	}
+	if itemReasons(live)&store.Unmatched == 0 {
+		itemEvent(log.Info(), item.server.Name, lib, item.row).Str("reason", "no longer unmatched").Msg("Skipped fix match")
+		return plex.Paths{}, false, nil
+	}
+	return paths, true, nil
 }
 
 // keepMatch returns the fix match fm of the item of manualMatch if Plex
@@ -372,7 +403,7 @@ func (r *Refresher) checkHeld(ctx context.Context, item manualItem, run *serverR
 		return false, err
 	}
 	live.RatingKey = key
-	row := storeItem(server, plex.Library{ID: item.row.Section, Type: item.row.Type}, live, itemReasons(live))
+	row := storeItem(server, plex.Library{ID: prev.Section, Type: prev.Type}, live, itemReasons(live))
 	var runID int64
 	if run != nil {
 		runID = run.id

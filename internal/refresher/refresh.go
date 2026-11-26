@@ -458,8 +458,13 @@ func (r *Refresher) itemPaths(ctx context.Context, run *serverRun, it store.Item
 			return paths, nil
 		}
 	}
-	paths, err := run.server.Plex.ItemPaths(ctx, it.RatingKey)
-	if err != nil {
+	var (
+		paths plex.Paths
+		err   error
+	)
+	if p, ok := run.prePaths[it.RatingKey]; ok {
+		paths = p
+	} else if paths, err = run.server.Plex.ItemPaths(ctx, it.RatingKey); err != nil {
 		return nil, err
 	}
 	if folder := seriesFolder(it.Type, paths); folder != "" && !run.preview {

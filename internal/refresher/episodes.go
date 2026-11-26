@@ -51,7 +51,7 @@ var withEpisodeGroupBudget = func(ctx context.Context) (context.Context, context
 // and records the confirming episode group name when an alternate group
 // confirmed it.
 func (r *Refresher) confirmEpisodeNumbers(ctx context.Context, run *serverRun, mc matchContext, tmdbID string) (int, error) {
-	result, err := compareEpisodes(ctx, run.server.Plex, r.opts.TMDB, mc.it.RatingKey, tmdbID)
+	result, err := compareEpisodesChecked(ctx, run.server.Plex, r.opts.TMDB, mc.it.RatingKey, tmdbID, true)
 	if result.diff.Season > 0 && ctx.Err() == nil {
 		mc.d.evidence.EpisodeDiff = result.diff
 		itemEvent(log.Debug(), run.server.Name, mc.lib, mc.it).Int("season", result.diff.Season).
@@ -112,9 +112,17 @@ type SeasonEpisodes struct {
 // back to the default seasons' diff; caller cancellation and service-wide TMDB
 // failures (401, 429) stop immediately.
 func compareEpisodes(ctx context.Context, p Plex, t TMDB, key, id string) (episodeComparison, error) {
+	return compareEpisodesChecked(ctx, p, t, key, id, false)
+}
+
+func compareEpisodesChecked(ctx context.Context, p Plex, t TMDB, key, id string, skipInvalidLocal bool) (episodeComparison, error) {
 	local, err := p.EpisodeNumbers(ctx, key)
 	if err != nil {
 		return episodeComparison{}, err
+	}
+	localTotal, validLocal := validLocalTotal(local)
+	if skipInvalidLocal && !validLocal {
+		return episodeComparison{}, nil
 	}
 	def, err := compareSeasons(local, func(season int) ([]int, error) {
 		catalog, err := t.SeasonEpisodes(ctx, id, season)
@@ -123,14 +131,8 @@ func compareEpisodes(ctx context.Context, p Plex, t TMDB, key, id string) (episo
 		}
 		return catalog, nil
 	})
-	if err != nil || def.count > 0 {
+	if err != nil || def.count > 0 || !validLocal {
 		return def, err
-	}
-	// Pre-check to avoid episode group requests when local numbers are empty,
-	// duplicate, or non-positive (no group could ever confirm them).
-	localTotal, ok := validLocalTotal(local)
-	if !ok {
-		return def, nil
 	}
 	grp, err := compareEpisodeGroups(ctx, t, id, local, localTotal)
 	if err != nil {
@@ -366,11 +368,21 @@ func episodeDiff(season int, local, catalog []int) store.EpisodeDiff {
 
 // onlyIn returns the sorted episode numbers of a that b lacks, each once.
 func onlyIn(a, b []int) []int {
+	inB := make(map[int]struct{}, len(b))
+	for _, n := range b {
+		inB[n] = struct{}{}
+	}
+	seen := make(map[int]struct{}, len(a))
 	var out []int
 	for _, n := range a {
-		if !slices.Contains(b, n) && !slices.Contains(out, n) {
-			out = append(out, n)
+		if _, ok := inB[n]; ok {
+			continue
 		}
+		if _, dup := seen[n]; dup {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
 	}
 	slices.Sort(out)
 	return out

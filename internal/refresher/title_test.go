@@ -531,7 +531,7 @@ func TestRefreshItemAppliesTheTitleMatch(t *testing.T) {
 	f, fp, _ := titleFixture(t, "imdb-tt1")
 	f.now = t0
 	f.saveLibrary(showsLib)
-	f.r.servers[0].Plex = checkedMetadata{fakePlex: fp, answers: []checkAnswer{{item: unmatchedItem("201")}, {item: completeItem("201")}}, checks: new(int)}
+	f.r.servers[0].Plex = checkedMetadata{fakePlex: fp, answers: []checkAnswer{{item: unmatchedItem("201")}, {item: unmatchedItem("201")}, {item: completeItem("201")}}, checks: new(int)}
 
 	res, err := f.r.RefreshItem(t.Context(), testServer, "201")
 	if err != nil {
