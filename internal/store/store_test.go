@@ -840,3 +840,48 @@ func TestKnownItemsResolvesCachedHistoryAndMissing(t *testing.T) {
 		t.Errorf("missing key should not be present: %+v", got["missing"])
 	}
 }
+
+func TestSetStoppedRejectsZeroTime(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
+	if _, err := s.SetStopped(context.Background(), srv, "a", time.Time{}, true); err == nil {
+		t.Fatal("SetStopped with zero time succeeded, want error")
+	}
+}
+
+func TestApplyCheckPreservesAddedAtWhenZero(t *testing.T) {
+	s := openTest(t)
+	orig := item("a", NoArt)
+	apply(t, s, Read{Items: []Item{orig}})
+	check := Item{RatingKey: "a", Title: "Updated", Reasons: NoSummary}
+	if _, err := s.ApplyCheck(srv, check, base.Add(time.Hour), 0); err != nil {
+		t.Fatalf("ApplyCheck: %v", err)
+	}
+	got, cached, known, err := s.KnownItem(srv, "a")
+	if err != nil || !cached || !known {
+		t.Fatalf("KnownItem = %v, %v, %v", cached, known, err)
+	}
+	if !got.AddedAt.Equal(orig.AddedAt) {
+		t.Errorf("AddedAt = %v, want %v", got.AddedAt, orig.AddedAt)
+	}
+}
+
+func TestPruneSectionsClearsDanglingMatchEventPointer(t *testing.T) {
+	s := openTest(t)
+	apply(t, s, Read{Section: "1", Items: []Item{item("a", Unmatched)}})
+	if err := s.RecordRequest(Request{Server: srv, RatingKey: "a", At: base.Add(time.Minute), Source: SourceAuto, Action: ActionMatch, Accepted: true}); err != nil {
+		t.Fatal(err)
+	}
+	// Move item "a" into section "2" while its match event stays in section "1".
+	apply(t, s, Read{Section: "2", Items: []Item{item("a", NoSummary)}})
+	if _, err := s.PruneSections(srv, []string{"2"}); err != nil {
+		t.Fatal(err)
+	}
+	got, cached, known, err := s.KnownItem(srv, "a")
+	if err != nil || !cached || !known {
+		t.Fatalf("KnownItem = %v, %v, %v", cached, known, err)
+	}
+	if got.LastMatchEventID != 0 {
+		t.Errorf("LastMatchEventID = %d, want 0 after old section was pruned", got.LastMatchEventID)
+	}
+}

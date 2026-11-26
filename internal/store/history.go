@@ -402,7 +402,11 @@ func writeCompleted(tx *sql.Tx, r Read, prev Item, in readKey) error {
 
 // readItem reads one row and closes the query before it returns.
 func readItem(tx *sql.Tx, server, ratingKey string) (it Item, found bool, err error) {
-	items, err := queryItems(tx, `SELECT `+itemColumns+` FROM item WHERE server = ? AND rating_key = ?`, server, ratingKey)
+	return readItemContext(context.Background(), tx, server, ratingKey)
+}
+
+func readItemContext(ctx context.Context, tx *sql.Tx, server, ratingKey string) (it Item, found bool, err error) {
+	items, err := queryItemsContext(ctx, tx, `SELECT `+itemColumns+` FROM item WHERE server = ? AND rating_key = ?`, server, ratingKey)
 	if err != nil {
 		return Item{}, false, fmt.Errorf("read item: %w", err)
 	}
@@ -414,7 +418,11 @@ func readItem(tx *sql.Tx, server, ratingKey string) (it Item, found bool, err er
 
 // insertEvent writes e and returns its ID.
 func insertEvent(tx *sql.Tx, e Event) (int64, error) {
-	res, err := tx.Exec(`INSERT INTO event (server, section, rating_key, at, kind, source, title, year, type, thumb, art, path,
+	return insertEventContext(context.Background(), tx, e)
+}
+
+func insertEventContext(ctx context.Context, tx *sql.Tx, e Event) (int64, error) {
+	res, err := tx.ExecContext(ctx, `INSERT INTO event (server, section, rating_key, at, kind, source, title, year, type, thumb, art, path,
 		action, accepted, outcome, error, match_guid, match_title, match_year, conflict, path_year, tmdb_year,
 		episode_count, links, fixed_action, fixed_match, fixed_match_event_id, run_id, tmdb_id, tmdb_skip, tmdb_missing,
 		episode_season, episode_plex, episode_tmdb, episode_missing, episode_extra, episode_group)

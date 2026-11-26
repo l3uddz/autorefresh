@@ -124,10 +124,13 @@ func scanItem(row scanner) (Item, error) {
 }
 
 // queryItems runs query and reads all rows before it returns.
-func queryItems(q interface {
-	Query(query string, args ...any) (*sql.Rows, error)
-}, query string, args ...any) ([]Item, error) {
-	rows, err := q.Query(query, args...)
+func queryItems(q querier, query string, args ...any) ([]Item, error) {
+	return queryItemsContext(context.Background(), q, query, args...)
+}
+
+// queryItemsContext runs query with ctx and reads all rows before it returns.
+func queryItemsContext(ctx context.Context, q querier, query string, args ...any) ([]Item, error) {
+	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -702,10 +705,8 @@ func (s *Store) prune(server string, remove func(server, section string) bool, a
 		return nil, fmt.Errorf("read libraries: %w", err)
 	}
 
-	for _, p := range pruned {
-		if _, err := tx.Exec(`DELETE FROM library WHERE server = ? AND section = ?`, p.Server, p.Section); err != nil {
-			return nil, fmt.Errorf("prune library: %w", err)
-		}
+	if err := deletePrunedLibraries(tx, pruned); err != nil {
+		return nil, err
 	}
 	if also != nil {
 		if err := also(tx); err != nil {
@@ -716,4 +717,19 @@ func (s *Store) prune(server string, remove func(server, section string) bool, a
 		return nil, fmt.Errorf("commit prune: %w", err)
 	}
 	return pruned, nil
+}
+
+func deletePrunedLibraries(tx *sql.Tx, pruned []Pruned) error {
+	for _, p := range pruned {
+		if _, err := tx.Exec(`UPDATE item SET last_match_event_id = NULL
+			WHERE last_match_event_id IS NOT NULL
+				AND EXISTS (SELECT 1 FROM event WHERE id = item.last_match_event_id AND server = ? AND section = ?)`,
+			p.Server, p.Section); err != nil {
+			return fmt.Errorf("clear pruned match events: %w", err)
+		}
+		if _, err := tx.Exec(`DELETE FROM library WHERE server = ? AND section = ?`, p.Server, p.Section); err != nil {
+			return fmt.Errorf("prune library: %w", err)
+		}
+	}
+	return nil
 }

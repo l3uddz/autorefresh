@@ -148,12 +148,13 @@ func finishRunRow(tx *sql.Tx, id int64, start RunStart, r RunResult) (bool, erro
 }
 
 // restoreRun stores the finished run id again, unless its server no longer
-// has a library row.
+// has a library row. Its events were unlinked when retention removed the row,
+// so events_linked is recorded as 0.
 func restoreRun(tx *sql.Tx, id int64, start RunStart, r RunResult) (bool, error) {
 	res, err := tx.Exec(`INSERT INTO run (id, server, kind, source, started_at, status, finished_at, error,
   read_items, refreshed, matched, failed, completed, fixed, incomplete, due, selected, skipped,
-  full_reads, incremental_reads)
-  SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+  full_reads, incremental_reads, events_linked)
+  SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0
   WHERE EXISTS (SELECT 1 FROM library WHERE server = ?)`,
 		id, start.Server, start.Kind, start.Source, start.StartedAt.Unix(), r.Status, r.FinishedAt.Unix(), r.Error,
 		r.ReadItems, r.Refreshed, r.Matched, r.Failed, r.Completed, r.Fixed, r.Incomplete, r.Due, r.Selected, r.Skipped,

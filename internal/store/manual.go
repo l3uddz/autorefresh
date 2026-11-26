@@ -109,12 +109,15 @@ func readOneKnown(ctx context.Context, itemStmt, snapStmt *sql.Stmt, server, key
 
 // SetStopped changes the stop state and records the change in the same transaction.
 func (s *Store) SetStopped(ctx context.Context, server, ratingKey string, at time.Time, stop bool) (bool, error) {
+	if at.IsZero() {
+		return false, errors.New("set stopped: zero time")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, txError(ctx, fmt.Errorf("begin stop change: %w", err))
 	}
 	defer tx.Rollback()
-	row, found, err := readItem(tx, server, ratingKey)
+	row, found, err := readItemContext(ctx, tx, server, ratingKey)
 	if err != nil {
 		return false, txError(ctx, err)
 	}
@@ -132,7 +135,7 @@ func (s *Store) SetStopped(ctx context.Context, server, ratingKey string, at tim
 		nullTime(stoppedAt), server, ratingKey); err != nil {
 		return false, txError(ctx, fmt.Errorf("update stop state: %w", err))
 	}
-	if _, err := insertEvent(tx, snapshotEvent(row, at, kind, SourceManual)); err != nil {
+	if _, err := insertEventContext(ctx, tx, snapshotEvent(row, at, kind, SourceManual)); err != nil {
 		return false, txError(ctx, err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -223,6 +226,9 @@ func (s *Store) ApplyCheck(server string, it Item, at time.Time, runID int64) (b
 	}
 	if it.Type == "" {
 		it.Type = prev.Type
+	}
+	if it.AddedAt.IsZero() {
+		it.AddedAt = prev.AddedAt
 	}
 	r := Read{Server: server, Section: prev.Section, At: at, RunID: runID}
 	in := readKey{meta: it, present: true, inItems: true}

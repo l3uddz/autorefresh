@@ -196,7 +196,7 @@ func TestFinishRunRestoresRemovedRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Run{ID: id, Server: srv, Kind: RunKindRun, Source: RunSourceManual, Status: RunFinished,
-		StartedAt: base, FinishedAt: end, Refreshed: 4, FullReads: 2, EventsLinked: true}
+		StartedAt: base, FinishedAt: end, Refreshed: 4, FullReads: 2, EventsLinked: false}
 	if len(got) != 1 || !reflect.DeepEqual(got[0], want) {
 		t.Fatalf("runs = %+v, want %+v", got, want)
 	}
