@@ -31,10 +31,12 @@ func (s *Server) serveStatus(w http.ResponseWriter, _ *http.Request) {
 // comment when idle. It returns when Stop ends the streams, the request
 // ends, or a write fails.
 func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
-	if s.isSSEClosing() {
-		writeError(w, http.StatusServiceUnavailable, "shutting down")
+	if code, msg := s.reserveSSE(); code != 0 {
+		writeError(w, code, msg)
 		return
 	}
+	defer s.releaseSSE()
+
 	changes, unsubscribe := s.status.subscribe()
 	defer unsubscribe()
 
@@ -46,11 +48,10 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	if s.beforeSSECommit != nil {
 		s.beforeSSECommit()
 	}
-	if code, msg := s.commitSSE(w); code != 0 {
-		writeError(w, code, msg)
+	if !s.commitSSE(w) {
+		writeError(w, http.StatusServiceUnavailable, "shutting down")
 		return
 	}
-	defer s.releaseSSE()
 
 	rc := http.NewResponseController(w)
 	if s.sseCtx.Err() != nil || s.send(rc, w, initial) != nil {
@@ -86,13 +87,6 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, rc *http.R
 	}
 }
 
-func (s *Server) isSSEClosing() bool {
-	s.sseMu.Lock()
-	closing := s.sseClosing || s.sseCtx.Err() != nil
-	s.sseMu.Unlock()
-	return closing
-}
-
 func (s *Server) stopSSE() {
 	s.sseMu.Lock()
 	s.sseClosing = true
@@ -100,10 +94,9 @@ func (s *Server) stopSSE() {
 	s.sseMu.Unlock()
 }
 
-// commitSSE serializes the initial 200 SSE response commitment against
-// stopSSE and the concurrent stream cap. It returns a non-zero HTTP status
-// and error message when the stream cannot start.
-func (s *Server) commitSSE(w http.ResponseWriter) (int, string) {
+// reserveSSE checks shutdown and claims a stream slot before subscribing or
+// marshaling an initial snapshot.
+func (s *Server) reserveSSE() (int, string) {
 	s.sseMu.Lock()
 	defer s.sseMu.Unlock()
 	if s.sseClosing || s.sseCtx.Err() != nil {
@@ -113,9 +106,20 @@ func (s *Server) commitSSE(w http.ResponseWriter) (int, string) {
 		return http.StatusServiceUnavailable, "too many event streams"
 	}
 	s.sseStreams++
+	return 0, ""
+}
+
+// commitSSE serializes the initial 200 SSE response commitment against
+// stopSSE so shutdown cannot race with committing headers.
+func (s *Server) commitSSE(w http.ResponseWriter) bool {
+	s.sseMu.Lock()
+	defer s.sseMu.Unlock()
+	if s.sseClosing || s.sseCtx.Err() != nil {
+		return false
+	}
 	setStreamHeaders(w.Header())
 	w.WriteHeader(http.StatusOK)
-	return 0, ""
+	return true
 }
 
 func (s *Server) releaseSSE() {

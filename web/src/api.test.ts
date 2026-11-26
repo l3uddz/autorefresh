@@ -93,8 +93,14 @@ describe('status order', () => {
     expect(parseStatusEvent('{}')).toBeUndefined();
     expect(parseStatusEvent(JSON.stringify({ boot: 'a', seq: 1, tmdb: 'off' }))).toBeUndefined();
     expect(parseStatusEvent(JSON.stringify({ boot: 'a', seq: 1, tmdb: 'off', servers: [null] }))).toBeUndefined();
-    expect(parseStatusEvent(JSON.stringify({ boot: 'a', seq: 1, tmdb: 'off', servers: [{ srv: 0, name: 'Home', run: 'bad' }] }))).toBeUndefined();
-    const valid: Status = { boot: 'a', seq: 2, tmdb: 'off', servers: [{ srv: 0, name: 'Home', health: 'ok', run: null }] };
+    expect(parseStatusEvent(JSON.stringify({ boot: 'a', seq: 1, tmdb: 'off', servers: [{ srv: 0, name: 'Home', health: 'ok', run: 'bad' }] }))).toBeUndefined();
+    expect(parseStatusEvent(JSON.stringify({ boot: 'a', seq: 1, tmdb: 'off', servers: [{ srv: 0, name: 'Home', health: 'ok', run: [] }] }))).toBeUndefined();
+    expect(parseStatusEvent(JSON.stringify({ boot: 'a', seq: 1, tmdb: 'off', servers: [{ srv: 0, name: 'Home', health: 'ok', run: null, last: {} }] }))).toBeUndefined();
+    const run = {
+      id: 7, kind: 'run' as const, source: 'schedule' as const, status: 'running' as const, startedAt: '2026-11-26T00:00:00Z',
+      recorded: false, librariesRead: 1, selected: 2, due: 2, done: 0, refreshed: 0, matched: 0, failed: 0, skipped: 0,
+    };
+    const valid: Status = { boot: 'a', seq: 2, tmdb: 'off', servers: [{ srv: 0, name: 'Home', health: 'ok', run, last: { ...run, status: 'finished', recorded: true } }] };
     expect(parseStatusEvent(JSON.stringify(valid))).toEqual(valid);
   });
 });

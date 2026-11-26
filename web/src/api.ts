@@ -120,21 +120,46 @@ export type Connection = 'connecting' | 'open' | 'reconnecting' | 'unavailable';
 
 const retryDelay = 3000;
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isRunProgress(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const r = value as Record<string, unknown>;
+  return (
+    isFiniteNumber(r.id) &&
+    typeof r.kind === 'string' &&
+    typeof r.source === 'string' &&
+    typeof r.status === 'string' &&
+    typeof r.startedAt === 'string' &&
+    typeof r.recorded === 'boolean' &&
+    isFiniteNumber(r.librariesRead) &&
+    isFiniteNumber(r.selected) &&
+    isFiniteNumber(r.due) &&
+    isFiniteNumber(r.done) &&
+    isFiniteNumber(r.refreshed) &&
+    isFiniteNumber(r.matched) &&
+    isFiniteNumber(r.failed) &&
+    isFiniteNumber(r.skipped)
+  );
+}
+
 /** Validates that value has the required runtime shape of a Status snapshot
  * before the SSE handler reads boot, seq, or servers. */
 export function isStatusSnapshot(value: unknown): value is Status {
-  if (typeof value !== 'object' || value === null) return false;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const v = value as Record<string, unknown>;
-  if (typeof v.boot !== 'string' || typeof v.seq !== 'number' || !Number.isFinite(v.seq) || typeof v.tmdb !== 'string') {
+  if (typeof v.boot !== 'string' || !isFiniteNumber(v.seq) || typeof v.tmdb !== 'string') {
     return false;
   }
   if (!Array.isArray(v.servers)) return false;
   return v.servers.every(entry => {
-    if (typeof entry !== 'object' || entry === null) return false;
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return false;
     const s = entry as Record<string, unknown>;
-    if (typeof s.srv !== 'number' || typeof s.name !== 'string') return false;
-    if (s.run !== null && typeof s.run !== 'object') return false;
-    if (s.last !== undefined && (typeof s.last !== 'object' || s.last === null)) return false;
+    if (!isFiniteNumber(s.srv) || typeof s.name !== 'string' || typeof s.health !== 'string') return false;
+    if (s.run !== null && !isRunProgress(s.run)) return false;
+    if (s.last !== undefined && !isRunProgress(s.last)) return false;
     return true;
   });
 }

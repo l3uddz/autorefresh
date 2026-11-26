@@ -434,6 +434,7 @@ func TestImageCoalescesConcurrentRequestsWhileSemaphoreFull(t *testing.T) {
 			recs[i] = getImage(s, "/api/items/thumb?srv=0&key=102")
 		})
 	}
+	coalesced := false
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		s.imageMu.Lock()
@@ -444,6 +445,7 @@ func TestImageCoalescesConcurrentRequestsWhileSemaphoreFull(t *testing.T) {
 		}
 		s.imageMu.Unlock()
 		if waiters == 2 {
+			coalesced = true
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
@@ -451,6 +453,9 @@ func TestImageCoalescesConcurrentRequestsWhileSemaphoreFull(t *testing.T) {
 	close(firstRelease)
 	<-firstDone
 	wg.Wait()
+	if !coalesced {
+		t.Fatal("concurrent requests for key 102 did not join before timeout")
+	}
 
 	mu.Lock()
 	got102 := callsByKey["102"]
