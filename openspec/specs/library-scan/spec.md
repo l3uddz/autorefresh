@@ -190,7 +190,7 @@ Autorefresh SHALL apply the result of a library read only when every request of 
 
 #### Scenario: Request fails part of the way
 
-- **WHEN** the full listing, an incremental listing, or an episode listing of a library fails
+- **WHEN** the full listing, an incremental listing, or an episode listing of a library fails in a run that is not a manual full scan
 - **THEN** the rows and read times of that library stay as they were
 - **AND** autorefresh logs `Reading library failed` and reads the next library
 

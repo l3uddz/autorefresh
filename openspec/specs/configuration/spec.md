@@ -8,7 +8,7 @@ Define how autorefresh finds, reads, defaults, and validates its YAML configurat
 
 ### Requirement: Default file locations
 
-When a path flag is not set, autorefresh SHALL place the configuration file `config.yml`, the database `autorefresh.db`, and the log `activity.log` in one default directory. That directory is the binary's directory when `config.yml` exists there, otherwise the `autorefresh` directory in the user configuration directory, created with owner-only access.
+When a path flag is not set, autorefresh SHALL place the configuration file `config.yml`, the database `autorefresh.db`, and the log `activity.log` in one default directory. That directory is the binary's directory when `config.yml` exists there, otherwise the `autorefresh` directory in the user configuration directory, created with owner-only access. When the user configuration directory is unknown or the directory cannot be created, it SHALL be the binary's directory.
 
 #### Scenario: Config file next to the binary
 
@@ -21,6 +21,12 @@ When a path flag is not set, autorefresh SHALL place the configuration file `con
 - **GIVEN** no path flags and no `config.yml` next to the binary
 - **WHEN** autorefresh starts
 - **THEN** it uses the `autorefresh` directory in the user configuration directory, such as `~/.config/autorefresh` on Linux, and creates it with mode `0700` if it is missing
+
+#### Scenario: User configuration directory unusable
+
+- **GIVEN** no path flags and no `config.yml` next to the binary
+- **WHEN** the user configuration directory is unknown, or autorefresh cannot create the `autorefresh` directory in it
+- **THEN** it uses the directory of the binary
 
 #### Scenario: Every path is set
 
@@ -78,7 +84,12 @@ A YAML error SHALL report only the line numbers that the error names, and SHALL 
 
 ### Requirement: Schedule validation
 
-The `schedule` and `cache-refresh` keys SHALL be standard five-field cron expressions that fire at least once in the future.
+The `schedule` and `cache-refresh` keys SHALL be standard five-field cron expressions or descriptors such as `@hourly`, `@daily`, or `@every 1h`, with an optional `TZ=<zone>` or `CRON_TZ=<zone>` prefix. Each SHALL fire at least once in the future.
+
+#### Scenario: Descriptor
+
+- **WHEN** `schedule` is `@every 1h` or `@hourly`
+- **THEN** autorefresh accepts it and runs on that schedule
 
 #### Scenario: Expression that never fires
 

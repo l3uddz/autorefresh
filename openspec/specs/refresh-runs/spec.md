@@ -8,7 +8,26 @@ Define what one automatic run does for each Plex server after it reads the libra
 
 ### Requirement: Servers run in parallel
 
-A run SHALL handle each configured server at the same time as the other servers, and SHALL handle the items of one server one at a time. An unavailable server SHALL end only its own run. A database error SHALL end the runs of all servers.
+A run SHALL handle each configured server at the same time as the other servers.
+
+#### Scenario: Two servers
+
+- **GIVEN** two servers that each have due items
+- **WHEN** a run starts
+- **THEN** each server starts its items without waiting for the other server to finish
+
+### Requirement: Items of one server run one at a time
+
+A run SHALL handle the items of one server one at a time.
+
+#### Scenario: Two due items
+
+- **WHEN** a server has two due items
+- **THEN** the run sends the request of the second item only after the first item is done
+
+### Requirement: An unavailable server ends only its own run
+
+When a server becomes unavailable during a run, the run SHALL end for that server only.
 
 #### Scenario: One server is down
 
@@ -16,6 +35,10 @@ A run SHALL handle each configured server at the same time as the other servers,
 - **WHEN** a run starts
 - **THEN** server `down` sends no more requests in this run
 - **AND** the other server still refreshes its due items and logs its summary
+
+### Requirement: A database error ends the runs of all servers
+
+When a database call fails during the run of one server, the run SHALL end for all servers.
 
 #### Scenario: Database error on one server
 
@@ -118,7 +141,7 @@ A run SHALL wait `refresh-delay` before each item of a server after the first on
 #### Scenario: Request time
 
 - **WHEN** a run waits `refresh-delay` between items
-- **THEN** the attempt time of each item is the time of its own request, and the summary duration includes the waits
+- **THEN** the attempt time of each item is taken when Plex answers its own request, and the summary duration includes the waits
 
 ### Requirement: Recheck before a send
 
@@ -183,7 +206,7 @@ After an accepted plain refresh, a run SHALL do nothing more for that item: it S
 
 ### Requirement: Failed request
 
-When a refresh request, a match request, or a match search fails with an error that does not stop the server, the run SHALL record a failed attempt, count one failure, log a warning (`Request failed` with the action, or `Match search failed`), and continue with the next item. It SHALL NOT add to the refresh count. After a failed match search, it SHALL send no request for that item in this run. A failed TMDB lookup is not a failed match search: `fix-match` defines its outcome.
+When a refresh, a match request, or a match search fails with an error that does not stop the server, the run SHALL record a failed attempt, count one failure, log a warning (`Request failed` with the action, or `Match search failed`), and go on to the next item. It SHALL NOT add to the refresh count. After a search error that ends the automatic decision, it SHALL send that item no request in this run. Errors that `fix-match` handles, such as a failed title search or TMDB lookup, follow it.
 
 #### Scenario: Server error on refresh
 
@@ -192,8 +215,13 @@ When a refresh request, a match request, or a match search fails with an error t
 
 #### Scenario: Failed match search
 
-- **WHEN** the match search of an unmatched item fails
+- **WHEN** the search for a `tmdb` path ID of an unmatched item fails with a server error
 - **THEN** the run sends neither a match nor a plain refresh for that item, and records a failed attempt
+
+#### Scenario: Failed title search
+
+- **WHEN** the title search of the title fallback fails with a server error
+- **THEN** the run records a `failed` decision and sends a plain refresh for that item
 
 ### Requirement: Gone item
 

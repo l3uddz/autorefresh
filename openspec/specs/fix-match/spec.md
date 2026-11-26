@@ -100,7 +100,7 @@ For each different path ID, autorefresh SHALL ask Plex once for match candidates
 
 ### Requirement: Failed search of a TVDB or IMDb ID
 
-A failed Plex search for a `tvdb` or `imdb` path ID SHALL count as a search without candidates. A 404 answer and an error that makes the server unavailable SHALL keep their meaning. A failed search for a `tmdb` ID SHALL fail the match search.
+A failed Plex search for a `tvdb` or `imdb` path ID SHALL count as a search without candidates. A 404 answer and an error that makes the server unavailable SHALL keep their meaning. A failed search for a `tmdb` ID SHALL fail the match search. An ignored search error SHALL give no warning, only a debug line.
 
 #### Scenario: TVDB search answers 500
 
@@ -110,7 +110,8 @@ A failed Plex search for a `tvdb` or `imdb` path ID SHALL count as a search with
 #### Scenario: Another ID finds the candidate
 
 - **WHEN** the search for `imdb-tt1` fails and the search for `tmdb-2` finds one candidate
-- **THEN** autorefresh applies that candidate and logs no search failure
+- **THEN** autorefresh applies that candidate and logs no search failure warning
+- **AND** it logs `Match search failed` for `imdb-tt1` only at debug level
 
 #### Scenario: TMDB ID search answers 500
 
@@ -253,7 +254,7 @@ Autorefresh SHALL compare each local season, in ascending order, with the same T
 
 ### Requirement: Alternate TMDB episode groups
 
-When TMDB's seasons do not confirm valid local numbers, autorefresh SHALL try the series' episode groups of the types Original air date, DVD, Absolute, and TV, each ID once. It SHALL read at most 10 groups, taken in turn from each type, those with at least as many episodes as Plex first, then unknown counts, then smaller ones. The first group that confirms SHALL end the check, and the decision SHALL record its name, trimmed to 120 characters, or its ID.
+When TMDB's seasons do not confirm valid local numbers, autorefresh SHALL try the series' episode groups of the types Original air date, DVD, Absolute, and TV, each ID once. It SHALL choose at most 10 groups, taken in turn from each type. It SHALL read first those with at least as many episodes as Plex, then unknown counts, then smaller ones, each in type order. The first group that confirms SHALL end the check, and the decision SHALL record its name, trimmed to 120 characters, or its ID.
 
 #### Scenario: Aired order confirms
 
@@ -263,7 +264,18 @@ When TMDB's seasons do not confirm valid local numbers, autorefresh SHALL try th
 #### Scenario: Many groups of one type
 
 - **WHEN** TMDB lists more than 10 groups of the Original air date type and one DVD group
-- **THEN** autorefresh reads at most 10 groups, and the DVD group is one of them
+- **THEN** autorefresh chooses at most 10 groups, and the DVD group is one of them
+
+#### Scenario: DVD group with an unknown count
+
+- **GIVEN** nine chosen Original air date groups with more episodes than Plex and a chosen DVD group with an unknown count
+- **WHEN** none of the nine groups confirms and the budget has time left
+- **THEN** autorefresh reads the DVD group last
+
+#### Scenario: Earlier group confirms
+
+- **WHEN** a chosen group confirms before the DVD group is reached
+- **THEN** autorefresh does not read the DVD group
 
 #### Scenario: Other group types
 
@@ -348,12 +360,17 @@ Autorefresh SHALL read a TMDB ID from its cache of the item and the external ID 
 
 ### Requirement: TMDB failure during a fix match
 
-When a TMDB request of a fix match fails, autorefresh SHALL log `TMDB lookup failed`, count a failed request, record the decision `failed` with the error, and turn TMDB off for the rest of the run of that server. The item SHALL get a plain refresh. The end of the run SHALL not count as a TMDB failure.
+When a TMDB request of a fix match fails, autorefresh SHALL log `TMDB lookup failed`, count a failed request, record the decision `failed` with the error, and turn TMDB off for the rest of the run of that server. The item SHALL get a plain refresh. The end of the run SHALL not count as a TMDB failure. An episode group request SHALL count only with a 401 or 429 answer; its other errors and the end of the group budget follow the episode group rules.
 
 #### Scenario: Lookup answers 500 or 401
 
 - **WHEN** the TMDB lookup of `tvdb-5` fails for the first item
 - **THEN** that item gets a plain refresh, a later item of the same server run asks TMDB nothing and records the skip reason `failed`, and the next run asks TMDB again
+
+#### Scenario: Episode group answers 500
+
+- **WHEN** an episode group request of the first item answers 500
+- **THEN** autorefresh logs a warning, skips that group, and a later item of the same server run still asks TMDB
 
 #### Scenario: Year request fails
 

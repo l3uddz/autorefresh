@@ -29,7 +29,7 @@ An item action SHALL act only on a configured server and on an item that autoref
 
 ### Requirement: Refresh now sends and records one refresh
 
-When the user refreshes one item and no fix match applies, autorefresh SHALL send one refresh request for that item to Plex at once and record it with the source manual. For a cached item, the request SHALL count as an attempt and as a refresh, so the backoff of the item grows.
+When the user refreshes one item and no fix match applies, autorefresh SHALL send one refresh request for that item to Plex at once and record it with the source manual. For a cached item, a request that Plex accepts SHALL count as an attempt and a refresh, so the backoff grows. A failed request SHALL count only as an attempt, so a new wait of the same length starts. A 404 of a cached item SHALL remove the item instead.
 
 #### Scenario: Refresh a cached item
 
@@ -39,13 +39,25 @@ When the user refreshes one item and no fix match applies, autorefresh SHALL sen
 
 #### Scenario: Plex rejects the refresh
 
-- **WHEN** Plex answers the refresh with an error
+- **WHEN** Plex answers the refresh of a cached item with an error other than 404
 - **THEN** autorefresh records a failed manual request and the action fails with that error
+- **AND** the item has one more attempt, the same number of refreshes, and a new wait of the same length
+
+#### Scenario: Attempt time
+
+- **WHEN** the user refreshes a cached item
+- **THEN** its attempt time is the time just before autorefresh sends the request, not the time of the answer
 
 #### Scenario: Plex no longer has the item
 
-- **WHEN** Plex answers the refresh with 404
-- **THEN** autorefresh records the item as gone, removes its cache row, and the action fails as not found
+- **WHEN** Plex answers the refresh of a cached item with 404
+- **THEN** autorefresh records the item as gone instead of a request event, removes its cache row, and the action fails as not found
+
+#### Scenario: Plex no longer has an item with only history
+
+- **GIVEN** an item that has history but no cache row
+- **WHEN** Plex answers its refresh with 404
+- **THEN** autorefresh records a failed manual request event and no gone event, and the action fails as not found
 
 ### Requirement: Refresh now runs the automatic fix match first
 
@@ -168,13 +180,19 @@ The user SHALL be able to apply a chosen candidate, given by its Plex GUID, name
 
 ### Requirement: Manual match search
 
-The match search SHALL list Plex match candidates for a known item and SHALL record nothing in the history. Without typed text, it SHALL search the item title without a year, and each ID in its folder and file names. With `tmdb-token` set and no TMDB ID in the names, it SHALL also search each TMDB ID that TMDB gives for an IMDb ID, or for a TVDB ID of a show. It SHALL also return the folder IDs with links, the locations, and the files.
+The match search SHALL list Plex match candidates for a known item and SHALL record nothing in the history. Without typed text, it SHALL search the item title without a year, and each ID in its folder paths, or in its file paths when Plex gives no folder. With `tmdb-token` set and no TMDB ID in these paths, it SHALL also search each TMDB ID that TMDB gives for an IMDb ID, or for a TVDB ID of a show. It SHALL also return the folder IDs with links, the locations, and the files.
 
 #### Scenario: Opening searches
 
 - **GIVEN** a movie whose folder holds `{imdb-tt123}` and a set `tmdb-token`
 - **WHEN** the user opens the match search
 - **THEN** Plex gets a title search, a search for `imdb-tt123`, and a search for the TMDB ID that TMDB gives for it
+
+#### Scenario: Folder and file with different IDs
+
+- **GIVEN** an item whose folder holds `{imdb-tt123}` and whose file holds `{tmdb-9}`
+- **WHEN** the user opens the match search
+- **THEN** Plex gets no search for `tmdb-9`, and the answer still lists the folder and the file
 
 #### Scenario: Item with only history
 
@@ -230,8 +248,18 @@ On request, autorefresh SHALL compare the regular episode numbers that Plex has 
 
 #### Scenario: TMDB fails
 
-- **WHEN** a TMDB request of the check fails
+- **WHEN** a TMDB request of the check fails, other than an episode group request that answers neither 401 nor 429
 - **THEN** the check fails with the TMDB error
+
+#### Scenario: One episode group fails
+
+- **WHEN** one episode group request of the check answers 500
+- **THEN** autorefresh logs a warning, tries the next group, and the check does not fail
+
+#### Scenario: Episode group budget runs out
+
+- **WHEN** the 15 second budget of the episode groups ends before a group confirms
+- **THEN** the check does not fail and reports the result of the default seasons
 
 ### Requirement: Stop trying and resume
 
@@ -265,7 +293,7 @@ Bulk stop and resume SHALL change the selected items of one server one after ano
 
 ### Requirement: Run now
 
-Run now SHALL start a run of all servers, or of one server, that works as a scheduled run of `refresh-runs` and records the source manual. With full set, the run SHALL read every library fully, also when its full read is not due. A run of one server SHALL NOT remove the cache, the stopped state, the events, or the runs of the other servers. The action SHALL return the run ID of each server at once.
+Run now SHALL start a run of all servers, or of one server, that works as a scheduled run of `refresh-runs` and records the source manual. With full set, the run SHALL read every library fully, also when its full read is not due. A run of one server SHALL NOT remove the cache or the stopped state of the other configured servers. Its history retention SHALL still remove the old events and runs of every server. The action SHALL return the run ID of each server at once.
 
 #### Scenario: Full run
 
@@ -276,7 +304,13 @@ Run now SHALL start a run of all servers, or of one server, that works as a sche
 
 - **GIVEN** two configured servers
 - **WHEN** the user starts Run now for one server
-- **THEN** the other server keeps its items, stopped state, events, and runs
+- **THEN** the other server keeps its items and stopped state
+
+#### Scenario: Retention of one-server run
+
+- **GIVEN** two configured servers, each with an event older than `history-retention`
+- **WHEN** the user starts Run now for one server
+- **THEN** the old events of both servers are removed
 
 #### Scenario: The run cannot start
 
@@ -395,12 +429,31 @@ When Refresh now completes an item or finds it gone while a run reads the librar
 
 ### Requirement: Time limits of item actions
 
-Refresh now SHALL have 90 s in all, with 45 s for its fix match search. The match search, the preview, and the episode check SHALL have 45 s each. Apply match, stop, resume, and bulk stop and resume SHALL have 30 s. An action that runs out of time SHALL fail as timed out. When the browser leaves, the action SHALL end. A request that Plex accepted SHALL still be recorded.
+Refresh now SHALL have 90 s in all, with 45 s for its fix match search. The match search, the preview, and the episode check SHALL have 45 s each. Apply match, stop, resume, and bulk stop and resume SHALL have 30 s. An action that runs out of time SHALL fail as timed out, except in the cases of the next requirement. When the browser leaves, the action SHALL end. A request that Plex accepted SHALL still be recorded.
 
 #### Scenario: Request ends after Plex accepted the refresh
 
 - **WHEN** the dashboard is forced to close the connection after Plex accepted the refresh but before it was recorded
 - **THEN** autorefresh still records the accepted manual request
+
+### Requirement: Time limits after the work started
+
+Refresh now SHALL succeed when its time ends during the checks after Plex accepted its request. Bulk stop and resume SHALL succeed when their time ends after they started on the items, and SHALL skip the remaining items with `timeout`. When their time ends while they still read the matching items, they SHALL fail as timed out.
+
+#### Scenario: Time ends during the checks of Refresh now
+
+- **WHEN** Plex accepted the refresh of a cached item and the 90 s end during the checks after it
+- **THEN** the action succeeds and reports the refresh
+
+#### Scenario: Time ends during bulk stop
+
+- **WHEN** the 30 s of a bulk stop end after it changed some items
+- **THEN** the action succeeds and skips the remaining items with `timeout`
+
+#### Scenario: Time ends while bulk stop finds its items
+
+- **WHEN** the 30 s of a bulk stop of all matching items end before it has read the matching items
+- **THEN** the action fails as timed out
 
 ### Requirement: Shutdown drains manual work
 

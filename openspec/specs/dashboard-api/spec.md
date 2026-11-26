@@ -310,7 +310,7 @@ A running server entry SHALL show its run with `id`, `kind`, `source`, `status`,
 
 ### Requirement: Item list filters
 
-`GET /api/items` SHALL filter by `srv`, `library` (a section ID, which needs `srv`), `reason` (one reason name), `type` (`movie` or `show`), and `q` (a search text of at most 200 bytes after trimming). `all` SHALL be empty or `1`. With `all=1`, `attention` SHALL also list items whose reasons are all ignored, with state `ignored`, and `fixed` SHALL also list items fixed without a request. `all` SHALL change only the chosen tab and its count.
+`GET /api/items` SHALL filter by `srv`, `library` (a section ID, which needs `srv`), `reason` (one reason name, which `fixed` and its count ignore), `type` (`movie` or `show`), and `q` (a search text of at most 200 bytes after trimming). `all` SHALL be empty or `1`. With `all=1`, `attention` SHALL also list items whose reasons are all ignored, with state `ignored`, and `fixed` SHALL also list items fixed without a request. `all` SHALL change only the chosen tab and its count.
 
 #### Scenario: Library without a server
 
@@ -321,6 +321,11 @@ A running server entry SHALL show its run with `id`, `kind`, `source`, `status`,
 
 - **WHEN** `reason` is `x` or lists two reasons, `type` is `episode`, `q` is longer than 200 bytes, or `all` is `0` or `true`
 - **THEN** the server answers `400` with `invalid reason`, `invalid type`, `invalid q`, or `invalid all`
+
+#### Scenario: Reason on the Fixed tab
+
+- **WHEN** a client requests `/api/items?tab=fixed&reason=no-art`
+- **THEN** the list and the `fixed` count include every fixed item, whatever reasons it had
 
 #### Scenario: Show ignored items
 
@@ -555,12 +560,12 @@ An item action that fails SHALL get a fixed status and message: `504` `timed out
 
 ### Requirement: Bulk routes
 
-`POST /api/items/refresh`, `POST /api/items/stop`, and `POST /api/items/resume` SHALL need `srv`, SHALL accept the list filters except `tab` (resume also rejects `all=1`), and SHALL take `{"keys":[...]}` or `{"matching":true}`, which selects every item that matches the filters. Refresh and stop SHALL use the `attention` tab and resume the `stopped` tab. Refresh SHALL answer `202` with `{id, count}`. Stop and resume SHALL answer `200` with `{changed, skipped}`.
+`POST /api/items/refresh`, `POST /api/items/stop`, and `POST /api/items/resume` SHALL need `srv`, SHALL accept the list filters except `tab` (resume also rejects `all=1`), and SHALL take a selection body by the next requirement. Refresh and stop SHALL use the `attention` tab and resume the `stopped` tab. Refresh SHALL answer `202` with `{id, count}`. Stop and resume SHALL answer `200` with `{changed, skipped}`.
 
 #### Scenario: Invalid selection
 
-- **WHEN** `srv` is missing, `tab` is set, a key is not digits, `keys` is empty, or the body has both `keys` and `matching`
-- **THEN** the server answers `400` with `invalid srv`, `invalid tab`, `invalid key`, or `invalid body`, and starts no job
+- **WHEN** `srv` is missing, `tab` is set, or a key is not digits
+- **THEN** the server answers `400` with `invalid srv`, `invalid tab`, or `invalid key`, and starts no job
 
 #### Scenario: Resume with all
 
@@ -574,8 +579,8 @@ An item action that fails SHALL get a fixed status and message: `504` `timed out
 
 #### Scenario: Selection limits
 
-- **WHEN** the selection holds more than 5000 distinct items, or no item
-- **THEN** the server answers `400` with `too many items` or `no items`
+- **WHEN** the selection holds more than 5000 distinct items
+- **THEN** the server answers `400` with `too many items`
 
 #### Scenario: Skipped items
 
@@ -586,6 +591,30 @@ An item action that fails SHALL get a fixed status and message: `504` `timed out
 
 - **WHEN** a bulk stop with `{"matching":true}` cannot read the matching items within its budget
 - **THEN** the server answers `504` with `timed out`
+
+### Requirement: Bulk selection body
+
+The body of a bulk route SHALL be `{"matching":true}`, which selects every item that matches the filters, or a non-empty `keys` list with `matching` absent or false. `matching` true with a `keys` list, also an empty one, and a body without keys and without `matching` true SHALL get `400` with `invalid body`. A matching selection that finds no item SHALL get `400` with `no items`.
+
+#### Scenario: Keys with matching false
+
+- **WHEN** the body is `{"keys":["1"],"matching":false}`
+- **THEN** the route selects the item with key `1`
+
+#### Scenario: Empty keys
+
+- **WHEN** the body is `{"keys":[]}`
+- **THEN** the server answers `400` with `invalid body` and starts no job
+
+#### Scenario: Keys with matching true
+
+- **WHEN** the body is `{"keys":["1"],"matching":true}` or `{"keys":[],"matching":true}`
+- **THEN** the server answers `400` with `invalid body` and starts no job
+
+#### Scenario: No matching item
+
+- **WHEN** the body is `{"matching":true}` and no item matches the filters
+- **THEN** the server answers `400` with `no items` and starts no job
 
 ### Requirement: Redaction of stored error texts
 
@@ -620,19 +649,32 @@ Every candidate thumb in an answer SHALL be an `https` URL with a host, without 
 - **WHEN** a thumb contains a configured secret that is not a credential, such as a short Plex host or a path prefix
 - **THEN** the answer keeps the thumb
 
-### Requirement: Shutdown
+### Requirement: Shutdown refuses new requests
 
-When the service stops the dashboard, the server SHALL answer every later request with `503` and `{"error":"shutting down"}`, before auth and the cross-origin check. It SHALL end open event streams at once and SHALL let active requests finish within the deadline of the stop. When the deadline passes, it SHALL cancel the active requests, close the connections, and wait at most 5 s more for their handlers.
+When the service stops the dashboard, the server SHALL answer every later request with `503` and `{"error":"shutting down"}`, before auth and the cross-origin check.
 
 #### Scenario: Request after stop
 
 - **WHEN** a client sends a request after the stop began
 - **THEN** the server answers `503` with `{"error":"shutting down"}` and the security headers
 
+### Requirement: Shutdown ends event streams
+
+When the service stops the dashboard, the server SHALL end open event streams at once and SHALL NOT wait for them.
+
 #### Scenario: Open event stream
 
 - **WHEN** a client has an open `/api/events` stream and the server stops
 - **THEN** the stream ends and the stop does not wait for it
+
+### Requirement: Shutdown lets active requests finish
+
+When the service stops the dashboard, the server SHALL let active requests finish within the deadline of the stop. When the deadline passes, it SHALL cancel the active requests, close the connections, and wait at most 5 s more for their handlers.
+
+#### Scenario: Request that finishes in time
+
+- **WHEN** a request is active when the stop begins and finishes before the stop deadline
+- **THEN** the client gets the full answer of that request
 
 #### Scenario: Handler that blocks
 

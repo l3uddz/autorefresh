@@ -22,7 +22,7 @@ Each event SHALL record the server, the library section, the rating key, the tim
 
 ### Requirement: Request events
 
-When autorefresh sends a refresh or match request to Plex, it SHALL record a `request` event with the action (`refresh`, `match`, `tmdb-match`, or `title-match`), whether Plex accepted it, its outcome, and the error text. The outcome SHALL be the action, or the action with `-failed` when Plex did not accept it. A match request SHALL also keep its target: the candidate GUID, title, and year, the links of the IDs that found it, and the path year, TMDB year, and episode count that confirmed it.
+Each refresh or match request to Plex, except a 404 for a cached item, SHALL record a `request` event with the action (`refresh`, `match`, `tmdb-match`, or `title-match`), whether Plex accepted it, its outcome, and the error text. The outcome SHALL be the action, with `-failed` when Plex did not accept it. A match request SHALL also keep its target: the candidate GUID, title, and year, the links of the IDs that found it, and the path year, TMDB year, and episode count that confirmed it.
 
 #### Scenario: Accepted refresh
 
@@ -38,6 +38,21 @@ When autorefresh sends a refresh or match request to Plex, it SHALL record a `re
 
 - **WHEN** a fix match search fails before autorefresh sends any request
 - **THEN** no `request` event is recorded, and the last outcome of the cached item becomes `search-failed`
+
+### Requirement: A 404 of a cached item replaces the request event
+
+When Plex answers a request of a cached item with 404, autorefresh SHALL record a `gone` event and no `request` event. When Plex answers a manual refresh of an item with only history with 404, autorefresh SHALL record a failed `request` event and no `gone` event.
+
+#### Scenario: Cached item
+
+- **WHEN** Plex answers the refresh of a cached item with 404
+- **THEN** a `gone` event with action `refresh` is recorded and no `request` event
+
+#### Scenario: Item with only history
+
+- **GIVEN** an item that has history but no cache row
+- **WHEN** Plex answers its manual refresh with 404
+- **THEN** a `request` event with outcome `refresh-failed` is recorded and no `gone` event
 
 ### Requirement: Fix match decisions are stored with their searches
 
@@ -334,7 +349,7 @@ When a run ends after another process marked it `interrupted`, its end SHALL rep
 
 ### Requirement: History retention removes old events
 
-At the start of each scheduled run and manual scan, autorefresh SHALL remove the events older than `history-retention`, with their searches and candidates, in one transaction. It SHALL log the numbers of removed events and runs at debug level when it removed any.
+At the start of each scheduled run and manual scan, autorefresh SHALL remove the events older than `history-retention` of every server, also when the scan covers one server, with their searches and candidates, in one transaction. It SHALL log the numbers of removed events and runs at debug level when it removed any.
 
 #### Scenario: Old decision removed
 

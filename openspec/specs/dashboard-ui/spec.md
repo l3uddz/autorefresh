@@ -530,10 +530,15 @@ The item detail SHALL offer Refresh now without a confirmation. The server handl
 - **WHEN** the refresh applied a fix match
 - **THEN** the toast starts with "Matched <title> to <match> (<year>)"
 
-#### Scenario: Plex removed the item
+#### Scenario: Item gone after the refresh
 
-- **WHEN** Plex no longer has the item
+- **WHEN** the refresh succeeds and the answer reports that Plex no longer has the item
 - **THEN** a notice toast says that Plex no longer has it and autorefresh removed it from the queue
+
+#### Scenario: Plex answers the refresh with 404
+
+- **WHEN** the refresh fails because Plex no longer has the item
+- **THEN** an error toast says "Plex no longer has this item. It was deleted or moved."
 
 ### Requirement: Stop trying and Resume an item
 
