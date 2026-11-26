@@ -498,7 +498,7 @@ The image proxy SHALL request only a stored path of the form `/library/metadata/
 
 #### Scenario: Slow refresh
 
-- **WHEN** the refresh succeeds, and the action with its follow-up takes longer than the 1 minute write timeout of the server but less than 3 minutes
+- **WHEN** the refresh succeeds, and the server finishes writing its answer after the 1 minute write timeout of the server but within 3 minutes of the request
 - **THEN** the client still receives the `200` answer with `checked`
 
 ### Requirement: Item action route answers
