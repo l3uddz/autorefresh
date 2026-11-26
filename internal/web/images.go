@@ -8,12 +8,35 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
 )
 
-// photoTimeout bounds the Plex request of an image.
-const photoTimeout = 30 * time.Second
+const (
+	// photoTimeout bounds the Plex request of an image.
+	photoTimeout = 30 * time.Second
+	// defaultMaxImageFetches bounds concurrent upstream Plex photo fetches.
+	defaultMaxImageFetches = 16
+)
+
+var errInvalidImage = errors.New("unsupported image content type")
+
+type imageKey struct {
+	srv, width, height int
+	ratingKey, path    string
+}
+
+type imageCall struct {
+	done        chan struct{}
+	ctx         context.Context
+	cancel      context.CancelFunc
+	waiters     int
+	body        []byte
+	contentType string
+	err         error
+}
 
 // imageSize is the size of a scaled image, in pixels.
 type imageSize struct{ width, height int }
@@ -58,16 +81,10 @@ func (s *Server) serveImage(w http.ResponseWriter, r *http.Request, sizes map[st
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), photoTimeout)
-	body, err := s.servers[srv].Plex.Photo(ctx, it.RatingKey, imagePath, size.width, size.height)
-	cancel()
-	if errors.Is(err, plex.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	contentType := sniffImage(body)
-	if err != nil || contentType == "" {
-		writeError(w, http.StatusBadGateway, "image unavailable")
+	key := imageKey{srv: srv, ratingKey: it.RatingKey, path: imagePath, width: size.width, height: size.height}
+	body, contentType, err := s.fetchImage(r.Context(), key)
+	if err != nil {
+		s.writeImageError(w, r, err)
 		return
 	}
 	h := w.Header()
@@ -76,6 +93,91 @@ func (s *Server) serveImage(w http.ResponseWriter, r *http.Request, sizes map[st
 	h.Set("Cache-Control", "private, max-age=86400")
 	h.Set("Cross-Origin-Resource-Policy", "same-origin")
 	_, _ = w.Write(body)
+}
+
+func (s *Server) writeImageError(w http.ResponseWriter, r *http.Request, err error) {
+	if r.Context().Err() != nil {
+		log.Debug().Str("error", s.redact(err.Error())).Str("path", r.URL.Path).Msg("Image proxy request failed")
+		return
+	}
+	if errors.Is(err, plex.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	log.Warn().Str("error", s.redact(err.Error())).Str("path", r.URL.Path).Msg("Image proxy request failed")
+	writeError(w, http.StatusBadGateway, "image unavailable")
+}
+
+// fetchImage returns the validated image bytes and content type for key.
+// Identical concurrent requests register a shared call before waiting on
+// s.imageSem so only one leader acquires a slot and calls Plex.
+func (s *Server) fetchImage(ctx context.Context, key imageKey) ([]byte, string, error) {
+	call, leader := s.beginImageCall(key)
+	if leader {
+		go s.runImageCall(key, call)
+	}
+	select {
+	case <-call.done:
+		return call.body, call.contentType, call.err
+	case <-ctx.Done():
+		s.leaveImageCall(key, call)
+		return nil, "", ctx.Err()
+	}
+}
+
+func (s *Server) beginImageCall(key imageKey) (*imageCall, bool) {
+	s.imageMu.Lock()
+	defer s.imageMu.Unlock()
+	if call := s.imageCalls[key]; call != nil {
+		call.waiters++
+		return call, false
+	}
+	ctx, cancel := context.WithTimeout(s.baseCtx, photoTimeout)
+	call := &imageCall{done: make(chan struct{}), ctx: ctx, cancel: cancel, waiters: 1}
+	s.imageCalls[key] = call
+	return call, true
+}
+
+func (s *Server) leaveImageCall(key imageKey, call *imageCall) {
+	s.imageMu.Lock()
+	call.waiters--
+	if call.waiters == 0 {
+		if s.imageCalls[key] == call {
+			delete(s.imageCalls, key)
+		}
+		call.cancel()
+	}
+	s.imageMu.Unlock()
+}
+
+func (s *Server) runImageCall(key imageKey, call *imageCall) {
+	defer func() {
+		call.cancel()
+		s.imageMu.Lock()
+		if s.imageCalls[key] == call {
+			delete(s.imageCalls, key)
+		}
+		s.imageMu.Unlock()
+		close(call.done)
+	}()
+	select {
+	case s.imageSem <- struct{}{}:
+		defer func() { <-s.imageSem }()
+	case <-call.ctx.Done():
+		call.err = call.ctx.Err()
+		return
+	}
+	body, err := s.servers[key.srv].Plex.Photo(call.ctx, key.ratingKey, key.path, key.width, key.height)
+	if err != nil {
+		call.err = err
+		return
+	}
+	ct := sniffImage(body)
+	if ct == "" {
+		call.err = errInvalidImage
+		return
+	}
+	call.body, call.contentType = body, ct
 }
 
 // sizeParam returns the size that the size parameter names in sizes. It

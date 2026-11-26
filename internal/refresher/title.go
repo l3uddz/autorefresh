@@ -282,13 +282,17 @@ func (r *Refresher) titleRequestFailed(ctx context.Context, run *serverRun, mc m
 }
 
 // sameTitle returns the candidates whose title and year agree with the item
-// and the folder year pathYear (titleAgrees).
+// and the folder year pathYear (titleAgrees), deduplicating non-empty GUIDs.
 func sameTitle(it store.Item, pathYear int, cands []plex.Candidate) []plex.Candidate {
 	var out []plex.Candidate
 	for _, c := range cands {
-		if titleAgrees(it, pathYear, c.Name, c.Year) {
-			out = append(out, c)
+		if !titleAgrees(it, pathYear, c.Name, c.Year) {
+			continue
 		}
+		if c.GUID != "" && slices.ContainsFunc(out, func(o plex.Candidate) bool { return o.GUID == c.GUID }) {
+			continue
+		}
+		out = append(out, c)
 	}
 	return out
 }
@@ -392,9 +396,16 @@ func (r *Refresher) folderTMDBID(ctx context.Context, run *serverRun, mc matchCo
 	case slices.Contains(mc.d.evidence.TMDBMissing, id.title()):
 		return "", tmdbNone, nil
 	}
+	if value, ok := mc.d.resolvedTMDB[id.title()]; ok {
+		return value, tmdbOne, nil
+	}
 	value, entries, err := r.findTMDBID(ctx, run.server.Name, mc.it, id, !run.preview)
-	if err == nil && entries != tmdbOne {
-		mc.d.noTMDBEntry(id, entries)
+	if err == nil {
+		if entries == tmdbOne {
+			mc.d.rememberTMDB(id, value)
+		} else {
+			mc.d.noTMDBEntry(id, entries)
+		}
 	}
 	return value, entries, err
 }

@@ -10,6 +10,7 @@ const units: [limit: number, size: number, suffix: string][] = [
 
 /** Returns a short duration such as "45s", "12m", "3h", or "2d 4h". */
 export function duration(seconds: number): string {
+  if (!Number.isFinite(seconds)) return '—';
   const s = Math.max(0, Math.round(seconds));
   const [, size, suffix] = units.find(([limit]) => s < limit)!;
   const whole = Math.floor(s / size);
@@ -23,7 +24,9 @@ export function duration(seconds: number): string {
 /** Returns "in 2d 4h", "3h ago", or "just now" for an ISO time. */
 export function relative(value: string | undefined, now: number): string {
   if (!value) return '—';
-  const diff = (Date.parse(value) - now) / 1000;
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return '—';
+  const diff = (ms - now) / 1000;
   if (Math.abs(diff) < 30) return 'just now';
   return diff > 0 ? `in ${duration(diff)}` : `${duration(-diff)} ago`;
 }
@@ -34,9 +37,11 @@ export function relative(value: string | undefined, now: number): string {
  * it skip the start. */
 export function nextRunText(value: string | undefined, now: number): string | undefined {
   if (!value) return undefined;
-  const diff = (Date.parse(value) - now) / 1000;
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return undefined;
+  const diff = (ms - now) / 1000;
   if (Math.round(diff) <= 0) return 'starting';
-  return `in ${duration(diff)} · ${new Date(value).toLocaleTimeString(undefined, { timeStyle: 'short' })}`;
+  return `in ${duration(diff)} · ${new Date(ms).toLocaleTimeString(undefined, { timeStyle: 'short' })}`;
 }
 
 /** Returns when the next full cache refresh is due, as "in 4d 4h · Sun
@@ -45,9 +50,11 @@ export function nextRunText(value: string | undefined, now: number): string | un
  * the time has come, which wins over the page clock. */
 export function fullReadText(value: string | undefined, isDue: boolean, now: number): string | undefined {
   if (!value) return undefined;
-  const diff = (Date.parse(value) - now) / 1000;
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return undefined;
+  const diff = (ms - now) / 1000;
   if (isDue || Math.round(diff) <= 0) return 'with the next run';
-  return `in ${duration(diff)} · ${new Date(value).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`;
+  return `in ${duration(diff)} · ${new Date(ms).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`;
 }
 
 /** Returns the kind of a run: a bulk refresh, or a run named by how it read
@@ -72,13 +79,16 @@ export function runTitle(run: { kind: string; source: string; fullReads?: number
 /** Returns the time of value as a short local date and time. */
 export function dateTime(value?: string): string {
   if (!value) return '—';
-  return new Date(value).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return '—';
+  return new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 /** Returns the duration of a run, or "—" while it has no end. */
 export function runDuration(startedAt?: string, finishedAt?: string): string {
   if (!startedAt || !finishedAt) return '—';
-  return duration((Date.parse(finishedAt) - Date.parse(startedAt)) / 1000);
+  const diff = (Date.parse(finishedAt) - Date.parse(startedAt)) / 1000;
+  return Number.isFinite(diff) ? duration(diff) : '—';
 }
 
 /** Turns an API name such as "no-summary" into "no summary". */

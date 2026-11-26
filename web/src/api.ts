@@ -1,338 +1,9 @@
 import { useEffect, useState } from 'react';
-import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import type { ItemKey, TabName } from './route';
+import { useQuery, useQueryClient, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
+import type { ItemKey } from './route';
+import type { RunRecord, Servers, Status } from './api-types';
 
-// Types of the JSON API in internal/web. Times are RFC 3339 strings, and
-// an omitted time is undefined.
-
-export interface ItemRecord {
-  srv: number;
-  server?: string;
-  section?: string;
-  library?: string;
-  key: string;
-  type?: string;
-  title?: string;
-  year?: number;
-  path?: string;
-  thumb?: string;
-  art?: string;
-  cached: boolean;
-  reasons?: string[];
-  state?: string;
-  nextDue?: string;
-  addedAt?: string;
-  lastAttempt?: string;
-  stoppedAt?: string;
-  attempts: number;
-  refreshes: number;
-  lastAction?: string;
-  lastOutcome?: string;
-  lastMatchOutcome?: string;
-  completedAt?: string;
-  fixedAction?: string;
-  fixedMatch?: string;
-}
-
-export interface ItemPage {
-  items: ItemRecord[];
-  next?: string;
-  counts: Record<TabName, number>;
-}
-
-export interface TimelineEvent {
-  id: number;
-  at?: string;
-  kind: string;
-  source?: string;
-  action?: string;
-  accepted: boolean;
-  outcome?: string;
-  error?: string;
-  match?: { guid: string; title?: string; year?: number };
-  /** The request that fixed the item, on a completed event. */
-  fixedAction?: string;
-  /** The match that fixed the item, on a completed event. */
-  fixedMatch?: string;
-  /** The ID of the accepted match request that fixed the item. */
-  fixedMatchEventId?: number;
-  /** The match rule that stopped a match, on a match decision. */
-  conflict?: string;
-  pathYear?: number;
-  tmdbYear?: number;
-  episodeCount?: number;
-  /** The IDs whose search found or confirmed the request. */
-  links?: string[];
-  /** The searches of a match decision, in the order autorefresh made them. */
-  searches: MatchSearch[];
-  /** The year of the item when autorefresh decided, on a match decision. */
-  itemYear?: number;
-  /** The TMDB ID whose year and episodes the year check compared. */
-  tmdbId?: string;
-  /** Why the decision asked TMDB nothing: off, failed, tmdb-id, or no-source. */
-  tmdbSkip?: string;
-  /** The folder IDs that TMDB has no single entry for. */
-  tmdbMissing?: string[];
-  /** The alternate TMDB episode group that confirmed a series, if any. */
-  episodeGroup?: string;
-  /** The first season whose episode numbers differ from TMDB. */
-  episodeDiff?: EpisodeDiff;
-}
-
-/** The first season whose regular episode numbers differ from TMDB, with
- * the episode counts of Plex and TMDB. The episode check also names the
- * episode numbers that only TMDB (missing) or only Plex (extra) has. */
-export interface EpisodeDiff {
-  season: number;
-  plex: number;
-  tmdb: number;
-  missing?: number[];
-  extra?: number[];
-}
-
-/** One Plex match search: of a match decision, or of the Fix match dialog.
- * Source is path, tmdb, or tie in a decision, and title, id, path, or tmdb
- * in the dialog. FromId is the folder ID that a TMDB search came from. */
-export interface MatchSearch {
-  query: string;
-  source?: string;
-  fromId?: string;
-  failed: boolean;
-  candidates: Candidate[];
-}
-
-/** A match candidate of Plex. A score of 0 means that Plex gave none. The
- * thumb is a remote https URL, or absent. */
-export interface Candidate {
-  guid: string;
-  name?: string;
-  year?: number;
-  type?: string;
-  summary?: string;
-  thumb?: string;
-  score: number;
-  /** The verdict of a match decision: picked, or why it was not. */
-  verdict?: string;
-}
-
-/** A folder ID of an item, with the page of its provider. */
-export interface FolderID {
-  id: string;
-  link: string;
-}
-
-/** The answer of GET /api/item/matches. Only the opening search (without
- * q) reads the paths, so a typed search has no IDs, locations, or files. */
-export interface Matches {
-  ids: FolderID[];
-  locations: string[];
-  files: string[];
-  searches: MatchSearch[];
-  tmdbFailed: boolean;
-}
-
-/** The answer of POST /api/item/episode-check. */
-/** What the Plex metadata provider tells about a series candidate. */
-export interface CandidateSeries {
-  tmdbId?: string;
-  seasons?: number;
-  episodes?: number;
-}
-
-/** The answer of the episode check of a candidate. Seasons are the seasons
- * that the deciding comparison read: those of the confirming episode group,
- * or else the TMDB seasons up to the one that differs. Stopped is true when
- * that season ended the check before the later seasons of Plex.
- * EpisodeGroups names each TMDB episode group whose seasons the check read. */
-export interface EpisodeCheck {
-  match: boolean;
-  episodes: number;
-  episodeGroup?: string;
-  diff?: EpisodeDiff;
-  /** Absent in the answer of a server from before the comparison. */
-  seasons?: SeasonEpisodes[];
-  stopped?: boolean;
-  episodeGroups?: string[];
-}
-
-/** The sorted regular episode numbers of one season in Plex and in TMDB. */
-export interface SeasonEpisodes {
-  season: number;
-  plex: number[];
-  tmdb: number[];
-}
-
-export interface ItemDetail {
-  item: ItemRecord;
-  timeline: TimelineEvent[];
-}
-
-/** The answer of POST /api/item/refresh: the item detail after the
- * refresh, the fix match that the refresh applied, if any, and whether a
- * check after the request saved the current reasons of the item. Plex
- * accepted the refresh, so the answer leaves out a detail that autorefresh
- * failed to read. */
-export interface RefreshAnswer extends Partial<ItemDetail> {
-  match?: TimelineEvent['match'];
-  checked: boolean;
-}
-
-export interface LiveItem {
-  summary?: string;
-  guid?: string;
-  seasons?: number;
-  episodes?: number;
-  locations: string[];
-  files: string[];
-  path?: string;
-}
-
-export interface Library {
-  section: string;
-  title: string;
-  type: string;
-  lastRead?: string;
-}
-
-export interface ServerInfo {
-  srv: number;
-  name: string;
-  machineIdentifier?: string;
-  scanned: boolean;
-  /** When the next full cache refresh of a library is due, absent without
-   * libraries. */
-  nextFullRead?: string;
-  /** True when the next full cache refresh is due at the time of the
-   * answer. */
-  fullReadDue?: boolean;
-  libraries: Library[];
-}
-
-export interface Servers {
-  servers: ServerInfo[];
-  ignoreReasons: string[];
-}
-
-export interface RunProgress {
-  id: number;
-  kind: string;
-  source: string;
-  status: string;
-  startedAt: string;
-  finishedAt?: string;
-  error?: string;
-  recorded: boolean;
-  librariesRead: number;
-  library?: string;
-  selected: number;
-  due: number;
-  done: number;
-  refreshed: number;
-  matched: number;
-  failed: number;
-  skipped: number;
-  /** The item in work. */
-  current?: NowItem;
-  /** The item after the pace wait, which ends at nextAt. */
-  next?: NowItem;
-  nextAt?: string;
-  /** The last finished item, with its outcome and finish time. */
-  last?: NowItem;
-}
-
-/** An item of a run in the live status. thumb is the poster proxy URL. */
-export interface NowItem {
-  key: string;
-  title?: string;
-  year?: number;
-  type?: string;
-  library?: string;
-  reasons?: string[];
-  thumb?: string;
-  outcome?: string;
-  finishedAt?: string;
-}
-
-export type Health = 'unknown' | 'ok' | 'unreachable' | 'unauthorized';
-
-export interface ServerStatus {
-  srv: number;
-  name: string;
-  health: Health;
-  last?: RunProgress;
-  run: RunProgress | null;
-}
-
-export interface Status {
-  /** The process that took the snapshot. A restart starts a new one. */
-  boot: string;
-  /** The number of changes of that process before the snapshot. */
-  seq: number;
-  servers: ServerStatus[];
-  tmdb: 'off' | Health;
-  /** The next start of the run schedule, absent without a schedule. */
-  nextRun?: string;
-}
-
-export interface RunRecord {
-  id: number;
-  srv: number;
-  server: string;
-  kind: string;
-  source: string;
-  status: string;
-  startedAt?: string;
-  finishedAt?: string;
-  error?: string;
-  readItems: number;
-  refreshed: number;
-  matched: number;
-  failed: number;
-  completed: number;
-  fixed: number;
-  incomplete: number;
-  due: number;
-  selected: number;
-  skipped: number;
-  /** The libraries that the run read fully and incrementally. Older runs
-   * have neither. */
-  fullReads?: number;
-  incrementalReads?: number;
-  /** False for a run from before runs linked their events, which lists no
-   * item. */
-  eventsLinked: boolean;
-}
-
-export interface RunItem {
-  key: string;
-  title: string;
-  outcome: string;
-  error?: string;
-  /** The facts of the item, only in the details of a run. */
-  year?: number;
-  type?: string;
-  thumb?: string;
-  library?: string;
-}
-
-/** An event that a run wrote, with the item that it names. */
-export interface RunEvent extends TimelineEvent {
-  key: string;
-  title?: string;
-  /** The title of the library of the item. */
-  library?: string;
-  year?: number;
-  type?: string;
-  thumb?: string;
-}
-
-/** One run with the events that it wrote and, for a bulk refresh, the
- * outcome of each selected item. */
-export interface RunDetail {
-  run: RunRecord;
-  events: RunEvent[];
-  items: RunItem[];
-}
+export * from './api-types';
 
 /** An answer of the API other than 2xx, with the message of its body. */
 export class ApiError extends Error {
@@ -397,6 +68,8 @@ export function newerStatus(cached: Status | undefined, next: Status, client: Qu
   if (retired.has(next.boot)) return cached;
   retired.add(cached.boot);
   retiredBoots.set(client, retired);
+  client.removeQueries({ queryKey: ['candidate', cached.boot] });
+  client.removeQueries({ queryKey: ['auto-match', cached.boot] });
   return next;
 }
 
@@ -417,9 +90,11 @@ export function statusQuery(client: QueryClient) {
   };
 }
 
-export function useStatus() {
+export function useStatus(): UseQueryResult<Status>;
+export function useStatus<T>(select: (status: Status) => T): UseQueryResult<T>;
+export function useStatus<T = Status>(select?: (status: Status) => T) {
   const client = useQueryClient();
-  return useQuery({ ...statusQuery(client), staleTime: Infinity });
+  return useQuery({ ...statusQuery(client), staleTime: Infinity, select });
 }
 
 /** Reads the latest runs of the server srv, or of every server. */
@@ -445,6 +120,62 @@ export type Connection = 'connecting' | 'open' | 'reconnecting' | 'unavailable';
 
 const retryDelay = 3000;
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isRunProgress(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const r = value as Record<string, unknown>;
+  return (
+    isFiniteNumber(r.id) &&
+    typeof r.kind === 'string' &&
+    typeof r.source === 'string' &&
+    typeof r.status === 'string' &&
+    typeof r.startedAt === 'string' &&
+    typeof r.recorded === 'boolean' &&
+    isFiniteNumber(r.librariesRead) &&
+    isFiniteNumber(r.selected) &&
+    isFiniteNumber(r.due) &&
+    isFiniteNumber(r.done) &&
+    isFiniteNumber(r.refreshed) &&
+    isFiniteNumber(r.matched) &&
+    isFiniteNumber(r.failed) &&
+    isFiniteNumber(r.skipped)
+  );
+}
+
+/** Validates that value has the required runtime shape of a Status snapshot
+ * before the SSE handler reads boot, seq, or servers. */
+export function isStatusSnapshot(value: unknown): value is Status {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  if (typeof v.boot !== 'string' || !isFiniteNumber(v.seq) || typeof v.tmdb !== 'string') {
+    return false;
+  }
+  if (!Array.isArray(v.servers)) return false;
+  return v.servers.every(entry => {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return false;
+    const s = entry as Record<string, unknown>;
+    if (!isFiniteNumber(s.srv) || typeof s.name !== 'string' || typeof s.health !== 'string') return false;
+    if (s.run !== null && !isRunProgress(s.run)) return false;
+    if (s.last !== undefined && !isRunProgress(s.last)) return false;
+    return true;
+  });
+}
+
+/** Parses and validates one SSE status event payload, returning undefined on
+ * malformed JSON or an unexpected snapshot shape. */
+export function parseStatusEvent(raw: string): Status | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  return isStatusSnapshot(parsed) ? parsed : undefined;
+}
+
 /** Keeps the status query up to date from GET /api/events and refreshes
  * the lists when a run ends, and when a stream connects: a run may have
  * ended before it, after the lists loaded. A run that starts refreshes the
@@ -454,6 +185,7 @@ export function useLiveStatus(): Connection {
   const [connection, setConnection] = useState<Connection>('connecting');
 
   useEffect(() => {
+    let disposed = false;
     let stream: EventSource | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
     // The last runs of the newest status, undefined until the first
@@ -463,42 +195,55 @@ export function useLiveStatus(): Connection {
     let lastRunning: string | undefined;
     let wasOpen = false;
 
-    const onStatus = (event: MessageEvent<string>) => {
-      const next = JSON.parse(event.data) as Status;
-      const status = newerStatus(client.getQueryData<Status>(['status']), next, client);
-      const runs = JSON.stringify(status.servers.map(({ last }) => [last?.id, last?.finishedAt]));
-      if (runs !== lastRuns) invalidateLists(client);
-      lastRuns = runs;
-      // A run that starts adds a row to the run history.
-      const running = JSON.stringify(status.servers.map(({ run }) => run?.id));
-      if (lastRunning !== undefined && running !== lastRunning) void client.invalidateQueries({ queryKey: ['runs'] });
-      lastRunning = running;
-      if (status === next) client.setQueryData(['status'], status);
-    };
-
     const connect = () => {
-      stream = new EventSource('./api/events');
-      stream.addEventListener('status', onStatus);
-      stream.onopen = () => {
+      if (disposed) return;
+      clearTimeout(retry);
+      retry = undefined;
+      const source = new EventSource('./api/events');
+      stream = source;
+      const onStatus = (event: MessageEvent<string>) => {
+        if (disposed || stream !== source) return;
+        const next = parseStatusEvent(event.data);
+        if (!next) return;
+        const status = newerStatus(client.getQueryData<Status>(['status']), next, client);
+        const runs = JSON.stringify(status.servers.map(({ last }) => [last?.id, last?.finishedAt]));
+        const running = JSON.stringify(status.servers.map(({ run }) => run?.id));
+        if (runs !== lastRuns) {
+          invalidateLists(client);
+        } else if (lastRunning !== undefined && running !== lastRunning) {
+          // A run that starts adds a row to the run history.
+          void client.invalidateQueries({ queryKey: ['runs'] });
+        }
+        lastRuns = runs;
+        lastRunning = running;
+        if (status === next) client.setQueryData(['status'], status);
+      };
+      source.addEventListener('status', onStatus);
+      source.onopen = () => {
+        if (disposed || stream !== source) return;
         // Each open, also a reconnect of the browser, starts again.
         lastRuns = undefined;
         wasOpen = true;
         setConnection('open');
       };
-      stream.onerror = () => {
+      source.onerror = () => {
+        if (disposed || stream !== source) return;
         setConnection(wasOpen ? 'reconnecting' : 'unavailable');
         // A stream that the browser gave up on (for example after a 503 or
         // a proxy error page) does not retry by itself.
-        if (stream?.readyState === EventSource.CLOSED) {
-          stream.close();
+        if (source.readyState === EventSource.CLOSED) {
+          source.close();
+          clearTimeout(retry);
           retry = setTimeout(connect, retryDelay);
         }
       };
     };
     connect();
     return () => {
+      disposed = true;
       clearTimeout(retry);
       stream?.close();
+      stream = undefined;
     };
   }, [client]);
 

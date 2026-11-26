@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -15,7 +14,7 @@ import (
 // zerolog write durations in the Go form, such as 11m3.814s.
 func newLogger(console io.Writer, path string, verbosity int) zerolog.Logger {
 	zerolog.DurationFieldFormat = zerolog.DurationFormatString
-	logger := log.Output(zerolog.MultiLevelWriter(zerolog.ConsoleWriter{
+	logger := zerolog.New(zerolog.MultiLevelWriter(zerolog.ConsoleWriter{
 		TimeFormat: time.Stamp,
 		Out:        console,
 	}, zerolog.ConsoleWriter{
@@ -27,7 +26,7 @@ func newLogger(console io.Writer, path string, verbosity int) zerolog.Logger {
 			MaxBackups: 5,
 		},
 		NoColor: true,
-	}))
+	})).With().Timestamp().Logger()
 
 	switch {
 	case verbosity == 1:

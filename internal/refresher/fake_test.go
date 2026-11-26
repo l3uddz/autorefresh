@@ -115,6 +115,17 @@ func (f *fakePlex) ItemPaths(ctx context.Context, ratingKey string) (plex.Paths,
 	return plex.Paths{Locations: f.paths[ratingKey]}, nil
 }
 
+func (f *fakePlex) ItemWithPaths(ctx context.Context, ratingKey string) (plex.Item, plex.Paths, error) {
+	if err := canceled(ctx); err != nil {
+		return plex.Item{}, plex.Paths{}, err
+	}
+	f.record("ItemWithPaths " + ratingKey)
+	if err := f.pathErrs[ratingKey]; err != nil {
+		return plex.Item{}, plex.Paths{}, err
+	}
+	return unmatchedItem(ratingKey), plex.Paths{Locations: f.paths[ratingKey]}, nil
+}
+
 func (f *fakePlex) EpisodeNumbers(ctx context.Context, ratingKey string) (map[int][]int, error) {
 	if err := canceled(ctx); err != nil {
 		return nil, err

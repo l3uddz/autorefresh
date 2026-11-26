@@ -1,6 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { newerStatus, statusQuery, type Status } from './api';
+import { newerStatus, parseStatusEvent, statusQuery, type Status } from './api';
 
 const status = (boot: string, seq: number): Status => ({ boot, seq, tmdb: 'off', servers: [] });
 
@@ -71,5 +71,36 @@ describe('status order', () => {
     const next = status('b', 2);
     expect(newerStatus(result, next, client)).toEqual(next);
     client.clear();
+  });
+
+  it('evicts retired-boot candidate and auto-match caches when switching boots', () => {
+    const client = new QueryClient();
+    client.setQueryData(['candidate', 'a', '0', 'plex://show/1'], { tmdbId: '1' });
+    client.setQueryData(['auto-match', 'a', 'srv=0&key=1'], { id: 0 });
+    client.setQueryData(['candidate', 'b', '0', 'plex://show/1'], { tmdbId: '2' });
+
+    newerStatus(status('a', 3), status('b', 0), client);
+
+    expect(client.getQueryData(['candidate', 'a', '0', 'plex://show/1'])).toBeUndefined();
+    expect(client.getQueryData(['auto-match', 'a', 'srv=0&key=1'])).toBeUndefined();
+    expect(client.getQueryData(['candidate', 'b', '0', 'plex://show/1'])).toEqual({ tmdbId: '2' });
+    client.clear();
+  });
+
+  it('ignores malformed JSON and invalid snapshot shapes in SSE status events', () => {
+    expect(parseStatusEvent('{not json')).toBeUndefined();
+    expect(parseStatusEvent('null')).toBeUndefined();
+    expect(parseStatusEvent('{}')).toBeUndefined();
+    expect(parseStatusEvent(JSON.stringify({ boot: 'a', seq: 1, tmdb: 'off' }))).toBeUndefined();
+    expect(parseStatusEvent(JSON.stringify({ boot: 'a', seq: 1, tmdb: 'off', servers: [null] }))).toBeUndefined();
+    expect(parseStatusEvent(JSON.stringify({ boot: 'a', seq: 1, tmdb: 'off', servers: [{ srv: 0, name: 'Home', health: 'ok', run: 'bad' }] }))).toBeUndefined();
+    expect(parseStatusEvent(JSON.stringify({ boot: 'a', seq: 1, tmdb: 'off', servers: [{ srv: 0, name: 'Home', health: 'ok', run: [] }] }))).toBeUndefined();
+    expect(parseStatusEvent(JSON.stringify({ boot: 'a', seq: 1, tmdb: 'off', servers: [{ srv: 0, name: 'Home', health: 'ok', run: null, last: {} }] }))).toBeUndefined();
+    const run = {
+      id: 7, kind: 'run' as const, source: 'schedule' as const, status: 'running' as const, startedAt: '2026-11-26T00:00:00Z',
+      recorded: false, librariesRead: 1, selected: 2, due: 2, done: 0, refreshed: 0, matched: 0, failed: 0, skipped: 0,
+    };
+    const valid: Status = { boot: 'a', seq: 2, tmdb: 'off', servers: [{ srv: 0, name: 'Home', health: 'ok', run, last: { ...run, status: 'finished', recorded: true } }] };
+    expect(parseStatusEvent(JSON.stringify(valid))).toEqual(valid);
   });
 });

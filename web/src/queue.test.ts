@@ -1,6 +1,6 @@
 import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { RunProgress, RunRecord, Status } from './api';
+import type { RunProgress, RunRecord, RunStatus, Status } from './api';
 import type { BulkRequest } from './bulk';
 import { cancelBulkQueue, cancelQueueOfJob, currentQueue, isQueueActive, NothingMatched, onQueueDone, queueFailed, queueOutcome, queueText, queueTiming, resetQueue, startBulkRefresh, type BulkQueue, type QueueStep } from './queue';
 
@@ -52,7 +52,7 @@ function fakeApi(refresh: Record<number, Answer[]>, items: Record<number, string
 const accepted = (id: number, count: number): Answer => ({ status: 202, body: { id, count } });
 const noItems: Answer = { status: 400, body: { error: 'no items' } };
 
-function storedRun(id: number, srv: number, status: string): RunRecord {
+function storedRun(id: number, srv: number, status: RunStatus): RunRecord {
   return { id, srv, server: '', kind: 'bulk-refresh', source: 'manual', status, readItems: 0, refreshed: 0, matched: 0, failed: 0, completed: 0, fixed: 0, incomplete: 0, due: 0, selected: 0, skipped: 0, eventsLinked: true };
 }
 
@@ -62,7 +62,7 @@ function freshStatus(boot = 'restarted', seq = 0): Status {
   return { boot, seq, tmdb: 'off', servers: [0, 1, 2].map(srv => ({ srv, name: '', health: 'ok' as const, run: null })) };
 }
 
-function lastRun(id: number, status: string, recorded = true): RunProgress {
+function lastRun(id: number, status: RunStatus, recorded = true): RunProgress {
   return { id, kind: 'bulk-refresh', source: 'manual', status, startedAt: '', recorded, librariesRead: 0, selected: 0, due: 0, done: 0, refreshed: 0, matched: 0, failed: 0, skipped: 0 };
 }
 

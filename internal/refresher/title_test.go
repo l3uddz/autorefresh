@@ -531,7 +531,7 @@ func TestRefreshItemAppliesTheTitleMatch(t *testing.T) {
 	f, fp, _ := titleFixture(t, "imdb-tt1")
 	f.now = t0
 	f.saveLibrary(showsLib)
-	f.r.servers[0].Plex = checkedMetadata{fakePlex: fp, answers: []checkAnswer{{item: unmatchedItem("201")}, {item: completeItem("201")}}, checks: new(int)}
+	f.r.servers[0].Plex = checkedMetadata{fakePlex: fp, answers: []checkAnswer{{item: unmatchedItem("201")}, {item: unmatchedItem("201")}, {item: completeItem("201")}}, checks: new(int)}
 
 	res, err := f.r.RefreshItem(t.Context(), testServer, "201")
 	if err != nil {
@@ -678,6 +678,22 @@ func TestTitleMatchStalePlexYearSameGUIDTwice(t *testing.T) {
 	wantCalls(t, ft.calls, "PremiereYear 88", "SeasonEpisodes 88 1")
 	wantDecision(t, f.decision("201"), store.DecisionMatched, "",
 		"title Title 201: plex://show/s=picked plex://show/o=other title plex://show/s=picked")
+}
+
+// Same-title matching deduplicates identical non-empty Plex GUIDs so one series
+// listed twice does not trigger conflictSeveral.
+func TestTitleMatchSameGUIDTwiceDeduplicates(t *testing.T) {
+	f, fp, _ := titleFixture(t)
+	fp.candidates[titleSearch] = []plex.Candidate{
+		{GUID: "plex://show/t", Name: "Title 201", Year: 2020},
+		{GUID: "plex://show/t", Name: "Title 201", Year: 2020},
+	}
+
+	f.run(t0)
+
+	wantCalls(t, sends(fp.calls), "Match 201 plex://show/t", "Refresh 201")
+	wantDecision(t, f.decision("201"), store.DecisionMatched, "",
+		"title Title 201: plex://show/t=picked plex://show/t=picked")
 }
 
 // A candidate without a Plex year has no year that could be stale, so

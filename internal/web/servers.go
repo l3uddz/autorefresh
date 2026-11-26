@@ -133,28 +133,65 @@ func (s *Server) machineIdentifiers(ctx context.Context) []string {
 	return ids
 }
 
+type identityCall struct {
+	done chan struct{}
+	id   string
+}
+
 // readIdentity asks the server srv for its machine identifier and caches it.
-// A failed lookup can retry after identityRetry.
+// Concurrent callers share one Plex lookup, and caller cancellation does not
+// abort it or start the retry wait. A failed lookup can retry after identityRetry.
 func (s *Server) readIdentity(ctx context.Context, srv int) string {
-	s.idMu.Lock()
-	id := s.identities[srv]
-	now := s.now()
-	if id != "" || (!s.identityTried[srv].IsZero() && now.Sub(s.identityTried[srv]) < identityRetry) {
-		s.idMu.Unlock()
+	id, call, leader := s.beginIdentityCall(srv)
+	if call == nil {
 		return id
 	}
-	s.identityTried[srv] = now
-	s.idMu.Unlock()
-	ctx, cancel := context.WithTimeout(ctx, identityTimeout)
+	if leader {
+		go s.runIdentityCall(srv, call)
+	}
+	select {
+	case <-call.done:
+		return call.id
+	case <-ctx.Done():
+		return ""
+	}
+}
+
+func (s *Server) beginIdentityCall(srv int) (string, *identityCall, bool) {
+	s.idMu.Lock()
+	defer s.idMu.Unlock()
+	if id := s.identities[srv]; id != "" {
+		return id, nil, false
+	}
+	if call := s.identityCalls[srv]; call != nil {
+		return "", call, false
+	}
+	if tried := s.identityTried[srv]; !tried.IsZero() && s.now().Sub(tried) < identityRetry {
+		return "", nil, false
+	}
+	call := &identityCall{done: make(chan struct{})}
+	s.identityCalls[srv] = call
+	return "", call, true
+}
+
+func (s *Server) runIdentityCall(srv int, call *identityCall) {
+	ctx, cancel := context.WithTimeout(s.baseCtx, identityTimeout)
 	defer cancel()
 	ps := s.servers[srv]
 	id, err := ps.Plex.Identity(ctx)
-	if err != nil {
-		log.Debug().Str("server", ps.Name).Str("error", s.redact(err.Error())).Msg("Reading Plex identity failed")
-		return ""
-	}
 	s.idMu.Lock()
-	s.identities[srv] = id
+	if err != nil || id == "" {
+		if s.baseCtx.Err() == nil {
+			s.identityTried[srv] = s.now()
+		}
+		if err != nil {
+			log.Debug().Str("server", ps.Name).Str("error", s.redact(err.Error())).Msg("Reading Plex identity failed")
+		}
+	} else {
+		s.identities[srv] = id
+		call.id = id
+	}
+	s.identityCalls[srv] = nil
 	s.idMu.Unlock()
-	return id
+	close(call.done)
 }

@@ -36,6 +36,16 @@ type decisionLog struct {
 	// severalTMDB are the path IDs of TMDBMissing that TMDB has several
 	// entries for, so the folder names no single series.
 	severalTMDB []string
+	// resolvedTMDB caches positive pathID -> TMDB ID resolutions within one
+	// evaluation so preview evaluations do not query TMDB twice for one ID.
+	resolvedTMDB map[string]string
+}
+
+func (d *decisionLog) rememberTMDB(from pathID, tmdbID string) {
+	if d.resolvedTMDB == nil {
+		d.resolvedTMDB = map[string]string{}
+	}
+	d.resolvedTMDB[from.title()] = tmdbID
 }
 
 // skipTMDB keeps the first reason why the evaluation asked TMDB nothing. An

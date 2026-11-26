@@ -108,10 +108,17 @@ func (s *Store) FinishJob(id int64, start RunStart, r RunResult, items []RunItem
 	if err != nil || !written {
 		return false, err
 	}
-	for _, item := range items {
-		if _, err := tx.Exec(`INSERT INTO run_item (run_id, position, rating_key, title, outcome, error)
-   VALUES (?, ?, ?, ?, ?, ?)`, id, item.Position, item.RatingKey, item.Title, item.Outcome, item.Error); err != nil {
-			return false, fmt.Errorf("record run item: %w", err)
+	if len(items) > 0 {
+		stmt, err := tx.Prepare(`INSERT INTO run_item (run_id, position, rating_key, title, outcome, error)
+   VALUES (?, ?, ?, ?, ?, ?)`)
+		if err != nil {
+			return false, fmt.Errorf("prepare run item: %w", err)
+		}
+		defer stmt.Close()
+		for _, item := range items {
+			if _, err := stmt.Exec(id, item.Position, item.RatingKey, item.Title, item.Outcome, item.Error); err != nil {
+				return false, fmt.Errorf("record run item: %w", err)
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -141,12 +148,13 @@ func finishRunRow(tx *sql.Tx, id int64, start RunStart, r RunResult) (bool, erro
 }
 
 // restoreRun stores the finished run id again, unless its server no longer
-// has a library row.
+// has a library row. Its events were unlinked when retention removed the row,
+// so events_linked is recorded as 0.
 func restoreRun(tx *sql.Tx, id int64, start RunStart, r RunResult) (bool, error) {
 	res, err := tx.Exec(`INSERT INTO run (id, server, kind, source, started_at, status, finished_at, error,
   read_items, refreshed, matched, failed, completed, fixed, incomplete, due, selected, skipped,
-  full_reads, incremental_reads)
-  SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+  full_reads, incremental_reads, events_linked)
+  SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0
   WHERE EXISTS (SELECT 1 FROM library WHERE server = ?)`,
 		id, start.Server, start.Kind, start.Source, start.StartedAt.Unix(), r.Status, r.FinishedAt.Unix(), r.Error,
 		r.ReadItems, r.Refreshed, r.Matched, r.Failed, r.Completed, r.Fixed, r.Incomplete, r.Due, r.Selected, r.Skipped,
@@ -193,7 +201,8 @@ func (s *Store) PruneHistory(before time.Time) (events, runs int, err error) {
 
 	cutoff := before.Unix()
 	if _, err := tx.Exec(`UPDATE item SET last_match_event_id = NULL
-		WHERE last_match_event_id IN (SELECT id FROM event WHERE at < ?)`, cutoff); err != nil {
+		WHERE last_match_event_id IS NOT NULL
+			AND EXISTS (SELECT 1 FROM event WHERE id = item.last_match_event_id AND at < ?)`, cutoff); err != nil {
 		return 0, 0, fmt.Errorf("clear match events: %w", err)
 	}
 	if events, err = deleteBefore(tx, `DELETE FROM event WHERE at < ?`, cutoff); err != nil {
@@ -426,6 +435,30 @@ const runItemsQuery = `SELECT ri.position, ri.rating_key, ri.title, ri.outcome, 
 // RunItems returns the bulk outcomes in selection order.
 func (s *Store) RunItems(ctx context.Context, runID int64) ([]RunItem, error) {
 	return runItems(ctx, s.db, runID)
+}
+
+// RunItemsWithServer returns the server name and bulk outcomes of runID in one
+// read-only transaction, or found=false when no such run exists.
+func (s *Store) RunItemsWithServer(ctx context.Context, runID int64) (string, []RunItem, bool, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return "", nil, false, fmt.Errorf("begin run items: %w", err)
+	}
+	defer tx.Rollback()
+
+	var server string
+	err = tx.QueryRowContext(ctx, `SELECT server FROM run WHERE id = ?`, runID).Scan(&server)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil, false, nil
+	}
+	if err != nil {
+		return "", nil, false, fmt.Errorf("read run server: %w", err)
+	}
+	items, err := runItems(ctx, tx, runID)
+	if err != nil {
+		return "", nil, false, err
+	}
+	return server, items, true, nil
 }
 
 func runItems(ctx context.Context, q querier, runID int64) ([]RunItem, error) {

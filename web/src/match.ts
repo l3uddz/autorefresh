@@ -262,19 +262,19 @@ export function isIDSearch(text: string): boolean {
   return match[1].toLowerCase() === 'imdb' ? imdbValue.test(match[2]) : /^\d+$/.test(match[2]);
 }
 
-export type SearchInput = { error: string } | TypedSearch;
+export type SearchInput = { error: string; field: 'q' | 'year' } | TypedSearch;
 
 /** Checks a typed search before it is sent. The API runs the opening
  * search for an empty text, so a typed search needs text. The year is
  * optional: a positive number of at most four digits. */
 export function checkSearch(text: string, year: string): SearchInput {
   const q = text.trim();
-  if (!q) return { error: 'Enter a title or an ID.' };
-  if (new TextEncoder().encode(q).length > maxSearchBytes) return { error: `Use at most ${maxSearchBytes} bytes.` };
+  if (!q) return { error: 'Enter a title or an ID.', field: 'q' };
+  if (new TextEncoder().encode(q).length > maxSearchBytes) return { error: `Use at most ${maxSearchBytes} bytes.`, field: 'q' };
   if (isIDSearch(q)) return { q };
   const y = year.trim();
   if (!y) return { q };
-  if (!/^\d{1,4}$/.test(y) || Number(y) < 1) return { error: 'The year must be a number from 1 to 9999.' };
+  if (!/^\d{1,4}$/.test(y) || Number(y) < 1) return { error: 'The year must be a number from 1 to 9999.', field: 'year' };
   return { q, year: Number(y) };
 }
 

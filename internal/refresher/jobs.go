@@ -123,12 +123,17 @@ func (j *Jobs) selectServers(names []string) ([]Server, error) {
 	if names == nil {
 		return j.r.servers, nil
 	}
+	seen := make(map[string]bool, len(names))
 	servers := make([]Server, 0, len(names))
 	for _, name := range names {
+		if seen[name] {
+			continue
+		}
 		srv, err := j.r.serverNamed(name)
 		if err != nil {
 			return nil, err
 		}
+		seen[name] = true
 		servers = append(servers, srv)
 	}
 	return servers, nil
@@ -184,13 +189,21 @@ func (j *Jobs) prepareBulk(server string, keys []string) (*serverRun, []bulkAdmi
 	if err != nil {
 		return nil, nil, err
 	}
+	if j.ctx.Err() != nil {
+		return nil, nil, ErrClosed
+	}
+	known, err := j.r.store.KnownItems(j.ctx, server, keys)
+	if err != nil {
+		if j.ctx.Err() != nil {
+			return nil, nil, ErrClosed
+		}
+		return nil, nil, fmt.Errorf("%w: %w", ErrStore, err)
+	}
 	items := make([]bulkAdmission, len(keys))
 	titles := libraryTitles{store: j.r.store, server: server}
 	for i, key := range keys {
-		row, cached, _, err := j.r.store.KnownItem(server, key)
-		if err != nil {
-			return nil, nil, fmt.Errorf("%w: %w", ErrStore, err)
-		}
+		k := known[key]
+		row := k.Item
 		library, err := titles.title(row.Section)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%w: %w", ErrStore, err)
@@ -200,7 +213,10 @@ func (j *Jobs) prepareBulk(server string, keys []string) (*serverRun, []bulkAdmi
 		shown := progressItem(row, library)
 		shown.RatingKey, shown.Reasons = key, 0
 		items[i] = bulkAdmission{item: store.RunItem{Position: i, RatingKey: key, Title: row.Title, Outcome: store.ItemNotReached},
-			shown: shown, attempts: row.Attempts, cached: cached}
+			shown: shown, attempts: row.Attempts, cached: k.Cached}
+	}
+	if j.ctx.Err() != nil {
+		return nil, nil, ErrClosed
 	}
 	start := store.RunStart{Server: server, Kind: store.RunKindBulkRefresh, Source: store.RunSourceManual, StartedAt: j.r.now()}
 	id, err := j.r.store.StartRun(start)
@@ -219,6 +235,9 @@ type libraryTitles struct {
 
 // title returns the title of the library section, or "" if it is unknown.
 func (l *libraryTitles) title(section string) (string, error) {
+	if section == "" {
+		return "", nil
+	}
 	if title, ok := l.seen[section]; ok {
 		return title, nil
 	}
@@ -341,11 +360,11 @@ func (r *Refresher) finishBulk(ctx context.Context, run *serverRun, items []stor
 	res := run.result(r.now(), canceled, err)
 	recorded, saveErr := r.store.FinishJob(run.id, run.startInfo, res, items)
 	r.progress().RunFinished(run.server.Name, res, err, recorded && saveErr == nil)
-	if saveErr != nil || !recorded {
-		reason = "result not recorded"
-	}
 	if reason != "" {
-		log.Error().Str("server", run.server.Name).Int64("run", run.id).Str("reason", reason).Msg("Bulk refresh failed")
+		log.Error().Str("server", run.server.Name).Int64("run", run.id).Str("reason", reason).Err(err).Msg("Bulk refresh failed")
+	}
+	if saveErr != nil || !recorded {
+		log.Error().Str("server", run.server.Name).Int64("run", run.id).Err(saveErr).Msg("Recording bulk refresh failed")
 	}
 	log.Info().Str("server", run.server.Name).Int("selected", run.selected).Int("refresh_requests", run.refreshes).
 		Int("failed_requests", run.failures).Int("skipped_items", run.skipped).Dur("duration", r.now().Sub(run.began)).Msg("Bulk refresh summary")

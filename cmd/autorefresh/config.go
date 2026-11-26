@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -35,9 +36,38 @@ func applyDefaultPaths(config, database, logFile *string) {
 
 // Tests replace these functions.
 var (
-	sleepFunc    = sleepContext // waits between two checks of the config file
-	readFileFunc = os.ReadFile  // reads the config file
+	sleepFunc    = sleepContext   // waits between two checks of the config file
+	readFileFunc = readConfigFile // reads the config file with a 1 MiB cap
 )
+
+// readConfigFile opens path, validates the opened file's metadata, and reads
+// at most maxConfigBytes+1 bytes so a file that grows or is replaced after
+// os.Stat cannot trigger an unbounded allocation.
+func readConfigFile(path string) ([]byte, error) {
+	f, err := openConfigFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	if info.Size() > maxConfigBytes {
+		return nil, fmt.Errorf("%s is larger than 1 MiB", path)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxConfigBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxConfigBytes {
+		return nil, fmt.Errorf("%s is larger than 1 MiB", path)
+	}
+	return data, nil
+}
 
 // sleepContext waits for d. It returns the error of ctx if ctx ends first.
 func sleepContext(ctx context.Context, d time.Duration) error {
@@ -87,6 +117,9 @@ func readConfig(ctx context.Context, path string, interval time.Duration) ([]byt
 	}
 }
 
+// maxConfigBytes bounds the config file size before reading it into memory.
+const maxConfigBytes = 1 << 20
+
 // checkConfig checks the config file at path once. It returns the content
 // of the file if the file is ready: it has content, it did not change during
 // the read, and after a wait it has the same state as seen. Otherwise it
@@ -103,6 +136,8 @@ func checkConfig(path string, waited bool, seen os.FileInfo) (data []byte, state
 		return nil, nil, fmt.Errorf("%s is not a regular file", path)
 	case info.Size() == 0:
 		return nil, nil, nil
+	case info.Size() > maxConfigBytes:
+		return nil, nil, fmt.Errorf("%s is larger than 1 MiB", path)
 	case waited && !sameState(seen, info):
 		return nil, info, nil
 	}
@@ -113,6 +148,9 @@ func checkConfig(path string, waited bool, seen os.FileInfo) (data []byte, state
 	}
 	if err != nil {
 		return nil, nil, err
+	}
+	if len(data) > maxConfigBytes {
+		return nil, nil, fmt.Errorf("%s is larger than 1 MiB", path)
 	}
 	after, err := os.Stat(path)
 	if err != nil || len(data) == 0 || !sameState(info, after) {

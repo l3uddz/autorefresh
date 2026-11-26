@@ -61,14 +61,16 @@ func TestServeWaitsForFirstRun(t *testing.T) {
 }
 
 type shutdownJobs struct {
-	started chan struct{}
-	order   chan string
+	started   chan struct{}
+	schedDone chan struct{}
+	order     chan string
 }
 
 func (j shutdownJobs) Scheduled(ctx context.Context) {
 	close(j.started)
 	<-ctx.Done()
 	j.order <- "scheduled-return"
+	close(j.schedDone)
 }
 
 func (j shutdownJobs) Close() { j.order <- "jobs-close" }
@@ -78,8 +80,18 @@ type stopFunc func(context.Context) error
 func (stop stopFunc) Stop(ctx context.Context) error { return stop(ctx) }
 
 func TestServeUntilStoppedDrainsInOrder(t *testing.T) {
-	jobs := shutdownJobs{started: make(chan struct{}), order: make(chan string, 3)}
+	jobs := shutdownJobs{
+		started:   make(chan struct{}),
+		schedDone: make(chan struct{}),
+		order:     make(chan string, 3),
+	}
 	ui := stopFunc(func(context.Context) error {
+		// Verify the scheduled run is canceled without waiting for stopUI.
+		select {
+		case <-jobs.schedDone:
+		case <-time.After(5 * time.Second):
+			t.Error("scheduled run was not canceled while UI was stopping")
+		}
 		jobs.order <- "ui-stop"
 		return nil
 	})
@@ -101,7 +113,7 @@ func TestServeUntilStoppedDrainsInOrder(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("shutdown did not finish")
 	}
-	for _, want := range []string{"ui-stop", "scheduled-return", "jobs-close"} {
+	for _, want := range []string{"scheduled-return", "ui-stop", "jobs-close"} {
 		select {
 		case got := <-jobs.order:
 			if got != want {

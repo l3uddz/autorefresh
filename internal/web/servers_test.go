@@ -356,3 +356,113 @@ func TestServersNextFullReadWithoutNextTime(t *testing.T) {
 		t.Errorf("next full read = %v, due %v, want now (%v) and due", h, got.Servers[0].FullReadDue, testNow)
 	}
 }
+
+type blockingIdentityPlex struct {
+	fakePlex
+	entered chan struct{}
+	release chan struct{}
+	done    chan struct{}
+}
+
+func (b *blockingIdentityPlex) Identity(ctx context.Context) (string, error) {
+	b.mu.Lock()
+	b.calls++
+	b.mu.Unlock()
+	select {
+	case <-b.entered:
+	default:
+		close(b.entered)
+	}
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	defer func() {
+		select {
+		case <-b.done:
+		default:
+			close(b.done)
+		}
+	}()
+	return b.id, b.err
+}
+
+func TestServersIdentityCoalescesConcurrentRequests(t *testing.T) {
+	st := openStore(t)
+	bp := &blockingIdentityPlex{
+		fakePlex: fakePlex{id: "shared-id"},
+		entered:  make(chan struct{}),
+		release:  make(chan struct{}),
+		done:     make(chan struct{}),
+	}
+	s := newServerWith(st, 0, []PlexServer{{Name: "Home", Plex: bp}})
+
+	var wg sync.WaitGroup
+	results := make([]serversAnswer, 2)
+	for i := range 2 {
+		wg.Go(func() {
+			getJSON(t, s, "/api/servers", &results[i])
+		})
+	}
+	<-bp.entered
+	// Give the second goroutine a brief moment to join the in-flight call.
+	time.Sleep(20 * time.Millisecond)
+	close(bp.release)
+	wg.Wait()
+
+	if n := bp.identityCalls(); n != 1 {
+		t.Fatalf("Identity calls = %d, want 1", n)
+	}
+	for i, got := range results {
+		if len(got.Servers) != 1 || got.Servers[0].MachineIdentifier == nil || *got.Servers[0].MachineIdentifier != "shared-id" {
+			t.Errorf("result[%d] = %+v, want shared-id", i, got.Servers)
+		}
+	}
+}
+
+func TestServersIdentityCallerCancelDoesNotPoisonCooldown(t *testing.T) {
+	st := openStore(t)
+	bp := &blockingIdentityPlex{
+		fakePlex: fakePlex{id: "cached-id"},
+		entered:  make(chan struct{}),
+		release:  make(chan struct{}),
+		done:     make(chan struct{}),
+	}
+	s := newServerWith(st, 0, []PlexServer{{Name: "Home", Plex: bp}})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/servers", nil)
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		serve(s, req)
+	}()
+	<-bp.entered
+	cancel()
+	<-firstDone
+
+	// Upstream finishes after the first caller disconnected.
+	close(bp.release)
+	<-bp.done
+	// Wait briefly for runIdentityCall to store the cached identity.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		s.idMu.Lock()
+		cached := s.identities[0]
+		s.idMu.Unlock()
+		if cached != "" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	var got serversAnswer
+	getJSON(t, s, "/api/servers", &got)
+	if len(got.Servers) != 1 || got.Servers[0].MachineIdentifier == nil || *got.Servers[0].MachineIdentifier != "cached-id" {
+		t.Fatalf("second caller = %+v, want cached-id", got.Servers)
+	}
+	if n := bp.identityCalls(); n != 1 {
+		t.Errorf("Identity calls = %d, want 1", n)
+	}
+}

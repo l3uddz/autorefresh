@@ -46,8 +46,8 @@ func TestRunRechecksSameSecondManualAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto}
-	if err := f.r.runItem(t.Context(), run, batch); err != nil {
-		t.Fatal(err)
+	if sent, err := f.r.runItem(t.Context(), run, batch); err != nil || sent {
+		t.Fatalf("runItem = sent %v, err %v", sent, err)
 	}
 	current, _ := f.row("home", "1", "1")
 	if run.skipped != 1 || current.Attempts != 2 || !current.LastAttempt.Equal(batch.LastAttempt) {
@@ -222,8 +222,8 @@ func TestManualMatchRecordsTargetAndStoppedRunSkipsItem(t *testing.T) {
 		t.Fatalf("stop = %v, %v", changed, err)
 	}
 	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto}
-	if err := f.r.runItem(t.Context(), run, batch); err != nil || run.skipped != 1 {
-		t.Fatalf("scheduled skip = %d, %v", run.skipped, err)
+	if sent, err := f.r.runItem(t.Context(), run, batch); err != nil || sent || run.skipped != 1 {
+		t.Fatalf("scheduled skip = sent %v, skipped %d, %v", sent, run.skipped, err)
 	}
 	cand := plex.Candidate{GUID: "plex://movie/1", Name: "Match", Year: 2020}
 	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {
@@ -269,6 +269,22 @@ func (p checkedMetadata) Item(context.Context, string) (plex.Item, error) {
 	a := p.answers[min(*p.checks, len(p.answers)-1)]
 	*p.checks++
 	return a.item, a.err
+}
+
+func (p checkedMetadata) ItemWithPaths(ctx context.Context, ratingKey string) (plex.Item, plex.Paths, error) {
+	if err := canceled(ctx); err != nil {
+		return plex.Item{}, plex.Paths{}, err
+	}
+	p.record("ItemWithPaths " + ratingKey)
+	if err := p.pathErrs[ratingKey]; err != nil {
+		return plex.Item{}, plex.Paths{}, err
+	}
+	a := p.answers[min(*p.checks, len(p.answers)-1)]
+	*p.checks++
+	if a.err != nil {
+		return plex.Item{}, plex.Paths{}, a.err
+	}
+	return a.item, plex.Paths{Locations: p.paths[ratingKey]}, nil
 }
 
 func matchCheckFixture(t *testing.T, answers ...checkAnswer) (*fixture, *fakePlex, *int) {
@@ -424,7 +440,7 @@ func refreshNowFixture(t *testing.T) (*fixture, *fakePlex) {
 	fp := newFakePlex(moviesLib)
 	fp.paths["101"] = []string{"/m/Film (2020) {tmdb-1}/Film.mkv"}
 	fp.candidates["101 tmdb-1"] = []plex.Candidate{{GUID: "plex://movie/m", Name: "Film", Year: 2020}}
-	answers := []checkAnswer{{item: unmatchedItem("101")}, {item: completeItem("101")}}
+	answers := []checkAnswer{{item: unmatchedItem("101")}, {item: unmatchedItem("101")}, {item: completeItem("101")}}
 	f := newRefreshFixture(t, Server{Name: testServer, Plex: checkedMetadata{fakePlex: fp, answers: answers, checks: new(int)}})
 	f.now = t0
 	f.seed(testServer, moviesLib, unmatchedItem("101"), store.Unmatched, 0)
@@ -532,7 +548,7 @@ func TestRefreshItemCanceledDuringSearch(t *testing.T) {
 	f, fp := refreshNowFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	fp.onCall = func(call string) {
-		if call == "ItemPaths 101" {
+		if call == "ItemWithPaths 101" {
 			cancel()
 		}
 	}
@@ -575,21 +591,42 @@ func TestRefreshItemReportsWhetherTheCheckRan(t *testing.T) {
 // tell keeps the match too. Refresh now then sends only the refresh.
 func TestRefreshItemSendsNoMatchUnlessPlexStillHasTheItemUnmatched(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		live checkAnswer
+		name         string
+		answers      []checkAnswer
+		wantDecision bool
+		wantSearch   bool
 	}{
-		{"matched during the search", checkAnswer{item: completeItem("101")}},
-		{"plex unavailable", checkAnswer{err: fmt.Errorf("item 101: %w", plex.ErrUnavailable)}},
+		{"already matched before search", []checkAnswer{{item: completeItem("101")}}, false, false},
+		{"matched during the search", []checkAnswer{{item: unmatchedItem("101")}, {item: completeItem("101")}}, true, true},
+		{"plex unavailable during keepMatch", []checkAnswer{{item: unmatchedItem("101")}, {err: fmt.Errorf("item 101: %w", plex.ErrUnavailable)}}, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, fp := refreshNowFixture(t)
-			f.r.servers[0].Plex = checkedMetadata{fakePlex: fp, answers: []checkAnswer{tc.live}, checks: new(int)}
+			f.r.servers[0].Plex = checkedMetadata{fakePlex: fp, answers: tc.answers, checks: new(int)}
 
 			res, err := f.r.RefreshItem(t.Context(), testServer, "101")
 			if err != nil || res.Match != nil {
 				t.Fatalf("refresh = %+v, %v; want a plain refresh", res, err)
 			}
 			wantCalls(t, sends(fp.calls), "Refresh 101")
+			hasDecision := false
+			for _, e := range f.timeline("101") {
+				if e.Kind == store.EventMatchDecision {
+					hasDecision = true
+				}
+			}
+			if hasDecision != tc.wantDecision {
+				t.Errorf("hasDecision = %v, want %v", hasDecision, tc.wantDecision)
+			}
+			hasSearch := false
+			for _, c := range fp.calls {
+				if strings.HasPrefix(c, "SearchMatches ") {
+					hasSearch = true
+				}
+			}
+			if hasSearch != tc.wantSearch {
+				t.Errorf("hasSearch = %v, want %v (calls %v)", hasSearch, tc.wantSearch, fp.calls)
+			}
 		})
 	}
 }
@@ -602,7 +639,7 @@ func TestRefreshItemSlowSearchStillRefreshes(t *testing.T) {
 	manualSearchTimeout = 10 * time.Millisecond
 	t.Cleanup(func() { manualSearchTimeout = saved })
 	fp.onCall = func(call string) {
-		if call == "ItemPaths 101" {
+		if call == "ItemWithPaths 101" {
 			time.Sleep(50 * time.Millisecond)
 		}
 	}

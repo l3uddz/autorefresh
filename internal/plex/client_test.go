@@ -204,6 +204,7 @@ func TestStatusMapping(t *testing.T) {
 		unauthorized bool
 	}{
 		{http.StatusUnauthorized, true, false, true},
+		{http.StatusTooManyRequests, true, false, false},
 		{http.StatusBadGateway, true, false, false},
 		{http.StatusServiceUnavailable, true, false, false},
 		{http.StatusGatewayTimeout, true, false, false},
@@ -468,5 +469,88 @@ func TestTimeoutLimitsRequest(t *testing.T) {
 	// The default of 30s would take much longer.
 	if took := time.Since(start); took > 5*time.Second {
 		t.Errorf("Refresh took %v, want about 50ms", took)
+	}
+}
+
+func TestBodyReadTimeoutAndCancelPreserveContextErrors(t *testing.T) {
+	t.Run("timeout after headers", func(t *testing.T) {
+		release := make(chan struct{})
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			<-release
+		}))
+		t.Cleanup(func() {
+			close(release)
+			srv.Close()
+		})
+		c := New("test", mustURL(t, srv.URL), testToken, 50*time.Millisecond)
+		_, err := c.Libraries(context.Background())
+		if !errors.Is(err, ErrUnavailable) || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("err = %v, want ErrUnavailable and context.DeadlineExceeded", err)
+		}
+	})
+
+	t.Run("cancel after headers", func(t *testing.T) {
+		started := make(chan struct{})
+		release := make(chan struct{})
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			close(started)
+			<-release
+		}))
+		t.Cleanup(func() {
+			close(release)
+			srv.Close()
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-started
+			cancel()
+		}()
+		c := New("test", mustURL(t, srv.URL), testToken, testTimeout)
+		_, err := c.Libraries(ctx)
+		if !errors.Is(err, ErrUnavailable) || !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want ErrUnavailable and context.Canceled", err)
+		}
+	})
+
+	t.Run("photo read error keeps prefix", func(t *testing.T) {
+		started := make(chan struct{})
+		release := make(chan struct{})
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			close(started)
+			<-release
+		}))
+		t.Cleanup(func() {
+			close(release)
+			srv.Close()
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-started
+			cancel()
+		}()
+		c := New("test", mustURL(t, srv.URL), testToken, testTimeout)
+		_, err := c.Photo(ctx, "1001", "/library/metadata/1001/thumb/1", 120, 180)
+		if err == nil || !strings.HasPrefix(err.Error(), "photo: ") || !errors.Is(err, ErrUnavailable) || !errors.Is(err, context.Canceled) {
+			t.Fatalf("Photo err = %v, want photo prefix + ErrUnavailable + context.Canceled", err)
+		}
+	})
+}
+
+func TestOversizedJSONResponseRejected(t *testing.T) {
+	old := maxJSONBytes
+	maxJSONBytes = 32
+	t.Cleanup(func() { maxJSONBytes = old })
+
+	_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(`{"MediaContainer":{"Directory":[{"key":"1","title":"` + strings.Repeat("a", 64) + `"}]}}`))
+	})
+	if _, err := c.Libraries(context.Background()); err == nil || !strings.Contains(err.Error(), "response too large") {
+		t.Fatalf("Libraries err = %v, want response too large", err)
 	}
 }

@@ -267,3 +267,205 @@ func TestImageNeedsAuth(t *testing.T) {
 		t.Errorf("Photo calls = %v, want none", got)
 	}
 }
+
+func TestImageCoalescesDuplicateConcurrentRequests(t *testing.T) {
+	st := openStore(t)
+	it := movie("101", "Alien", store.NoSummary, time.Time{})
+	it.Thumb = thumbPath
+	readLibrary(t, st, "Home", "1", testNow, it)
+
+	want := pngBytes(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var mu sync.Mutex
+	calls := 0
+	fp := &fakePlex{photo: func(_ context.Context, _, _ string, _, _ int) ([]byte, error) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		select {
+		case <-entered:
+		default:
+			close(entered)
+		}
+		<-release
+		return want, nil
+	}}
+	s := newServerWith(st, 0, []PlexServer{{Name: "Home", Plex: fp}})
+
+	var wg sync.WaitGroup
+	recs := make([]*httptest.ResponseRecorder, 2)
+	for i := range 2 {
+		wg.Go(func() {
+			recs[i] = getImage(s, "/api/items/thumb?srv=0&key=101")
+		})
+	}
+	<-entered
+	time.Sleep(20 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	mu.Lock()
+	gotCalls := calls
+	mu.Unlock()
+	if gotCalls != 1 {
+		t.Fatalf("Photo calls = %d, want 1", gotCalls)
+	}
+	for i, rec := range recs {
+		if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), want) {
+			t.Errorf("response[%d] = status %d len %d, want 200 len %d", i, rec.Code, rec.Body.Len(), len(want))
+		}
+	}
+}
+
+func TestImageBoundsConcurrentFetchesAndRespectsCancel(t *testing.T) {
+	st := openStore(t)
+	it1 := movie("101", "One", store.NoSummary, time.Time{})
+	it1.Thumb = thumbPath
+	it2 := movie("102", "Two", store.NoSummary, time.Time{})
+	it2.Thumb = "/library/metadata/102/thumb/1700000002"
+	readLibrary(t, st, "Home", "1", testNow, it1, it2)
+
+	want := pngBytes(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var mu sync.Mutex
+	var keys []string
+	fp := &fakePlex{photo: func(_ context.Context, key, _ string, _, _ int) ([]byte, error) {
+		mu.Lock()
+		keys = append(keys, key)
+		mu.Unlock()
+		if key == "101" {
+			close(entered)
+			<-release
+		}
+		return want, nil
+	}}
+	s := newServerWith(st, 0, []PlexServer{{Name: "Home", Plex: fp}})
+	s.imageSem = make(chan struct{}, 1)
+
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		getImage(s, "/api/items/thumb?srv=0&key=101")
+	}()
+	<-entered
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/api/items/thumb?srv=0&key=102", nil)
+	rec := serve(s, req)
+	if rec.Body.Len() != 0 {
+		t.Errorf("canceled request wrote body %q, want empty", rec.Body.String())
+	}
+
+	close(release)
+	<-firstDone
+	mu.Lock()
+	gotKeys := append([]string(nil), keys...)
+	mu.Unlock()
+	if len(gotKeys) != 1 || gotKeys[0] != "101" {
+		t.Errorf("Photo keys = %v, want only [101]", gotKeys)
+	}
+}
+
+func TestImageLogsFailureRedacted(t *testing.T) {
+	const secret = "fake-private-token"
+	logs := captureLog(t)
+	st := openStore(t)
+	it := movie("101", "Alien", store.NoSummary, time.Time{})
+	it.Thumb = thumbPath
+	readLibrary(t, st, "Home", "1", testNow, it)
+	s := New(Options{
+		Store:   st,
+		Secrets: []string{secret},
+		Servers: []PlexServer{{Name: "Home", Plex: &fakePlex{photo: func(context.Context, string, string, int, int) ([]byte, error) {
+			return nil, errors.New("plex failed with " + secret)
+		}}}},
+	})
+
+	res := getImage(s, "/api/items/thumb?srv=0&key=101")
+	assertJSONError(t, res, http.StatusBadGateway, "image unavailable")
+	out := logs.String()
+	if !strings.Contains(out, `"level":"warn"`) || !strings.Contains(out, redacted) || strings.Contains(out, secret) {
+		t.Errorf("log = %q, want redacted warn without secret", out)
+	}
+}
+
+func TestImageCoalescesConcurrentRequestsWhileSemaphoreFull(t *testing.T) {
+	st := openStore(t)
+	it1 := movie("101", "One", store.NoSummary, time.Time{})
+	it1.Thumb = thumbPath
+	it2 := movie("102", "Two", store.NoSummary, time.Time{})
+	it2.Thumb = "/library/metadata/102/thumb/1700000002"
+	readLibrary(t, st, "Home", "1", testNow, it1, it2)
+
+	want := pngBytes(t)
+	firstEntered := make(chan struct{})
+	firstRelease := make(chan struct{})
+	var mu sync.Mutex
+	callsByKey := map[string]int{}
+	fp := &fakePlex{photo: func(_ context.Context, key, _ string, _, _ int) ([]byte, error) {
+		mu.Lock()
+		callsByKey[key]++
+		mu.Unlock()
+		if key == "101" {
+			close(firstEntered)
+			<-firstRelease
+		}
+		return want, nil
+	}}
+	s := newServerWith(st, 0, []PlexServer{{Name: "Home", Plex: fp}})
+	s.imageSem = make(chan struct{}, 1)
+
+	firstDone := make(chan struct{})
+	go func() {
+		defer close(firstDone)
+		getImage(s, "/api/items/thumb?srv=0&key=101")
+	}()
+	<-firstEntered
+
+	// Saturate with 101 holding the only slot, then send two concurrent
+	// requests for 102 before releasing 101. Both must share one fetch.
+	var wg sync.WaitGroup
+	recs := make([]*httptest.ResponseRecorder, 2)
+	for i := range 2 {
+		wg.Go(func() {
+			recs[i] = getImage(s, "/api/items/thumb?srv=0&key=102")
+		})
+	}
+	coalesced := false
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		s.imageMu.Lock()
+		call := s.imageCalls[imageKey{srv: 0, ratingKey: "102", path: it2.Thumb, width: 240, height: 360}]
+		waiters := 0
+		if call != nil {
+			waiters = call.waiters
+		}
+		s.imageMu.Unlock()
+		if waiters == 2 {
+			coalesced = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(firstRelease)
+	<-firstDone
+	wg.Wait()
+	if !coalesced {
+		t.Fatal("concurrent requests for key 102 did not join before timeout")
+	}
+
+	mu.Lock()
+	got102 := callsByKey["102"]
+	mu.Unlock()
+	if got102 != 1 {
+		t.Fatalf("Photo calls for key 102 = %d, want 1", got102)
+	}
+	for i, rec := range recs {
+		if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), want) {
+			t.Errorf("response[%d] = status %d len %d, want 200 len %d", i, rec.Code, rec.Body.Len(), len(want))
+		}
+	}
+}

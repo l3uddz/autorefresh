@@ -296,10 +296,17 @@ func insertSearch(tx *sql.Tx, eventID int64, position int, m MatchSearch) error 
 	if err != nil {
 		return fmt.Errorf("write search: %w", err)
 	}
+	if len(m.Candidates) == 0 {
+		return nil
+	}
+	stmt, err := tx.Prepare(`INSERT INTO match_candidate (search_id, position, guid, name, year, type, summary, thumb, score, verdict)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("prepare candidate: %w", err)
+	}
+	defer stmt.Close()
 	for i, c := range m.Candidates {
-		if _, err := tx.Exec(`INSERT INTO match_candidate (search_id, position, guid, name, year, type, summary, thumb, score, verdict)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			searchID, i, c.GUID, c.Name, c.Year, c.Type, c.Summary, c.Thumb, c.Score, c.Verdict); err != nil {
+		if _, err := stmt.Exec(searchID, i, c.GUID, c.Name, c.Year, c.Type, c.Summary, c.Thumb, c.Score, c.Verdict); err != nil {
 			return fmt.Errorf("write candidate: %w", err)
 		}
 	}
@@ -395,7 +402,11 @@ func writeCompleted(tx *sql.Tx, r Read, prev Item, in readKey) error {
 
 // readItem reads one row and closes the query before it returns.
 func readItem(tx *sql.Tx, server, ratingKey string) (it Item, found bool, err error) {
-	items, err := queryItems(tx, `SELECT `+itemColumns+` FROM item WHERE server = ? AND rating_key = ?`, server, ratingKey)
+	return readItemContext(context.Background(), tx, server, ratingKey)
+}
+
+func readItemContext(ctx context.Context, tx *sql.Tx, server, ratingKey string) (it Item, found bool, err error) {
+	items, err := queryItemsContext(ctx, tx, `SELECT `+itemColumns+` FROM item WHERE server = ? AND rating_key = ?`, server, ratingKey)
 	if err != nil {
 		return Item{}, false, fmt.Errorf("read item: %w", err)
 	}
@@ -407,7 +418,11 @@ func readItem(tx *sql.Tx, server, ratingKey string) (it Item, found bool, err er
 
 // insertEvent writes e and returns its ID.
 func insertEvent(tx *sql.Tx, e Event) (int64, error) {
-	res, err := tx.Exec(`INSERT INTO event (server, section, rating_key, at, kind, source, title, year, type, thumb, art, path,
+	return insertEventContext(context.Background(), tx, e)
+}
+
+func insertEventContext(ctx context.Context, tx *sql.Tx, e Event) (int64, error) {
+	res, err := tx.ExecContext(ctx, `INSERT INTO event (server, section, rating_key, at, kind, source, title, year, type, thumb, art, path,
 		action, accepted, outcome, error, match_guid, match_title, match_year, conflict, path_year, tmdb_year,
 		episode_count, links, fixed_action, fixed_match, fixed_match_event_id, run_id, tmdb_id, tmdb_skip, tmdb_missing,
 		episode_season, episode_plex, episode_tmdb, episode_missing, episode_extra, episode_group)
@@ -446,17 +461,26 @@ func (s *Store) TimelineContext(ctx context.Context, server, ratingKey string) (
 	defer tx.Rollback()
 
 	events, err := queryEvents(ctx, tx, server, ratingKey)
-	if err != nil {
-		return nil, err
+	if err != nil || !hasMatchDecision(events) {
+		return events, err
 	}
 	searchAt, err := attachSearches(ctx, tx, events, server, ratingKey)
-	if err != nil {
-		return nil, err
+	if err != nil || len(searchAt) == 0 {
+		return events, err
 	}
 	if err := attachCandidates(ctx, tx, events, searchAt, server, ratingKey); err != nil {
 		return nil, err
 	}
 	return events, nil
+}
+
+func hasMatchDecision(events []Event) bool {
+	for _, e := range events {
+		if e.Kind == EventMatchDecision {
+			return true
+		}
+	}
+	return false
 }
 
 func queryEvents(ctx context.Context, tx *sql.Tx, server, ratingKey string) ([]Event, error) {

@@ -53,3 +53,9 @@ func TestNoAuthWhenUnset(t *testing.T) {
 		t.Errorf("WWW-Authenticate = %q, want none", got)
 	}
 }
+
+func TestBasicAuthFailsClosedWithPasswordOnly(t *testing.T) {
+	s := New(Options{Password: "secret"})
+	rec := serve(s, httptest.NewRequest(http.MethodGet, "/", nil))
+	assertJSONError(t, rec, http.StatusUnauthorized, "unauthorized")
+}

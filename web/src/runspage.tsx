@@ -13,7 +13,7 @@ import { Heading, Text } from '@astryxdesign/core/Text';
 import { ClockIcon } from '@heroicons/react/24/outline';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { api, useStatus, type RunRecord } from './api';
+import { api, useStatus, type RunRecord, type Status } from './api';
 import { useNow } from './clock';
 import { dateTime, label, relative, runDuration, runKind } from './format';
 import { navigate, runHash } from './route';
@@ -23,6 +23,7 @@ import { NextRun, RunRow, statusDots } from './status';
 
 const tableQuery = `(min-width: ${DEFAULT_WIDTH_BREAKPOINTS.lg}px)`;
 const pageSize = 50;
+const selectServerCount = (status: Status) => status.servers.length;
 
 interface RunPage {
   runs: RunRecord[];
@@ -41,8 +42,7 @@ function runsPath(srv: number | undefined, cursor: string): string {
 /** The run history of every server, or of the server srv, newest first.
  * The run whose ID is run opens in a drawer. */
 export function RunsPage({ srv, run }: { srv?: number; run?: number }) {
-  const status = useStatus();
-  const isMulti = (status.data?.servers.length ?? 0) > 1;
+  const isMulti = (useStatus(selectServerCount).data ?? 0) > 1;
   const isTable = useMediaQuery(tableQuery);
   const pages = useInfiniteQuery({
     // The key is under 'runs', which the live status refreshes when a run
@@ -110,21 +110,28 @@ interface Row extends Record<string, unknown> {
   id: number;
 }
 
-function RunTable({ runs, isMulti, srv, openRun }: { runs: RunRecord[]; isMulti: boolean; srv?: number; openRun?: number }) {
+function RelativeTime({ value }: { value?: string }) {
   const now = useNow();
-  const open = useRowOpen(
-    useMemo(() => (row: Row) => navigate({ page: 'runs', run: row.id, srv }), [srv]),
-    openRun,
-  );
-  const rows = useMemo(() => runs.map(run => ({ id: run.id, run })), [runs]);
-  const count = (key: keyof RunRecord, header: string): TableColumn<Row> => ({
+  return <Text type="supporting" color="secondary">{relative(value, now)}</Text>;
+}
+
+function countColumn(key: keyof RunRecord, header: string): TableColumn<Row> {
+  return {
     key,
     header,
     align: 'end',
     width: pixel(112),
     renderCell: ({ run }) => <Text hasTabularNumbers>{String(run[key] ?? 0)}</Text>,
-  });
-  const columns: TableColumn<Row>[] = [
+  };
+}
+
+function RunTable({ runs, isMulti, srv, openRun }: { runs: RunRecord[]; isMulti: boolean; srv?: number; openRun?: number }) {
+  const open = useRowOpen(
+    useMemo(() => (row: Row) => navigate({ page: 'runs', run: row.id, srv }), [srv]),
+    openRun,
+  );
+  const rows = useMemo(() => runs.map(run => ({ id: run.id, run })), [runs]);
+  const columns = useMemo<TableColumn<Row>[]>(() => [
     {
       key: 'startedAt',
       header: 'Started',
@@ -132,7 +139,7 @@ function RunTable({ runs, isMulti, srv, openRun }: { runs: RunRecord[]; isMulti:
       renderCell: ({ run }) => (
         <VStack gap={0}>
           <Text>{dateTime(run.startedAt)}</Text>
-          <Text type="supporting" color="secondary">{relative(run.startedAt, now)}</Text>
+          <RelativeTime value={run.startedAt} />
         </VStack>
       ),
     },
@@ -156,18 +163,19 @@ function RunTable({ runs, isMulti, srv, openRun }: { runs: RunRecord[]; isMulti:
         </HStack>
       ),
     },
-    count('readItems', 'Read'),
-    count('refreshed', 'Refreshed'),
-    count('matched', 'Matched'),
-    count('failed', 'Failed'),
-    count('fixed', 'Fixed'),
-    count('due', 'Due'),
+    countColumn('readItems', 'Read'),
+    countColumn('refreshed', 'Refreshed'),
+    countColumn('matched', 'Matched'),
+    countColumn('failed', 'Failed'),
+    countColumn('fixed', 'Fixed'),
+    countColumn('due', 'Due'),
     {
       key: 'error',
       header: 'Error',
       width: proportional(1.4, { minWidth: 140 }),
       renderCell: ({ run }) => <Text type="supporting" wordBreak="break-word">{run.error ?? ''}</Text>,
     },
-  ];
-  return <Table data={rows} columns={columns} idKey="id" density="spacious" hasHover plugins={{ open }} />;
+  ], [isMulti]);
+  const plugins = useMemo(() => ({ open }), [open]);
+  return <Table data={rows} columns={columns} idKey="id" density="spacious" hasHover plugins={plugins} />;
 }

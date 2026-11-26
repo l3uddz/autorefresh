@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ApiError, type RunDetail, type RunEvent, type RunItem, type RunRecord } from './api';
+import { ApiError, type RunDetail, type RunEvent, type RunItem, type RunRecord, type TimelineEventKind } from './api';
 import { filterGroups, nextCountFilter, noEntries, runCounts, runGroups, runPollInterval } from './runs';
 
 const record = (change: Partial<RunRecord> = {}): RunRecord => ({
@@ -8,7 +8,7 @@ const record = (change: Partial<RunRecord> = {}): RunRecord => ({
   ...change,
 });
 let nextID = 1;
-const event = (key: string, kind: string, change: Partial<RunEvent> = {}): RunEvent => ({
+const event = (key: string, kind: TimelineEventKind, change: Partial<RunEvent> = {}): RunEvent => ({
   id: nextID++, key, title: `Item ${key}`, kind, accepted: false, searches: [], ...change,
 });
 const detail = (events: RunEvent[], change: Partial<RunRecord> = {}, items: RunItem[] = []): RunDetail => ({ run: record(change), events, items });

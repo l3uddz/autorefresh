@@ -13,12 +13,19 @@ let now = Date.now();
 let timer: ReturnType<typeof setInterval> | undefined;
 
 function subscribe(listener: () => void) {
+  if (listeners.size === 0) now = Date.now();
   listeners.add(listener);
   timer ??= setInterval(() => {
     now = Date.now();
     listeners.forEach(notify => notify());
   }, tick);
-  return () => listeners.delete(listener);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) {
+      clearInterval(timer);
+      timer = undefined;
+    }
+  };
 }
 
 /** Returns the current time in milliseconds, updated every 30 seconds. */

@@ -353,8 +353,8 @@ func TestMovedItemCompletesAfterOldLibraryPruned(t *testing.T) {
 	if n := count(t, s, `SELECT COUNT(*) FROM event WHERE kind = 'request'`); n != 0 {
 		t.Fatalf("request events = %d, want 0 after the prune", n)
 	}
-	if n := count(t, s, `SELECT COUNT(*) FROM item WHERE rating_key = 'a' AND last_match_event_id IS NOT NULL`); n != 1 {
-		t.Fatalf("rows with a stale match event ID = %d, want 1", n)
+	if n := count(t, s, `SELECT COUNT(*) FROM item WHERE rating_key = 'a' AND last_match_event_id IS NOT NULL`); n != 0 {
+		t.Fatalf("rows with a stale match event ID = %d, want 0", n)
 	}
 
 	done := item("a", 0)

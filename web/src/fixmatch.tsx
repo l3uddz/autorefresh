@@ -1,29 +1,26 @@
 import { useImperativeAlertDialog } from '@astryxdesign/core/AlertDialog';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
-import { Card } from '@astryxdesign/core/Card';
 import { Collapsible } from '@astryxdesign/core/Collapsible';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { EmptyState } from '@astryxdesign/core/EmptyState';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
 import { DEFAULT_WIDTH_BREAKPOINTS } from '@astryxdesign/core/theme';
-import { HStack, Layout, LayoutContent, LayoutPanel, StackItem, VStack } from '@astryxdesign/core/Layout';
+import { HStack, Layout, LayoutContent, LayoutPanel, VStack } from '@astryxdesign/core/Layout';
 import { Link } from '@astryxdesign/core/Link';
 import { Skeleton } from '@astryxdesign/core/Skeleton';
 import { Heading, Text } from '@astryxdesign/core/Text';
-import { TextInput } from '@astryxdesign/core/TextInput';
-import { Token } from '@astryxdesign/core/Token';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
-import { useState } from 'react';
-import { ApiError, api, invalidateLists, post, useStatus, type Candidate, type ItemRecord, type LiveItem, type Matches, type MatchSearch, type TimelineEvent } from './api';
+import { useMemo, useState } from 'react';
+import { ApiError, api, invalidateLists, post, useStatus, type Candidate, type ItemRecord, type LiveItem, type Matches, type MatchSearch, type Status, type TimelineEvent } from './api';
+import { CandidateCard } from './candidatecard';
 import { askThen } from './confirm';
 import { actionError } from './errors';
-import { plexCounts, plural, titleYear, typeName } from './format';
-import { EpisodeCheckRow } from './episodecheck';
-import { useNotify } from './notify';
+import { plexCounts, plural, titleYear } from './format';
 import { DecisionPanel } from './history';
-import { autoEvidence, autoEvidenceText, previewSearches, checkSearch, compareYear, groupCandidates, isCurrentMatch, isFolderEvidence, listView, matchBody, matchesPath, newerDecision, previewQuery, sameSearch, asksProvider, candidateQuery, compareEpisodeCount, episodeCheckId, type CandidateGroup, type EpisodeCountCheck, type Evidence, type TypedSearch, type YearCheck } from './match';
-import { RemotePoster } from './media';
+import { groupCandidates, isCurrentMatch, listView, matchBody, matchesPath, newerDecision, previewQuery, previewSearches, sameSearch, type CandidateGroup, type TypedSearch } from './match';
+import { useNotify } from './notify';
+import { SearchForm } from './searchform';
 import { lastDecision } from './timeline';
 
 // The Fix match dialog of one item: candidates with their evidence on the
@@ -33,6 +30,8 @@ import { lastDecision } from './timeline';
 // confirmation that names the item and the candidate.
 
 const wideQuery = `(min-width: ${DEFAULT_WIDTH_BREAKPOINTS.lg}px)`;
+const selectBoot = (status: Status) => status.boot;
+const selectTMDBOn = (status: Status) => status.tmdb !== 'off';
 
 /** Match searches call Plex several times, so they run only when asked:
  * no refetch on focus, on a reconnect, or on a list refresh, no retry, and
@@ -87,8 +86,8 @@ function FixMatchBody({ item, params, timeline, live, isWide, onClose }: BodyPro
   const client = useQueryClient();
   const notify = useNotify();
   const confirm = useImperativeAlertDialog();
-  const status = useStatus().data;
-  const isTMDBOn = (status?.tmdb ?? 'off') !== 'off';
+  const boot = useStatus(selectBoot).data;
+  const isTMDBOn = useStatus(selectTMDBOn).data ?? false;
   const [typed, setTyped] = useState<TypedSearch>();
 
   const opening = useQuery({
@@ -104,10 +103,10 @@ function FixMatchBody({ item, params, timeline, live, isWide, onClose }: BodyPro
   });
   // The preview searches like a run, so it runs only on request. A
   // preview that still runs is joined, not restarted.
-  const preview = useQuery(previewQuery(params, status?.boot));
+  const preview = useQuery(previewQuery(params, boot));
   // Until the live status names the process, the cache key of the preview
   // would change under a running preview, so the preview waits for it.
-  const canPreview = status?.boot !== undefined;
+  const canPreview = boot !== undefined;
   const runPreview = () => {
     if (canPreview) void preview.refetch({ cancelRefetch: false });
   };
@@ -131,7 +130,14 @@ function FixMatchBody({ item, params, timeline, live, isWide, onClose }: BodyPro
   const decisionPanel = (hasHeading: boolean) => (
     <AutoMatchPanel decision={decision} isPreview={isPreview} title={decisionTitle} hasHeading={hasHeading} preview={preview} canRun={canPreview} onRun={runPreview} />
   );
-  const groups = groupCandidates([...(opening.data?.searches ?? []), ...previewSearches(isPreview ? decision : undefined)], typed ? search.data?.searches : [], typed?.year);
+  const openingSearches = opening.data?.searches;
+  const typedSearches = search.data?.searches;
+  const typedYear = typed?.year;
+  const hasTyped = typed !== undefined;
+  const groups = useMemo(
+    () => groupCandidates([...(openingSearches ?? []), ...previewSearches(isPreview ? decision : undefined)], hasTyped ? typedSearches : [], typedYear),
+    [openingSearches, isPreview, decision, hasTyped, typedSearches, typedYear],
+  );
   const title = titleYear(item.title ?? `Item ${item.key}`, item.year);
   const counts = plexCounts(live);
   const subtitle = [item.library, counts.length ? `${counts.join(' · ')} in Plex` : undefined].filter(Boolean).join(' · ');
@@ -189,7 +195,7 @@ function FixMatchBody({ item, params, timeline, live, isWide, onClose }: BodyPro
               isCurrent={isCurrentMatch(group, live?.guid)}
               itemEpisodes={live?.episodes}
               isTMDBOn={isTMDBOn}
-              boot={status?.boot}
+              boot={boot}
               isApplying={apply.isPending}
               isCompact={!isWide}
               onChoose={() => choose(group)}
@@ -230,47 +236,6 @@ function FixMatchBody({ item, params, timeline, live, isWide, onClose }: BodyPro
         ) : undefined
       }
     />
-  );
-}
-
-function SearchForm({ isSearching, onSearch, onClear }: { isSearching: boolean; onSearch: (search: TypedSearch) => void; onClear?: () => void }) {
-  const [text, setText] = useState('');
-  const [year, setYear] = useState('');
-  const [error, setError] = useState<string>();
-  const submit = () => {
-    const input = checkSearch(text, year);
-    if ('error' in input) {
-      setError(input.error);
-      return;
-    }
-    setError(undefined);
-    onSearch(input);
-  };
-  const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') submit();
-  };
-  return (
-    <VStack gap={2}>
-      <HStack gap={2} vAlign="end" wrap="wrap">
-        <StackItem size="fill">
-          <TextInput
-            label="Search"
-            type="search"
-            value={text}
-            placeholder="Title, or an ID such as tmdb-48213"
-            onChange={value => setText(value)}
-            onKeyDown={onKeyDown}
-            status={error ? { type: 'error' } : undefined}
-          />
-        </StackItem>
-        <TextInput label="Year" value={year} width={96} inputMode="numeric" placeholder="Any" onChange={value => setYear(value)} onKeyDown={onKeyDown} />
-        <Button label="Search" variant="secondary" isLoading={isSearching} onClick={submit} />
-        {onClear && <Button label="Clear search" variant="ghost" onClick={onClear} />}
-      </HStack>
-      <Text type="supporting" color={error ? 'primary' : 'secondary'}>
-        {error ?? 'Search by title and an optional year, or by an ID such as tmdb-48213, tvdb-31207, or imdb-tt7712040. An ID search ignores the year.'}
-      </Text>
-    </VStack>
   );
 }
 
@@ -335,40 +300,6 @@ function SearchStatus({ label, query, isGone, onRetry }: StatusProps) {
   );
 }
 
-function yearToken(check: YearCheck) {
-  switch (check.kind) {
-    case 'same':
-      return <Token size="sm" color="green" label={`year ${check.year}`} />;
-    case 'off':
-      return <Token size="sm" color="yellow" label={`year off by ${check.diff}`} />;
-    case 'differs':
-      return <Token size="sm" color="red" label={`year differs by ${check.diff}`} />;
-    default:
-      return null;
-  }
-}
-
-function episodeToken(check: EpisodeCountCheck) {
-  switch (check.kind) {
-    case 'same':
-      return <Token size="sm" color="green" label={`${plural(check.episodes, 'episode')}, same as yours`} />;
-    case 'differs':
-      return <Token size="sm" color="yellow" label={`${plural(check.episodes, 'episode')}, yours has ${check.yours.toLocaleString()}`} />;
-    default:
-      return null;
-  }
-}
-
-function foundLabel(evidence: Evidence): string {
-  const year = evidence.year ? ` (${evidence.year})` : '';
-  return `Found by ${evidence.isTyped ? 'your' : 'the'} ${evidence.source === 'id' ? 'ID' : 'title'} search “${evidence.query}”${year}`;
-}
-
-function evidenceLabel(evidence: Evidence): string {
-  if (evidence.source === 'tmdb' && evidence.fromId) return `matches folder ${evidence.fromId} via ${evidence.query}`;
-  return `matches folder ${evidence.query}`;
-}
-
 interface AutoMatchProps {
   /** The newer of the preview and the last automatic decision. */
   decision?: TimelineEvent;
@@ -410,89 +341,5 @@ function AutoMatchPanel({ decision, isPreview, title, hasHeading, preview, canRu
       {failure}
       <HStack>{run('Run again', 'secondary')}</HStack>
     </VStack>
-  );
-}
-
-interface CardProps {
-  group: CandidateGroup;
-  item: ItemRecord;
-  params: string;
-  decision?: TimelineEvent;
-  /** The decision is a preview, not the last automatic fix match. */
-  isPreview: boolean;
-  isCurrent: boolean;
-  /** The episodes that Plex has for the item, from the live view. */
-  itemEpisodes?: number;
-  isTMDBOn: boolean;
-  /** The process of the service, which scopes the provider cache. */
-  boot?: string;
-  isApplying: boolean;
-  /** Puts the score and the button below the details, for a phone. */
-  isCompact: boolean;
-  onChoose: () => void;
-}
-
-function CandidateCard({ group, item, params, decision, isPreview, isCurrent, itemEpisodes, isTMDBOn, boot, isApplying, isCompact, onChoose }: CardProps) {
-  const { candidate } = group;
-  // The metadata provider gives a series candidate its counts and TMDB ID.
-  // A failed or unknown answer adds nothing to the card.
-  const series = useQuery({ ...candidateQuery(params, group.guid, boot), enabled: asksProvider(group, item.type, boot) });
-  const tmdbId = episodeCheckId(group, item.type, isTMDBOn, series.data?.tmdbId);
-  const folder = group.foundBy.filter(isFolderEvidence);
-  const found = group.foundBy.filter(e => !isFolderEvidence(e));
-  const auto = autoEvidence(decision, group.guid);
-  const facts = [typeName(candidate.type), candidate.year, ...plexCounts(series.data)].filter(Boolean).join(' · ');
-  const reason = !group.guid ? 'Plex gave this candidate no GUID, so it cannot be applied' : isCurrent ? 'This is the current match' : undefined;
-  const score = candidate.score > 0 && (
-    <VStack gap={0} hAlign={isCompact ? 'start' : 'end'}>
-      <Text weight="semibold" hasTabularNumbers>{candidate.score}</Text>
-      <Text type="supporting" color="secondary">Plex score</Text>
-    </VStack>
-  );
-  const match = <Button label="Match" variant={isCurrent ? 'secondary' : 'primary'} isDisabled={Boolean(reason) || isApplying} tooltip={reason} onClick={onChoose} />;
-  return (
-    <Card padding={4}>
-      <HStack gap={4} vAlign="start">
-        <RemotePoster src={candidate.thumb} title={candidate.name} type={candidate.type} />
-        <StackItem size="fill">
-          <VStack gap={2}>
-            <HStack gap={2} wrap="wrap" vAlign="center">
-              <Text weight="semibold" wordBreak="break-word">{candidate.name || candidate.guid || 'Unnamed candidate'}</Text>
-              {isCurrent && <Token size="sm" color="blue" label="currently matched" />}
-            </HStack>
-            {facts && <Text type="supporting" color="secondary">{facts}</Text>}
-            {candidate.summary && <Text type="supporting" maxLines={3}>{candidate.summary}</Text>}
-            <HStack gap={1} wrap="wrap">
-              {folder.map((e, index) => <Token key={`${index}-${e.query}`} size="sm" color="green" label={evidenceLabel(e)} />)}
-              {yearToken(compareYear(item.year, candidate.year))}
-              {episodeToken(compareEpisodeCount(itemEpisodes, series.data?.episodes))}
-            </HStack>
-            {/* Longer evidence is text, so it wraps instead of being cut. */}
-            {found.map((e, index) => (
-              <Text key={`${index}-${e.query}`} type="supporting" color="secondary" wordBreak="break-word">
-                {foundLabel(e)}
-              </Text>
-            ))}
-            {auto.map((a, index) => (
-              <Text key={`${index}-${a.query}`} type="supporting" wordBreak="break-word">
-                {autoEvidenceText(a, isPreview)}
-              </Text>
-            ))}
-            {group.guid && <Text type="code" color="secondary" wordBreak="break-all">{group.guid}</Text>}
-            {/* The key ties the check to the item and the TMDB ID: when a
-                search ties the candidate to another ID, the row starts
-                again and drops the answer of the previous ID. */}
-            {tmdbId && <EpisodeCheckRow key={`${params}|${tmdbId}`} params={params} tmdbId={tmdbId} />}
-          </VStack>
-        </StackItem>
-        {!isCompact && <VStack gap={2} hAlign="end">{score}{match}</VStack>}
-      </HStack>
-      {isCompact && (
-        <HStack gap={3} hAlign="between" vAlign="center" paddingBlockStart={3}>
-          {score ?? <Text type="supporting" color="secondary">No Plex score</Text>}
-          {match}
-        </HStack>
-      )}
-    </Card>
   );
 }

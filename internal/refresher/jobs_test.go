@@ -437,3 +437,73 @@ func TestBulkReportsKeyOfUnknownItem(t *testing.T) {
 		t.Errorf("started items = %+v, want item 9", items)
 	}
 }
+
+func TestRunNowDeduplicatesServers(t *testing.T) {
+	f := newRefreshFixture(t, Server{Name: "home", Plex: newFakePlex(moviesLib)})
+	f.now = t0
+	jobs := NewJobs(f.r)
+	t.Cleanup(jobs.Close)
+	ids, err := jobs.RunNow([]string{"home", "home"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs.wg.Wait()
+	if len(ids) != 1 {
+		t.Fatalf("ids = %v, want 1 deduplicated run", ids)
+	}
+}
+
+type failFinishJobStore struct{ Store }
+
+func (failFinishJobStore) FinishJob(int64, store.RunStart, store.RunResult, []store.RunItem) (bool, error) {
+	return false, errRun
+}
+
+func TestFinishBulkLogsRunAndSaveErrors(t *testing.T) {
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: newFakePlex(moviesLib)})
+	f.r.store = failFinishJobStore{Store: f.store}
+	run := &serverRun{id: 42, server: Server{Name: testServer}, began: t0}
+
+	f.r.finishBulk(t.Context(), run, nil, fmt.Errorf("plex: %w", plex.ErrUnavailable))
+
+	got := f.logs.String()
+	if !strings.Contains(got, `"message":"Bulk refresh failed"`) || !strings.Contains(got, `"reason":"plex unavailable"`) || !strings.Contains(got, `"error":"plex: `) {
+		t.Errorf("missing bulk failure log with error: %s", got)
+	}
+	if !strings.Contains(got, `"message":"Recording bulk refresh failed"`) || !strings.Contains(got, errRun.Error()) {
+		t.Errorf("missing save error log: %s", got)
+	}
+}
+
+type countKnownStore struct {
+	Store
+	single atomic.Int32
+	batch  atomic.Int32
+}
+
+func (s *countKnownStore) KnownItem(server, key string) (store.Item, bool, bool, error) {
+	s.single.Add(1)
+	return s.Store.KnownItem(server, key)
+}
+
+func (s *countKnownStore) KnownItems(ctx context.Context, server string, keys []string) (map[string]store.KnownResult, error) {
+	s.batch.Add(1)
+	return s.Store.KnownItems(ctx, server, keys)
+}
+
+func TestPrepareBulkUsesBatchKnownItems(t *testing.T) {
+	f := newRefreshFixture(t, Server{Name: testServer, Plex: newFakePlex(moviesLib)})
+	f.seed(testServer, moviesLib, incompleteItem("1"), store.NoSummary, 0)
+	f.seed(testServer, moviesLib, incompleteItem("2"), store.NoSummary, 0)
+	cs := &countKnownStore{Store: f.store}
+	f.r.store = cs
+	jobs := NewJobs(f.r)
+	t.Cleanup(jobs.Close)
+
+	if _, _, err := jobs.prepareBulk(testServer, []string{"1", "2", "999"}); err != nil {
+		t.Fatal(err)
+	}
+	if cs.batch.Load() != 1 || cs.single.Load() != 0 {
+		t.Errorf("KnownItems calls = %d, KnownItem calls = %d; want 1 and 0", cs.batch.Load(), cs.single.Load())
+	}
+}

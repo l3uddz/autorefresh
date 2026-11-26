@@ -192,8 +192,9 @@ func (s *Status) Snapshot() StatusView {
 
 // ServerChecked records the result of the start check of server.
 func (s *Status) ServerChecked(server string, err error) {
-	s.updateServer(server, func(srv *ServerStatus) {
+	s.updateServer(server, func(srv *ServerStatus) bool {
 		srv.Health = checkHealth(err)
+		return true
 	})
 }
 
@@ -211,8 +212,9 @@ func (s *Status) TMDBChecked(err error) {
 
 // RunStarted starts the progress of a run of server.
 func (s *Status) RunStarted(id int64, start store.RunStart) {
-	s.updateServer(start.Server, func(srv *ServerStatus) {
+	s.updateServer(start.Server, func(srv *ServerStatus) bool {
 		srv.Run = &RunProgress{ID: id, Kind: start.Kind, Source: start.Source, StartedAt: start.StartedAt, Status: store.RunRunning}
+		return true
 	})
 }
 
@@ -278,7 +280,7 @@ func finishedItem(current *NowItem, key, outcome string, at time.Time) *NowItem 
 // RunFinished ends the progress of the run of server and updates its health
 // from the result.
 func (s *Status) RunFinished(server string, res store.RunResult, err error, recorded bool) {
-	s.updateServer(server, func(srv *ServerStatus) {
+	s.updateServer(server, func(srv *ServerStatus) bool {
 		if srv.Run != nil {
 			last := *srv.Run
 			last.Current, last.Next, last.NextAt = nil, nil, time.Time{}
@@ -289,29 +291,33 @@ func (s *Status) RunFinished(server string, res store.RunResult, err error, reco
 		}
 		srv.Run = nil
 		srv.Health = runHealth(srv.Health, res, err)
+		return true
 	})
 }
 
 // updateServer applies change to the status of server and signals the
-// subscribers. It ignores an unknown server.
-func (s *Status) updateServer(server string, change func(*ServerStatus)) {
+// subscribers when change reports a modification. It ignores an unknown server.
+func (s *Status) updateServer(server string, change func(*ServerStatus) bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	i, ok := s.index[server]
 	if !ok {
 		return
 	}
-	change(&s.servers[i])
-	s.notify()
+	if change(&s.servers[i]) {
+		s.notify()
+	}
 }
 
 // updateRun applies change to the run of server, with the index of the
-// server. It ignores a server that has no run.
+// server. It ignores a server that has no run without waking subscribers.
 func (s *Status) updateRun(server string, change func(srv int, run *RunProgress)) {
-	s.updateServer(server, func(srv *ServerStatus) {
-		if srv.Run != nil {
-			change(srv.Srv, srv.Run)
+	s.updateServer(server, func(srv *ServerStatus) bool {
+		if srv.Run == nil {
+			return false
 		}
+		change(srv.Srv, srv.Run)
+		return true
 	})
 }
 

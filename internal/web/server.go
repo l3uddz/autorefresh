@@ -30,7 +30,7 @@ type Plex interface {
 
 // Store is the part of store.Store that the web server uses.
 type Store interface {
-	RunItems(context.Context, int64) ([]store.RunItem, error)
+	RunItemsWithServer(context.Context, int64) (string, []store.RunItem, bool, error)
 	ListItems(ctx context.Context, q store.ListQuery) ([]store.ListItem, *store.Cursor, error)
 	CountItems(ctx context.Context, q store.ListQuery) (store.ListCounts, error)
 	Libraries(ctx context.Context, server string) ([]store.LibraryEntry, error)
@@ -103,22 +103,37 @@ type Server struct {
 	actionTimeout time.Duration
 
 	// idMu guards identities, the cached machine identifier of each server
-	// ("": not read yet).
+	// ("": not read yet), and in-flight identity lookups.
 	idMu          sync.Mutex
 	identities    []string
 	identityTried []time.Time
+	identityCalls []*identityCall
+
+	// imageMu guards imageCalls for coalescing concurrent identical image
+	// proxy fetches; imageSem bounds concurrent upstream Photo requests.
+	imageMu    sync.Mutex
+	imageCalls map[imageKey]*imageCall
+	imageSem   chan struct{}
 
 	// sseCtx ends the event streams. Stop cancels it first, so that
 	// Shutdown does not wait for open streams.
 	sseCtx    context.Context
 	cancelSSE context.CancelFunc
+	// sseMu guards sseStreams and sseClosing against maxSSEStreams and shutdown.
+	sseMu           sync.Mutex
+	sseStreams      int
+	sseClosing      bool
+	maxSSEStreams   int
+	beforeSSECommit func() // test hook invoked before committing SSE headers
 	// writeTimeout bounds each write to an event stream.
 	writeTimeout time.Duration
 	// keepalive is the interval of the keepalive comments of an idle
 	// event stream.
 	keepalive time.Duration
 
-	// cancelBase cancels the base context of every request.
+	// baseCtx and cancelBase are the base context of requests and
+	// background coalesced lookups (identity and image proxy).
+	baseCtx    context.Context
 	cancelBase context.CancelFunc
 	// forceWait bounds the wait for the active handlers after a failed
 	// Shutdown.
@@ -162,10 +177,15 @@ func New(opts Options) *Server {
 		actionTimeout: defaultActionTimeout,
 		identities:    make([]string, len(opts.Servers)),
 		identityTried: make([]time.Time, len(opts.Servers)),
+		identityCalls: make([]*identityCall, len(opts.Servers)),
+		imageCalls:    map[imageKey]*imageCall{},
+		imageSem:      make(chan struct{}, defaultMaxImageFetches),
 		sseCtx:        sseCtx,
 		cancelSSE:     cancelSSE,
+		maxSSEStreams: defaultMaxSSEStreams,
 		writeTimeout:  defaultWriteTimeout,
 		keepalive:     defaultKeepalive,
+		baseCtx:       baseCtx,
 		cancelBase:    cancelBase,
 		forceWait:     defaultForceWait,
 	}
@@ -181,7 +201,7 @@ func New(opts Options) *Server {
 	s.api("GET /api/items/thumb", s.serveThumb)
 	s.api("GET /api/items/art", s.serveArt)
 	s.api("GET /api/runs", s.serveRuns)
-	s.api("/api/", func(w http.ResponseWriter, _ *http.Request) {
+	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})
 
@@ -239,8 +259,9 @@ func (s *Server) Start(ln net.Listener) {
 // It returns the Shutdown error. The budget is the deadline of ctx plus
 // forceWait.
 func (s *Server) Stop(ctx context.Context) error {
+	defer s.cancelBase()
 	s.closeAdmission()
-	s.cancelSSE()
+	s.stopSSE()
 	err := s.srv.Shutdown(ctx)
 	if err != nil {
 		s.force()

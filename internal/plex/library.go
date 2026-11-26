@@ -170,8 +170,9 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 	}
 	endpoint := c.endpoint("library", "sections", section, "all")
 	var items []Item
-	_, err := c.walkMetadataPages(ctx, endpoint, listQuery(itemType, filters), func(m metadata) {
+	_, err := c.walkMetadataPages(ctx, endpoint, listQuery(itemType, filters), func(m metadata) bool {
 		items = append(items, m.item())
+		return true
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listing section %s: %w", section, err)
@@ -180,8 +181,9 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 }
 
 // walkMetadataPages visits one page at a time and returns the final total.
-// Each page after the first overlaps the previous page by one item.
-func (c *Client) walkMetadataPages(ctx context.Context, endpoint *url.URL, query url.Values, visit func(metadata)) (int, error) {
+// Each page after the first overlaps the previous page by one item. Returning
+// false from visit stops pagination early.
+func (c *Client) walkMetadataPages(ctx context.Context, endpoint *url.URL, query url.Values, visit func(metadata) bool) (int, error) {
 	query.Set("X-Plex-Container-Size", strconv.Itoa(pageSize))
 	var read int
 	var last string
@@ -198,7 +200,9 @@ func (c *Client) walkMetadataPages(ctx context.Context, endpoint *url.URL, query
 			return 0, err
 		}
 		for _, item := range rest {
-			visit(item)
+			if !visit(item) {
+				return 0, nil
+			}
 			last = item.RatingKey
 		}
 		read += len(rest)
@@ -299,6 +303,16 @@ func (c *Client) Item(ctx context.Context, ratingKey string) (Item, error) {
 	return m.item(), nil
 }
 
+// ItemWithPaths reads the metadata and paths for one item in one request.
+// Only a 404 gives ErrNotFound.
+func (c *Client) ItemWithPaths(ctx context.Context, ratingKey string) (Item, Paths, error) {
+	m, err := c.itemMetadata(ctx, ratingKey, "item")
+	if err != nil {
+		return Item{}, Paths{}, err
+	}
+	return m.item(), m.paths(), nil
+}
+
 // ItemPaths returns Location[].path and Media[].Part[].file of an item. Only
 // a 404 status gives ErrNotFound. A response without an item gives a plain
 // error.
@@ -340,15 +354,17 @@ func (c *Client) EpisodeNumbers(ctx context.Context, ratingKey string) (map[int]
 	seasons := make(map[int][]int)
 	var read int
 	valid := true
-	total, err := c.walkMetadataPages(ctx, endpoint, url.Values{}, func(m metadata) {
+	total, err := c.walkMetadataPages(ctx, endpoint, url.Values{}, func(m metadata) bool {
 		read++
 		switch {
 		case m.Season != nil && *m.Season == 0:
 		case m.Season == nil || *m.Season < 0 || m.Index <= 0 || len(m.files()) == 0:
 			valid = false
+			return false
 		default:
 			seasons[*m.Season] = append(seasons[*m.Season], m.Index)
 		}
+		return true
 	})
 	if errors.Is(err, errIncompleteListing) {
 		return nil, nil

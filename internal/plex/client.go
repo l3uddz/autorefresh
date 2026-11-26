@@ -22,8 +22,8 @@ import (
 )
 
 var (
-	// ErrUnavailable marks a 401, 502, 503, or 504 status, a transport error,
-	// and a timeout. The caller can retry later.
+	// ErrUnavailable marks a 401, 429, 502, 503, or 504 status, a transport
+	// error, and a timeout. The caller can retry later.
 	ErrUnavailable = errors.New("plex server unavailable")
 	// ErrNotFound marks a 404 status.
 	ErrNotFound = errors.New("plex item not found")
@@ -31,6 +31,13 @@ var (
 	// rejected the token. It also wraps ErrUnavailable.
 	ErrUnauthorized = errors.New("plex token rejected")
 )
+
+// maxJSONBytes bounds JSON response decoding so a misconfigured proxy cannot
+// exhaust memory. Tests may lower it.
+var maxJSONBytes int64 = 32 << 20
+
+// maxIdleConnsPerHost keeps connections pooled across dashboard poster bursts.
+const maxIdleConnsPerHost = 16
 
 // idPattern matches a rating key or a section ID. Each one is a single path
 // segment, so it must not be "." or "..".
@@ -53,12 +60,18 @@ func New(name string, base *url.URL, token string, timeout time.Duration) *Clien
 	if b.Path == "" {
 		b.Path = "/" // the request paths then start with "/"
 	}
+	var transport http.RoundTripper
+	if baseTr, ok := http.DefaultTransport.(*http.Transport); ok {
+		tr := baseTr.Clone()
+		tr.MaxIdleConnsPerHost = maxIdleConnsPerHost
+		transport = tr
+	}
 	return &Client{
 		name:     name,
 		base:     &b,
 		provider: &provider,
 		token:    token,
-		http:     &http.Client{Timeout: timeout, CheckRedirect: sameOrigin},
+		http:     &http.Client{Timeout: timeout, Transport: transport, CheckRedirect: neterr.SameOrigin},
 	}
 }
 
@@ -80,23 +93,6 @@ func (c *Client) metadataEndpoint(ratingKey string, segments ...string) (*url.UR
 	}
 	return c.endpoint(append([]string{"library", "metadata", ratingKey}, segments...)...), nil
 }
-
-// sameOrigin refuses a redirect to another origin. Go forwards the
-// X-Plex-Token header to the target of a redirect, so a cross-origin redirect
-// would leak the token.
-func sameOrigin(req *http.Request, via []*http.Request) error {
-	if len(via) >= 10 {
-		return fmt.Errorf("too many redirects: %w", neterr.ErrRedirectRefused)
-	}
-	if req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host {
-		return fmt.Errorf("redirect to another origin: %w", neterr.ErrRedirectRefused)
-	}
-	return nil
-}
-
-// maxDrainBytes bounds unread response body draining so normal responses
-// reuse connections without letting a misbehaving server stall a request.
-const maxDrainBytes = 64 << 10
 
 // ValidRatingKey reports whether key is a rating key, by the rule that every
 // request of this package applies.
@@ -131,17 +127,10 @@ func (c *Client) do(ctx context.Context, method string, endpoint *url.URL, query
 	c.trace(req, start).Int("status", res.StatusCode).Msg("Plex request")
 
 	if err := statusError(res); err != nil {
-		drainAndClose(res)
+		neterr.DrainAndClose(res)
 		return nil, fmt.Errorf("%s %s: %w", method, req.URL.Path, err)
 	}
 	return res, nil
-}
-
-// drainAndClose reads a bounded rest of the body, which lets the connection
-// get reused, and closes it.
-func drainAndClose(res *http.Response) {
-	io.Copy(io.Discard, io.LimitReader(res.Body, maxDrainBytes))
-	res.Body.Close()
 }
 
 // send sends a request to endpoint with the query. If out is not nil, it
@@ -151,13 +140,20 @@ func (c *Client) send(ctx context.Context, method string, endpoint *url.URL, que
 	if err != nil {
 		return err
 	}
-	defer drainAndClose(res)
 
 	if out == nil {
+		neterr.DrainAndClose(res)
 		return nil
 	}
-	if err := json.NewDecoder(res.Body).Decode(out); err != nil {
-		return bodyError(method, endpoint.Path, err)
+	lr := &io.LimitedReader{R: res.Body, N: maxJSONBytes + 1}
+	err = json.NewDecoder(lr).Decode(out)
+	if lr.N == 0 {
+		res.Body.Close()
+		return fmt.Errorf("%s %s: response too large", method, endpoint.Path)
+	}
+	neterr.DrainAndClose(res)
+	if err != nil {
+		return bodyError(ctx, method, endpoint.Path, err)
 	}
 	return nil
 }
@@ -173,7 +169,7 @@ func statusError(res *http.Response) error {
 	switch res.StatusCode {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("%s: %w: %w", status, ErrUnauthorized, ErrUnavailable)
-	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		return fmt.Errorf("%s: %w", status, ErrUnavailable)
 	case http.StatusNotFound:
 		return fmt.Errorf("%s: %w", status, ErrNotFound)
@@ -182,15 +178,32 @@ func statusError(res *http.Response) error {
 	}
 }
 
-// bodyError wraps an error from decoding a response body. A network error or
-// a body that ends early means that the server is unavailable, and its text can hold the server
-// address, so the result keeps none of it.
-func bodyError(method, path string, err error) error {
+// bodyError wraps an error from decoding a response body. A context error,
+// network error, or truncated body means that the server is unavailable, and
+// its text can hold the server address, so the result keeps none of it.
+func bodyError(ctx context.Context, method, path string, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("%s %s: reading response failed: %w: %w", method, path, ErrUnavailable, ctxErr)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%s %s: reading response failed: %w: %w", method, path, ErrUnavailable, context.DeadlineExceeded)
+	}
 	var netErr net.Error
 	if errors.As(err, &netErr) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return fmt.Errorf("%s %s: reading response failed: %w", method, path, ErrUnavailable)
 	}
 	return fmt.Errorf("%s %s: decoding response: %w", method, path, err)
+}
+
+// readError wraps a raw body read error without exposing transport details.
+func readError(ctx context.Context, method, path string, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return fmt.Errorf("%s %s: reading response failed: %w: %w", method, path, ErrUnavailable, ctxErr)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%s %s: reading response failed: %w: %w", method, path, ErrUnavailable, context.DeadlineExceeded)
+	}
+	return fmt.Errorf("%s %s: reading response failed: %w", method, path, ErrUnavailable)
 }
 
 // trace starts the trace line of one request.

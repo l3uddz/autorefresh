@@ -329,18 +329,54 @@ func TestEventsClearsDeadlineAfterFlush(t *testing.T) {
 	}
 }
 
-func TestEventsAfterStopSendNothing(t *testing.T) {
+func TestEventsAfterStopAnswers503(t *testing.T) {
 	s := New(Options{})
-	s.cancelSSE()
-	f := newFakeStream(t)
+	s.stopSSE()
 
-	done := serveInBackground(s, f, httptest.NewRequest(http.MethodGet, "/api/events", nil))
-	waitReturned(t, done, time.Second)
-
-	if calls := f.recorded(); len(calls) != 0 {
-		t.Errorf("calls = %q, want none", calls)
-	}
-	if got := f.header.Get("Content-Type"); got == "text/event-stream" {
+	rec := serve(s, httptest.NewRequest(http.MethodGet, "/api/events", nil))
+	assertJSONError(t, rec, http.StatusServiceUnavailable, "shutting down")
+	if got := rec.Header().Get("Content-Type"); got == "text/event-stream" {
 		t.Error("the handler started a stream after Stop")
 	}
+}
+
+func TestEventsShutdownBeforeCommitReturns503(t *testing.T) {
+	s := New(Options{})
+	s.beforeSSECommit = func() { s.stopSSE() }
+
+	rec := serve(s, httptest.NewRequest(http.MethodGet, "/api/events", nil))
+	assertJSONError(t, rec, http.StatusServiceUnavailable, "shutting down")
+	if got := rec.Header().Get("Content-Type"); got == "text/event-stream" {
+		t.Error("the handler committed SSE headers after shutdown started")
+	}
+}
+
+func TestEventsCapsConcurrentStreams(t *testing.T) {
+	s := New(Options{})
+	s.maxSSEStreams = 1
+	ts := httptest.NewServer(s.Handler())
+	defer ts.Close()
+
+	resp1, br1 := openStream(t, ts.URL)
+	statusData(t, readEvent(t, br1))
+
+	// A second concurrent stream gets 503.
+	rec := serve(s, httptest.NewRequest(http.MethodGet, "/api/events", nil))
+	assertJSONError(t, rec, http.StatusServiceUnavailable, "too many event streams")
+
+	// Closing the first stream releases its slot.
+	_ = resp1.Body.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		s.sseMu.Lock()
+		n := s.sseStreams
+		s.sseMu.Unlock()
+		if n == 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	resp2, br2 := openStream(t, ts.URL)
+	defer func() { _ = resp2.Body.Close() }()
+	statusData(t, readEvent(t, br2))
 }

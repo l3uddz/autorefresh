@@ -135,13 +135,19 @@ A run SHALL handle at most `max-refreshes-per-run` due items on each server, in 
 
 ### Requirement: Pacing
 
-A run SHALL wait `refresh-delay` before each item of a server after the first one, whatever the outcome of the previous item. A dry run SHALL NOT wait. A match search is a read and SHALL NOT be paced on its own.
+A run SHALL wait `refresh-delay` before the next item of a server only after an item that sent a request to Plex. A skipped item SHALL NOT trigger a pace wait before the next item. A dry run SHALL NOT wait. A match search is a read and SHALL NOT be paced on its own.
 
 #### Scenario: Three due items
 
 - **GIVEN** `refresh-delay` is `5s`
 - **WHEN** a run refreshes three items on one server
 - **THEN** it waits 5 seconds twice: before the second item and before the third item
+
+#### Scenario: Skipped item between due items
+
+- **GIVEN** `refresh-delay` is `5s` and the first due item was stopped before its turn
+- **WHEN** the run skips the first item and moves to the second
+- **THEN** it starts the second item without waiting `refresh-delay`
 
 #### Scenario: Request time
 
@@ -244,7 +250,7 @@ When Plex answers a request of a run with 404, the run SHALL remove the item fro
 
 ### Requirement: Unavailable server
 
-Except in the title fallback of the `fix-match` capability, a run SHALL end the run of a server when a Plex request answers 401, 502, 503, or 504, fails in transport, or ends early, and also when the server does not list its libraries. It SHALL log one error `Plex server unavailable` with the server and SHALL send no more requests to that server in this run. An item whose request failed this way SHALL still get its failed attempt. Other errors, such as a 500 answer, SHALL fail only the item.
+Except in the title fallback of `fix-match`, a run SHALL end a server's run when Plex answers 401, 429, 502, 503, or 504, fails in transport, ends early, or cannot list libraries. It SHALL log one error `Plex server unavailable` with the server and send no more requests to it in this run. The failing item SHALL still record its failed attempt. Other errors, such as 500, SHALL fail only the item.
 
 #### Scenario: Unavailable during the refresh step
 
@@ -252,6 +258,12 @@ Except in the title fallback of the `fix-match` capability, a run SHALL end the 
 - **WHEN** Plex answers the first refresh with `503 Service Unavailable`
 - **THEN** the first item gets a failed attempt, the second item gets no request, and the summary has `remaining_items` 1
 - **AND** the next run sends the second item first, because the first item waits
+
+#### Scenario: Rate limited by a proxy
+
+- **GIVEN** two due items on one server
+- **WHEN** Plex or its reverse proxy answers the first refresh with `429 Too Many Requests`
+- **THEN** the first item gets a failed attempt, the run of that server ends as failed, and the second item gets no request
 
 #### Scenario: Token rejected
 

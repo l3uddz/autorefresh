@@ -112,7 +112,7 @@ With `--once`, autorefresh SHALL run the refresher one time at once and then exi
 
 ### Requirement: Startup token checks
 
-Without `--once`, autorefresh SHALL check each Plex server, by a request for its libraries, and the TMDB token, if set, at the same time before the first scheduled run. The checks SHALL log their results and, when the dashboard is on, give them to the dashboard status as health. A failed check SHALL NOT stop the start.
+Without `--once`, autorefresh SHALL check each Plex server, by a request for its libraries, and the TMDB token, if set, at the same time before the first scheduled run, within a 15 second startup check timeout. The checks SHALL log their results and, when the dashboard is on, give them to the dashboard status as health. A failed check SHALL NOT stop the start.
 
 #### Scenario: Token accepted
 
@@ -145,10 +145,16 @@ Without `--once`, autorefresh SHALL check each Plex server, by a request for its
 - **WHEN** a Plex server is slow to answer its check
 - **THEN** the TMDB check runs while the Plex check waits
 
+#### Scenario: Startup check timeout
+
+- **GIVEN** a Plex server is configured with a 5 minute timeout and never answers
+- **WHEN** startup token checks run
+- **THEN** the check times out after 15 seconds, logs `Checking Plex server failed`, and starts the schedule without waiting 5 minutes
+
 #### Scenario: Dashboard health
 
 - **WHEN** the dashboard is on and a check ends
-- **THEN** the dashboard status gets the result as the health of that server or of TMDB
+- **THEN** the dashboard status shows the result of that check without waiting for the first run
 
 #### Scenario: Signal during the checks
 
@@ -158,7 +164,7 @@ Without `--once`, autorefresh SHALL check each Plex server, by a request for its
 
 ### Requirement: Scheduled operation
 
-Without `--once`, autorefresh SHALL try to start one run as soon as the token checks end, and one at each time of the `schedule` cron expression, until the schedule stops in the shutdown order, also while the dashboard stops. The schedule SHALL use the local time zone, unless the expression starts with `TZ=<zone>` or `CRON_TZ=<zone>`. A start while another run is busy, such as a manual run from the dashboard, SHALL be skipped with the warning `Skipped scheduled start, a run is busy`.
+Without `--once`, autorefresh SHALL try to start one run as soon as the token checks end, and one at each time of the `schedule` cron expression, until SIGINT or SIGTERM arrives. The schedule SHALL use the local time zone, unless the expression starts with `TZ=<zone>` or `CRON_TZ=<zone>`. A start while another run is busy, such as a manual run from the dashboard, SHALL be skipped with the warning `Skipped scheduled start, a run is busy`.
 
 #### Scenario: First run at once
 
@@ -185,6 +191,11 @@ Without `--once`, autorefresh SHALL try to start one run as soon as the token ch
 - **WHEN** autorefresh starts with `--dry-run` and without `--once`
 - **THEN** it checks the tokens and runs on the schedule as usual
 
+#### Scenario: Cron tick during shutdown
+
+- **WHEN** SIGINT or SIGTERM arrives while the dashboard is stopping
+- **THEN** the schedule starts no new scheduled run
+
 ### Requirement: Next scheduled time on the dashboard
 
 When the dashboard is on, autorefresh SHALL give the dashboard status the next time of the schedule when the schedule starts and at each schedule time, also at a time that a busy run skips.
@@ -201,7 +212,7 @@ When the dashboard is on, autorefresh SHALL give the dashboard status the next t
 
 ### Requirement: Dashboard listener start
 
-Autorefresh SHALL bind the dashboard listener only when `ui.listen` is set and neither `--once` nor `--dry-run` is set. It SHALL bind before the token checks, so a bind error stops the start before any Plex request.
+Autorefresh SHALL bind the dashboard listener only when `ui.listen` is set, neither `--once` nor `--dry-run` is set, and no shutdown signal has arrived during setup. It SHALL bind before the token checks, so a bind error stops the start before any Plex request.
 
 #### Scenario: Listener bound
 
@@ -224,6 +235,11 @@ Autorefresh SHALL bind the dashboard listener only when `ui.listen` is set and n
 - **WHEN** `ui.listen` is set and `--once` or `--dry-run` is set
 - **THEN** autorefresh logs `UI is off with --once or --dry-run` once and binds no listener
 
+#### Scenario: Signal before listener bind
+
+- **WHEN** SIGINT or SIGTERM arrives while opening the database before the listener binds
+- **THEN** autorefresh binds no dashboard listener, closes the database, and exits cleanly
+
 #### Scenario: Requests during the token checks
 
 - **WHEN** the dashboard listener has started and the token checks are still pending
@@ -231,13 +247,13 @@ Autorefresh SHALL bind the dashboard listener only when `ui.listen` is set and n
 
 ### Requirement: Shutdown order
 
-On SIGINT or SIGTERM without `--once`, autorefresh SHALL stop in this order: the dashboard, with a 5 s limit for a graceful stop, after which it cancels the requests that are still open; then the schedule, whose busy scheduled run it cancels and waits for; then the manual jobs, which it cancels and waits for, and the item actions, which it waits for; then the database. It SHALL then log `Stopped` and exit with code 0.
+On SIGINT or SIGTERM without `--once`, autorefresh SHALL stop scheduling new runs and cancel any active scheduled run at once, stop the dashboard with a 5 s limit for a graceful stop (canceling still-open requests after that limit), wait for the active scheduled run to return, cancel and wait for manual jobs, wait for item actions, and then close the database. It SHALL then log `Stopped` and exit with code 0.
 
 #### Scenario: Signal during a scheduled run
 
 - **WHEN** a signal arrives while a scheduled run is busy
-- **THEN** the dashboard stops first while the run goes on
-- **AND** if the run is still busy after that, it is cancelled and returns before the manual jobs stop and the database closes
+- **THEN** the schedule stops new ticks and cancels the active scheduled run without waiting for the dashboard stop timeout
+- **AND** the dashboard stops, the scheduled run returns, manual jobs and item actions drain, and then the database closes
 
 #### Scenario: Dashboard does not stop in time
 

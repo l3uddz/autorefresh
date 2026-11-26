@@ -10,9 +10,9 @@ import (
 const basicAuthChallenge = `Basic realm="autorefresh", charset="UTF-8"`
 
 // basicAuth requires the configured username and password on every request.
-// It returns next unchanged when username is empty.
+// It returns next unchanged only when both username and password are empty.
 func basicAuth(username, password string, next http.Handler) http.Handler {
-	if username == "" {
+	if username == "" && password == "" {
 		return next
 	}
 	wantUser := sha256.Sum256([]byte(username))

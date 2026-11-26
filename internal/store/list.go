@@ -467,7 +467,7 @@ type ListCounts struct{ Attention, Fixed, Stopped int }
 func countQuery(q ListQuery) (string, []any) {
 	var b queryBuilder
 	if q.Tab == TabFixed {
-		b.add(`SELECT COUNT(*)` + eventFrom)
+		b.add(`SELECT COUNT(*) FROM event e`)
 		fixedFilters(&b, q)
 	} else {
 		b.add(`SELECT COUNT(*) FROM item`)

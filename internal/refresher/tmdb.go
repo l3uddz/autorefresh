@@ -83,6 +83,7 @@ func (r *Refresher) tmdbResults(ctx context.Context, run *serverRun, lib plex.Li
 			d.noTMDBEntry(from, entries)
 			continue
 		}
+		d.rememberTMDB(from, tmdbID)
 		if searched[tmdbID] {
 			continue
 		}

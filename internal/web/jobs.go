@@ -103,9 +103,13 @@ func (s *Server) serveRunItems(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := s.store.RunItems(r.Context(), id)
+	server, items, found, err := s.store.RunItemsWithServer(r.Context(), id)
 	if err != nil {
 		writeStoreError(w, r, err)
+		return
+	}
+	if _, configured := s.srvIndex[server]; !found || !configured {
+		writeError(w, http.StatusNotFound, "no such run")
 		return
 	}
 	out := make([]runItemJSON, 0, len(items))
@@ -130,7 +134,9 @@ func (s *Server) serveBulkRefresh(w http.ResponseWriter, r *http.Request) {
 	if !s.jobsAvailable(w) {
 		return
 	}
-	srv, keys, ok := s.bulkItems(w, r, r.Context(), store.TabAttention)
+	ctx, cancel := context.WithTimeout(r.Context(), s.actionTimeout)
+	defer cancel()
+	srv, keys, ok := s.bulkItems(w, r, ctx, store.TabAttention)
 	if !ok {
 		return
 	}
@@ -215,12 +221,12 @@ func (s *Server) bulkKeys(ctx context.Context, q store.ListQuery, selection bulk
 			return nil, errBulkKey
 		}
 		if !seen[key] {
+			if len(keys) >= maxBulkItems {
+				return nil, errBulkLimit
+			}
 			seen[key] = true
 			keys = append(keys, key)
 		}
-	}
-	if len(keys) > maxBulkItems {
-		return nil, errBulkLimit
 	}
 	return keys, nil
 }

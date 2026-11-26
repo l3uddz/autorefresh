@@ -21,6 +21,7 @@ type Plex interface {
 	Libraries(ctx context.Context) ([]plex.Library, error)
 	List(ctx context.Context, section string, itemType int, filters ...plex.Filter) ([]plex.Item, error)
 	ItemPaths(ctx context.Context, ratingKey string) (plex.Paths, error)
+	ItemWithPaths(ctx context.Context, ratingKey string) (plex.Item, plex.Paths, error)
 	EpisodeNumbers(ctx context.Context, ratingKey string) (map[int][]int, error)
 	Refresh(ctx context.Context, ratingKey string) error
 	Item(ctx context.Context, ratingKey string) (plex.Item, error)
@@ -37,6 +38,7 @@ type Store interface {
 	LibraryInfo(string, string) (store.LibraryInfo, bool, error)
 	RecordManual(store.ManualRecord) error
 	KnownItem(server, ratingKey string) (store.Item, bool, bool, error)
+	KnownItems(ctx context.Context, server string, keys []string) (map[string]store.KnownResult, error)
 	Library(server, section string) (store.Library, error)
 	EventMark() (store.EventMark, error)
 	ApplyRead(r store.Read) (fixed []store.Item, err error)
@@ -126,16 +128,17 @@ type serverRun struct {
 	source               store.Source
 	server               Server
 	began                time.Time
-	libraries            []plex.Library      // the selected libraries
-	files                map[string][]string // movie files by rating key, from the reads of this run
-	full                 bool                // read every library fully
-	fullReadItems        int                 // items that full reads listed
-	incrementalReadItems int                 // items that incremental reads listed
-	fullReads            int                 // libraries read fully
-	incrementalReads     int                 // libraries read incrementally
-	completed            []completedItem     // rows that became complete, logged after the refresh step
-	fixed                int                 // completed rows that had a request that Plex accepted
-	fixedAfterMatch      int                 // completed rows that had a match request that Plex accepted
+	libraries            []plex.Library        // the selected libraries
+	files                map[string][]string   // movie files by rating key, from the reads of this run
+	prePaths             map[string]plex.Paths // pre-fetched item paths by rating key, e.g. from manual refresh pre-check
+	full                 bool                  // read every library fully
+	fullReadItems        int                   // items that full reads listed
+	incrementalReadItems int                   // items that incremental reads listed
+	fullReads            int                   // libraries read fully
+	incrementalReads     int                   // libraries read incrementally
+	completed            []completedItem       // rows that became complete, logged after the refresh step
+	fixed                int                   // completed rows that had a request that Plex accepted
+	fixedAfterMatch      int                   // completed rows that had a match request that Plex accepted
 	due                  int
 	refreshes            int // refresh requests sent, also failed ones
 	matches              int // match requests sent, also failed ones

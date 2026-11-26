@@ -124,10 +124,13 @@ func scanItem(row scanner) (Item, error) {
 }
 
 // queryItems runs query and reads all rows before it returns.
-func queryItems(q interface {
-	Query(query string, args ...any) (*sql.Rows, error)
-}, query string, args ...any) ([]Item, error) {
-	rows, err := q.Query(query, args...)
+func queryItems(q querier, query string, args ...any) ([]Item, error) {
+	return queryItemsContext(context.Background(), q, query, args...)
+}
+
+// queryItemsContext runs query with ctx and reads all rows before it returns.
+func queryItemsContext(ctx context.Context, q querier, query string, args ...any) ([]Item, error) {
+	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -342,6 +345,15 @@ func writeExisting(tx *sql.Tx, r Read, prev Item, in readKey) (fixed bool, err e
 // insertNewRows inserts rows for incoming items not in old or settled that
 // have at least one incomplete reason.
 func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]readKey, settled map[string]bool) error {
+	if len(incoming) == 0 {
+		return nil
+	}
+	stmt, err := tx.Prepare(`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons, thumb, art, path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("prepare item insert: %w", err)
+	}
+	defer stmt.Close()
 	for key, in := range incoming {
 		if _, exists := old[key]; exists || settled[key] {
 			continue
@@ -350,9 +362,7 @@ func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]
 		if final == 0 {
 			continue
 		}
-		_, err := tx.Exec(`INSERT INTO item (server, section, rating_key, type, title, year, added_at, reasons, thumb, art, path)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			r.Server, r.Section, key, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final),
+		_, err := stmt.Exec(r.Server, r.Section, key, in.meta.Type, in.meta.Title, in.meta.Year, in.meta.AddedAt.Unix(), int(final),
 			in.meta.Thumb, in.meta.Art, in.meta.Path)
 		if err != nil {
 			return fmt.Errorf("write item %s: %w", key, err)
@@ -364,11 +374,19 @@ func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]
 // writeFolders saves the staged folder of each row that the read kept. A key
 // without a row, such as a deleted one, matches nothing.
 func writeFolders(tx *sql.Tx, r Read) error {
+	if len(r.Folders) == 0 {
+		return nil
+	}
+	stmt, err := tx.Prepare(`UPDATE item SET path = ? WHERE server = ? AND rating_key = ?`)
+	if err != nil {
+		return fmt.Errorf("prepare item folder: %w", err)
+	}
+	defer stmt.Close()
 	for key, folder := range r.Folders {
 		if folder == "" {
 			continue
 		}
-		if _, err := tx.Exec(`UPDATE item SET path = ? WHERE server = ? AND rating_key = ?`, folder, r.Server, key); err != nil {
+		if _, err := stmt.Exec(folder, r.Server, key); err != nil {
 			return fmt.Errorf("write item folder %s: %w", key, err)
 		}
 	}
@@ -687,10 +705,8 @@ func (s *Store) prune(server string, remove func(server, section string) bool, a
 		return nil, fmt.Errorf("read libraries: %w", err)
 	}
 
-	for _, p := range pruned {
-		if _, err := tx.Exec(`DELETE FROM library WHERE server = ? AND section = ?`, p.Server, p.Section); err != nil {
-			return nil, fmt.Errorf("prune library: %w", err)
-		}
+	if err := deletePrunedLibraries(tx, pruned); err != nil {
+		return nil, err
 	}
 	if also != nil {
 		if err := also(tx); err != nil {
@@ -701,4 +717,19 @@ func (s *Store) prune(server string, remove func(server, section string) bool, a
 		return nil, fmt.Errorf("commit prune: %w", err)
 	}
 	return pruned, nil
+}
+
+func deletePrunedLibraries(tx *sql.Tx, pruned []Pruned) error {
+	for _, p := range pruned {
+		if _, err := tx.Exec(`UPDATE item SET last_match_event_id = NULL
+			WHERE last_match_event_id IS NOT NULL
+				AND EXISTS (SELECT 1 FROM event WHERE id = item.last_match_event_id AND server = ? AND section = ?)`,
+			p.Server, p.Section); err != nil {
+			return fmt.Errorf("clear pruned match events: %w", err)
+		}
+		if _, err := tx.Exec(`DELETE FROM library WHERE server = ? AND section = ?`, p.Server, p.Section); err != nil {
+			return fmt.Errorf("prune library: %w", err)
+		}
+	}
+	return nil
 }

@@ -89,7 +89,7 @@ export function useShown<T>(
     keyRef.current = key;
     const dialog = dialogRef.current;
     if (dialog && !dialog.open) setShown(current => afterExit(current, open));
-  });
+  }, [open, onDismiss, key]);
   const ref = useCallback((dialog: HTMLDialogElement | null) => {
     dialogRef.current = dialog;
     if (!dialog) return undefined;
