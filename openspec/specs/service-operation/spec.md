@@ -162,12 +162,12 @@ Without `--once`, autorefresh SHALL try to start one run as soon as the token ch
 
 #### Scenario: First run at once
 
-- **WHEN** autorefresh starts without `--once`, the token checks finish without a signal, and no other run is busy when they end
-- **THEN** it sends the first scheduled run's requests right after the token checks, without waiting for the schedule
+- **WHEN** autorefresh starts without `--once`, the token checks finish without a signal, and no other run is busy when the first scheduled start begins
+- **THEN** that start runs right after the token checks, without waiting for the schedule
 
 #### Scenario: Manual run during the checks
 
-- **WHEN** the dashboard accepted a manual run during the token checks, and that run is still busy when they end
+- **WHEN** the dashboard accepted a manual run during the token checks, and that run is still busy when the first scheduled start begins
 - **THEN** autorefresh skips the first scheduled start and logs `Skipped scheduled start, a run is busy`
 
 #### Scenario: Time zone prefix
