@@ -180,8 +180,8 @@ func (c *Config) validate() error {
 	if c.Ignored, err = store.ParseReasons(c.IgnoreReasons); err != nil {
 		return fmt.Errorf("ignore-reasons: %w", err)
 	}
-	if c.TMDBToken != "" && hasControlOrSpace(c.TMDBToken) {
-		return errors.New("tmdb-token must not contain whitespace or control characters")
+	if c.TMDBToken != "" && hasNonTokenChar(c.TMDBToken) {
+		return errors.New("tmdb-token must contain only printable ASCII without whitespace or control characters")
 	}
 	if err := c.UI.validate(); err != nil {
 		return err
@@ -245,11 +245,11 @@ func hasControl(s string) bool {
 	return false
 }
 
-// hasControlOrSpace reports whether s contains any ASCII control character or
-// whitespace, which cannot appear in a valid Plex or TMDB header token.
-func hasControlOrSpace(s string) bool {
+// hasNonTokenChar reports whether s contains any whitespace, control character,
+// or non-ASCII rune, which cannot appear in a valid Plex or TMDB header token.
+func hasNonTokenChar(s string) bool {
 	for _, r := range s {
-		if r <= 0x20 || r == 0x7f {
+		if r <= 0x20 || r >= 0x7f {
 			return true
 		}
 	}
@@ -260,6 +260,9 @@ func hasControlOrSpace(s string) bool {
 // expression that never fires, such as February 30, Next returns the zero
 // time.
 func parseCron(key, expr string) (cron.Schedule, error) {
+	if err := checkEveryDuration(key, expr); err != nil {
+		return nil, err
+	}
 	sched, err := cron.ParseStandard(expr)
 	if err != nil {
 		return nil, fmt.Errorf("%s %q: %w", key, expr, err)
@@ -268,6 +271,28 @@ func parseCron(key, expr string) (cron.Schedule, error) {
 		return nil, fmt.Errorf("%s %q: the expression never fires", key, expr)
 	}
 	return sched, nil
+}
+
+// checkEveryDuration rejects @every schedules shorter than 1s, which robfig/cron
+// would otherwise clamp silently to 1s.
+func checkEveryDuration(key, expr string) error {
+	rest := strings.TrimSpace(expr)
+	if strings.HasPrefix(rest, "TZ=") || strings.HasPrefix(rest, "CRON_TZ=") {
+		_, after, ok := strings.Cut(rest, " ")
+		if !ok {
+			return nil
+		}
+		rest = strings.TrimSpace(after)
+	}
+	durStr, ok := strings.CutPrefix(rest, "@every ")
+	if !ok {
+		return nil
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(durStr))
+	if err == nil && d < time.Second {
+		return fmt.Errorf("%s %q: @every duration must be at least 1s", key, expr)
+	}
+	return nil
 }
 
 // label names a server in errors. It never uses the URL or the token.
@@ -294,8 +319,8 @@ func (s *Server) validate() error {
 	if s.Token == "" {
 		return errors.New("token is empty")
 	}
-	if hasControlOrSpace(s.Token) {
-		return errors.New("token must not contain whitespace or control characters")
+	if hasNonTokenChar(s.Token) {
+		return errors.New("token must contain only printable ASCII without whitespace or control characters")
 	}
 	if s.RequestTimeout() <= 0 {
 		return errors.New("timeout must be greater than zero")
@@ -328,6 +353,9 @@ func validateURL(raw string) (*url.URL, error) {
 	if u.Hostname() == "" {
 		return nil, errors.New("url has no host")
 	}
+	if err := validateURLPort(u); err != nil {
+		return nil, err
+	}
 	if u.User != nil {
 		return nil, errors.New("url must not have userinfo")
 	}
@@ -340,4 +368,20 @@ func validateURL(raw string) (*url.URL, error) {
 		return nil, errors.New("url must not have a fragment")
 	}
 	return u, nil
+}
+
+// validateURLPort rejects empty trailing colons and ports outside 1..65535.
+func validateURLPort(u *url.URL) error {
+	if strings.HasSuffix(u.Host, ":") {
+		return errors.New("url has an invalid port")
+	}
+	port := u.Port()
+	if port == "" {
+		return nil
+	}
+	p, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || p == 0 {
+		return errors.New("url has an invalid port")
+	}
+	return nil
 }

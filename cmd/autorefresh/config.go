@@ -87,6 +87,9 @@ func readConfig(ctx context.Context, path string, interval time.Duration) ([]byt
 	}
 }
 
+// maxConfigBytes bounds the config file size before reading it into memory.
+const maxConfigBytes = 1 << 20
+
 // checkConfig checks the config file at path once. It returns the content
 // of the file if the file is ready: it has content, it did not change during
 // the read, and after a wait it has the same state as seen. Otherwise it
@@ -103,6 +106,8 @@ func checkConfig(path string, waited bool, seen os.FileInfo) (data []byte, state
 		return nil, nil, fmt.Errorf("%s is not a regular file", path)
 	case info.Size() == 0:
 		return nil, nil, nil
+	case info.Size() > maxConfigBytes:
+		return nil, nil, fmt.Errorf("%s is larger than 1 MiB", path)
 	case waited && !sameState(seen, info):
 		return nil, info, nil
 	}
@@ -113,6 +118,9 @@ func checkConfig(path string, waited bool, seen os.FileInfo) (data []byte, state
 	}
 	if err != nil {
 		return nil, nil, err
+	}
+	if len(data) > maxConfigBytes {
+		return nil, nil, fmt.Errorf("%s is larger than 1 MiB", path)
 	}
 	after, err := os.Stat(path)
 	if err != nil || len(data) == 0 || !sameState(info, after) {

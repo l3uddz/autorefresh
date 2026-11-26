@@ -315,6 +315,25 @@ func TestReadConfigRejectsDirectory(t *testing.T) {
 	}
 }
 
+func TestReadConfigRejectsOversizedFile(t *testing.T) {
+	captureLog(t)
+	path := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(path, make([]byte, maxConfigBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalRead := readFileFunc
+	t.Cleanup(func() { readFileFunc = originalRead })
+	readFileFunc = func(string) ([]byte, error) {
+		t.Fatal("readFileFunc was called for an oversized config file")
+		return nil, nil
+	}
+
+	_, err := readConfigAsync(t, path, time.Hour)
+	if err == nil || !strings.Contains(err.Error(), "larger than 1 MiB") {
+		t.Fatalf("readConfig error = %v, want larger than 1 MiB", err)
+	}
+}
+
 // captureLog sends the global logger to a buffer until the test ends. The
 // caller reads the buffer only after every logging goroutine is done.
 func captureLog(t *testing.T) *bytes.Buffer {
