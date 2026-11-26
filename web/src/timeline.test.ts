@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { ItemDetail, ItemRecord, RefreshAnswer, TimelineEvent } from './api';
+import type { ItemDetail, ItemRecord, RefreshAnswer, TimelineEvent, TimelineEventKind } from './api';
 import { decisionView, refreshOutcome, refreshResult, refreshText, disposition, episodeDiffText, eventView, lastDecision, rowVerdict, searchSource, verdictName } from './timeline';
 
 const item = (change: Partial<ItemRecord> = {}): ItemRecord => ({ srv: 0, key: '7', cached: false, attempts: 0, refreshes: 0, ...change });
-const event = (id: number, kind: string, change: Partial<TimelineEvent> = {}): TimelineEvent => ({ id, kind, accepted: false, at: `2026-11-${10 + id}T00:00:00Z`, searches: [], ...change });
+const event = (id: number, kind: TimelineEventKind, change: Partial<TimelineEvent> = {}): TimelineEvent => ({ id, kind, accepted: false, at: `2026-11-${10 + id}T00:00:00Z`, searches: [], ...change });
 
 describe('disposition', () => {
   const detail = (timeline: TimelineEvent[], change: Partial<ItemRecord> = {}): ItemDetail => ({ item: item(change), timeline });
