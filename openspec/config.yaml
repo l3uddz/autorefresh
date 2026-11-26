@@ -26,7 +26,7 @@ rules:
     - Keep each production Go function at a cognitive complexity of 15 or less, and split larger steps into named functions.
     - For dashboard work, follow web/AGENTS.md. Use Astryx components and tokens only.
   tasks:
-    - 'Plan one Conventional Commit for each task, in the format `<type>(<scope>): <summary>`, for example `fix(refresher): keep the newer check`.'
+    - 'Plan one commit for each task, with a subject in the Conventional Commits format of AGENTS.md: `<type>(<scope>)[!]: <summary>`, for example `fix(refresher): keep the newer check`. Mark a breaking change with `!` and explain it in a `BREAKING CHANGE:` footer.'
     - Include the updates of README.md for user-facing changes, and of AGENTS.md for new packages or rules.
     - End with the CI sequence of AGENTS.md (mise run vendor, test, lint, web-install, web-lint, web-test, and test-webui). For changes in web/, also run pnpm exec astryx doctor --built . in web/.
 
