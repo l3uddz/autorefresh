@@ -523,7 +523,7 @@ The item detail SHALL offer Refresh now without a confirmation; `manual-actions`
 
 #### Scenario: Answer without a check result
 
-- **WHEN** the answer has the item detail, but no check saved the reasons of the item
+- **WHEN** the answer has the item detail, no check saved the reasons of the item, and its timeline shows no removal
 - **THEN** the dashboard shows the detail at once, and a success toast names only the accepted refresh or the applied match
 
 #### Scenario: Still missing
