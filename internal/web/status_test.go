@@ -85,6 +85,27 @@ func TestStatusTracksRun(t *testing.T) {
 	}
 }
 
+func TestStatusUpdateRunNoOpWhenIdleDoesNotNotify(t *testing.T) {
+	st := NewStatus([]string{"one"}, false)
+	ch, unsub := st.subscribe()
+	defer unsub()
+	before := st.Snapshot().Seq
+
+	st.LibraryRead("one", "Movies")
+	st.Batch("one", 1, 1)
+	st.ItemStarted("one", refresher.ProgressItem{RatingKey: "1"})
+	st.ItemDone("one", "1", "refresh", refresher.Counts{})
+
+	if got := st.Snapshot().Seq; got != before {
+		t.Errorf("seq = %d after idle updateRun calls, want %d", got, before)
+	}
+	select {
+	case <-ch:
+		t.Error("subscriber signaled for idle updateRun calls")
+	default:
+	}
+}
+
 func TestStatusHealth(t *testing.T) {
 	finished := store.RunResult{Status: store.RunFinished}
 	failed := store.RunResult{Status: store.RunFailed}

@@ -32,6 +32,7 @@ func (s *Server) serveStatus(w http.ResponseWriter, _ *http.Request) {
 // ends, or a write fails.
 func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 	if s.sseCtx.Err() != nil {
+		writeError(w, http.StatusServiceUnavailable, "shutting down")
 		return
 	}
 	if !s.acquireSSE() {
@@ -58,8 +59,14 @@ func (s *Server) serveEvents(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case <-changes:
+			if s.sseCtx.Err() != nil {
+				return
+			}
 			err = s.sendStatus(rc, w)
 		case <-keepalive.C:
+			if s.sseCtx.Err() != nil {
+				return
+			}
 			err = s.send(rc, w, keepaliveComment)
 		}
 		if err != nil {

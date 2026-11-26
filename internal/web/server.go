@@ -257,6 +257,7 @@ func (s *Server) Start(ln net.Listener) {
 // It returns the Shutdown error. The budget is the deadline of ctx plus
 // forceWait.
 func (s *Server) Stop(ctx context.Context) error {
+	defer s.cancelBase()
 	s.closeAdmission()
 	s.cancelSSE()
 	err := s.srv.Shutdown(ctx)

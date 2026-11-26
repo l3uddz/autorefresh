@@ -383,6 +383,46 @@ func (a slowRefresh) RefreshItem(context.Context, string, string) (refresher.Ref
 	return refresher.RefreshResult{Checked: true}, nil
 }
 
+func (a slowRefresh) ApplyMatch(context.Context, string, string, plex.Candidate) error {
+	time.Sleep(a.delay)
+	return nil
+}
+
+func (a slowRefresh) SearchMatches(context.Context, string, string, refresher.MatchQuery) (refresher.MatchResult, error) {
+	time.Sleep(a.delay)
+	return refresher.MatchResult{}, nil
+}
+
+func TestMatchAndSearchOutlastServerWriteTimeout(t *testing.T) {
+	s := New(Options{Actions: slowRefresh{delay: 200 * time.Millisecond}, Servers: []PlexServer{{Name: "home"}}})
+	s.srv.WriteTimeout = 50 * time.Millisecond
+	base := startServer(t, s)
+	t.Cleanup(func() { _ = s.Stop(context.Background()) })
+
+	matchReq, err := http.NewRequestWithContext(t.Context(), http.MethodPost, base+"/api/item/match?srv=0&key=1", strings.NewReader(`{"guid":"plex://movie/1","name":"One","year":2020}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	matchReq.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(matchReq)
+	if err != nil {
+		t.Fatalf("match answer lost: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("match status = %d, want 200", resp.StatusCode)
+	}
+
+	searchResp, err := http.Get(base + "/api/item/matches?srv=0&key=1")
+	if err != nil {
+		t.Fatalf("search answer lost: %v", err)
+	}
+	searchResp.Body.Close()
+	if searchResp.StatusCode != http.StatusOK {
+		t.Fatalf("search status = %d, want 200", searchResp.StatusCode)
+	}
+}
+
 // A refresh can outlast the write timeout of the server, and its answer
 // still reaches the browser, so the user does not repeat a request that
 // Plex accepted.

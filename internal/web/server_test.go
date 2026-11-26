@@ -103,6 +103,9 @@ func TestStopClosesAdmission(t *testing.T) {
 	if err := s.Stop(ctx); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
+	if s.srv.BaseContext(nil).Err() == nil {
+		t.Error("clean Stop did not cancel baseCtx")
+	}
 
 	rec := serve(s, httptest.NewRequest(http.MethodGet, "/", nil))
 	assertJSONError(t, rec, http.StatusServiceUnavailable, "shutting down")
@@ -152,6 +155,9 @@ func TestStartAndStop(t *testing.T) {
 	defer cancel()
 	if err := s.Stop(ctx); err != nil {
 		t.Fatalf("Stop: %v", err)
+	}
+	if s.srv.BaseContext(nil).Err() == nil {
+		t.Error("clean Stop did not cancel baseCtx")
 	}
 
 	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}

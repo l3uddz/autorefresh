@@ -329,18 +329,13 @@ func TestEventsClearsDeadlineAfterFlush(t *testing.T) {
 	}
 }
 
-func TestEventsAfterStopSendNothing(t *testing.T) {
+func TestEventsAfterStopAnswers503(t *testing.T) {
 	s := New(Options{})
 	s.cancelSSE()
-	f := newFakeStream(t)
 
-	done := serveInBackground(s, f, httptest.NewRequest(http.MethodGet, "/api/events", nil))
-	waitReturned(t, done, time.Second)
-
-	if calls := f.recorded(); len(calls) != 0 {
-		t.Errorf("calls = %q, want none", calls)
-	}
-	if got := f.header.Get("Content-Type"); got == "text/event-stream" {
+	rec := serve(s, httptest.NewRequest(http.MethodGet, "/api/events", nil))
+	assertJSONError(t, rec, http.StatusServiceUnavailable, "shutting down")
+	if got := rec.Header().Get("Content-Type"); got == "text/event-stream" {
 		t.Error("the handler started a stream after Stop")
 	}
 }

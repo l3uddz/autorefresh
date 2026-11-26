@@ -134,7 +134,9 @@ func (s *Server) serveBulkRefresh(w http.ResponseWriter, r *http.Request) {
 	if !s.jobsAvailable(w) {
 		return
 	}
-	srv, keys, ok := s.bulkItems(w, r, r.Context(), store.TabAttention)
+	ctx, cancel := context.WithTimeout(r.Context(), s.actionTimeout)
+	defer cancel()
+	srv, keys, ok := s.bulkItems(w, r, ctx, store.TabAttention)
 	if !ok {
 		return
 	}
@@ -219,12 +221,12 @@ func (s *Server) bulkKeys(ctx context.Context, q store.ListQuery, selection bulk
 			return nil, errBulkKey
 		}
 		if !seen[key] {
+			if len(keys) >= maxBulkItems {
+				return nil, errBulkLimit
+			}
 			seen[key] = true
 			keys = append(keys, key)
 		}
-	}
-	if len(keys) > maxBulkItems {
-		return nil, errBulkLimit
 	}
 	return keys, nil
 }

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -33,7 +34,13 @@ const (
 	// lock of another process (30 s at most). The answer must still reach
 	// the browser, so the user does not repeat a request that Plex accepted.
 	refreshWriteTimeout = 3 * time.Minute
-	maxBodyBytes        = 1 << 20
+	// matchWriteTimeout bounds POST /api/item/match, whose match request and
+	// follow-up refresh/check plus store lock can exceed the 1 m server timeout.
+	matchWriteTimeout = 2 * time.Minute
+	// searchWriteTimeout bounds search, auto-match preview, and episode-check
+	// answers, which can run up to searchTimeout plus encoding overhead.
+	searchWriteTimeout = 90 * time.Second
+	maxBodyBytes       = 1 << 20
 )
 
 // Actions is the set of synchronous dashboard actions.
@@ -68,12 +75,11 @@ func requireJSON(next http.Handler) http.Handler {
 }
 
 func noBody(w http.ResponseWriter, r *http.Request) bool {
-	var b [1]byte
-	n, err := r.Body.Read(b[:])
+	n, err := io.CopyN(io.Discard, r.Body, 1)
 	switch {
 	case n > 0:
 		writeError(w, http.StatusBadRequest, "body not allowed")
-	case err != io.EOF:
+	case !errors.Is(err, io.EOF):
 		writeError(w, http.StatusBadRequest, "invalid body")
 	default:
 		return true
@@ -83,13 +89,12 @@ func noBody(w http.ResponseWriter, r *http.Request) bool {
 
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
-	dec.DisallowUnknownFields()
 	var object json.RawMessage
 	err := dec.Decode(&object)
 	if err == nil {
 		err = dec.Decode(new(json.RawMessage))
 		if err == io.EOF && len(object) > 0 && object[0] == '{' {
-			strict := json.NewDecoder(strings.NewReader(string(object)))
+			strict := json.NewDecoder(bytes.NewReader(object))
 			strict.DisallowUnknownFields()
 			err = strict.Decode(v)
 			if err == nil {
@@ -106,7 +111,14 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	return false
 }
 
+func extendWriteDeadline(w http.ResponseWriter, d time.Duration) {
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(d)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		log.Warn().Err(err).Msg("Extending the write deadline failed")
+	}
+}
+
 type itemAction struct {
+	srv         int
 	server, key string
 	params      url.Values
 }
@@ -126,7 +138,7 @@ func (s *Server) actionParams(w http.ResponseWriter, r *http.Request) (itemActio
 		writeError(w, http.StatusBadRequest, err.Error())
 		return itemAction{}, false
 	}
-	return itemAction{server: s.servers[srv].Name, key: key, params: v}, true
+	return itemAction{srv: srv, server: s.servers[srv].Name, key: key, params: v}, true
 }
 
 // refreshJSON answers POST /api/item/refresh: the item detail after the
@@ -147,9 +159,7 @@ func (s *Server) serveRefresh(w http.ResponseWriter, r *http.Request) {
 	if !ok || !noBody(w, r) {
 		return
 	}
-	if err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(refreshWriteTimeout)); err != nil && !errors.Is(err, http.ErrNotSupported) {
-		log.Warn().Err(err).Msg("Extending the write deadline of a refresh failed")
-	}
+	extendWriteDeadline(w, refreshWriteTimeout)
 	ctx, cancel := context.WithTimeout(r.Context(), refreshTimeout)
 	defer cancel()
 	res, err := s.actions.RefreshItem(ctx, a.server, a.key)
@@ -167,19 +177,19 @@ func (s *Server) serveRefresh(w http.ResponseWriter, r *http.Request) {
 // refreshedDetail reads the detail of the item after its refresh, or
 // returns nil and logs why it could not.
 func (s *Server) refreshedDetail(r *http.Request, a itemAction) *itemDetailJSON {
-	srv, key, err := s.itemParams(a.params)
-	if err != nil {
-		return nil
-	}
-	it, found, err := s.lookupItem(r.Context(), srv, key)
+	it, found, err := s.lookupItem(r.Context(), a.srv, a.key)
 	if err == nil && found {
 		var detail itemDetailJSON
-		if detail, err = s.itemDetail(r.Context(), srv, it); err == nil {
+		if detail, err = s.itemDetail(r.Context(), a.srv, it); err == nil {
 			return &detail
 		}
 	}
 	if err != nil {
-		log.Warn().Err(err).Str("path", r.URL.Path).Msg("Reading the item after a refresh failed")
+		ev := log.Warn()
+		if r.Context().Err() != nil {
+			ev = log.Debug()
+		}
+		ev.Err(err).Str("path", r.URL.Path).Msg("Reading the item after a refresh failed")
 	}
 	return nil
 }
@@ -210,6 +220,7 @@ func (s *Server) serveMatch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid match")
 		return
 	}
+	extendWriteDeadline(w, matchWriteTimeout)
 	ctx, cancel := context.WithTimeout(r.Context(), s.actionTimeout)
 	defer cancel()
 	s.accepted(w, r, s.actions.ApplyMatch(ctx, a.server, a.key, plex.Candidate{GUID: body.GUID, Name: body.Name, Year: body.Year}))
@@ -269,6 +280,7 @@ func (s *Server) serveMatches(w http.ResponseWriter, r *http.Request) {
 		}
 		year = y
 	}
+	extendWriteDeadline(w, searchWriteTimeout)
 	ctx, cancel := context.WithTimeout(r.Context(), searchTimeout)
 	defer cancel()
 	result, err := s.actions.SearchMatches(ctx, a.server, a.key, refresher.MatchQuery{Text: q, Year: year})
@@ -295,6 +307,7 @@ func (s *Server) serveAutoMatch(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	extendWriteDeadline(w, searchWriteTimeout)
 	ctx, cancel := context.WithTimeout(r.Context(), searchTimeout)
 	defer cancel()
 	d, err := s.actions.PreviewMatch(ctx, a.server, a.key)
@@ -319,6 +332,7 @@ func (s *Server) serveEpisodeCheck(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid tmdb")
 		return
 	}
+	extendWriteDeadline(w, searchWriteTimeout)
 	ctx, cancel := context.WithTimeout(r.Context(), searchTimeout)
 	defer cancel()
 	result, err := s.actions.EpisodeCheck(ctx, a.server, a.key, id)
@@ -400,6 +414,10 @@ func (s *Server) writeActionError(w http.ResponseWriter, r *http.Request, err er
 }
 
 func (s *Server) writeTMDBError(w http.ResponseWriter, r *http.Request, err error) {
+	if r.Context().Err() != nil {
+		log.Debug().Str("error", s.redact(err.Error())).Str("path", r.URL.Path).Msg("TMDB request failed")
+		return
+	}
 	log.Warn().Str("error", s.redact(err.Error())).Str("path", r.URL.Path).Msg("TMDB request failed")
 	if errors.Is(err, tmdb.ErrUnauthorized) {
 		writeError(w, http.StatusBadGateway, "TMDB rejected the token")
