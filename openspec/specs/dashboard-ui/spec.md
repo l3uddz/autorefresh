@@ -513,12 +513,18 @@ The item detail SHALL show the item art faded behind its head, the poster, the t
 
 ### Requirement: Refresh now
 
-The item detail SHALL offer Refresh now without a confirmation; `manual-actions` gives the server rules. Its toast SHALL name the applied match, with its year when known, or the accepted refresh. When the answer has the item detail, the dashboard SHALL show it at once, and the toast SHALL add what the check found: complete, still missing reasons, or gone. For a plain refresh of a gone item, the toast SHALL be only the removal notice.
+The item detail SHALL offer Refresh now without a confirmation; `manual-actions` gives the server rules. Its toast SHALL name the applied match, with its year when known, or the accepted refresh. When the answer has the item detail, the dashboard SHALL show it at once. The toast SHALL add a check result only when the answer gives one: complete, still missing reasons, or gone. For a plain refresh of a gone item, the toast SHALL be only the removal notice.
 
 #### Scenario: Item complete
 
-- **WHEN** the check after the refresh finds the item complete
+- **WHEN** the check after a plain refresh finds the item complete
 - **THEN** a success toast says "Plex accepted the refresh of <title>. It is complete."
+- **AND** after a fix match, the toast says "Matched <title> to <match>", with the year when known, followed by ". It is complete."
+
+#### Scenario: Answer without a check result
+
+- **WHEN** the answer has the item detail, but no check saved the reasons of the item
+- **THEN** the dashboard shows the detail at once, and a success toast names only the accepted refresh or the applied match
 
 #### Scenario: Still missing
 
