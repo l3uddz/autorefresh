@@ -1,32 +1,41 @@
 schema: spec-driven
 
-# Project context (optional)
-# Add only constraints that should guide OpenSpec artifacts and workflows.
-# Include constraints an agent cannot infer by reading the code.
-# Keep general project documentation and discoverable codebase facts out.
-# Example:
-#   context: |
-#     Designs and tasks must cover Windows, macOS, and Linux
-#     Write all artifacts in Spanish
+# Project context. Every OpenSpec agent reads it. AGENTS.md holds the full
+# repository rules; this lists the constraints that shape plans and specs.
+context: |
+  autorefresh is a Go service that runs beside autoscan. It finds Plex items with missing metadata and asks Plex to refresh or fix match them, one item at a time. An optional dashboard (internal/web, web/) shows and drives that work.
+  Read AGENTS.md before planning. It maps the packages and gives the repository rules, which win over these lines.
+  Plex safety: never refresh or scan a whole library. Send only single-item requests. Reading whole libraries page by page is fine. A plan that sends a new kind of write request to Plex must say so in its proposal.
+  The only hosts autorefresh calls are the configured Plex servers, the Plex metadata provider, and TMDB. A new outside host needs the maintainer's agreement.
+  Tests need no network, no running Plex server, and no TMDB token. They use net/http/httptest and recorded responses in testdata/, with private values removed.
+  openspec/specs describes the current behaviour and follows the code. The designs in changes/archive are history and can be out of date.
+  Track work in GitHub issues of l3uddz/autorefresh. Reference only real issues, and never invent an issue number.
+  Write every artifact in plain, simple English: short sentences, active voice, and one term for one thing.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always state what is out of scope
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+# Per-artifact rules.
+rules:
+  proposal:
+    - Name the GitHub issue that the change delivers.
+    - State the non-goals.
+    - Say which configuration keys, API routes, or dashboard pages the change adds, changes, or removes.
+  specs:
+    - Describe observable behaviour only, such as requests to Plex or TMDB, stored history, API answers, log messages, and what the dashboard shows. Do not name Go or TypeScript functions, types, or files.
+    - Give configuration keys with their defaults, as internal/config sets them.
+  design:
+    - Describe the load on Plex and TMDB, such as the number of requests for each item and the pacing.
+    - Keep each production Go function at a cognitive complexity of 15 or less, and split larger steps into named functions.
+    - For dashboard work, follow web/AGENTS.md. Use Astryx components and tokens only.
+  tasks:
+    - 'Plan one Conventional Commit for each task, in the format `<type>(<scope>): <summary>`, for example `fix(refresher): keep the newer check`.'
+    - Include the updates of README.md for user-facing changes, and of AGENTS.md for new packages or rules.
+    - End with the CI sequence of AGENTS.md (mise run vendor, test, lint, web-install, web-lint, web-test, and test-webui). For changes in web/, also run pnpm exec astryx doctor --built . in web/.
 
-# Per-operation guidance (optional)
-# Add advisory guidance for how apply and archive work should be conducted.
-# This is separate from artifact rules above.
-# Example:
-#   operations:
-#     apply:
-#       guidance:
-#         - Keep test summaries concise
-#     archive:
-#       guidance:
-#         - Summarize the archive outcome before finishing
+# Per-operation guidance.
+operations:
+  apply:
+    guidance:
+      - Check new code against tests that use recorded responses. Send no request to a live Plex server unless the maintainer asks for it. Single-item refreshes need no extra approval, but ask before a fix match or any other write.
+      - When the behaviour of the code differs from a spec, update the spec in the same branch.
+  archive:
+    guidance:
+      - Before archiving, sync the delta specs into openspec/specs, and check that openspec validate --all --strict passes.

@@ -29,7 +29,7 @@ When the design adds packages or rules, update this file.
 | `mise.toml` | Tool versions and development tasks |
 | `.golangci.yml` | golangci-lint configuration: the formatter, the linters, and the complexity limit that `mise run lint` checks |
 | `.goreleaser.yml` | Release build configuration. A `before` hook runs `mise run web-build`, and the build uses the `webui` tag, so every release embeds the dashboard. |
-| `openspec/` | OpenSpec root with the `spec-driven` schema. `specs/<capability>/spec.md` describes the current behaviour of each capability: `configuration`, `service-operation`, `library-scan`, `refresh-runs`, `fix-match`, `history`, `manual-actions`, `dashboard-api`, and `dashboard-ui`. `changes/<name>/` holds a planned change, and `changes/archive/` holds finished ones. The archive starts with the five designs and plans of the retired superpowers workflow, which describe the design as it was then. `config.yaml` holds the schema, and can hold project context and artifact rules for the OpenSpec workflow. |
+| `openspec/` | OpenSpec root with the `spec-driven` schema. `specs/<capability>/spec.md` describes the current behaviour of each capability: `configuration`, `service-operation`, `library-scan`, `refresh-runs`, `fix-match`, `history`, `manual-actions`, `dashboard-api`, and `dashboard-ui`. `changes/<name>/` holds a planned change, and `changes/archive/` holds finished ones. The archive starts with the five designs and plans of the retired superpowers workflow, which describe the design as it was then. `config.yaml` holds the schema, the project context, the rules of each artifact, and the guidance for apply and archive. |
 
 ## Code changes
 
