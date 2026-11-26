@@ -315,6 +315,9 @@ func TestErrorsAndTraceOmitSecrets(t *testing.T) {
 		t.Fatalf("errors = %v", errs)
 	}
 	srv.Close()
+	// Close only closes the idle connections of http.DefaultTransport. Drop the
+	// pooled connection of the client, so the request dials and is refused.
+	c.http.CloseIdleConnections()
 	errs = append(errs, c.Refresh(context.Background(), "3")) // transport error
 
 	for _, err := range errs[1:] {
