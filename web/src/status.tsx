@@ -13,7 +13,7 @@ import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Heading, Text } from '@astryxdesign/core/Text';
 import { ClockIcon } from '@heroicons/react/24/outline';
 import { useQuery } from '@tanstack/react-query';
-import { api, useRuns, useServers, useStatus, type Health, type ItemPage, type RunProgress, type RunRecord, type ServerInfo, type ServerStatus } from './api';
+import { api, useRuns, useServers, useStatus, type Health, type ItemPage, type RunProgress, type RunRecord, type ServerInfo, type ServerStatus, type Status } from './api';
 import { useNow } from './clock';
 import { dateTime, fixedBy, fullReadText, label, nextRunText, plural, relative, runDuration, runTitle } from './format';
 import { Poster } from './media';
@@ -50,7 +50,7 @@ export function StatusPage({ srv }: { srv?: number }) {
       ) : (
         <Grid columns={{ minWidth: 340, repeat: 'fit' }} gap={4}>
           {shown?.map(server => (
-            <ServerCard key={server.srv} server={server} info={servers.data?.servers[server.srv]} isMulti={multi} isBusy={busy} />
+            <ServerCard key={server.srv} server={server} info={servers.data?.servers.find(entry => entry.srv === server.srv)} isMulti={multi} isBusy={busy} />
           ))}
         </Grid>
       )}
@@ -218,7 +218,9 @@ function ServerCounts({ counts, error, isScanned, srv }: { counts?: ItemPage['co
   if (!counts) return <Skeleton width={220} height={16} />;
   return (
     <HStack gap={3} wrap="wrap">
-      <Link href={routeHash({ page: 'items', tab: 'attention', srv })}>{plural(counts.attention, 'item')} need attention</Link>
+      <Link href={routeHash({ page: 'items', tab: 'attention', srv })}>
+        {plural(counts.attention, 'item')} {counts.attention === 1 ? 'needs' : 'need'} attention
+      </Link>
       <Text type="supporting" color="secondary">{counts.fixed.toLocaleString()} fixed recently · {counts.stopped.toLocaleString()} stopped</Text>
     </HStack>
   );
@@ -289,12 +291,14 @@ function RecentRuns({ isMulti, srv }: { isMulti: boolean; srv?: number }) {
   );
 }
 
+const selectNextRun = (status: Status) => status.nextRun;
+
 /** When the next scheduled run starts, from the live status. It shows
  * nothing until the status is known. */
 export function NextRun() {
-  const status = useStatus();
+  const nextRun = useStatus(selectNextRun).data;
   const now = useNow();
-  const text = nextRunText(status.data?.nextRun, now);
+  const text = nextRunText(nextRun, now);
   if (!text) return null;
   return (
     <HStack gap={2} vAlign="center">

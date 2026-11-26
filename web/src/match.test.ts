@@ -223,9 +223,9 @@ describe('dialog state', () => {
 
 describe('checkSearch', () => {
   it('requires text and keeps the byte limit of the API', () => {
-    expect(checkSearch('   ', '')).toEqual({ error: 'Enter a title or an ID.' });
+    expect(checkSearch('   ', '')).toEqual({ error: 'Enter a title or an ID.', field: 'q' });
     expect(checkSearch('x'.repeat(200), '')).toEqual({ q: 'x'.repeat(200) });
-    expect(checkSearch('é'.repeat(101), '')).toHaveProperty('error');
+    expect(checkSearch('é'.repeat(101), '')).toEqual({ error: 'Use at most 200 bytes.', field: 'q' });
     expect(checkSearch('  Harbor  ', '')).toEqual({ q: 'Harbor' });
   });
 
@@ -233,7 +233,9 @@ describe('checkSearch', () => {
     expect(checkSearch('Harbor', '2019')).toEqual({ q: 'Harbor', year: 2019 });
     expect(checkSearch('Harbor', '1')).toEqual({ q: 'Harbor', year: 1 });
     expect(checkSearch('Harbor', '9999')).toEqual({ q: 'Harbor', year: 9999 });
-    for (const year of ['0', '0000', '10000', '-1', '19.5', '2e3', 'abcd']) expect(checkSearch('Harbor', year)).toHaveProperty('error');
+    for (const year of ['0', '0000', '10000', '-1', '19.5', '2e3', 'abcd']) {
+      expect(checkSearch('Harbor', year)).toEqual({ error: 'The year must be a number from 1 to 9999.', field: 'year' });
+    }
   });
 
   it('drops the year of an ID search, which the API ignores', () => {

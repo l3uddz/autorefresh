@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 import type { ItemKey } from './route';
 import type { RunRecord, Servers, Status } from './api-types';
 
@@ -90,9 +90,11 @@ export function statusQuery(client: QueryClient) {
   };
 }
 
-export function useStatus() {
+export function useStatus(): UseQueryResult<Status>;
+export function useStatus<T>(select: (status: Status) => T): UseQueryResult<T>;
+export function useStatus<T = Status>(select?: (status: Status) => T) {
   const client = useQueryClient();
-  return useQuery({ ...statusQuery(client), staleTime: Infinity });
+  return useQuery({ ...statusQuery(client), staleTime: Infinity, select });
 }
 
 /** Reads the latest runs of the server srv, or of every server. */

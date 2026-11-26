@@ -3,6 +3,7 @@ import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { ButtonGroup } from '@astryxdesign/core/ButtonGroup';
 import { DropdownMenu, DropdownMenuDivider, DropdownMenuItem, DropdownMenuSubMenu } from '@astryxdesign/core/DropdownMenu';
+import { EmptyState } from '@astryxdesign/core/EmptyState';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
 import { DEFAULT_WIDTH_BREAKPOINTS } from '@astryxdesign/core/theme';
 import { Icon } from '@astryxdesign/core/Icon';
@@ -12,9 +13,9 @@ import { Skeleton } from '@astryxdesign/core/Skeleton';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Text } from '@astryxdesign/core/Text';
 import { TopNav, TopNavHeading, TopNavItem } from '@astryxdesign/core/TopNav';
-import { ChevronDownIcon } from '@heroicons/react/24/outline';
-import { lazy, Suspense, useEffect } from 'react';
-import { useLiveStatus, useStatus, type Connection, type ServerStatus } from './api';
+import { ChevronDownIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { Component, lazy, Suspense, useEffect, type ReactNode } from 'react';
+import { useLiveStatus, useStatus, type Connection, type ServerStatus, type Status } from './api';
 import { plural } from './format';
 import { useNotify } from './notify';
 import { onQueueDone, queueOutcome, queueText } from './queue';
@@ -25,15 +26,50 @@ import { StatusPage } from './status';
 const ItemsPage = lazy(async () => ({ default: (await import('./items')).ItemsPage }));
 const RunsPage = lazy(async () => ({ default: (await import('./runspage')).RunsPage }));
 
+const selectServerCount = (status: Status) => status.servers.length;
+
+interface BoundaryProps {
+  resetKey: string;
+  children: ReactNode;
+}
+
+class RouteErrorBoundary extends Component<BoundaryProps, { error?: Error }> {
+  state: { error?: Error } = {};
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidUpdate(prevProps: BoundaryProps) {
+    if (this.state.error && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ error: undefined });
+    }
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <VStack padding={6}>
+        <EmptyState
+          title="This page could not load"
+          description={this.state.error.message || 'Reload the page to load the latest version of the dashboard.'}
+          icon={<Icon icon={ExclamationTriangleIcon} size="lg" />}
+          actions={<Button label="Reload" variant="primary" onClick={() => window.location.reload()} />}
+        />
+      </VStack>
+    );
+  }
+}
+
 export function App() {
   const connection = useLiveStatus();
   const notify = useNotify();
   useEffect(() => onQueueDone(queue => notify(queueOutcome(queue), queueText(queue), { autoHideDuration: 10_000 })), [notify]);
   const route = useRoute();
-  const status = useStatus();
-  const srv = routeScope(route, status.data?.servers.length);
+  const serverCount = useStatus(selectServerCount);
+  const srv = routeScope(route, serverCount.data);
   // A scoped page waits for the servers, so its queries use a valid scope.
-  const isScopePending = status.isPending && route.srv !== undefined;
+  const isScopePending = serverCount.isPending && route.srv !== undefined;
   return (
     <AppShell
       height="fill"
@@ -41,16 +77,20 @@ export function App() {
       banner={connectionBanner(connection)}>
       {isScopePending ? (
         <PageSkeleton />
-      ) : route.page === 'items' ? (
-        <Suspense fallback={<PageSkeleton />}>
-          <ItemsPage tab={route.tab} item={route.item} srv={srv} />
-        </Suspense>
-      ) : route.page === 'runs' ? (
-        <Suspense fallback={<PageSkeleton />}>
-          <RunsPage srv={srv} run={route.run} />
-        </Suspense>
       ) : (
-        <StatusPage srv={srv} />
+        <RouteErrorBoundary resetKey={routeHash(route)}>
+          {route.page === 'items' ? (
+            <Suspense fallback={<PageSkeleton />}>
+              <ItemsPage tab={route.tab} item={route.item} srv={srv} />
+            </Suspense>
+          ) : route.page === 'runs' ? (
+            <Suspense fallback={<PageSkeleton />}>
+              <RunsPage srv={srv} run={route.run} />
+            </Suspense>
+          ) : (
+            <StatusPage srv={srv} />
+          )}
+        </RouteErrorBoundary>
       )}
     </AppShell>
   );

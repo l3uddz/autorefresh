@@ -15,7 +15,7 @@ import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Heading, Text } from '@astryxdesign/core/Text';
 import { ClockIcon, InboxIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ApiError, api, type RunDetail, type RunRecord } from './api';
 import { dateTime, label, plural, runDuration, runTitle, titleYear } from './format';
 import { Poster } from './media';
@@ -154,11 +154,11 @@ function RunHead({ run, isMulti }: { run: RunRecord; isMulti: boolean }) {
  * links keep: undefined when the route names another server. */
 function RunBody({ detail, scope }: { detail: RunDetail; scope?: number }) {
   const { run } = detail;
-  const groups = runGroups(detail);
-  const counts = runCounts(run);
+  const groups = useMemo(() => runGroups(detail), [detail]);
+  const counts = useMemo(() => runCounts(run), [run]);
   const [filter, setFilter] = useState<string>();
   const active = counts.find(count => count.name === filter);
-  const filtered = active?.shows ? filterGroups(groups, active.shows) : [];
+  const filtered = useMemo(() => (active?.shows ? filterGroups(groups, active.shows) : []), [groups, active]);
   // A filter whose items the run no longer lists shows every item.
   const isFiltered = filtered.length > 0;
   return (
@@ -195,7 +195,8 @@ function RunCounts({ counts, groups, filter, onFilter }: CountsProps) {
   return (
     <Grid columns={{ minWidth: 112, repeat: 'fit' }} gap={2}>
       {counts.map(count => {
-        if (!count.shows || filterGroups(groups, count.shows).length === 0) {
+        const shows = count.shows;
+        if (!shows || !groups.some(group => group.entries.some(entry => shows(group.id, entry)))) {
           return (
             <Card key={count.name} variant="muted" padding={3}>
               <CountText count={count} />

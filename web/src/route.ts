@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 
 // Routes live in the hash, so the page works at any sub-path of a reverse
 // proxy without configuration:
@@ -97,7 +97,7 @@ function subscribe(listener: () => void) {
 /** Returns the current route and follows hash changes. */
 export function useRoute(): Route {
   const hash = useSyncExternalStore(subscribe, () => window.location.hash);
-  return parseRoute(hash);
+  return useMemo(() => parseRoute(hash), [hash]);
 }
 
 /** Moves to route and keeps the browser history. */

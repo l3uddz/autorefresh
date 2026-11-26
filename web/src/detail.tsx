@@ -42,6 +42,10 @@ interface Props {
 
 type Operation = 'refresh' | 'stop' | 'resume';
 
+type ActionResult =
+  | { operation: 'refresh'; result: RefreshAnswer }
+  | { operation: 'stop' | 'resume' };
+
 export function ItemDetail({ target, server, ignored, onClose }: Props) {
   const params = itemParams(target);
   const detail = useQuery({
@@ -197,14 +201,20 @@ function DetailActions({ item, server, params, timeline, live }: ActionProps) {
   const confirm = useImperativeAlertDialog();
   const title = item.title ?? `Item ${item.key}`;
   const action = useMutation({
-    mutationFn: async (operation: Operation) => ({ operation, result: await post<unknown>(`item/${operation}?${params}`) }),
-    onSuccess: ({ operation, result }) => {
+    mutationFn: async (operation: Operation): Promise<ActionResult> => {
       if (operation === 'refresh') {
-        const answer = result as RefreshAnswer;
+        return { operation, result: await post<RefreshAnswer>(`item/refresh?${params}`) };
+      }
+      await post<{ changed: boolean }>(`item/${operation}?${params}`);
+      return { operation };
+    },
+    onSuccess: outcome => {
+      if (outcome.operation === 'refresh') {
+        const answer = outcome.result;
         if (answer.item && answer.timeline) client.setQueryData<Detail>(['item', params], { item: answer.item, timeline: answer.timeline });
         notify(refreshOutcome(answer), refreshText(answer, title));
       } else {
-        notify('success', successText(operation, title));
+        notify('success', successText(outcome.operation, title));
       }
     },
     onError: error => {
