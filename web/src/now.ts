@@ -36,7 +36,9 @@ export function outcomeView(outcome: string | undefined): { text: string; tone: 
 /** Returns the time until at, such as "in 5s", or "now" once it passed. */
 export function countdown(at: string | undefined, now: number): string {
   if (!at) return '';
-  const seconds = Math.ceil((Date.parse(at) - now) / 1000);
+  const ms = Date.parse(at);
+  if (!Number.isFinite(ms)) return '';
+  const seconds = Math.ceil((ms - now) / 1000);
   return seconds > 0 ? `in ${seconds}s` : 'now';
 }
 
@@ -51,7 +53,9 @@ export function itemDetail(item: NowItem, withReasons: boolean): string {
  * within a second. */
 export function since(at: string | undefined, now: number): string {
   if (!at) return '';
-  const seconds = Math.floor((now - Date.parse(at)) / 1000);
+  const ms = Date.parse(at);
+  if (!Number.isFinite(ms)) return '';
+  const seconds = Math.floor((now - ms) / 1000);
   if (seconds < 1) return 'now';
   return seconds < 60 ? `${seconds}s ago` : `${Math.floor(seconds / 60)}m ago`;
 }

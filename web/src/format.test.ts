@@ -18,10 +18,13 @@ describe('format', () => {
     expect(duration(2 * 86400 + 4 * 3600)).toBe('2d 4h');
     expect(duration(86400)).toBe('1d');
     expect(duration(-5)).toBe('0s');
+    expect(duration(Number.NaN)).toBe('—');
+    expect(duration(Infinity)).toBe('—');
   });
 
   it('describes times relative to now', () => {
     expect(relative(undefined, now)).toBe('—');
+    expect(relative('not-a-date', now)).toBe('—');
     expect(relative(at(10), now)).toBe('just now');
     expect(relative(at(2 * 86400 + 4 * 3600), now)).toBe('in 2d 4h');
     expect(relative(at(-3 * 3600), now)).toBe('3h ago');
@@ -55,6 +58,7 @@ describe('format', () => {
     expect(plural(2, 'library', 'libraries')).toBe('2 libraries');
     expect(runDuration(at(0), at(125))).toBe('2m');
     expect(runDuration(at(0), undefined)).toBe('—');
+    expect(runDuration('bad', at(125))).toBe('—');
   });
 });
 
@@ -67,6 +71,7 @@ describe('type names', () => {
 
   it('describes the next scheduled run', () => {
     expect(nextRunText(undefined, now)).toBeUndefined();
+    expect(nextRunText('bad', now)).toBeUndefined();
     expect(nextRunText(at(-5), now)).toBe('starting');
     expect(nextRunText(at(0), now)).toBe('starting');
     const time = new Date(at(45 * 60)).toLocaleTimeString(undefined, { timeStyle: 'short' });

@@ -68,6 +68,8 @@ export function newerStatus(cached: Status | undefined, next: Status, client: Qu
   if (retired.has(next.boot)) return cached;
   retired.add(cached.boot);
   retiredBoots.set(client, retired);
+  client.removeQueries({ queryKey: ['candidate', cached.boot] });
+  client.removeQueries({ queryKey: ['auto-match', cached.boot] });
   return next;
 }
 
@@ -125,6 +127,7 @@ export function useLiveStatus(): Connection {
   const [connection, setConnection] = useState<Connection>('connecting');
 
   useEffect(() => {
+    let disposed = false;
     let stream: EventSource | undefined;
     let retry: ReturnType<typeof setTimeout> | undefined;
     // The last runs of the newest status, undefined until the first
@@ -134,42 +137,59 @@ export function useLiveStatus(): Connection {
     let lastRunning: string | undefined;
     let wasOpen = false;
 
-    const onStatus = (event: MessageEvent<string>) => {
-      const next = JSON.parse(event.data) as Status;
-      const status = newerStatus(client.getQueryData<Status>(['status']), next, client);
-      const runs = JSON.stringify(status.servers.map(({ last }) => [last?.id, last?.finishedAt]));
-      if (runs !== lastRuns) invalidateLists(client);
-      lastRuns = runs;
-      // A run that starts adds a row to the run history.
-      const running = JSON.stringify(status.servers.map(({ run }) => run?.id));
-      if (lastRunning !== undefined && running !== lastRunning) void client.invalidateQueries({ queryKey: ['runs'] });
-      lastRunning = running;
-      if (status === next) client.setQueryData(['status'], status);
-    };
-
     const connect = () => {
-      stream = new EventSource('./api/events');
-      stream.addEventListener('status', onStatus);
-      stream.onopen = () => {
+      if (disposed) return;
+      clearTimeout(retry);
+      retry = undefined;
+      const source = new EventSource('./api/events');
+      stream = source;
+      const onStatus = (event: MessageEvent<string>) => {
+        if (disposed || stream !== source) return;
+        let next: Status;
+        try {
+          next = JSON.parse(event.data) as Status;
+        } catch {
+          return;
+        }
+        const status = newerStatus(client.getQueryData<Status>(['status']), next, client);
+        const runs = JSON.stringify(status.servers.map(({ last }) => [last?.id, last?.finishedAt]));
+        const running = JSON.stringify(status.servers.map(({ run }) => run?.id));
+        if (runs !== lastRuns) {
+          invalidateLists(client);
+        } else if (lastRunning !== undefined && running !== lastRunning) {
+          // A run that starts adds a row to the run history.
+          void client.invalidateQueries({ queryKey: ['runs'] });
+        }
+        lastRuns = runs;
+        lastRunning = running;
+        if (status === next) client.setQueryData(['status'], status);
+      };
+      source.addEventListener('status', onStatus);
+      source.onopen = () => {
+        if (disposed || stream !== source) return;
         // Each open, also a reconnect of the browser, starts again.
         lastRuns = undefined;
         wasOpen = true;
         setConnection('open');
       };
-      stream.onerror = () => {
+      source.onerror = () => {
+        if (disposed || stream !== source) return;
         setConnection(wasOpen ? 'reconnecting' : 'unavailable');
         // A stream that the browser gave up on (for example after a 503 or
         // a proxy error page) does not retry by itself.
-        if (stream?.readyState === EventSource.CLOSED) {
-          stream.close();
+        if (source.readyState === EventSource.CLOSED) {
+          source.close();
+          clearTimeout(retry);
           retry = setTimeout(connect, retryDelay);
         }
       };
     };
     connect();
     return () => {
+      disposed = true;
       clearTimeout(retry);
       stream?.close();
+      stream = undefined;
     };
   }, [client]);
 

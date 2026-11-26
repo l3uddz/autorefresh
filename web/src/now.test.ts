@@ -35,6 +35,7 @@ describe('now panel', () => {
     expect(countdown('2026-11-23T12:00:00Z', now)).toBe('now');
     expect(countdown('2026-11-23T11:59:57Z', now)).toBe('now');
     expect(countdown(undefined, now)).toBe('');
+    expect(countdown('invalid', now)).toBe('');
   });
 
   it('says how long ago the last item finished', () => {
@@ -44,6 +45,7 @@ describe('now panel', () => {
     expect(since('2026-11-23T11:58:30Z', now)).toBe('1m ago');
     expect(since('2026-11-23T12:00:03Z', now)).toBe('now');
     expect(since(undefined, now)).toBe('');
+    expect(since('invalid', now)).toBe('');
   });
 
   it('joins the library and the reasons of an item', () => {
