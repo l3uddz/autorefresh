@@ -606,12 +606,12 @@ Each candidate of a decision SHALL have the GUID, name, year, type, summary, pos
 
 ### Requirement: Preview of the automatic decision
 
-Autorefresh SHALL give a preview of the automatic decision for any known item, with the same decision rules as a run. Only its inputs differ: it always asks Plex for the item paths, and no earlier TMDB failure turns its TMDB steps off. It SHALL record no decision, send no match, and write no TMDB ID or path to the cache. A failure that a run keeps in its decision SHALL stay in the preview's decision. The end of the request, a store error, or a 404 answer SHALL return an error.
+Autorefresh SHALL give a preview of the automatic decision for any known item, also one that a run would not match, with the same decision rules as a run. Its inputs differ: it always asks Plex for the item paths, and no earlier TMDB failure turns its TMDB steps off. It SHALL record no decision, send no match, and write no TMDB ID or path to the cache. A failure that a run keeps in its decision SHALL stay in it; the end of the request, a store error, or a 404 SHALL return an error.
 
 #### Scenario: Item that a run skips
 
 - **WHEN** the preview runs for a matched item for which Plex accepted no request yet
-- **THEN** it returns the decision that the searches give, and the item history stays unchanged
+- **THEN** it skips the run's eligibility check, returns the decision that the searches give, and the item history stays unchanged
 
 #### Scenario: Preview of a movie
 
