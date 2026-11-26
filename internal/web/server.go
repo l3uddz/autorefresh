@@ -30,7 +30,7 @@ type Plex interface {
 
 // Store is the part of store.Store that the web server uses.
 type Store interface {
-	RunItems(context.Context, int64) ([]store.RunItem, error)
+	RunItemsWithServer(context.Context, int64) (string, []store.RunItem, bool, error)
 	ListItems(ctx context.Context, q store.ListQuery) ([]store.ListItem, *store.Cursor, error)
 	CountItems(ctx context.Context, q store.ListQuery) (store.ListCounts, error)
 	Libraries(ctx context.Context, server string) ([]store.LibraryEntry, error)
@@ -181,7 +181,7 @@ func New(opts Options) *Server {
 	s.api("GET /api/items/thumb", s.serveThumb)
 	s.api("GET /api/items/art", s.serveArt)
 	s.api("GET /api/runs", s.serveRuns)
-	s.api("/api/", func(w http.ResponseWriter, _ *http.Request) {
+	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 	})
 

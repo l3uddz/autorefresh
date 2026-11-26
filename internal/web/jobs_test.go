@@ -147,6 +147,25 @@ func TestRunItemsRedactsStoredErrors(t *testing.T) {
 	}
 }
 
+func TestRunItemsReturns404ForMissingOrRemovedServer(t *testing.T) {
+	db := openStore(t)
+	start := store.RunStart{Server: "removed", Kind: store.RunKindBulkRefresh, Source: store.RunSourceManual, StartedAt: testNow}
+	removedID, err := db.StartRun(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.FinishJob(removedID, start, store.RunResult{Status: store.RunFailed, FinishedAt: testNow}, []store.RunItem{
+		{RatingKey: "1", Outcome: store.ItemFailed, Error: "secret from removed server"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s := New(Options{Store: db, Servers: []PlexServer{{Name: "home"}}})
+	for _, path := range []string{fmt.Sprintf("/api/runs/items?id=%d", removedID), "/api/runs/items?id=999999"} {
+		rec := serve(s, httptest.NewRequest(http.MethodGet, path, nil))
+		assertJSONError(t, rec, http.StatusNotFound, "no such run")
+	}
+}
+
 func TestBulkMatchingPagesAndAppliesFilter(t *testing.T) {
 	db := openStore(t)
 	items := make([]store.Item, 0, maxPageLimit+2)

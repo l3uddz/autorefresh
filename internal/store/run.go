@@ -437,6 +437,30 @@ func (s *Store) RunItems(ctx context.Context, runID int64) ([]RunItem, error) {
 	return runItems(ctx, s.db, runID)
 }
 
+// RunItemsWithServer returns the server name and bulk outcomes of runID in one
+// read-only transaction, or found=false when no such run exists.
+func (s *Store) RunItemsWithServer(ctx context.Context, runID int64) (string, []RunItem, bool, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return "", nil, false, fmt.Errorf("begin run items: %w", err)
+	}
+	defer tx.Rollback()
+
+	var server string
+	err = tx.QueryRowContext(ctx, `SELECT server FROM run WHERE id = ?`, runID).Scan(&server)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil, false, nil
+	}
+	if err != nil {
+		return "", nil, false, fmt.Errorf("read run server: %w", err)
+	}
+	items, err := runItems(ctx, tx, runID)
+	if err != nil {
+		return "", nil, false, err
+	}
+	return server, items, true, nil
+}
+
 func runItems(ctx context.Context, q querier, runID int64) ([]RunItem, error) {
 	rows, err := q.QueryContext(ctx, runItemsQuery, runID)
 	if err != nil {

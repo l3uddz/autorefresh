@@ -103,9 +103,13 @@ func (s *Server) serveRunItems(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := s.store.RunItems(r.Context(), id)
+	server, items, found, err := s.store.RunItemsWithServer(r.Context(), id)
 	if err != nil {
 		writeStoreError(w, r, err)
+		return
+	}
+	if _, configured := s.srvIndex[server]; !found || !configured {
+		writeError(w, http.StatusNotFound, "no such run")
 		return
 	}
 	out := make([]runItemJSON, 0, len(items))

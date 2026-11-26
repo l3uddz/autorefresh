@@ -47,7 +47,11 @@ type Actions interface {
 }
 
 func (s *Server) api(pattern string, next http.HandlerFunc) {
-	s.mux.Handle(pattern, requireJSON(next))
+	if strings.HasPrefix(pattern, http.MethodPost+" ") {
+		s.mux.Handle(pattern, requireJSON(next))
+		return
+	}
+	s.mux.HandleFunc(pattern, next)
 }
 
 func requireJSON(next http.Handler) http.Handler {

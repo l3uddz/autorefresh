@@ -39,6 +39,9 @@ func TestUnknownAPIPathIsJSON404(t *testing.T) {
 			assertJSONError(t, rec, http.StatusNotFound, "not found")
 		})
 	}
+	// Unknown POST routes return 404 even without Content-Type: application/json.
+	rec := serve(New(Options{}), httptest.NewRequest(http.MethodPost, "/api/does-not-exist", nil))
+	assertJSONError(t, rec, http.StatusNotFound, "not found")
 }
 
 func TestSecurityHeaders(t *testing.T) {
