@@ -159,7 +159,7 @@ Each entry under `plex` configures one Plex server:
 | `libraries` | no | all supported | Optional list of library titles to include |
 | `timeout` | no | `30s` | Timeout for each request to this server |
 
-Valid values for `ignore-reasons`: `unmatched`, `no-summary`, `no-poster`, `no-art`, `episode-no-summary`, and `episode-unmatched`.
+Valid values for `ignore-reasons`: `unmatched`, `no-summary`, `no-poster`, `no-art`, `episode-no-summary`, `episode-unmatched`, and `mismatched`.
 
 Durations use Go units such as `s`, `m`, and `h` (write 7 days as `168h`). Unknown keys fail validation.
 

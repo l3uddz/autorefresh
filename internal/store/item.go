@@ -21,10 +21,13 @@ type Item struct {
 	Year                       int
 	AddedAt                    time.Time
 	Reasons                    Reasons
-	LastRefresh, LastAttempt   time.Time // zero: never
-	Refreshes, Attempts        int
-	LastAction                 Action // the last request that Plex accepted
-	LastMatch                  Action // the last match request that Plex accepted
+	// Keep holds the item reasons that the reader could not decide, so a
+	// read or a check keeps their stored value. It is not stored.
+	Keep                     Reasons
+	LastRefresh, LastAttempt time.Time // zero: never
+	Refreshes, Attempts      int
+	LastAction               Action // the last request that Plex accepted
+	LastMatch                Action // the last match request that Plex accepted
 
 	Thumb, Art, Path string    // Plex image paths and the folder or file path; "": unknown
 	StoppedAt        time.Time // zero: not stopped
@@ -74,9 +77,10 @@ type Read struct {
 	// RunID is the run of the read, which its events name; 0: none.
 	RunID int64
 	// Mark is the newest event before the read listed its items. ApplyRead
-	// adds no row for an item with a completed or gone event after Mark: a
-	// check or a manual action settled the item during the read, so the
-	// listing can be older. The zero EventMark checks no event.
+	// neither adds nor changes the row of an item with a completed or gone
+	// event, or a request that Plex accepted, after Mark: a check or a manual
+	// action settled or changed the item during the read, so the listing can
+	// be older. The zero EventMark checks no event.
 	Mark EventMark
 }
 
@@ -176,9 +180,9 @@ func (s *Store) Library(server, section string) (Library, error) {
 // must set AddedAt on every item, because a zero time is stored as a negative
 // number, and must not put a key in both r.Items and r.Gone. A row of the
 // same rating key in another section moves to r.Section and keeps its history
-// and its reasons that the read does not replace. It inserts no row for an
-// item that an event after r.Mark settled; a later read that lists the item
-// as incomplete adds the row again, at the latest the next full read.
+// and its reasons that the read does not replace. It neither inserts nor
+// changes the row of an item that an event after r.Mark settled or changed;
+// a later read applies its listing again, at the latest the next full read.
 func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -187,7 +191,7 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	defer tx.Rollback()
 
 	// The events of the read itself are not newer than the read.
-	settled, err := settledKeys(tx, r)
+	newer, err := newerKeys(tx, r)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +199,7 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	if err := writeReadTimes(tx, r); err != nil {
 		return nil, err
 	}
-	if err := deleteGone(tx, r); err != nil {
+	if err := deleteGone(tx, r, newer); err != nil {
 		return nil, err
 	}
 	incoming := readKeys(r)
@@ -203,14 +207,14 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	if err != nil {
 		return nil, err
 	}
-	fixed, err = applyOldRows(tx, r, old, incoming)
+	fixed, err = applyOldRows(tx, r, old, incoming, newer)
 	if err != nil {
 		return nil, err
 	}
-	if err := insertNewRows(tx, r, old, incoming, settled); err != nil {
+	if err := insertNewRows(tx, r, old, incoming, newer); err != nil {
 		return nil, err
 	}
-	if err := writeFolders(tx, r); err != nil {
+	if err := writeFolders(tx, r, newer); err != nil {
 		return nil, err
 	}
 
@@ -220,38 +224,43 @@ func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
 	return fixed, nil
 }
 
-// settledKeys returns the rating keys of r.Server with a completed or gone
-// event after r.Mark, or none for the zero mark.
-func settledKeys(tx *sql.Tx, r Read) (map[string]bool, error) {
+// newerKeys returns the rating keys of r.Server with a completed or gone
+// event, or a request that Plex accepted, after r.Mark, or none for the zero
+// mark. Plex can have changed such an item after the listing of the read.
+func newerKeys(tx *sql.Tx, r Read) (map[string]bool, error) {
 	if !r.Mark.set {
 		return nil, nil
 	}
 	// NOT INDEXED keeps SQLite on the ID range, the few events after the
 	// mark, instead of the server's whole history in an index.
-	rows, err := tx.Query(`SELECT rating_key FROM event NOT INDEXED WHERE id > ? AND server = ? AND kind IN (?, ?)`,
-		r.Mark.id, r.Server, EventCompleted, EventGone)
+	rows, err := tx.Query(`SELECT rating_key FROM event NOT INDEXED
+		WHERE id > ? AND server = ? AND (kind IN (?, ?) OR kind = ? AND accepted = 1)`,
+		r.Mark.id, r.Server, EventCompleted, EventGone, EventRequest)
 	if err != nil {
-		return nil, fmt.Errorf("read settled items: %w", err)
+		return nil, fmt.Errorf("read newer items: %w", err)
 	}
 	defer rows.Close()
-	settled := map[string]bool{}
+	newer := map[string]bool{}
 	for rows.Next() {
 		var key string
 		if err := rows.Scan(&key); err != nil {
-			return nil, fmt.Errorf("read settled items: %w", err)
+			return nil, fmt.Errorf("read newer items: %w", err)
 		}
-		settled[key] = true
+		newer[key] = true
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read settled items: %w", err)
+		return nil, fmt.Errorf("read newer items: %w", err)
 	}
-	return settled, nil
+	return newer, nil
 }
 
-// deleteGone deletes the rows of r.Gone. Unless r.DryRun, it writes a gone
-// event for each row that exists.
-func deleteGone(tx *sql.Tx, r Read) error {
+// deleteGone deletes the rows of r.Gone except the rows of newer. Unless
+// r.DryRun, it writes a gone event for each row that it deletes.
+func deleteGone(tx *sql.Tx, r Read, newer map[string]bool) error {
 	for _, key := range r.Gone {
+		if newer[key] {
+			continue
+		}
 		if !r.DryRun {
 			if err := writeGone(tx, r, key); err != nil {
 				return err
@@ -289,11 +298,15 @@ type completion struct {
 }
 
 // applyOldRows updates or deletes each stored row in old after the read r,
-// returning the rows that became complete. Unless r.DryRun, it writes a
-// completed event for each of them, ordered by rating key.
-func applyOldRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]readKey) ([]Item, error) {
+// except the rows of newer, returning the rows that became complete. Unless
+// r.DryRun, it writes a completed event for each of them, ordered by rating
+// key.
+func applyOldRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]readKey, newer map[string]bool) ([]Item, error) {
 	var done []completion
 	for key, prev := range old {
+		if newer[key] {
+			continue
+		}
 		fixed, err := writeExisting(tx, r, prev, incoming[key])
 		if err != nil {
 			return nil, err
@@ -342,9 +355,9 @@ func writeExisting(tx *sql.Tx, r Read, prev Item, in readKey) (fixed bool, err e
 	return false, nil
 }
 
-// insertNewRows inserts rows for incoming items not in old or settled that
+// insertNewRows inserts rows for incoming items not in old or newer that
 // have at least one incomplete reason.
-func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]readKey, settled map[string]bool) error {
+func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]readKey, newer map[string]bool) error {
 	if len(incoming) == 0 {
 		return nil
 	}
@@ -355,7 +368,7 @@ func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]
 	}
 	defer stmt.Close()
 	for key, in := range incoming {
-		if _, exists := old[key]; exists || settled[key] {
+		if _, exists := old[key]; exists || newer[key] {
 			continue
 		}
 		final := in.reasons(r, 0)
@@ -371,9 +384,10 @@ func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]
 	return nil
 }
 
-// writeFolders saves the staged folder of each row that the read kept. A key
-// without a row, such as a deleted one, matches nothing.
-func writeFolders(tx *sql.Tx, r Read) error {
+// writeFolders saves the staged folder of each row that the read kept,
+// except the rows of newer. A key without a row, such as a deleted one,
+// matches nothing.
+func writeFolders(tx *sql.Tx, r Read, newer map[string]bool) error {
 	if len(r.Folders) == 0 {
 		return nil
 	}
@@ -383,7 +397,7 @@ func writeFolders(tx *sql.Tx, r Read) error {
 	}
 	defer stmt.Close()
 	for key, folder := range r.Folders {
-		if folder == "" {
+		if folder == "" || newer[key] {
 			continue
 		}
 		if _, err := stmt.Exec(folder, r.Server, key); err != nil {
@@ -430,11 +444,13 @@ func readKeys(r Read) map[string]readKey {
 
 // reasons returns the final reasons of a row after the read r. prev is the
 // old reasons of the row, or 0 for a new row. The zero readKey stands for a
-// row that the read does not list.
+// row that the read does not list. A listed row keeps the old value of each
+// reason in its Keep.
 func (k readKey) reasons(r Read, prev Reasons) Reasons {
 	final := prev & ItemReasons
 	if k.inItems {
-		final = k.meta.Reasons & ItemReasons
+		keep := k.meta.Keep & ItemReasons
+		final = k.meta.Reasons&^keep&ItemReasons | prev&keep
 	}
 	if r.Shows {
 		return final | k.episodes | prev&r.EpisodeSkipped
@@ -522,7 +538,7 @@ type DueQuery struct {
 	// MaxRefreshInterval is the longest wait. Below RefreshInterval, the
 	// wait does not back off.
 	MaxRefreshInterval time.Duration
-	Ignored            Reasons // a row whose reasons are all in Ignored is never due
+	Ignored            Reasons // a row whose reasons are all in Ignored or ManualReasons is never due
 	Limit              int     // the most rows that Due returns; 0: no limit
 }
 
@@ -532,8 +548,8 @@ func (q DueQuery) rules() DueRules {
 		MaxRefreshInterval: q.MaxRefreshInterval, Ignored: q.Ignored}
 }
 
-// Due returns the first q.Limit rows of the sections that are incomplete,
-// added at or before Now-MinimumAge, and with no attempt in their wait
+// Due returns the first q.Limit rows of the sections that have a reason
+// outside Ignored and ManualReasons, are added at or before Now-MinimumAge, and with no attempt in their wait
 // before Now. total is the number of all such rows.
 //
 // The wait backs off: it is RefreshInterval for a row with at most 1
@@ -553,7 +569,7 @@ func (s *Store) Due(q DueQuery) (items []Item, total int, err error) {
 	where := `server = ? AND section IN (` + placeholders(len(q.Sections)) + `)
 		AND stopped_at IS NULL AND reasons & ~? != 0 AND NOT (` + tooNew.sql + `) AND NOT (` + waiting.sql + `)`
 	args := append([]any{q.Server}, stringArgs(q.Sections)...)
-	args = append(args, int(q.Ignored))
+	args = append(args, int(q.Ignored|ManualReasons))
 	args = append(append(args, tooNew.args...), waiting.args...)
 
 	// One read transaction gives the count and the rows the same snapshot,

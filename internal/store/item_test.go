@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -984,5 +985,100 @@ func TestApplyReadWritesStagedFolders(t *testing.T) {
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}, Folders: map[string]string{"a": "/tv/A", "gone": "/tv/G", "empty": ""}})
 	if got := rows(t, s); got["a"].Path != "/tv/A" || len(got) != 1 {
 		t.Fatalf("rows = %+v", got)
+	}
+}
+
+// A request that Plex accepted after the mark of a read can have changed the
+// item after its listing, such as a manual Fix match to a wrong movie. The
+// check after the request is newer, so the read neither completes nor
+// changes the row, and adds no row for an item that it does not cache. A
+// request that Plex did not accept changes nothing in Plex, so the read
+// applies its listing.
+func TestApplyReadKeepsRowsOfNewerRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		accepted bool
+		kept     bool
+	}{
+		{"accepted request", true, true},
+		{"rejected request", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := openTest(t)
+			apply(t, s, Read{Items: []Item{item("a", NoSummary), item("b", NoSummary)}})
+			mark, err := s.EventMark()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range []string{"a", "n"} {
+				req := Request{Server: srv, RatingKey: key, At: base, Source: SourceManual, Action: ActionMatch, Accepted: tc.accepted}
+				err := s.RecordManual(ManualRecord{Request: req, Snapshot: item(key, NoArt), Cached: key == "a"})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := s.ApplyCheck(srv, item("a", Mismatched), base, 0); err != nil {
+				t.Fatal(err)
+			}
+
+			// The listing is from before the match: a is complete, n is new.
+			fixed := apply(t, s, Read{At: base.Add(time.Hour), Mark: mark,
+				Items: []Item{item("a", 0), item("b", 0), item("n", NoArt)}})
+			got := rows(t, s)
+			a, ok := got["a"]
+			if ok != tc.kept || tc.kept && a.Reasons != Mismatched {
+				t.Errorf("row a = %+v (stored %v), want stored %v with the reasons of the check", a, ok, tc.kept)
+			}
+			if _, ok := got["n"]; ok == tc.kept {
+				t.Errorf("row n stored = %v, want %v", ok, !tc.kept)
+			}
+			if _, ok := got["b"]; ok || !slices.Contains(keys(fixed), "b") {
+				t.Errorf("fixed = %v, want b completed as usual", keys(fixed))
+			}
+			if done := hasCompleted(t, s, "a"); done == tc.kept {
+				t.Errorf("completed event of a = %v, want %v", done, !tc.kept)
+			}
+		})
+	}
+}
+
+// The rule of a request after the mark covers the staged 404s and series
+// folders of a full read too.
+func TestApplyReadKeepsGoneAndFolderOfNewerRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		accepted bool
+	}{
+		{"accepted request", true},
+		{"rejected request", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := openTest(t)
+			apply(t, s, Read{Items: []Item{item("g", NoSummary), item("f", NoSummary)}, Folders: map[string]string{"f": "/tv/Old"}})
+			mark, err := s.EventMark()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range []string{"g", "f"} {
+				req := Request{Server: srv, RatingKey: key, At: base, Source: SourceManual, Action: ActionMatch, Accepted: tc.accepted}
+				if err := s.RecordRequest(req); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			apply(t, s, Read{At: base.Add(time.Hour), Mark: mark, Full: true, Gone: []string{"g"},
+				Items: []Item{item("f", NoSummary)}, Folders: map[string]string{"f": "/tv/New"}})
+			got := rows(t, s)
+			if _, ok := got["g"]; ok != tc.accepted {
+				t.Errorf("row g stored = %v, want %v", ok, tc.accepted)
+			}
+			want := "/tv/New"
+			if tc.accepted {
+				want = "/tv/Old"
+			}
+			if got["f"].Path != want {
+				t.Errorf("path of f = %q, want %q", got["f"].Path, want)
+			}
+		})
 	}
 }

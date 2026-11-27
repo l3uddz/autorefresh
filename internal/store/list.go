@@ -55,8 +55,9 @@ func (r DueRules) nextDue() sqlPart {
 // state is the QueueState of a row.
 func (r DueRules) state() sqlPart {
 	tooNew, waiting := r.tooNew(), r.waiting()
-	args := append([]any{int(r.Ignored)}, tooNew.args...)
+	args := append([]any{int(r.Ignored), int(r.Ignored | ManualReasons)}, tooNew.args...)
 	return sqlPart{`CASE WHEN stopped_at IS NOT NULL THEN 'stopped' WHEN reasons & ~? = 0 THEN 'ignored'
+		WHEN reasons & ~? = 0 THEN 'manual'
 		WHEN ` + tooNew.sql + ` THEN 'too-new' WHEN ` + waiting.sql + ` THEN 'waiting' ELSE 'due' END`,
 		append(args, waiting.args...)}
 }
@@ -69,6 +70,7 @@ const (
 	StateWaiting QueueState = "waiting" // until the end of its backoff wait
 	StateTooNew  QueueState = "too-new" // until MinimumAge passes
 	StateIgnored QueueState = "ignored" // all its reasons are ignored
+	StateManual  QueueState = "manual"  // only reasons that need a manual fix, such as a wrong match
 	StateStopped QueueState = "stopped"
 )
 
