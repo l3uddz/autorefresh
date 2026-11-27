@@ -37,8 +37,10 @@ var (
 	errInvalidCursor   = errors.New("invalid cursor")
 )
 
-// cursorVersion is the version of the item cursor.
-const cursorVersion = 1
+// cursorVersion is the version of the item cursor. Version 2 sorts the rows
+// that are never due after every due time, so a cursor of version 1 from
+// before that order is invalid.
+const cursorVersion = 2
 
 // itemCursor is the JSON of an item cursor. Only the value field of the
 // sort type is set: T for SortTitle, N otherwise.

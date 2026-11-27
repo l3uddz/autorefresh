@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -50,6 +51,20 @@ func (r DueRules) waiting() sqlPart {
 func (r DueRules) nextDue() sqlPart {
 	return sqlPart{`MAX(added_at * 1000 + ?, COALESCE(last_attempt * 1000 + ` + waitSQL + `, 0))`,
 		append([]any{r.MinimumAge.Milliseconds()}, r.backoffArgs()...)}
+}
+
+// neverDue is the sort value of the next due time of a row that is never
+// due, because its reasons outside Ignored are all ManualReasons: a time
+// after every other, so the row comes last in ascending order and first in
+// descending order.
+const neverDue = math.MaxInt64
+
+// dueSort is the sort column of SortDue: the next due time, or neverDue for
+// a row in state ignored or manual. The listed NextDue stays separate.
+func (r DueRules) dueSort() sqlPart {
+	next := r.nextDue()
+	return sqlPart{`CASE WHEN reasons & ~? = 0 THEN ? ELSE ` + next.sql + ` END`,
+		append([]any{int(r.Ignored | ManualReasons), int64(neverDue)}, next.args...)}
 }
 
 // state is the QueueState of a row.
@@ -155,7 +170,7 @@ func queueSorts(r DueRules) map[SortKey]sortColumn {
 		SortTitle:       {sqlPart{sql: `item.title COLLATE NOCASE`}, true},
 		SortYear:        {sqlPart{sql: `item.year`}, false},
 		SortAdded:       {sqlPart{sql: `item.added_at`}, false},
-		SortDue:         {r.nextDue(), false},
+		SortDue:         {r.dueSort(), false},
 		SortTries:       {sqlPart{sql: `item.attempts`}, false},
 		SortLastAttempt: {sqlPart{sql: `COALESCE(item.last_attempt, 0)`}, false},
 		SortStopped:     {sqlPart{sql: `COALESCE(item.stopped_at, 0)`}, false},

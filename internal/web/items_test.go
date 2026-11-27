@@ -456,7 +456,9 @@ func TestItemsRejectsInvalidParams(t *testing.T) {
 		{"limit=a", "invalid limit"},
 		{"cursor=!!!", "invalid cursor"},
 		{"cursor=" + plain[:len(plain)/2], "invalid cursor"},
-		{"cursor=" + editCursor(t, plain, func(f map[string]any) { f["v"] = 2 }), "invalid cursor"},
+		{"cursor=" + editCursor(t, plain, func(f map[string]any) { f["v"] = cursorVersion + 1 }), "invalid cursor"},
+		// A cursor from before the never-due rows sorted last.
+		{"cursor=" + editCursor(t, plain, func(f map[string]any) { f["v"] = 1 }), "invalid cursor"},
 		{"cursor=" + editCursor(t, plain, func(f map[string]any) { delete(f, "v") }), "invalid cursor"},
 		{"cursor=" + editCursor(t, plain, func(f map[string]any) { delete(f, "k") }), "invalid cursor"},
 		{"cursor=" + editCursor(t, plain, func(f map[string]any) { delete(f, "s") }), "invalid cursor"},

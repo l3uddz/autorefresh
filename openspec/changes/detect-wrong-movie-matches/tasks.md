@@ -14,7 +14,7 @@
 
 ## 4. Show the comparison in the live Plex view
 
-- [x] 4.1 Add `externalIds` and, for matched movies, `mismatch` to `GET /api/item/live` through `refresher.CompareMovieIDs` with `d.GUID` and `d.Paths.Files`. Add handler tests for the dashboard-api scenarios, including an unmatched movie without `mismatch` and the source order, with `includeGuids=1` checked on the recorded Plex request. Add the `manual` state and the new reason filter to the handler tests of `GET /api/items`. Update the `internal/web` row of `AGENTS.md`. Verify with `go test ./internal/web/`. Commit: `feat(web): show the wrong match result in the live Plex view`.
+- [x] 4.1 Add `externalIds` and, for matched movies, `mismatch` to `GET /api/item/live` through `refresher.CompareMovieIDs` with `d.GUID` and `d.Paths.Files`. Add handler tests for the dashboard-api scenarios, including an unmatched movie without `mismatch` and the source order. The `internal/plex` tests check `includeGuids=1` on the recorded item request, because the web tests use a fake Plex. Add the `manual` state and the new reason filter to the handler tests of `GET /api/items`. Update the `internal/web` row of `AGENTS.md`. Verify with `go test ./internal/web/`. Commit: `feat(web): show the wrong match result in the live Plex view`.
 
 ## 5. Show wrong matches in the dashboard
 
@@ -23,6 +23,10 @@
 ## 6. Full checks
 
 - [x] 6.1 Run `mise run vendor`, `mise run test`, `mise run lint`, `mise run web-install`, `mise run web-lint`, `mise run web-test`, and `mise run test-webui` in order, then `pnpm exec astryx doctor --built .` in `web/`. All pass, and `go.mod` and `go.sum` have no change. Check that `openspec validate detect-wrong-movie-matches --strict` passes. No commit unless a check needs a fix, which then gets its own `fix(<scope>)` commit.
+
+## 7. Sort rows that are never due
+
+- [x] 7.1 Add `DueRules.dueSort`, which gives a row in state `manual` or `ignored` the largest integer for `SortDue`, and keep the listed `nextDue` separate. Raise the web cursor version to 2. Add a store test of both directions over several pages with `WithIgnored`, and a web test that a version 1 cursor is invalid. Verify with `go test ./internal/store/ ./internal/web/`. Commit: `fix(store): sort rows that are never due after every due time`.
 
 ## Workflow follow-up
 

@@ -96,6 +96,10 @@ Alternative: refresh a mismatched movie with the usual backoff. Rejected: a refr
 
 It uses Astryx components and tokens only, by `web/AGENTS.md`. The Fix match dialog needs no change, because its automatic preview already searches the path IDs for any known item.
 
+### 7. Sort by next due time
+
+A row whose reasons outside `ignore-reasons` are all `ManualReasons`, in state `manual` or `ignored`, is never due, but the due sort computed a time for it, so an older `manual` row came before rows that are due. `DueRules.dueSort` gives such a row `math.MaxInt64`, a time after every other: it comes last when the soonest comes first (`sort=due`) and first when the latest comes first (`sort=-due`). The column stays not null, so the keyset cursor sees every row, and server and rating key still break ties. The listed `nextDue` comes from `nextDue` as before and stays empty for these rows. The web cursor version goes from 1 to 2, so a cursor of the old order gets the usual `400 invalid cursor` instead of repeating or skipping rows.
+
 ### Load on Plex and TMDB
 
 - Requests: no change. Reads keep their pages of 500, and a check keeps its 1 to 3 item reads.
@@ -106,7 +110,7 @@ It uses Astryx components and tokens only, by `web/AGENTS.md`. The Fix match dia
 ## Risks / Trade-offs
 
 - [The folder ID is wrong, not the Plex match] → The reason tells the user to look, and nothing changes in Plex without a manual Fix match. Stop trying dismisses one item. `ignore-reasons: [mismatched]` mutes the reason everywhere.
-- [A request is in flight when a read applies its listing] → The event of a request is written only after Plex answers. A request that Plex accepted but whose answer has not arrived, or whose answer was lost, is not yet an accepted event, so an older listing that shows the movie complete can still delete its row and record a spurious Fixed. The next full read adds the row again. This race exists on `main` for every reason, and the coordination of reads with manual actions is out of scope here: see #161.
+- [A request is in flight when a read applies its listing] → The event of a request is written only after Plex answers. A request that Plex accepted but whose answer has not arrived, or whose answer was lost, is not yet an accepted event, so an older listing that shows the movie complete can still delete its row and record a spurious Fixed. A follow-up check can likewise read the old metadata that Plex still serves after it accepted a match, and complete the item. The next full read adds the row again. This race exists on `main` for every reason. Closing it needs per-request markers, a fence for their pruning, a typed outcome of each write, re-reads of skipped items, and checks that confirm the new match, so it is planned as its own change: see #161.
 - [Many movies are flagged after the first full read] → They send no request and only fill Attention. The reason filter and Stop trying handle them. The README says so.
 - [Plex returns a sparse or odd `Guid` list] → The comparison is undecided and keeps the old bit. It cannot cause a false Fixed event.
 - [Multi-version movies whose folders name different IDs] → Two values of one source are not compared, so the result is undecided.

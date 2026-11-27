@@ -69,6 +69,17 @@ The item list and the item detail SHALL give the state `manual` to a cached item
 - **WHEN** a cached movie has the reasons `mismatched` and `no-art`
 - **THEN** its state follows the usual rules, such as `due` or `waiting`
 
+#### Scenario: Sort by next due time
+
+- **WHEN** a client requests `/api/items?all=1&sort=due` with items in states `due` and `waiting`, an item in state `manual`, and an item in state `ignored`
+- **THEN** the `manual` and `ignored` items come after the `due` and `waiting` items, on every page, and have no `nextDue`
+- **AND** with `sort=-due` they come first
+
+#### Scenario: Cursor of the old due order
+
+- **WHEN** a client sends a cursor of version 1
+- **THEN** the server answers `400` with `invalid cursor`
+
 #### Scenario: Filter by wrong match
 
 - **WHEN** a client requests `/api/items?reason=mismatched`
