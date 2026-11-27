@@ -253,7 +253,7 @@ The Items page SHALL offer a List and a Table mode, and SHALL remember the choic
 #### Scenario: Reason badges
 
 - **WHEN** an item has reasons
-- **THEN** each reason shows as a coloured badge: unmatched red, no poster and no art orange, no summary blue, episode reasons purple
+- **THEN** each reason shows as a coloured badge: unmatched red, no poster and no art orange, no summary blue, episode reasons purple, mismatched pink
 - **AND** an ignored reason is muted and marked "(ignored)"
 
 #### Scenario: Row state per tab
@@ -261,6 +261,11 @@ The Items page SHALL offer a List and a Table mode, and SHALL remember the choic
 - **WHEN** the list shows the Attention tab
 - **THEN** each row shows its queue state, such as "Due" or "Waiting · in 3h", and its number of tries when it has at least one
 - **AND** a Fixed row shows what fixed it and when, and a Stopped row shows when it was stopped
+
+#### Scenario: Row that needs a manual fix
+
+- **WHEN** an Attention row has the queue state `manual`
+- **THEN** the row shows "Needs a manual fix" as its queue state
 
 #### Scenario: Wide screen
 
@@ -308,6 +313,11 @@ The Items page SHALL filter by a search of the title or path, by library, by rea
 
 - **WHEN** the user turns on "Include ignored reasons" on Attention and then opens Fixed
 - **THEN** the Fixed switch "Include fixed by Plex alone" stays off
+
+#### Scenario: Filter wrong matches
+
+- **WHEN** the user opens the reason filter on Attention
+- **THEN** it offers "mismatched" beside the other reasons, and choosing it lists only items with the reason `mismatched`
 
 ### Requirement: Sort
 
@@ -964,3 +974,18 @@ The dashboard SHALL catch uncaught page errors and failed lazy route chunk loads
 - **GIVEN** the dashboard tab was opened before an upgrade changed the built frontend asset hashes
 - **WHEN** the user navigates to a lazy-loaded page whose old chunk fails to load
 - **THEN** the dashboard shows a recovery message with a Reload button
+
+### Requirement: Wrong match in the item detail
+
+When the live Plex view of a movie reports the result `mismatched`, the item detail SHALL show a warning "Plex matched this movie to a different entry than its path names. Use Fix match to choose the right one." It SHALL list each compared source with its name (TMDB, IMDb, or TVDB), the path ID, and the Plex IDs. With another result, without a live view, or while the live view fails, it SHALL show no such warning.
+
+#### Scenario: Movie with a wrong match
+
+- **WHEN** the live view of a movie gives `mismatch` with the result `mismatched` and the source `tmdb`, path `100`, and Plex `200`
+- **THEN** the detail shows the warning with the line "TMDB: path 100, Plex 200"
+- **AND** the Fix match action of the detail stays the only way to fix the match
+
+#### Scenario: Live view unavailable
+
+- **WHEN** the live view fails, also after an earlier answer with the result `mismatched`, and the cached item has the reason `mismatched`
+- **THEN** the detail shows the reason badge and no wrong match warning

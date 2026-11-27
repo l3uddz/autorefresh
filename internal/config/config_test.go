@@ -361,3 +361,13 @@ func TestDecodeRejectsInvalidUI(t *testing.T) {
 		})
 	}
 }
+
+func TestDecodeIgnoresWrongMatches(t *testing.T) {
+	cfg, err := Decode(strings.NewReader("ignore-reasons: [mismatched]\n" + minimalServer))
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if cfg.Ignored != store.Mismatched {
+		t.Errorf("Ignored = %v, want mismatched", cfg.Ignored)
+	}
+}

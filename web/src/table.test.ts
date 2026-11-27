@@ -43,6 +43,11 @@ describe('table rows', () => {
     expect(row).toMatchObject({ title: 'Item 7', library: 'TV', reasons: '—', 'last-attempt': '—', 'fixed-by': 'Plex on its own' });
   });
 
+  it('names a wrong match and its queue state', () => {
+    const row = tableRow({ ...item, reasons: ['mismatched'], state: 'manual', nextDue: undefined }, now, false, []);
+    expect(row).toMatchObject({ reasons: 'mismatched', due: 'Needs a manual fix' });
+  });
+
   it('keeps the rows when a clock tick changes no cell and replaces them when one changes', () => {
     const rows = [tableRow(item, now - 60_000, false, [])];
     // A minute later every label still reads the same.

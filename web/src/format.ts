@@ -126,6 +126,8 @@ export function queueState(state: string | undefined, nextDue: string | undefine
       return `Too new · ${relative(nextDue, now)}`;
     case 'ignored':
       return 'Ignored reasons';
+    case 'manual':
+      return 'Needs a manual fix';
     case 'stopped':
       return 'Stopped';
     default:

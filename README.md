@@ -11,6 +11,7 @@ Autorefresh monitors Plex movie libraries (`tv.plex.agents.movie`) and show libr
 - Detects movies and shows that are unmatched or missing a summary, poster, or background art. For matched shows, it also detects unmatched regular episodes and regular episodes without a summary. Specials in season 0 do not count.
 - Refreshes one item at a time. It never triggers a library-wide "Refresh All Metadata".
 - Waits `minimum-age` before touching new items, paces requests with `refresh-delay`, and backs off retries on items that stay incomplete.
+- Flags a matched movie whose folder or file names IDs, such as `{tmdb-747059}`, that disagree with Plex (reason `mismatched`). At least one source (TMDB, IMDb, or TVDB) must be named by the paths and listed by Plex, and no such source may agree, so a shared IMDb ID outweighs a differing TMDB ID. The reason alone never makes a movie due, so autorefresh never refreshes or re-matches a movie because of it. Another missing reason, such as a missing summary, is still refreshed as usual. A movie whose only reason is `mismatched` waits in Attention as "Needs a manual fix" until you fix the match. The next full read finds the movies of an older cache.
 - Fixes unmatched items automatically when folder or file names include a matching ID, such as `{tmdb-747059}`, `[imdb-tt19120100]`, or `(tvdb-463649)`. Setting `tmdb-token` adds TMDB lookups for IMDb and TVDB IDs, release year and episode confirmation, and title fallback for shows.
 - Serves an optional web dashboard to watch runs live, browse incomplete and fixed items, run bulk actions, and fix matches by hand.
 
@@ -46,6 +47,8 @@ The dashboard has three pages:
 - Status: server health, live run progress, and manual runs.
 - Items: Attention, Fixed, and Stopped queues with search, filters, bulk actions, and manual Fix Match.
 - Runs: run history and per-item outcomes.
+
+A wrong movie match has a pink `mismatched` reason badge, and the reason filter of Items can show only these movies. A movie whose only counted reason is `mismatched` has the queue state "Needs a manual fix"; with another reason, such as `no-art`, it keeps the usual state, such as "Due". Its item detail shows a warning with the path ID and the Plex IDs of each source that disagrees. Use Fix match there to choose the right match.
 
 In the Items and Runs tables, a hand cursor shows where you can click to open details.
 Clicking anywhere on the non-interactive surface of a linked list row opens its item or run details.
@@ -159,7 +162,7 @@ Each entry under `plex` configures one Plex server:
 | `libraries` | no | all supported | Optional list of library titles to include |
 | `timeout` | no | `30s` | Timeout for each request to this server |
 
-Valid values for `ignore-reasons`: `unmatched`, `no-summary`, `no-poster`, `no-art`, `episode-no-summary`, and `episode-unmatched`.
+Valid values for `ignore-reasons`: `unmatched`, `no-summary`, `no-poster`, `no-art`, `episode-no-summary`, `episode-unmatched`, and `mismatched`.
 
 Durations use Go units such as `s`, `m`, and `h` (write 7 days as `168h`). Unknown keys fail validation.
 

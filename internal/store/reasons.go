@@ -15,10 +15,15 @@ const (
 	NoArt
 	EpisodeNoSummary // regular episodes with an empty summary
 	EpisodeUnmatched // matched series with unmatched regular episodes
+	Mismatched       // a matched movie whose path IDs disagree with its Plex IDs
 )
 
 // ItemReasons holds the reasons that come from the item itself.
-const ItemReasons = Unmatched | NoSummary | NoPoster | NoArt
+const ItemReasons = Unmatched | NoSummary | NoPoster | NoArt | Mismatched
+
+// ManualReasons never make a row due: a refresh keeps the current match, so
+// only a manual fix match helps.
+const ManualReasons = Mismatched
 
 var reasonNames = []struct {
 	reason Reasons
@@ -30,9 +35,10 @@ var reasonNames = []struct {
 	{NoArt, "no-art"},
 	{EpisodeNoSummary, "episode-no-summary"},
 	{EpisodeUnmatched, "episode-unmatched"},
+	{Mismatched, "mismatched"},
 }
 
-// String gives "unmatched,no-summary,no-poster,no-art,episode-no-summary,episode-unmatched"
+// String gives "unmatched,no-summary,no-poster,no-art,episode-no-summary,episode-unmatched,mismatched"
 // in this order, for the set flags only. 0 gives "".
 func (r Reasons) String() string {
 	var names []string

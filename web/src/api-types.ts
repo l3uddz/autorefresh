@@ -3,7 +3,7 @@ import type { TabName } from './route';
 // Types of the JSON API in internal/web. Times are RFC 3339 strings, and
 // an omitted time is undefined.
 
-export type ItemState = 'due' | 'waiting' | 'too-new' | 'ignored' | 'stopped';
+export type ItemState = 'due' | 'waiting' | 'too-new' | 'ignored' | 'manual' | 'stopped';
 
 export type TimelineEventKind = 'request' | 'completed' | 'gone' | 'stopped' | 'resumed' | 'match-decision';
 
@@ -196,6 +196,26 @@ export interface LiveItem {
   locations: string[];
   files: string[];
   path?: string;
+  /** The external IDs that Plex lists, such as `tmdb://100`. */
+  externalIds: string[];
+  /** The wrong match check of a matched movie. */
+  mismatch?: WrongMatch;
+}
+
+export type WrongMatchResult = 'mismatched' | 'agrees' | 'undecided' | 'no-path-ids';
+
+export interface WrongMatch {
+  result: WrongMatchResult;
+  /** The compared sources, in the order tmdb, imdb, tvdb. */
+  sources: ComparedSource[];
+}
+
+export interface ComparedSource {
+  source: string;
+  /** The ID that the file path names. */
+  path: string;
+  /** The IDs of the source that Plex lists. */
+  plex: string[];
 }
 
 export interface Library {

@@ -34,6 +34,7 @@ describe('format', () => {
     expect(queueState('due', undefined, now)).toBe('Due');
     expect(queueState('waiting', at(3600), now)).toBe('Waiting · in 1h');
     expect(queueState('too-new', at(600), now)).toBe('Too new · in 10m');
+    expect(queueState('manual', undefined, now)).toBe('Needs a manual fix');
     expect(queueState(undefined, undefined, now)).toBe('—');
   });
 

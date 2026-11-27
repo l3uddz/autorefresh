@@ -141,18 +141,24 @@ func parseID(text string) (pathID, bool) {
 	if m == nil {
 		return pathID{}, false
 	}
-	source, value := strings.ToLower(m[1]), m[2]
-	if source == "imdb" {
-		if !imdbValue.MatchString(value) {
-			return pathID{}, false
-		}
-		return pathID{source, strings.ToLower(value)}, true
-	}
-	norm, ok := normalizePositiveNumber(value)
+	source := strings.ToLower(m[1])
+	value, ok := normalizeIDValue(source, m[2])
 	if !ok {
 		return pathID{}, false
 	}
-	return pathID{source, norm}, true
+	return pathID{source, value}, true
+}
+
+// normalizeIDValue checks the value of an ID of source and returns it in one
+// form: a lowercase IMDb ID, or a TMDB or TVDB number without leading zeros.
+func normalizeIDValue(source, value string) (string, bool) {
+	if source == "imdb" {
+		if !imdbValue.MatchString(value) {
+			return "", false
+		}
+		return strings.ToLower(value), true
+	}
+	return normalizePositiveNumber(value)
 }
 
 // normalizePositiveNumber strips leading zeros from a decimal digit string and

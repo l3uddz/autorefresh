@@ -417,6 +417,16 @@ type liveAnswer struct {
 	Locations []string `json:"locations"`
 	Files     []string `json:"files"`
 	Path      string   `json:"path"`
+	// ExternalIDs and Mismatch are what the wrong match check reads.
+	ExternalIDs []string `json:"externalIds"`
+	Mismatch    *struct {
+		Result  string `json:"result"`
+		Sources []struct {
+			Source string   `json:"source"`
+			Path   string   `json:"path"`
+			Plex   []string `json:"plex"`
+		} `json:"sources"`
+	} `json:"mismatch"`
 }
 
 // liveServer returns a Server for st with one server Home whose Plex
@@ -495,6 +505,60 @@ func TestItemLive(t *testing.T) {
 	body = getJSON(t, s, "/api/item/live?srv=0&key=201", &empty)
 	if !strings.Contains(body, `"locations":[]`) || !strings.Contains(body, `"files":[]`) {
 		t.Errorf("empty details body = %s", body)
+	}
+}
+
+func TestItemLiveWrongMatch(t *testing.T) {
+	st := openStore(t)
+	show := movie("201", "Dark", store.NoSummary, time.Time{})
+	show.Type = "show"
+	readLibrary(t, st, "Home", "1", testNow, show,
+		movie("101", "Wrong", store.Mismatched, time.Time{}), movie("102", "Bare", store.NoArt, time.Time{}),
+		movie("103", "Local", store.Unmatched, time.Time{}), movie("104", "Both", store.Mismatched, time.Time{}))
+	answers := map[string]plex.Details{
+		"101": {GUID: "plex://movie/a", Paths: plex.Paths{Files: []string{"/m/Wrong {tmdb-100}/w.mkv"}},
+			ExternalIDs: []string{"imdb://tt1", "tmdb://200", "tvdb://3"}},
+		"102": {GUID: "plex://movie/b", Paths: plex.Paths{Files: []string{"/m/Bare (2000)/b.mkv"}},
+			ExternalIDs: []string{"tmdb://200"}},
+		"103": {GUID: "local://103", Paths: plex.Paths{Files: []string{"/m/Local {tmdb-100}/l.mkv"}}},
+		"104": {GUID: "plex://movie/d", Paths: plex.Paths{Files: []string{"/m/Both {imdb-tt5} {tmdb-100}/b.mkv"}},
+			ExternalIDs: []string{"imdb://tt6", "tmdb://200"}},
+		"201": {GUID: "plex://show/dark", Paths: plex.Paths{Locations: []string{"/tv/Dark {tmdb-100}"}},
+			ExternalIDs: []string{"tmdb://200"}},
+	}
+	s := liveServer(st, func(_ context.Context, key string) (plex.Details, error) {
+		return answers[key], nil
+	})
+
+	var wrong liveAnswer
+	body := getJSON(t, s, "/api/item/live?srv=0&key=101", &wrong)
+	if !reflect.DeepEqual(wrong.ExternalIDs, []string{"imdb://tt1", "tmdb://200", "tvdb://3"}) {
+		t.Errorf("externalIds = %v", wrong.ExternalIDs)
+	}
+	if want := `"mismatch":{"result":"mismatched","sources":[{"source":"tmdb","path":"100","plex":["200"]}]}`; !strings.Contains(body, want) {
+		t.Errorf("wrong match body = %s, want %s", body, want)
+	}
+
+	body = getJSON(t, s, "/api/item/live?srv=0&key=102", &liveAnswer{})
+	if !strings.Contains(body, `"mismatch":{"result":"no-path-ids","sources":[]}`) {
+		t.Errorf("no path ID body = %s", body)
+	}
+
+	for _, key := range []string{"103", "201"} {
+		body = getJSON(t, s, "/api/item/live?srv=0&key="+key, &liveAnswer{})
+		if strings.Contains(body, `"mismatch"`) {
+			t.Errorf("%s body has a mismatch: %s", key, body)
+		}
+		if key == "103" && !strings.Contains(body, `"externalIds":[]`) {
+			t.Errorf("103 body has no empty externalIds: %s", body)
+		}
+	}
+
+	var both liveAnswer
+	getJSON(t, s, "/api/item/live?srv=0&key=104", &both)
+	if both.Mismatch == nil || both.Mismatch.Result != "mismatched" || len(both.Mismatch.Sources) != 2 ||
+		both.Mismatch.Sources[0].Source != "tmdb" || both.Mismatch.Sources[1].Source != "imdb" {
+		t.Errorf("several sources = %+v, want tmdb then imdb", both.Mismatch)
 	}
 }
 

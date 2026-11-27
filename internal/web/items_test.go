@@ -456,7 +456,9 @@ func TestItemsRejectsInvalidParams(t *testing.T) {
 		{"limit=a", "invalid limit"},
 		{"cursor=!!!", "invalid cursor"},
 		{"cursor=" + plain[:len(plain)/2], "invalid cursor"},
-		{"cursor=" + editCursor(t, plain, func(f map[string]any) { f["v"] = 2 }), "invalid cursor"},
+		{"cursor=" + editCursor(t, plain, func(f map[string]any) { f["v"] = cursorVersion + 1 }), "invalid cursor"},
+		// A cursor from before the never-due rows sorted last.
+		{"cursor=" + editCursor(t, plain, func(f map[string]any) { f["v"] = 1 }), "invalid cursor"},
 		{"cursor=" + editCursor(t, plain, func(f map[string]any) { delete(f, "v") }), "invalid cursor"},
 		{"cursor=" + editCursor(t, plain, func(f map[string]any) { delete(f, "k") }), "invalid cursor"},
 		{"cursor=" + editCursor(t, plain, func(f map[string]any) { delete(f, "s") }), "invalid cursor"},
@@ -511,5 +513,47 @@ func TestAPIStoreFailureIs500(t *testing.T) {
 	for _, path := range []string{"/api/items", "/api/servers", "/api/runs", "/api/item?srv=0&key=1", "/api/item/live?srv=0&key=1"} {
 		rec := serve(s, httptest.NewRequest(http.MethodGet, path, nil))
 		assertJSONError(t, rec, http.StatusInternalServerError, "internal error")
+	}
+}
+
+func TestItemsManualState(t *testing.T) {
+	st := openStore(t)
+	old, recent := testNow.Add(-48*time.Hour), testNow.Add(-time.Hour)
+	readLibrary(t, st, "Home", "1", testNow,
+		movie("301", "Only wrong", store.Mismatched, old),
+		movie("302", "New wrong", store.Mismatched, recent),
+		movie("303", "Wrong and bare", store.Mismatched|store.NoArt, old),
+		movie("304", "Bare", store.NoSummary, old))
+	s := newServerWith(st, 0, []PlexServer{{Name: "Home", Plex: &fakePlex{id: "id-Home"}}})
+	s.rules.MinimumAge = 24 * time.Hour
+
+	got, _ := getItems(t, s, "")
+	if got.Counts.Attention != 4 {
+		t.Errorf("attention count = %d, want 4", got.Counts.Attention)
+	}
+	items := byKey(t, got.Items)
+	for key, state := range map[string]string{"301": "manual", "302": "manual", "303": "due", "304": "due"} {
+		if items[key]["state"] != state {
+			t.Errorf("%s state = %v, want %s", key, items[key]["state"], state)
+		}
+	}
+	assertAbsent(t, items["301"], "nextDue")
+	assertAbsent(t, items["302"], "nextDue")
+	if !reflect.DeepEqual(items["303"]["reasons"], []any{"no-art", "mismatched"}) {
+		t.Errorf("303 reasons = %v", items["303"]["reasons"])
+	}
+
+	detail, _ := getItem(t, s, "srv=0&key=302")
+	if detail.Item["state"] != "manual" {
+		t.Errorf("detail state = %v, want manual", detail.Item["state"])
+	}
+	assertAbsent(t, detail.Item, "nextDue")
+
+	filtered, _ := getItems(t, s, "reason=mismatched")
+	if keys := sortedStrings(keysOf(filtered.Items)); !reflect.DeepEqual(keys, []string{"301", "302", "303"}) {
+		t.Errorf("reason=mismatched keys = %v", keys)
+	}
+	if filtered.Counts.Attention != 3 {
+		t.Errorf("reason=mismatched attention count = %d, want 3", filtered.Counts.Attention)
 	}
 }

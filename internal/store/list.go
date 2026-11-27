@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 )
@@ -52,11 +53,26 @@ func (r DueRules) nextDue() sqlPart {
 		append([]any{r.MinimumAge.Milliseconds()}, r.backoffArgs()...)}
 }
 
+// neverDue is the sort value of the next due time of a row that is never
+// due, because its reasons outside Ignored are all ManualReasons: a time
+// after every other, so the row comes last in ascending order and first in
+// descending order.
+const neverDue = math.MaxInt64
+
+// dueSort is the sort column of SortDue: the next due time, or neverDue for
+// a row in state ignored or manual. The listed NextDue stays separate.
+func (r DueRules) dueSort() sqlPart {
+	next := r.nextDue()
+	return sqlPart{`CASE WHEN reasons & ~? = 0 THEN ? ELSE ` + next.sql + ` END`,
+		append([]any{int(r.Ignored | ManualReasons), int64(neverDue)}, next.args...)}
+}
+
 // state is the QueueState of a row.
 func (r DueRules) state() sqlPart {
 	tooNew, waiting := r.tooNew(), r.waiting()
-	args := append([]any{int(r.Ignored)}, tooNew.args...)
+	args := append([]any{int(r.Ignored), int(r.Ignored | ManualReasons)}, tooNew.args...)
 	return sqlPart{`CASE WHEN stopped_at IS NOT NULL THEN 'stopped' WHEN reasons & ~? = 0 THEN 'ignored'
+		WHEN reasons & ~? = 0 THEN 'manual'
 		WHEN ` + tooNew.sql + ` THEN 'too-new' WHEN ` + waiting.sql + ` THEN 'waiting' ELSE 'due' END`,
 		append(args, waiting.args...)}
 }
@@ -69,6 +85,7 @@ const (
 	StateWaiting QueueState = "waiting" // until the end of its backoff wait
 	StateTooNew  QueueState = "too-new" // until MinimumAge passes
 	StateIgnored QueueState = "ignored" // all its reasons are ignored
+	StateManual  QueueState = "manual"  // only reasons that need a manual fix, such as a wrong match
 	StateStopped QueueState = "stopped"
 )
 
@@ -153,7 +170,7 @@ func queueSorts(r DueRules) map[SortKey]sortColumn {
 		SortTitle:       {sqlPart{sql: `item.title COLLATE NOCASE`}, true},
 		SortYear:        {sqlPart{sql: `item.year`}, false},
 		SortAdded:       {sqlPart{sql: `item.added_at`}, false},
-		SortDue:         {r.nextDue(), false},
+		SortDue:         {r.dueSort(), false},
 		SortTries:       {sqlPart{sql: `item.attempts`}, false},
 		SortLastAttempt: {sqlPart{sql: `COALESCE(item.last_attempt, 0)`}, false},
 		SortStopped:     {sqlPart{sql: `COALESCE(item.stopped_at, 0)`}, false},
