@@ -16,7 +16,7 @@ The store SHALL create a new database file with incremental auto-vacuum, set bef
 
 ### Requirement: One-time conversion of an existing database
 
-At start, outside a dry run, autorefresh SHALL convert a database without incremental auto-vacuum with `VACUUM` and then a truncating WAL checkpoint, and SHALL log `Converted database` at info level with the size before and after (pages times page size). A failure SHALL log the warning `Database conversion failed`, and the start SHALL continue. A database over 256 MiB SHALL NOT be converted; autorefresh SHALL log `Database too large to convert` at info level.
+At start, outside a dry run, autorefresh SHALL convert a database without incremental auto-vacuum with `VACUUM` and then a truncating WAL checkpoint, and SHALL log `Converted database` at info level with the size before and after (pages times page size). A failure SHALL log the warning `Database conversion failed`, and the start SHALL go on to its next step. A database over 256 MiB SHALL NOT be converted; autorefresh SHALL log `Database too large to convert` at info level.
 
 #### Scenario: Existing database
 
@@ -26,9 +26,9 @@ At start, outside a dry run, autorefresh SHALL convert a database without increm
 
 #### Scenario: Another process holds the database
 
-- **GIVEN** another process holds a write transaction on an old database for longer than 30 s
+- **GIVEN** another process has an old database open, with or without a transaction, for longer than the lock wait of the space upkeep
 - **WHEN** autorefresh starts
-- **THEN** it logs `Database conversion failed`, `PRAGMA auto_vacuum` still reads `0`, the service runs, and the next start tries again
+- **THEN** it logs `Database conversion failed` after that wait, `PRAGMA auto_vacuum` still reads `0`, the start goes on to its next step with its usual lock wait, and the next start tries the conversion again
 
 #### Scenario: Large database
 
@@ -40,9 +40,19 @@ At start, outside a dry run, autorefresh SHALL convert a database without increm
 - **WHEN** a dry run starts with an old database
 - **THEN** the database is not converted
 
+### Requirement: Exclusive lock of the conversion
+
+The conversion SHALL hold the exclusive lock of the database file from its size check to its end, so that no other process can read or grow the file in between. It SHALL therefore run only when no other process has the file open, and otherwise wait for a later start.
+
+#### Scenario: A writer prepares a large transaction
+
+- **GIVEN** another process has an old database open with a large write transaction that it has not committed
+- **WHEN** autorefresh starts
+- **THEN** it does not convert the database, and the size that it checks is never smaller than the size that `VACUUM` rewrites
+
 ### Requirement: Space upkeep at run start
 
-At the start of each scheduled run and manual scan, outside a dry run, autorefresh SHALL do the space upkeep once, before the servers run and without delaying the answer of a Run now request. It SHALL release the free pages when they are at least a fifth of the pages and at least 1 MiB, then always checkpoint the WAL with truncation, then run `PRAGMA optimize`. A failed step SHALL log a warning, and the run SHALL continue.
+At the start of each scheduled run and manual scan, outside a dry run, autorefresh SHALL do the space upkeep once, before the servers run and without delaying the answer of a Run now request. It SHALL release the free pages when they are at least a fifth of the pages and at least 1 MiB under the write lock, then always checkpoint the WAL with truncation, then run `PRAGMA optimize`. A failed step SHALL log a warning, and the run SHALL continue.
 
 #### Scenario: Large removal
 
@@ -62,6 +72,18 @@ At the start of each scheduled run and manual scan, outside a dry run, autorefre
 - **WHEN** the checkpoint cannot finish
 - **THEN** the run continues, and the checkpoint of a later run start shrinks the file
 
+#### Scenario: Another process reuses the free pages
+
+- **GIVEN** a converted database whose free pages passed the threshold when the run start first read them
+- **WHEN** another process reuses most of them before the release takes the write lock
+- **THEN** autorefresh releases no page
+
+#### Scenario: The release fails
+
+- **GIVEN** another process holds the write lock longer than the lock wait of the space upkeep
+- **WHEN** a run starts with many free pages
+- **THEN** autorefresh logs a warning, still tries the checkpoint, and the run continues
+
 #### Scenario: Database without incremental auto-vacuum
 
 - **GIVEN** a database whose conversion failed at start
@@ -77,7 +99,17 @@ At the start of each scheduled run and manual scan, outside a dry run, autorefre
 #### Scenario: Dry run
 
 - **WHEN** a dry run starts with many free pages
-- **THEN** autorefresh releases no page, checkpoints nothing, and runs no `PRAGMA optimize`
+- **THEN** autorefresh releases no page, runs no upkeep checkpoint, and runs no `PRAGMA optimize`
+
+### Requirement: Short lock waits of the space upkeep
+
+Each statement of the one-time conversion and of the space upkeep SHALL wait at most 2 seconds for a lock that another process holds, and then give up until the next start or run. The release and the checkpoint of a run start can each use that wait. Every other database step SHALL keep its usual wait of 30 seconds. A dry run SHALL run no upkeep step; the checkpoint that SQLite makes itself when the last connection closes stays as before.
+
+#### Scenario: A reader of another process during the upkeep
+
+- **GIVEN** another process keeps a read transaction open
+- **WHEN** a run starts
+- **THEN** the checkpoint gives up after about 2 seconds, and the dashboard queries of the service wait no longer than that
 
 ### Requirement: Query planner statistics at stop
 

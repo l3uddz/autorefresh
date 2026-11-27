@@ -57,6 +57,8 @@ type Store interface {
 	StartRun(r store.RunStart) (int64, error)
 	FinishRun(id int64, start store.RunStart, r store.RunResult) (bool, error)
 	PruneHistory(before time.Time) (events, runs int, err error)
+	Reclaim(ctx context.Context) (store.ReclaimResult, error)
+	Optimize(ctx context.Context) error
 }
 
 // Server is one Plex server to check.
@@ -279,6 +281,7 @@ func (r *Refresher) cancelStarted(runs []startedRun) error {
 }
 
 func (r *Refresher) execute(ctx context.Context, runs []startedRun) error {
+	r.upkeep(ctx)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errs := make([]error, len(runs))
@@ -294,6 +297,31 @@ func (r *Refresher) execute(ctx context.Context, runs []startedRun) error {
 	}
 	wg.Wait()
 	return errors.Join(errs...)
+}
+
+// upkeep releases the free database pages, truncates the WAL, and updates
+// the planner statistics once before the servers run. It runs inside the run
+// job, so a lock wait never delays the answer of Run now. A failure only
+// logs, because space upkeep must not stop refreshes. A dry run changes
+// nothing in the file.
+func (r *Refresher) upkeep(ctx context.Context) {
+	if r.opts.DryRun || ctx.Err() != nil {
+		return
+	}
+	res, err := r.store.Reclaim(ctx)
+	switch {
+	case err != nil:
+		log.Warn().Err(err).Msg("Reclaiming database space failed")
+	case res.Pages > 0:
+		log.Debug().Int64("pages", res.Pages).Int64("bytes", res.Bytes).Bool("checkpoint_busy", res.CheckpointBusy).
+			Msg("Reclaimed database space")
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	if err := r.store.Optimize(ctx); err != nil {
+		log.Warn().Err(err).Msg("Updating database statistics failed")
+	}
 }
 
 // serverOnly reports whether err ends only the run of its own server: an

@@ -11,7 +11,7 @@
 
 ## 2. Space upkeep at run start and statistics at stop
 
-- [ ] 2.1 Add `Store.Reclaim` (one-fifth and 1 MiB threshold, the unconditional truncating checkpoint, and pages from the fall in `page_count`) and `Store.Optimize`, and add both to the `refresher.Store` interface. Call `upkeep` at the start of `execute` unless a dry run, with the `Reclaimed database space` debug line and warning-only failures. Call `Optimize` with a 5 s context before `closeStore` at a normal stop of `main` unless `--dry-run`.
+- [x] 2.1 Add `Store.Reclaim` (one-fifth and 1 MiB threshold, the unconditional truncating checkpoint, and pages from the fall in `page_count`) and `Store.Optimize`, and add both to the `refresher.Store` interface. Call `upkeep` at the start of `execute` unless a dry run, with the `Reclaimed database space` debug line and warning-only failures. Call `Optimize` with a 5 s context before `closeStore` at a normal stop of `main` unless `--dry-run`.
   - Store tests: release above and below the threshold, a database without auto-vacuum, a busy checkpoint that a later `Reclaim` completes, `Optimize` normally and under a held write lock within its deadline, and the closed-database cases.
   - Refresher tests: no calls in a dry run, warning-only failures, and one call per manual scan from the job and not from `RunNow`.
   - `cmd/autorefresh` tests: a normal stop writes `sqlite_stat1`, and a `--dry-run` stop does not.
@@ -21,7 +21,7 @@
 
 ## 3. Full checks
 
-- [ ] 3.1 Run `mise run vendor`, `mise run test`, `mise run lint`, `mise run web-install`, `mise run web-lint`, `mise run web-test`, and `mise run test-webui` in order. All pass, and `go.mod` and `go.sum` have no change. Check that `openspec validate reclaim-database-space --strict` passes. No commit unless a check needs a fix, which then gets its own `fix(store)` commit.
+- [x] 3.1 Run `mise run vendor`, `mise run test`, `mise run lint`, `mise run web-install`, `mise run web-lint`, `mise run web-test`, and `mise run test-webui` in order. All pass, and `go.mod` and `go.sum` have no change. Check that `openspec validate reclaim-database-space --strict` passes. No commit unless a check needs a fix, which then gets its own `fix(store)` commit.
 
 ## Workflow follow-up
 

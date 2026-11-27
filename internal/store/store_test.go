@@ -635,6 +635,8 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 			_, err := s.ConvertAutoVacuum(context.Background())
 			return err
 		},
+		"Reclaim":  func() error { _, err := s.Reclaim(context.Background()); return err },
+		"Optimize": func() error { return s.Optimize(context.Background()) },
 	}
 	for name, call := range calls {
 		if err := call(); err == nil {
