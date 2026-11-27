@@ -55,5 +55,5 @@ None.
   - `internal/refresher`: upkeep after each run, outside the run lock (`Run`, `Jobs.Scheduled`, and the Run now job), with the `Store` interface extended.
   - `cmd/autorefresh`: the conversion after `Open`, and `Optimize` before `Close`.
 - **Database**: no schema migration. The file layout changes once, at the conversion.
-- **Docs**: `README.md` (a sentence on file size beside the WAL note) and `AGENTS.md` (the `internal/store` and `cmd/autorefresh` rows).
+- **Docs**: `README.md` (a sentence on file size beside the WAL note) and `AGENTS.md` (the `cmd/autorefresh`, `internal/store`, and `internal/refresher` rows).
 - **Startup**: the one-time conversion takes well under a second at the measured size. It needs memory, and temporary WAL space, about the size of the database.
