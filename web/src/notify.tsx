@@ -15,12 +15,18 @@ const outcomeIcons = { success: CheckCircleIcon, notice: InformationCircleIcon, 
 type NotifyOptions = Omit<ToastOptions, 'body' | 'type' | 'renderContent'>;
 
 /** Returns a function that shows the toast of an action with an icon of
- * its outcome. An error toast keeps the error colours of Astryx. */
+ * its outcome. Every outcome defaults to auto-hiding with Astryx's stock
+ * duration (5 s, paused on hover or focus) unless a caller overrides it. */
 export function useNotify() {
   const showToast = useToast();
   return useCallback(
     (outcome: Outcome, text: string, options?: NotifyOptions) =>
-      showToast({ ...options, type: outcome === 'error' ? 'error' : 'info', body: <ToastBody outcome={outcome} text={text} /> }),
+      showToast({
+        isAutoHide: true,
+        ...options,
+        type: outcome === 'error' ? 'error' : 'info',
+        body: <ToastBody outcome={outcome} text={text} />,
+      }),
     [showToast],
   );
 }

@@ -7,7 +7,7 @@ import { useMediaQuery } from '@astryxdesign/core/hooks';
 import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, Layout, LayoutContent, LayoutHeader, LayoutPanel, StackItem, VStack } from '@astryxdesign/core/Layout';
-import { List, ListItem } from '@astryxdesign/core/List';
+import { List } from '@astryxdesign/core/List';
 import { ResizeHandle, useResizable } from '@astryxdesign/core/Resizable';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
 import { Selector } from '@astryxdesign/core/Selector';
@@ -26,6 +26,7 @@ import { useNow } from './clock';
 import { ItemDetail } from './detail';
 import { fixedBy, label, plural, queueState, relative } from './format';
 import { ItemTable } from './itemtable';
+import { LinkListItem } from './listlink';
 import { Poster, Reasons } from './media';
 import { useShown } from './presence';
 import { itemHash, navigate, tabNames, type ItemKey, type TabName } from './route';
@@ -507,7 +508,7 @@ function ItemList({ tab, rows, isMulti, ignored, openItem, srv }: ListProps) {
   return (
     <List density="balanced" hasDividers edge="padded">
       {rows.map(item => (
-        <ListItem
+        <LinkListItem
           key={itemID(item)}
           itemKey={itemID(item)}
           href={itemHash(tab, item, srv)}

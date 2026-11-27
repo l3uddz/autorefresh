@@ -8,7 +8,7 @@ import { Grid } from '@astryxdesign/core/Grid';
 import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, Layout, LayoutContent, LayoutHeader, StackItem, VStack } from '@astryxdesign/core/Layout';
-import { List, ListItem } from '@astryxdesign/core/List';
+import { List } from '@astryxdesign/core/List';
 import { SelectableCard } from '@astryxdesign/core/SelectableCard';
 import { Skeleton } from '@astryxdesign/core/Skeleton';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
@@ -18,6 +18,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { ApiError, api, type RunDetail, type RunRecord } from './api';
 import { dateTime, label, plural, runDuration, runTitle, titleYear } from './format';
+import { LinkListItem } from './listlink';
 import { Poster } from './media';
 import { itemHash } from './route';
 import { useShown } from './presence';
@@ -241,7 +242,7 @@ function EntryGroup({ group, srv, scope }: { group: RunGroup; srv: number; scope
 
 function EntryRow({ entry, srv, scope }: { entry: RunEntry; srv: number; scope?: number }) {
   return (
-    <ListItem
+    <LinkListItem
       href={itemHash(entry.tab, { srv, key: entry.key }, scope)}
       align="start"
       startContent={<Poster src={entry.thumb} title={entry.title} type={entry.type} size="sm" />}

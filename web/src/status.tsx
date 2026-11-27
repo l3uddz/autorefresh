@@ -6,7 +6,7 @@ import { Grid } from '@astryxdesign/core/Grid';
 import { Icon } from '@astryxdesign/core/Icon';
 import { HStack, StackItem, VStack } from '@astryxdesign/core/Layout';
 import { Link } from '@astryxdesign/core/Link';
-import { List, ListItem } from '@astryxdesign/core/List';
+import { List } from '@astryxdesign/core/List';
 import { ProgressBar } from '@astryxdesign/core/ProgressBar';
 import { Skeleton } from '@astryxdesign/core/Skeleton';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
@@ -16,6 +16,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, useRuns, useServers, useStatus, type Health, type ItemPage, type RunProgress, type RunRecord, type ServerInfo, type ServerStatus, type Status } from './api';
 import { useNow } from './clock';
 import { dateTime, fixedBy, fullReadText, label, nextRunText, plural, relative, runDuration, runTitle } from './format';
+import { LinkListItem } from './listlink';
 import { Poster } from './media';
 import { NowPanel } from './nowpanel';
 import { cancelBulkQueue, isQueueActive, queueProgress, useBulkQueue } from './queue';
@@ -248,7 +249,7 @@ function RecentFixes({ isMulti, srv }: { isMulti: boolean; srv?: number }) {
       {fixes.data && fixes.data.items.length > 0 && (
         <List density="balanced" hasDividers>
           {fixes.data.items.map(item => (
-            <ListItem
+            <LinkListItem
               key={`${item.srv}/${item.key}`}
               href={itemHash('fixed', item, srv)}
               startContent={<Poster src={item.thumb} title={item.title} type={item.type} size="sm" />}
@@ -323,7 +324,7 @@ export function RunRow({ run, isMulti, href, isSelected, isDetailed = false }: {
           .filter(Boolean)
           .join(' · ');
   return (
-    <ListItem
+    <LinkListItem
       href={href}
       isSelected={isSelected}
       label={isMulti ? `${run.server} · ${kind}` : kind}

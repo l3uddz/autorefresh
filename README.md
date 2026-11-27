@@ -47,6 +47,8 @@ The dashboard has three pages:
 - Items: Attention, Fixed, and Stopped queues with search, filters, bulk actions, and manual Fix Match.
 - Runs: run history and per-item outcomes.
 
+Clicking anywhere on the non-interactive surface of a linked list row opens its item or run details, and action toasts (including errors) close automatically after 5 seconds by default (10 seconds for bulk refresh end reports), pausing while hovered or focused.
+
 To enable the dashboard, add a `ui` section to `config.yml`:
 
 ```yaml
