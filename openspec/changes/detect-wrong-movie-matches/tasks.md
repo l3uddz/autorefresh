@@ -14,7 +14,7 @@
 
 ## 4. Show the comparison in the live Plex view
 
-- [ ] 4.1 Add `externalIds` and, for matched movies, `mismatch` to `GET /api/item/live` through `refresher.CompareMovieIDs` with `d.GUID` and `d.Paths.Files`. Add handler tests for the dashboard-api scenarios, including an unmatched movie without `mismatch` and the source order, with `includeGuids=1` checked on the recorded Plex request. Add the `manual` state and the new reason filter to the handler tests of `GET /api/items`. Update the `internal/web` row of `AGENTS.md`. Verify with `go test ./internal/web/`. Commit: `feat(web): show the wrong match result in the live Plex view`.
+- [x] 4.1 Add `externalIds` and, for matched movies, `mismatch` to `GET /api/item/live` through `refresher.CompareMovieIDs` with `d.GUID` and `d.Paths.Files`. Add handler tests for the dashboard-api scenarios, including an unmatched movie without `mismatch` and the source order, with `includeGuids=1` checked on the recorded Plex request. Add the `manual` state and the new reason filter to the handler tests of `GET /api/items`. Update the `internal/web` row of `AGENTS.md`. Verify with `go test ./internal/web/`. Commit: `feat(web): show the wrong match result in the live Plex view`.
 
 ## 5. Show wrong matches in the dashboard
 
