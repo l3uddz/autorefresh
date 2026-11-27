@@ -40,6 +40,7 @@ Alternative: one item request per movie. Rejected: it adds a request per movie f
 `internal/refresher/wrongmatch.go` holds `CompareMovieIDs(guid string, files, externalIDs []string) WrongMatch`. `WrongMatch` holds a `Result` (`unmatched`, `mismatched`, `agrees`, `undecided`, `no-path-ids`) and the compared sources, each with the path ID and the Plex IDs. The rules:
 
 - A `local://` GUID gives `unmatched` at once, so no caller can flag an unmatched movie.
+- No files give `undecided`, because the paths are then unknown, not free of IDs.
 - The path side runs `parseIDs` on the movie's file paths. The callers always pass files: `plex.Item.Files` in a read and a check, and `Details.Paths.Files` in the live view, never `Paths.All()`.
 - The Plex side splits each external ID with `strings.Cut(id, "://")`. It keeps only the schemes `imdb`, `tmdb`, and `tvdb`, compared without case. It then normalizes the value with `normalizeIDValue(source, value)`, a helper split out of `parseID` (`imdbValue` and lowercase for `imdb`, `normalizePositiveNumber` for `tmdb` and `tvdb`). `parseID` calls the same helper, so both sides follow one normalization. The value goes to the helper as it is, not through `idPattern`, so a malformed ID such as `tmdb://-100` or `tmdb:///100` is dropped instead of read as `100`. Values are deduplicated for each source, in first-seen order.
 - A source is compared when the paths name exactly one value of it and Plex lists at least one value of it.

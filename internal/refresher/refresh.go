@@ -109,7 +109,7 @@ func (r *Refresher) recheck(run *serverRun, batch store.Item) (store.Item, strin
 		return store.Item{}, "gone", nil
 	case !row.StoppedAt.IsZero():
 		return row, "stopped", nil
-	case row.Attempts != batch.Attempts || row.Reasons&^r.opts.IgnoreReasons == 0:
+	case row.Attempts != batch.Attempts || row.Reasons&^(r.opts.IgnoreReasons|store.ManualReasons) == 0:
 		return row, "changed", nil
 	default:
 		return row, "", nil

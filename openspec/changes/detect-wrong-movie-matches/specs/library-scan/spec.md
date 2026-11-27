@@ -126,7 +126,7 @@ A matched movie SHALL be `mismatched` when at least one source can be compared a
 
 ### Requirement: A read keeps an undecided wrong match
 
-When the paths of a listed matched movie name at least one ID, but no source can be compared, the read SHALL keep the `mismatched` value that the cache row had before the read. A new row SHALL then not get `mismatched`. This applies when Plex lists no ID of the path sources, or when the paths name two different IDs of each such source.
+When Plex gives no file of a listed matched movie, or its paths name at least one ID but no source can be compared, the read SHALL keep the `mismatched` value that the cache row had before the read. A new row SHALL then not get `mismatched`. No source can be compared when Plex lists no ID of the path sources, or when the paths name two different IDs of each such source.
 
 #### Scenario: Plex lists no ID of the path source
 
@@ -138,6 +138,12 @@ When the paths of a listed matched movie name at least one ID, but no source can
 
 - **WHEN** the files of a matched movie name `{tmdb-1}` and `{tmdb-2}` and no other ID, and the movie has no cache row
 - **THEN** the read adds no `mismatched` reason
+
+#### Scenario: No file listed
+
+- **GIVEN** a cached movie with the reason `mismatched`
+- **WHEN** a read lists the movie without a file
+- **THEN** the row keeps `mismatched`
 
 #### Scenario: Plex fixes the match
 
