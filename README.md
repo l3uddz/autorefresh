@@ -48,6 +48,8 @@ The dashboard has three pages:
 - Items: Attention, Fixed, and Stopped queues with search, filters, bulk actions, and manual Fix Match.
 - Runs: run history and per-item outcomes.
 
+A wrong movie match has a pink `mismatched` reason badge, and the reason filter of Items can show only these movies. A movie whose only counted reason is `mismatched` has the queue state "Needs a manual fix"; with another reason, such as `no-art`, it keeps the usual state, such as "Due". Its item detail shows a warning with the path ID and the Plex IDs of each source that disagrees. Use Fix match there to choose the right match.
+
 In the Items and Runs tables, a hand cursor shows where you can click to open details.
 Clicking anywhere on the non-interactive surface of a linked list row opens its item or run details.
 Action toasts (including errors) close automatically after 5 seconds by default (10 seconds for bulk refresh end reports), pausing while hovered or focused.

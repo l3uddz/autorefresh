@@ -107,8 +107,9 @@ export function Backdrop({ src }: { src?: string }) {
   );
 }
 
-const reasonColors: Record<string, 'red' | 'orange' | 'blue' | 'purple'> = {
+const reasonColors: Record<string, 'red' | 'orange' | 'blue' | 'purple' | 'pink'> = {
   unmatched: 'red',
+  mismatched: 'pink',
   'no-poster': 'orange',
   'no-art': 'orange',
   'no-summary': 'blue',

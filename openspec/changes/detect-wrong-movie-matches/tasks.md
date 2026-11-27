@@ -18,11 +18,11 @@
 
 ## 5. Show wrong matches in the dashboard
 
-- [ ] 5.1 Add the `manual` state and the live fields to `api-types.ts`, the state text to `format.ts`, the reason option to `items.tsx`, the `pink` badge to `media.tsx`, and the warning banner without a button to `DetailBody` in `detail.tsx`, using Astryx components and tokens only. Add Vitest tests for the state text, the reason label in the badge and the table row, and the warning with and without a live view and for a non-`mismatched` result. Describe the badge, state, and warning in the Dashboard section of `README.md`. Verify with `mise run web-lint` and `mise run web-test`, and with `pnpm exec astryx doctor --built .` in `web/` after `mise run web-build`. Commit: `feat(web): show wrong movie matches in Items and the item detail`.
+- [x] 5.1 Add the `manual` state and the live fields to `api-types.ts`, the state text to `format.ts`, the reason option to `items.tsx`, the `pink` badge to `media.tsx`, and the warning banner without a button to `DetailBody` in `detail.tsx`, using Astryx components and tokens only. Add Vitest tests for the state text, the reason label in the badge and the table row, and the warning with and without a live view and for a non-`mismatched` result. Describe the badge, state, and warning in the Dashboard section of `README.md`. Verify with `mise run web-lint` and `mise run web-test`, and with `pnpm exec astryx doctor --built .` in `web/` after `mise run web-build`. Commit: `feat(web): show wrong movie matches in Items and the item detail`.
 
 ## 6. Full checks
 
-- [ ] 6.1 Run `mise run vendor`, `mise run test`, `mise run lint`, `mise run web-install`, `mise run web-lint`, `mise run web-test`, and `mise run test-webui` in order, then `pnpm exec astryx doctor --built .` in `web/`. All pass, and `go.mod` and `go.sum` have no change. Check that `openspec validate detect-wrong-movie-matches --strict` passes. No commit unless a check needs a fix, which then gets its own `fix(<scope>)` commit.
+- [x] 6.1 Run `mise run vendor`, `mise run test`, `mise run lint`, `mise run web-install`, `mise run web-lint`, `mise run web-test`, and `mise run test-webui` in order, then `pnpm exec astryx doctor --built .` in `web/`. All pass, and `go.mod` and `go.sum` have no change. Check that `openspec validate detect-wrong-movie-matches --strict` passes. No commit unless a check needs a fix, which then gets its own `fix(<scope>)` commit.
 
 ## Workflow follow-up
 
