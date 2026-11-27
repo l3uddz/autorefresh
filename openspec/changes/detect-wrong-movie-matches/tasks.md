@@ -2,7 +2,7 @@
 
 ## 1. Read the external IDs from Plex
 
-- [ ] 1.1 Add `includeGuids=1` to movie listings and to the item metadata read. Decode the `Guid` list into `ExternalIDs` on `plex.Item` and `plex.Details`; a `Guid` value that does not decode gives no IDs. Record a redacted movie listing with `Guid` entries in `internal/plex/testdata/`, with no private values. Add tests that check the query of movie and show listings and of the metadata read, the decoded IDs, and the odd `Guid` shape. Verify with `go test ./internal/plex/`. Commit: `feat(plex): read the external IDs of movies`.
+- [x] 1.1 Add `includeGuids=1` to movie listings and to the item metadata read. Decode the `Guid` list into `ExternalIDs` on `plex.Item` and `plex.Details`; a `Guid` value that does not decode gives no IDs. Record a redacted movie listing with `Guid` entries in `internal/plex/testdata/`, with no private values. Add tests that check the query of movie and show listings and of the metadata read, the decoded IDs, and the odd `Guid` shape. Verify with `go test ./internal/plex/`. Commit: `feat(plex): read the external IDs of movies`.
 
 ## 2. Store the reason and the queue state
 

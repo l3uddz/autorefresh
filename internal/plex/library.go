@@ -46,6 +46,9 @@ type Item struct {
 	Art       string // "" when absent
 	AddedAt   time.Time
 	Files     []string // movie listings: Media[].Part[].file
+	// ExternalIDs are the external IDs of a matched item, such as
+	// "tmdb://100". Movie listings and item reads ask for them.
+	ExternalIDs []string
 }
 
 // Filter is one Plex filter, sent as the query parameter Key=Value. The key
@@ -102,16 +105,39 @@ func (m metadata) files() []string {
 
 func (m metadata) item() Item {
 	return Item{
-		RatingKey: m.RatingKey,
-		GUID:      m.GUID,
-		Title:     m.Title,
-		Year:      m.Year,
-		Summary:   m.Summary,
-		Thumb:     m.Thumb,
-		Art:       m.Art,
-		AddedAt:   time.Unix(m.AddedAt, 0),
-		Files:     m.files(),
+		RatingKey:   m.RatingKey,
+		GUID:        m.GUID,
+		Title:       m.Title,
+		Year:        m.Year,
+		Summary:     m.Summary,
+		Thumb:       m.Thumb,
+		Art:         m.Art,
+		AddedAt:     time.Unix(m.AddedAt, 0),
+		Files:       m.files(),
+		ExternalIDs: m.externalIDs(),
 	}
+}
+
+// externalIDs returns the id of each entry of the Guid list. A Guid value
+// that is not a list of objects gives no IDs, so only the comparison that
+// uses them has nothing to compare, and the listing does not fail.
+func (m metadata) externalIDs() []string {
+	if len(m.ExternalGuids) == 0 {
+		return nil
+	}
+	var entries []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(m.ExternalGuids, &entries); err != nil {
+		return nil
+	}
+	var ids []string
+	for _, e := range entries {
+		if e.ID != "" {
+			ids = append(ids, e.ID)
+		}
+	}
+	return ids
 }
 
 var identityPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,128}$`)
@@ -246,6 +272,10 @@ func listQuery(itemType int, filters []Filter) url.Values {
 		"sort":            {"addedAt"},
 		"excludeElements": {exclude},
 	}
+	if itemType == TypeMovie {
+		// The external IDs let a read find a wrong match with no extra request.
+		query.Set("includeGuids", "1")
+	}
 	for _, f := range filters {
 		query.Add(f.Key, f.Value)
 	}
@@ -277,7 +307,7 @@ func (c *Client) itemMetadata(ctx context.Context, ratingKey, op string) (metada
 	}
 
 	var resp metadataResponse
-	if err := c.send(ctx, http.MethodGet, endpoint, nil, &resp); err != nil {
+	if err := c.send(ctx, http.MethodGet, endpoint, url.Values{"includeGuids": {"1"}}, &resp); err != nil {
 		return metadata{}, fmt.Errorf("%s: %w", op, err)
 	}
 	if len(resp.MediaContainer.Metadata) == 0 {
@@ -329,6 +359,7 @@ type Details struct {
 	GUID, Summary         string
 	ChildCount, LeafCount int // seasons and episodes of a show; 0 otherwise
 	Paths                 Paths
+	ExternalIDs           []string // such as "tmdb://100"
 }
 
 // ItemDetails reads the details of an item. Errors follow ItemPaths.
@@ -340,7 +371,7 @@ func (c *Client) ItemDetails(ctx context.Context, ratingKey string) (Details, er
 	return Details{
 		GUID: m.GUID, Summary: m.Summary,
 		ChildCount: m.ChildCount, LeafCount: m.LeafCount,
-		Paths: m.paths(),
+		Paths: m.paths(), ExternalIDs: m.externalIDs(),
 	}, nil
 }
 
