@@ -631,6 +631,10 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 		"SetPath":       func() error { return s.SetPath(srv, "101", "/x") },
 		"FillPath":      func() error { _, err := s.FillPath(context.Background(), srv, "101", "/x"); return err },
 		"Libraries":     func() error { _, err := s.Libraries(context.Background(), srv); return err },
+		"ConvertAutoVacuum": func() error {
+			_, err := s.ConvertAutoVacuum(context.Background())
+			return err
+		},
 	}
 	for name, call := range calls {
 		if err := call(); err == nil {

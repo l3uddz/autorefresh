@@ -2,7 +2,7 @@
 
 ## 1. Incremental auto-vacuum in the store
 
-- [ ] 1.1 Add the `retryBusy` helper and use it for `enableWAL` and for the pre-WAL `auto_vacuum = INCREMENTAL` of a new file in `Open`. Add `Store.ConvertAutoVacuum` with the `maxConvertBytes` cap and the truncating checkpoint, returning sizes as pages times page size. Call it from `cmd/autorefresh` after `store.Open` unless `--dry-run`, with the `Converted database`, `Database too large to convert`, and `Database conversion failed` logs.
+- [x] 1.1 Add the `retryBusy` helper and use it for `enableWAL` and for the pre-WAL `auto_vacuum = INCREMENTAL` of a new file in `Open`. Add `Store.ConvertAutoVacuum` with the `maxConvertBytes` cap and the truncating checkpoint, returning sizes as pages times page size. Call it from `cmd/autorefresh` after `store.Open` unless `--dry-run`, with the `Converted database`, `Database too large to convert`, and `Database conversion failed` logs.
   - Store tests: a new file, two handles creating a new file, converting an old file with its rows kept, a conversion blocked by a second handle's write transaction, the cap, and the closed-database case in `TestMethodsReportDatabaseFailure`.
   - `cmd/autorefresh` test: `--dry-run` leaves an old file at `auto_vacuum = 0`, and a normal run converts it.
   - Update the `internal/store` and `cmd/autorefresh` rows of `AGENTS.md`.

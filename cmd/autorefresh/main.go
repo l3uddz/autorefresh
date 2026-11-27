@@ -110,6 +110,7 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 	if err != nil {
 		return fatal(err, "Failed opening database")
 	}
+	convertDatabase(ctx, st, opts.DryRun)
 	if err := interruptRuns(st, opts, time.Now()); err != nil {
 		closeStore(st)
 		return fatal(err, "Failed marking interrupted runs")
