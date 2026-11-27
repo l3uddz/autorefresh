@@ -245,6 +245,41 @@ func TestReclaimKeepsFewFreePages(t *testing.T) {
 	}
 }
 
+// Each half of the threshold alone releases nothing: a fifth of the pages
+// under 1 MiB, and 1 MiB under a fifth of the pages.
+func TestReclaimNeedsBothThresholds(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		rows, deleted int
+		share, bytes  bool // which half the setup passes
+	}{
+		{name: "share under 1 MiB", rows: 100, deleted: 100, share: true},
+		{name: "1 MiB under a fifth", rows: 1500, deleted: 250, bytes: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := openTest(t)
+			fillAndDelete(t, s, tc.rows, tc.deleted)
+			ctx := context.Background()
+			free, _ := pragmaInt(ctx, s.db, "freelist_count")
+			pages, _ := pragmaInt(ctx, s.db, "page_count")
+			if got := free*reclaimShare >= pages; got != tc.share {
+				t.Fatalf("setup: %d of %d pages free, share half = %v, want %v", free, pages, got, tc.share)
+			}
+			if got := free*4096 >= reclaimMinBytes; got != tc.bytes {
+				t.Fatalf("setup: %d free pages, bytes half = %v, want %v", free, got, tc.bytes)
+			}
+
+			r, err := s.Reclaim(ctx)
+			if err != nil || r.Pages != 0 {
+				t.Errorf("Reclaim = %+v, %v, want no released page", r, err)
+			}
+			if after, _ := pragmaInt(ctx, s.db, "freelist_count"); after != free {
+				t.Errorf("free pages = %d, want %d", after, free)
+			}
+		})
+	}
+}
+
 func TestReclaimNeedsIncrementalAutoVacuum(t *testing.T) {
 	s, err := Open(openVersion1(t))
 	if err != nil {

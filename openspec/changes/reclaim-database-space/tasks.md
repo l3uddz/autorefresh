@@ -9,9 +9,9 @@
   - Verify with `go test ./internal/store/ ./cmd/autorefresh/`.
   - Commit: `perf(store): use incremental auto-vacuum for the database`.
 
-## 2. Space upkeep at run start and statistics at stop
+## 2. Space upkeep after a run and statistics at stop
 
-- [x] 2.1 Add `Store.Reclaim` (one-fifth and 1 MiB threshold, the unconditional truncating checkpoint, and pages from the fall in `page_count`) and `Store.Optimize`, and add both to the `refresher.Store` interface. Call `upkeep` at the start of `execute` unless a dry run, with the `Reclaimed database space` debug line and warning-only failures. Call `Optimize` with a 5 s context before `closeStore` at a normal stop of `main` unless `--dry-run`.
+- [x] 2.1 Add `Store.Reclaim` (one-fifth and 1 MiB threshold, a truncating checkpoint attempt in every upkeep, and pages from the fall in `page_count`) and `Store.Optimize`, and add both to the `refresher.Store` interface. Call `upkeep` after the servers of the run and outside the run lock (from `Run`, `Jobs.Scheduled`, and the Run now job), unless a dry run or the run context ended, with the `Reclaimed database space` debug line and warning-only failures. Call `Optimize` with a 5 s context in `finishStore`, before it closes the store after the schedule stops and at the end of `--once`, unless `--dry-run`.
   - Store tests: release above and below the threshold, a database without auto-vacuum, a busy checkpoint that a later `Reclaim` completes, `Optimize` normally and under a held write lock within its deadline, and the closed-database cases.
   - Refresher tests: no calls in a dry run, warning-only failures, and one call per manual scan from the job and not from `RunNow`.
   - `cmd/autorefresh` tests: a normal stop writes `sqlite_stat1`, and a `--dry-run` stop does not.
@@ -25,5 +25,5 @@
 
 ## Workflow follow-up
 
-- Live acceptance (maintainer): after deploy, check the log for `Converted database` once, and that `PRAGMA auto_vacuum` of `/config/autorefresh.db` reads `2`.
+- Live acceptance (maintainer): after deploy, check that `PRAGMA auto_vacuum` of `/config/autorefresh.db` reads `2`. The conversion lines of the log show the path that the start took.
 - Archive: sync the delta specs into `openspec/specs`, run `openspec validate --all --strict`, and archive the change.

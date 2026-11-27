@@ -232,6 +232,14 @@ func (r *Refresher) pruneBeforeRun(now time.Time) error {
 // one server also stops the other servers. An unavailable server stops only
 // itself. If ctx ends, Run stops and returns nil.
 func (r *Refresher) Run(ctx context.Context) error {
+	err := r.scan(ctx)
+	r.upkeep(ctx)
+	return err
+}
+
+// scan is Run without the space upkeep, which Jobs runs after it gives the
+// run lock back.
+func (r *Refresher) scan(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -281,7 +289,6 @@ func (r *Refresher) cancelStarted(runs []startedRun) error {
 }
 
 func (r *Refresher) execute(ctx context.Context, runs []startedRun) error {
-	r.upkeep(ctx)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	errs := make([]error, len(runs))
@@ -300,10 +307,12 @@ func (r *Refresher) execute(ctx context.Context, runs []startedRun) error {
 }
 
 // upkeep releases the free database pages, truncates the WAL, and updates
-// the planner statistics once before the servers run. It runs inside the run
-// job, so a lock wait never delays the answer of Run now. A failure only
-// logs, because space upkeep must not stop refreshes. A dry run changes
-// nothing in the file.
+// the planner statistics once after the servers of a run end, so it covers
+// every removal of the run. Jobs runs it after the run lock is free again,
+// so a Run now during the upkeep is admitted. Its answer can still wait for
+// the one database connection while the upkeep holds it. A failure only
+// logs, because space upkeep must not stop refreshes. A run
+// whose context ended skips it, and a dry run changes nothing in the file.
 func (r *Refresher) upkeep(ctx context.Context) {
 	if r.opts.DryRun || ctx.Err() != nil {
 		return

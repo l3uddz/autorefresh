@@ -12,8 +12,8 @@ See proposal.md for the motivation and the measured sizes. The facts that shape 
 - A throwaway probe used the bundled `modernc.org/sqlite` v1.62.0 against a copy of the deployed database. Neon repeated and extended it in its review.
   - **New file:** `PRAGMA auto_vacuum = INCREMENTAL` has no effect once `journal_mode = WAL` has run on a new file.
   - **Conversion:** on an existing WAL database, `auto_vacuum = INCREMENTAL` and then `VACUUM` give `auto_vacuum = 2` and keep the data. When `VACUUM` fails with `SQLITE_BUSY`, `auto_vacuum` still reads `0`.
-  - **Release:** `PRAGMA incremental_vacuum` empties the free list, but the main file shrinks only after `PRAGMA wal_checkpoint(TRUNCATE)`.
-  - **Blocked checkpoint:** with a reader of another connection open, the checkpoint answers `busy = 1` and the file does not shrink.
+  - **Release:** `PRAGMA incremental_vacuum` emptied the free list, but the main file shrank only after `PRAGMA wal_checkpoint(TRUNCATE)`.
+  - **Blocked checkpoint:** with a reader of another connection open, the checkpoint answered `busy = 1`, and the file kept its size in that probe.
   - **Pointer-map pages:** with 4096-byte pages, incremental auto-vacuum keeps one pointer-map page per 819 data pages. Releasing N free pages can shrink the page count by N plus the pointer-map pages it frees.
   - **`PRAGMA optimize`:** it writes `sqlite_stat1`, and it fails at once with `SQLITE_BUSY` while another process holds the write lock.
 
@@ -21,9 +21,9 @@ See proposal.md for the motivation and the measured sizes. The facts that shape 
 
 **Goals:**
 
-- Keep the file close to the size of its data after a large removal.
+- Give the space of a large removal back to the file system, when SQLite and the other processes on the file allow it.
 - Keep the query planner statistics current without a schedule.
-- Never fail a start, a run, or a stop over space upkeep, and never delay the answer of Run now.
+- Never fail a start, a run, or a stop over space upkeep, and never refuse a Run now over it.
 - Run no upkeep step during a dry run. SQLite's own checkpoint when the last connection closes is not an upkeep step and stays as before.
 
 **Non-Goals:**
@@ -42,7 +42,7 @@ A new file then never needs the conversion. A dry run that creates a new file cr
 
 The store has one connection, so a statement that waits 30 s for another process holds up every other query of the service, also the dashboard. `withUpkeepLockWait` therefore pins the connection, sets `PRAGMA busy_timeout` to `upkeepLockWait` (2 s, a package variable for tests), runs the step, and sets the usual 30 s again, also when the context has ended. When a step fails, it closes the connection instead of returning it to the pool, because the step can have left it in any state. That covers the setter too: SQLite applies the pragma while it prepares the statement, so a setter that fails after that point (such as on a cancelled context) has still changed the connection. A connection whose restore fails is closed as well. The next connection gets the usual settings from the data source name. `Reclaim` and `Optimize` run through it. A step that gives up runs again at the next start or run.
 
-The limit applies to each statement that waits. `Reclaim` has two such statements, the release and the checkpoint, so under a held writer it can pin the connection for about 4 s, and the dashboard queries wait up to that long.
+The limit applies to each statement that waits. `Reclaim` has two such statements, the release and the checkpoint. Risks gives what that means for the dashboard.
 
 ### 3. Convert an existing file once, from `main`, outside a dry run
 
@@ -66,9 +66,18 @@ Alternatives considered:
 - **A migration file.** Rejected: `VACUUM` cannot run inside the transaction of a migration.
 - **`VACUUM INTO` a new file and a rename.** Rejected: it is unsafe while a second process, such as `--once`, has the file open.
 
-### 4. Space upkeep at the start of `execute`
+### 4. Space upkeep after a run, outside the run lock
 
-`execute` calls `r.upkeep(ctx)` once, before it starts the server goroutines, unless `r.opts.DryRun`. Scheduled runs and manual scans both pass through `execute`. `RunNow` runs `execute` inside the launched job, so `POST /api/runs` answers as before. `pruneBeforeRun` and its early return for a non-positive retention stay unchanged.
+The upkeep runs once after every server of a scheduled run, a Run now scan, or a `--once` run ended, unless `r.opts.DryRun`. A bulk refresh launches its job without it. It then follows every removal of the run: `pruneBeforeRun` in `begin` and `pruneSections` in each server run, with their existing rules. A run whose context ended (a stop or a cancel) skips it, and the next run does it. A failed server does not skip it, because the upkeep gets the context of the run, not the one that `execute` cancels when a server fails.
+
+The upkeep runs after the run lock is free again. The dashboard offers Run now as soon as no server runs, so an upkeep that held the lock could answer a click with `409 a run is busy` while it ran. (A click on the status update of the last server just before the scan gives the lock back can still get `409`, as before this change.) Therefore:
+
+- `execute` no longer calls `upkeep`.
+- `Refresher.Run`, the path of `--once`, runs `scan` (the scan of every server) and then `upkeep`.
+- `Jobs.Scheduled` runs `scan` under the run lock, gives the lock back (also after a panic), and then runs `upkeep`. The scheduler waits for `Scheduled`, so a stop waits for the upkeep too.
+- `RunNow` launches its job with `launchThen`: the scan under the lock, then the upkeep with the context of the job once the lock is free. `Jobs.Close` waits for both through the wait group, and it cancels the upkeep with the job context.
+
+A new run can then start while the upkeep of the last run still works. The release and the checkpoint share the one connection with it, and their write lock orders them, so this is safe. The free pages that the upkeep counts are the ones still free then: a long run can have reused some of the pages that its removals freed. `RunNow` answers when the job starts, as before. Its `begin` needs the one database connection, so its answer can wait while the upkeep holds that connection, as every other dashboard request can (see Risks).
 
 `upkeep` runs two store methods, `Reclaim` and then `Optimize`. It logs each error as a warning and returns nothing, so no step can end the run. It stops early when `ctx` ends.
 
@@ -79,21 +88,23 @@ Alternatives considered:
 3. Always runs `PRAGMA wal_checkpoint(TRUNCATE)` while the context is live, also after a failed release, and scans its three result columns. The error joins the errors of the release and the checkpoint.
 4. Returns `ReclaimResult{Pages, Bytes, CheckpointBusy}`. `Pages` is the fall in `page_count`, clamped at 0, so it counts freed pointer-map pages too. `Bytes` is `int64(Pages) * page_size`, and every size product uses `int64`, so a 32-bit build cannot overflow.
 
-`upkeep` logs `Reclaimed database space` at debug level with `pages`, `bytes`, and `checkpoint_busy` when `Pages > 0`.
+`upkeep` logs `Reclaimed database space` at debug level with `pages`, `bytes`, and `checkpoint_busy` when `Reclaim` returns no error and `Pages > 0`. On an error, it logs the warning instead.
 
-The checkpoint runs on every run start. A checkpoint that a reader blocked therefore needs no saved state: the next run start retries it, even when the free list is already empty. The checkpoint also resets the WAL file to zero bytes each run, which costs no more than the autocheckpoint work it replaces.
+`Reclaim` tries the checkpoint each time it runs with a live context, also when the free list is empty, so a checkpoint that a reader blocked needs no saved state. How much the WAL and the main file shrink is up to SQLite and the other processes on the file (see Risks).
 
 The threshold avoids churn. Hourly retention frees a few pages that new events reuse within the hour, so releasing them on every run would shrink and regrow the file for nothing.
 
 Alternatives considered:
 
 - **Upkeep in `pruneBeforeRun`.** Rejected: `begin` runs inside the Run now request, so a 30 s lock wait would delay the answer, and the retention guard would skip upkeep.
-- **Full auto-vacuum (`auto_vacuum = FULL`).** Rejected: it moves pages at every commit, which costs more on each write than a release at run start.
+- **Upkeep at the start of `execute`.** Rejected: the cache of a library that a server run removes would then wait for the next run.
+- **Upkeep at the end of `execute`, under the run lock.** Rejected: the dashboard would offer Run now while the lock is still held.
+- **Full auto-vacuum (`auto_vacuum = FULL`).** Rejected: it moves pages at every commit, which costs more on each write than a release once a run.
 - **A pending-checkpoint flag on the store.** Rejected: an unconditional checkpoint is stateless and also correct.
 
 ### 5. `PRAGMA optimize`
 
-`Store.Optimize(ctx) error` runs `PRAGMA optimize`. `upkeep` calls it after `Reclaim`. At a normal stop, `main` calls it before `closeStore` when `--dry-run` is off, with a 5 s context from `context.Background()`, as `stopUI` does, because the run context has ended by then. It logs an error as a warning. It runs with the 2 s upkeep lock wait, and the bundled driver interrupts a statement when its context ends, so the 5 s timeout bounds it as well. The early-error exits of `main` keep closing the store without it, so a failed start writes nothing.
+`Store.Optimize(ctx) error` runs `PRAGMA optimize`. `upkeep` calls it after `Reclaim`. At the end of the service or of `--once`, `main` calls it before `closeStore` when `--dry-run` is off, with a 5 s context from `context.Background()`, as `stopUI` does, because the run context has ended by then. It logs an error as a warning. It runs with the 2 s upkeep lock wait, and the bundled driver interrupts a statement when its context ends, so the 5 s timeout bounds it as well. `finishStore` calls it, and `run` calls `finishStore` after `serveUntilStopped` and at the end of `runOnce`. Only an exit of `run` on an error of the start, or on a signal that it notices before the dashboard (when set) binds, closes the store without it, also when the start already wrote the database.
 
 `Store.Close` stays a plain close.
 
@@ -135,11 +146,13 @@ None. The change sends no request.
 - [The conversion makes the first start slower] → Well under a second at the measured size. The cap bounds the worst case, and the step runs once.
 - [Memory and WAL space during the conversion, about the size of the database] → The 256 MiB cap. The truncating checkpoint after `VACUUM` gives the WAL space back.
 - [A second process, such as `--once`, has the database open during the conversion] → The conversion waits up to 2 s, then logs a warning, and the next start tries again. It runs only at a start with no other process on the file. A later startup write can still wait 30 s and fail as before this change.
-- [The release and the checkpoint at a run start wait for another process] → They run inside the job, and each statement waits at most 2 s. Under a held writer, the release and the checkpoint can each use that wait, so the dashboard queries, such as an Items request, can wait about 4 s for the one database connection. The Run now answer does not wait for them.
-- [`PRAGMA optimize` fails while another process writes] → It logs a warning, and the next run start tries again.
+- [The release and the checkpoint at the end of a run wait for another process] → They run after the run, outside the run lock and outside any request, and each statement waits at most 2 s. While the upkeep holds the one connection, a dashboard request that reads or writes the database, also a Run now, waits for it: up to 2 s for each upkeep statement that waits, plus the work of the upkeep. Its own statements then keep the usual 30 s wait.
+- [SQLite and the other processes decide the file size] → A reader of another process can keep a checkpoint from finishing or from truncating the WAL, and new writes can reuse released pages before a checkpoint. The next upkeep tries again. Autorefresh makes no promise about the size of the file.
+- [A checkpoint attempt in every upkeep] → Its write and sync work depends on the WAL: usually little after an hourly run, more when a reader kept earlier attempts from finishing. The design accepts this cost.
+- [`PRAGMA optimize` fails while another process writes] → It logs a warning, and the next run tries again.
 - [Rollback to an older binary] → An older binary reads an `auto_vacuum = 2` file normally and never calls `incremental_vacuum`. Free pages then stay in the file, as today.
 
 ## Migration Plan
 
-- No schema migration. The first normal start of the new binary converts the file once.
+- No schema migration. Each start of the new binary that is not a dry run tries to convert a file without incremental auto-vacuum, until one conversion commits.
 - To roll back, deploy the older binary. No step is needed.
