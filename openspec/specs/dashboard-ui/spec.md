@@ -273,6 +273,28 @@ The Items page SHALL offer a List and a Table mode, and SHALL remember the choic
 - **WHEN** an item has no poster or its poster fails to load
 - **THEN** the row shows a film or TV icon in its place
 
+### Requirement: Pointer for table rows that open details
+
+The dashboard SHALL show a hand cursor over the part of each Items and Runs table row that opens details. A control within a row SHALL keep its own cursor and action.
+
+#### Scenario: Hover over an item row
+
+- **GIVEN** the Items page is in Table mode
+- **WHEN** the mouse hovers over the text, padding, or empty cell space of an item row that opens details
+- **THEN** the cursor shows a hand
+
+#### Scenario: Hover over a run row
+
+- **GIVEN** the Runs page shows a table
+- **WHEN** the mouse hovers over the text, padding, or empty cell space of a run row that opens details, including the Started cell
+- **THEN** the cursor shows a hand
+
+#### Scenario: Use an Items row selection control
+
+- **GIVEN** an Items table row has a selection checkbox
+- **WHEN** the user hovers over and clicks the checkbox
+- **THEN** the checkbox keeps its usual cursor and toggles selection without opening item details
+
 ### Requirement: Search and filters
 
 The Items page SHALL filter by a search of the title or path, by library, by reason, and by type. The library filter SHALL show only when the scope is one server with more than one library. The reason filter SHALL not show on the Fixed tab. A switch SHALL include items with only ignored reasons on Attention, and items that Plex completed alone on Fixed; Stopped has no switch.

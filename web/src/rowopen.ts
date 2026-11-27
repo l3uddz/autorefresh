@@ -1,5 +1,10 @@
 import type { TablePlugin } from '@astryxdesign/core/Table';
+import * as stylex from '@stylexjs/stylex';
 import { useMemo } from 'react';
+
+const styles = stylex.create({
+  clickable: { cursor: 'pointer' },
+});
 
 /** Tells whether an event came from the row itself rather than from a
  * control inside it, such as a checkbox or a link. */
@@ -22,6 +27,7 @@ export function useRowOpen<Row extends Record<string, unknown> & { id: string | 
         const prevKeyDown = props.htmlProps?.onKeyDown;
         return {
           ...props,
+          xstyle: [...props.xstyle, styles.clickable],
           htmlProps: {
             ...props.htmlProps,
             tabIndex: 0,

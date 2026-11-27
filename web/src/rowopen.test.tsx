@@ -1,9 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { TablePlugin } from '@astryxdesign/core/Table';
+import * as stylex from '@stylexjs/stylex';
 import { useRowOpen } from './rowopen';
 
 type Row = { id: string };
+
+const styles = stylex.create({
+  priorRowStyle: { opacity: 0.5 },
+  pointer: { cursor: 'pointer' },
+});
 
 function getPlugin(onOpen: (row: Row) => void, openID?: string): TablePlugin<Row> {
   let plugin!: TablePlugin<Row>;
@@ -16,6 +22,20 @@ function getPlugin(onOpen: (row: Row) => void, openID?: string): TablePlugin<Row
 }
 
 describe('useRowOpen', () => {
+  it('adds the details cursor only to body rows and preserves existing row styles (#155)', () => {
+    const plugin = getPlugin(vi.fn());
+    const body = plugin.transformBodyRow!(
+      { htmlProps: {}, xstyle: [styles.priorRowStyle], children: null },
+      { id: '1' },
+      0,
+    );
+
+    expect(stylex.props(...body.xstyle)).toEqual(stylex.props(styles.priorRowStyle, styles.pointer));
+    expect(plugin.rowModel).toBe('flat');
+    expect(plugin.transformHeaderRow).toBeUndefined();
+    expect(plugin.transformHeaderCell).toBeUndefined();
+  });
+
   it('chains existing row click and keydown handlers and respects defaultPrevented', () => {
     const onOpen = vi.fn();
     const prevClick = vi.fn((event: { defaultPrevented: boolean; preventDefault: () => void }) => {
