@@ -54,6 +54,11 @@ func Open(file string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("open database: %w", err)
 	}
+	// auto_vacuum has no effect on a new file once it is in WAL mode.
+	if err := setNewAutoVacuum(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open database: %w", err)
+	}
 	if err := enableWAL(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("open database: %w", err)
@@ -93,8 +98,9 @@ func dataSourceName(file string) (string, error) {
 	return u.String(), nil
 }
 
-// busyTimeout is the longest wait for a lock that another process holds.
-const busyTimeout = 30 * time.Second
+// busyTimeout is the longest wait for a lock that another process holds. Tests
+// shorten it.
+var busyTimeout = 30 * time.Second
 
 // checkPragma returns an error unless the pragma has the value want.
 func checkPragma(db *sql.DB, pragma string, want int) error {
@@ -109,20 +115,25 @@ func checkPragma(db *sql.DB, pragma string, want int) error {
 }
 
 // enableWAL switches the database to WAL journal mode if it is not already.
-// Two processes switching a rollback-journal database to WAL at the same time
-// can hit SQLITE_BUSY without waiting for busy_timeout, so it retries briefly.
 func enableWAL(db *sql.DB) error {
+	var mode string
+	if err := retryBusy(func() error { return db.QueryRow(`PRAGMA journal_mode = WAL`).Scan(&mode) }); err != nil {
+		return err
+	}
+	if !strings.EqualFold(mode, "wal") {
+		return fmt.Errorf("journal_mode is %q, want %q", mode, "wal")
+	}
+	return nil
+}
+
+// retryBusy runs fn until it returns no busy error, for at most busyTimeout.
+// Two processes that set up a new or rollback-journal file at the same time
+// can get SQLITE_BUSY without waiting for busy_timeout.
+func retryBusy(fn func() error) error {
 	deadline := time.Now().Add(busyTimeout)
 	for {
-		var mode string
-		err := db.QueryRow(`PRAGMA journal_mode = WAL`).Scan(&mode)
-		if err == nil {
-			if !strings.EqualFold(mode, "wal") {
-				return fmt.Errorf("journal_mode is %q, want %q", mode, "wal")
-			}
-			return nil
-		}
-		if !isBusy(err) || time.Now().After(deadline) {
+		err := fn()
+		if err == nil || !isBusy(err) || time.Now().After(deadline) {
 			return err
 		}
 		time.Sleep(10 * time.Millisecond)

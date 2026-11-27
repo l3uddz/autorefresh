@@ -21,7 +21,8 @@ var (
 // Jobs coordinates scheduled runs and dashboard jobs.
 type Jobs struct {
 	r      *Refresher
-	run    func(context.Context) error
+	run    func(context.Context) error // a scheduled scan, without upkeep
+	upkeep func(context.Context)       // after a run, outside the run lock
 	ctx    context.Context
 	stop   context.CancelFunc
 	mu     sync.Mutex
@@ -39,19 +40,27 @@ type job struct {
 // NewJobs creates the process-wide run coordinator.
 func NewJobs(r *Refresher) *Jobs {
 	ctx, stop := context.WithCancel(context.Background())
-	return &Jobs{r: r, run: r.Run, ctx: ctx, stop: stop}
+	return &Jobs{r: r, run: r.scan, upkeep: r.upkeep, ctx: ctx, stop: stop}
 }
 
-// Scheduled starts a scheduled run if the coordinator is idle.
+// Scheduled starts a scheduled run if the coordinator is idle, and does the
+// space upkeep after it gives the run lock back.
 func (j *Jobs) Scheduled(ctx context.Context) {
 	if !j.mu.TryLock() {
 		log.Warn().Msg("Skipped scheduled start, a run is busy")
 		return
 	}
-	defer j.mu.Unlock()
-	if err := j.run(ctx); err != nil {
+	if err := j.runLocked(ctx); err != nil {
 		log.Error().Err(err).Msg("Run failed")
 	}
+	j.upkeep(ctx)
+}
+
+// runLocked runs the scheduled scan, which holds the run lock, and gives
+// the lock back also after a panic.
+func (j *Jobs) runLocked(ctx context.Context) error {
+	defer j.mu.Unlock()
+	return j.run(ctx)
 }
 
 func (j *Jobs) admit() error {
@@ -73,19 +82,32 @@ func (j *Jobs) release() {
 }
 
 func (j *Jobs) launch(ids []int64, work func(context.Context)) {
+	j.launchThen(ids, work, nil)
+}
+
+// launchThen runs work as the current job under the run lock, then after,
+// if set, with the context of the job once the lock is free again. Close
+// waits for both.
+func (j *Jobs) launchThen(ids []int64, work, after func(context.Context)) {
 	ctx, cancel := context.WithCancel(j.ctx)
 	j.curMu.Lock()
 	j.cur = &job{ids: slices.Clone(ids), cancel: cancel}
 	j.curMu.Unlock()
 	go func() {
-		defer j.release()
+		defer j.wg.Done()
 		defer cancel()
-		defer func() {
-			j.curMu.Lock()
-			j.cur = nil
-			j.curMu.Unlock()
+		func() {
+			defer j.mu.Unlock()
+			defer func() {
+				j.curMu.Lock()
+				j.cur = nil
+				j.curMu.Unlock()
+			}()
+			work(ctx)
 		}()
-		work(ctx)
+		if after != nil {
+			after(ctx)
+		}
 	}()
 }
 
@@ -111,11 +133,11 @@ func (j *Jobs) RunNow(names []string, full bool) ([]int64, error) {
 		runs[i].full = full
 		ids[i] = runs[i].id
 	}
-	j.launch(ids, func(ctx context.Context) {
+	j.launchThen(ids, func(ctx context.Context) {
 		if err := j.r.execute(ctx, runs); err != nil {
 			log.Error().Err(err).Msg("Run failed")
 		}
-	})
+	}, j.upkeep)
 	return ids, nil
 }
 

@@ -110,6 +110,7 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 	if err != nil {
 		return fatal(err, "Failed opening database")
 	}
+	convertDatabase(ctx, st, opts.DryRun)
 	if err := interruptRuns(st, opts, time.Now()); err != nil {
 		closeStore(st)
 		return fatal(err, "Failed marking interrupted runs")
@@ -170,7 +171,7 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 	defer context.AfterFunc(ctx, stop)()
 
 	if opts.Once {
-		return runOnce(ctx, r, st)
+		return runOnce(ctx, r, st, opts.DryRun)
 	}
 	if ctx.Err() != nil {
 		closeStore(st)
@@ -200,7 +201,7 @@ func run(ctx context.Context, stop context.CancelFunc, opts options, version str
 		onNext = status.SetNextRun
 	}
 	serveUntilStopped(ctx, ui, jobs, cfg.RunSchedule, onNext)
-	closeStore(st)
+	finishStore(st, opts.DryRun)
 	log.Info().Msg("Stopped")
 	return nil
 }
@@ -238,12 +239,12 @@ func newServers(cfg config.Config) ([]refresher.Server, []*plex.Client, []string
 
 // runOnce runs r once and closes the database. It returns the error of the
 // run, or else the error of the close.
-func runOnce(ctx context.Context, r *refresher.Refresher, st *store.Store) error {
+func runOnce(ctx context.Context, r *refresher.Refresher, st *store.Store, dryRun bool) error {
 	err := r.Run(ctx)
 	if err != nil {
 		log.Error().Err(err).Msg("Run failed")
 	}
-	if closeErr := closeStore(st); err == nil {
+	if closeErr := finishStore(st, dryRun); err == nil {
 		err = closeErr
 	}
 	return err

@@ -57,6 +57,8 @@ type Store interface {
 	StartRun(r store.RunStart) (int64, error)
 	FinishRun(id int64, start store.RunStart, r store.RunResult) (bool, error)
 	PruneHistory(before time.Time) (events, runs int, err error)
+	Reclaim(ctx context.Context) (store.ReclaimResult, error)
+	Optimize(ctx context.Context) error
 }
 
 // Server is one Plex server to check.
@@ -230,6 +232,14 @@ func (r *Refresher) pruneBeforeRun(now time.Time) error {
 // one server also stops the other servers. An unavailable server stops only
 // itself. If ctx ends, Run stops and returns nil.
 func (r *Refresher) Run(ctx context.Context) error {
+	err := r.scan(ctx)
+	r.upkeep(ctx)
+	return err
+}
+
+// scan is Run without the space upkeep, which Jobs runs after it gives the
+// run lock back.
+func (r *Refresher) scan(ctx context.Context) error {
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -294,6 +304,33 @@ func (r *Refresher) execute(ctx context.Context, runs []startedRun) error {
 	}
 	wg.Wait()
 	return errors.Join(errs...)
+}
+
+// upkeep releases the free database pages, truncates the WAL, and updates
+// the planner statistics once after the servers of a run end, so it covers
+// every removal of the run. Jobs runs it after the run lock is free again,
+// so a Run now during the upkeep is admitted. Its answer can still wait for
+// the one database connection while the upkeep holds it. A failure only
+// logs, because space upkeep must not stop refreshes. A run
+// whose context ended skips it, and a dry run changes nothing in the file.
+func (r *Refresher) upkeep(ctx context.Context) {
+	if r.opts.DryRun || ctx.Err() != nil {
+		return
+	}
+	res, err := r.store.Reclaim(ctx)
+	switch {
+	case err != nil:
+		log.Warn().Err(err).Msg("Reclaiming database space failed")
+	case res.Pages > 0:
+		log.Debug().Int64("pages", res.Pages).Int64("bytes", res.Bytes).Bool("checkpoint_busy", res.CheckpointBusy).
+			Msg("Reclaimed database space")
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	if err := r.store.Optimize(ctx); err != nil {
+		log.Warn().Err(err).Msg("Updating database statistics failed")
+	}
 }
 
 // serverOnly reports whether err ends only the run of its own server: an

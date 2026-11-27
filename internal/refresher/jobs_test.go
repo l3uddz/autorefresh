@@ -42,7 +42,7 @@ func TestJobsScheduledSkipsOverlappingStart(t *testing.T) {
 	var calls atomic.Int32
 	started := make(chan struct{})
 	release := make(chan struct{})
-	r := &Jobs{run: func(context.Context) error {
+	r := &Jobs{upkeep: func(context.Context) {}, run: func(context.Context) error {
 		calls.Add(1)
 		close(started)
 		<-release
@@ -72,7 +72,7 @@ func TestJobsScheduledSkipsOverlappingStart(t *testing.T) {
 func TestJobsScheduledLogsRunError(t *testing.T) {
 	buf := captureJobsLog(t)
 
-	r := &Jobs{run: func(context.Context) error {
+	r := &Jobs{upkeep: func(context.Context) {}, run: func(context.Context) error {
 		return errors.New("database is locked")
 	}}
 	r.Scheduled(context.Background())
@@ -87,7 +87,7 @@ func TestJobsScheduledUnlocksAfterPanic(t *testing.T) {
 	captureJobsLog(t)
 
 	var calls atomic.Int32
-	r := &Jobs{run: func(context.Context) error {
+	r := &Jobs{upkeep: func(context.Context) {}, run: func(context.Context) error {
 		if calls.Add(1) == 1 {
 			panic("run failed")
 		}
@@ -505,5 +505,25 @@ func TestPrepareBulkUsesBatchKnownItems(t *testing.T) {
 	}
 	if cs.batch.Load() != 1 || cs.single.Load() != 0 {
 		t.Errorf("KnownItems calls = %d, KnownItem calls = %d; want 1 and 0", cs.batch.Load(), cs.single.Load())
+	}
+}
+
+// The space upkeep of a scheduled run comes after the run lock is free, so
+// Run now is admitted while it runs.
+func TestJobsScheduledUpkeepRunsWithoutTheRunLock(t *testing.T) {
+	captureJobsLog(t)
+	ran := false
+	var j *Jobs
+	j = &Jobs{run: func(context.Context) error { return nil }, upkeep: func(context.Context) {
+		ran = true
+		if !j.mu.TryLock() {
+			t.Error("the upkeep holds the run lock")
+			return
+		}
+		j.mu.Unlock()
+	}}
+	j.Scheduled(context.Background())
+	if !ran {
+		t.Error("Scheduled did no upkeep")
 	}
 }
