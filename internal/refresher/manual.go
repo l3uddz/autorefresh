@@ -404,6 +404,7 @@ func (r *Refresher) checkHeld(ctx context.Context, item manualItem, run *serverR
 	}
 	live.RatingKey = key
 	row := storeItem(server, plex.Library{ID: prev.Section, Type: prev.Type}, live, itemReasons(live))
+	flagWrongMatch(&row, prev.Type, live)
 	var runID int64
 	if run != nil {
 		runID = run.id
@@ -416,7 +417,10 @@ func (r *Refresher) checkHeld(ctx context.Context, item manualItem, run *serverR
 	if fixed && run != nil {
 		run.complete(lib.Title, prev)
 	}
-	itemEvent(log.Info(), server, lib, row).Bool("completed", fixed).Msg("Checked item")
+	// The saved reasons include a mismatched value that the check kept.
+	saved := row
+	saved.Reasons |= prev.Reasons & row.Keep
+	itemEvent(log.Info(), server, lib, saved).Bool("completed", fixed).Msg("Checked item")
 	return fixed, nil
 }
 

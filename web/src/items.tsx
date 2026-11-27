@@ -33,7 +33,7 @@ import { itemHash, navigate, tabNames, type ItemKey, type TabName } from './rout
 import { chooseSort, formatSort, parseSort, sortKeys } from './table';
 
 const tabTitles: Record<TabName, string> = { attention: 'Attention', fixed: 'Fixed', stopped: 'Stopped' };
-const reasonOptions = ['unmatched', 'no-summary', 'no-poster', 'no-art', 'episode-no-summary', 'episode-unmatched'];
+const reasonOptions = ['unmatched', 'no-summary', 'no-poster', 'no-art', 'mismatched', 'episode-no-summary', 'episode-unmatched'];
 const anyOption = { value: '', label: 'Any' };
 const noReasons: string[] = [];
 

@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
+	"github.com/l3uddz/autorefresh/internal/refresher"
 	"github.com/l3uddz/autorefresh/internal/store"
 )
 
@@ -98,13 +99,44 @@ type candidateJSON struct {
 
 // liveJSON is what Plex tells about an item now, with its cached path.
 type liveJSON struct {
-	Summary   string   `json:"summary,omitempty"`
-	GUID      string   `json:"guid,omitempty"`
-	Seasons   *int     `json:"seasons,omitempty"`
-	Episodes  *int     `json:"episodes,omitempty"`
-	Locations []string `json:"locations"`
-	Files     []string `json:"files"`
-	Path      string   `json:"path,omitempty"`
+	Summary     string        `json:"summary,omitempty"`
+	GUID        string        `json:"guid,omitempty"`
+	Seasons     *int          `json:"seasons,omitempty"`
+	Episodes    *int          `json:"episodes,omitempty"`
+	Locations   []string      `json:"locations"`
+	Files       []string      `json:"files"`
+	Path        string        `json:"path,omitempty"`
+	ExternalIDs []string      `json:"externalIds"`
+	Mismatch    *mismatchJSON `json:"mismatch,omitempty"` // a matched movie only
+}
+
+// mismatchJSON is the wrong match check of a movie.
+type mismatchJSON struct {
+	Result  refresher.WrongMatchResult `json:"result"`
+	Sources []comparedSourceJSON       `json:"sources"`
+}
+
+type comparedSourceJSON struct {
+	Source string   `json:"source"`
+	Path   string   `json:"path"`
+	Plex   []string `json:"plex"`
+}
+
+// liveMismatch returns the wrong match check of a matched movie with its
+// live file paths and external IDs, or nil for a show or an unmatched movie.
+func liveMismatch(itemType string, d plex.Details) *mismatchJSON {
+	if itemType != plex.MovieLibrary {
+		return nil
+	}
+	wm := refresher.CompareMovieIDs(d.GUID, d.Paths.Files, d.ExternalIDs)
+	if wm.Result == refresher.WrongMatchUnmatched {
+		return nil
+	}
+	out := &mismatchJSON{Result: wm.Result, Sources: []comparedSourceJSON{}}
+	for _, s := range wm.Sources {
+		out.Sources = append(out.Sources, comparedSourceJSON{Source: s.Source, Path: s.Path, Plex: s.Plex})
+	}
+	return out
 }
 
 // itemParams returns the srv and key parameters of the query v. Both are
@@ -262,6 +294,7 @@ func (s *Server) serveItemLive(w http.ResponseWriter, r *http.Request) {
 	out := liveJSON{
 		Summary: d.Summary, GUID: d.GUID,
 		Locations: nonNil(d.Paths.Locations), Files: nonNil(d.Paths.Files), Path: path,
+		ExternalIDs: nonNil(d.ExternalIDs), Mismatch: liveMismatch(it.Type, d),
 	}
 	if it.Type == plex.ShowLibrary {
 		out.Seasons, out.Episodes = &d.ChildCount, &d.LeafCount

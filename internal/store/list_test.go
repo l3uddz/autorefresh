@@ -657,3 +657,43 @@ func TestItemDetailFromRowOrHistory(t *testing.T) {
 		t.Fatalf("ItemDetail of an unknown key = %v, %v, want not found", found, err)
 	}
 }
+
+// A row whose counted reasons are all ManualReasons, or all ignored, is
+// never due. The due sort places it after every due time: last when the
+// soonest comes first, first when the latest comes first. Ties keep their
+// order across pages, and the listed NextDue stays zero.
+func TestListSortsNeverDueRowsAfterEveryDueTime(t *testing.T) {
+	s := openTest(t)
+	now := base.Add(1000 * time.Hour)
+	rules := DueRules{Now: now, RefreshInterval: time.Hour, MaxRefreshInterval: time.Hour, Ignored: NoArt}
+	apply(t, s, Read{Items: []Item{
+		item("k1", NoSummary), // due
+		item("k2", NoSummary), // waiting until now+30m
+		item("m1", Mismatched),
+		item("m2", Mismatched),
+		item("i1", NoArt), // ignored
+	}})
+	accept(t, s, "k2", now.Add(-30*time.Minute), ActionRefresh)
+
+	for _, tt := range []struct {
+		desc bool
+		want []string
+	}{
+		{false, []string{"k1", "k2", "i1", "m1", "m2"}},
+		{true, []string{"m2", "m1", "i1", "k2", "k1"}},
+	} {
+		q := ListQuery{Tab: TabAttention, Sort: SortDue, Desc: tt.desc, Rules: rules, WithIgnored: true}
+		items := listAll(t, s, q)
+		if got := listKeys(items); !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("desc=%v: one call = %v, want %v", tt.desc, got, tt.want)
+		}
+		if paged := listPages(t, s, q, 2); !reflect.DeepEqual(paged, tt.want) {
+			t.Errorf("desc=%v: pages = %v, want %v", tt.desc, paged, tt.want)
+		}
+		for _, it := range items {
+			if it.RatingKey[0] != 'k' && !it.NextDue.IsZero() {
+				t.Errorf("%s NextDue = %v, want zero", it.RatingKey, it.NextDue)
+			}
+		}
+	}
+}

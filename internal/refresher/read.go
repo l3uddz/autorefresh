@@ -174,12 +174,9 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 	if err != nil {
 		return readFailed(ctx, run, lib, err)
 	}
-	rd.Items = make([]store.Item, 0, len(items))
-	seen := make([]string, 0, len(items))
-	for _, it := range items {
-		rd.Items = append(rd.Items, storeItem(name, lib, it, itemReasons(it)))
-		seen = append(seen, it.RatingKey)
-	}
+	var seen []string
+	var wrong []wrongMatchItem
+	rd.Items, seen, wrong = listedRows(name, lib, items)
 
 	if rd.Full {
 		unseen, err := r.store.Unseen(name, lib.ID, seen)
@@ -202,6 +199,7 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 		return err
 	}
 	run.recordRead(rd, lib, items, fixed)
+	logWrongMatches(name, lib, wrong)
 	r.logRead(rd, lib, r.now().Sub(at))
 	r.progress().LibraryRead(name, lib.Title)
 	return nil
@@ -379,6 +377,37 @@ func listSeries(ctx context.Context, client Plex, server string, lib plex.Librar
 		items = append(items, storeItem(server, lib, it, reason))
 	}
 	return items, nil
+}
+
+// listedRows returns the cache row of each listed item with its reasons, the
+// listed rating keys, and the movies whose match is wrong.
+func listedRows(server string, lib plex.Library, items []plex.Item) (rows []store.Item, seen []string, wrong []wrongMatchItem) {
+	rows = make([]store.Item, 0, len(items))
+	seen = make([]string, 0, len(items))
+	for _, it := range items {
+		row := storeItem(server, lib, it, itemReasons(it))
+		if wm := flagWrongMatch(&row, lib.Type, it); wm.Result == WrongMatchMismatched {
+			wrong = append(wrong, wrongMatchItem{title: it.Title, match: wm})
+		}
+		rows = append(rows, row)
+		seen = append(seen, it.RatingKey)
+	}
+	return rows, seen, wrong
+}
+
+// wrongMatchItem is a listed movie that a read found mismatched.
+type wrongMatchItem struct {
+	title string
+	match WrongMatch
+}
+
+// logWrongMatches logs each mismatched movie of a read at debug level.
+func logWrongMatches(server string, lib plex.Library, items []wrongMatchItem) {
+	for _, it := range items {
+		pathIDs, plexIDs := wrongMatchFields(it.match)
+		log.Debug().Str("server", server).Str("library", lib.Title).Str("title", it.title).
+			Strs("path_ids", pathIDs).Strs("plex_ids", plexIDs).Msg("Wrong match")
+	}
 }
 
 // logRead logs the young incomplete items and the read.

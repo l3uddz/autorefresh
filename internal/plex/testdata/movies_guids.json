@@ -1,0 +1,42 @@
+{
+  "MediaContainer": {
+    "size": 1,
+    "totalSize": 1,
+    "offset": 0,
+    "Metadata": [
+      {
+        "ratingKey": "1001",
+        "key": "/library/metadata/1001",
+        "guid": "plex://movie/000000000000000000000001",
+        "type": "movie",
+        "title": "Fixture Movie One",
+        "year": 2020,
+        "summary": "A neutral summary.",
+        "thumb": "/library/metadata/1001/thumb/1700000050",
+        "art": "/library/metadata/1001/art/1700000050",
+        "addedAt": 1700000000,
+        "updatedAt": 1700000050,
+        "Guid": [
+          {
+            "id": "imdb://tt0000001"
+          },
+          {
+            "id": "tmdb://100001"
+          },
+          {
+            "id": "tvdb://200001"
+          }
+        ],
+        "Media": [
+          {
+            "Part": [
+              {
+                "file": "/fixture/movies/Fixture Movie One (2020) {tmdb-100001}/Fixture Movie One (2020).mkv"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

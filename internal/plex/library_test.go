@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -429,7 +430,7 @@ func TestListEncodesFilters(t *testing.T) {
 		{
 			"movie", TypeMovie, nil,
 			"X-Plex-Container-Size=500&X-Plex-Container-Start=0" +
-				"&excludeElements=Role%2CDirector%2CWriter%2CGenre%2CCountry&sort=addedAt&type=1",
+				"&excludeElements=Role%2CDirector%2CWriter%2CGenre%2CCountry&includeGuids=1&sort=addedAt&type=1",
 		},
 	}
 	for _, tt := range tests {
@@ -524,5 +525,57 @@ func TestItemNotFound(t *testing.T) {
 	_, c := newServer(t, http.NotFound)
 	if _, err := c.Item(context.Background(), "1001"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("error = %v, want ErrNotFound", err)
+	}
+}
+
+// A movie listing with includeGuids=1 lists the external IDs of each movie.
+func TestListDecodesExternalIDs(t *testing.T) {
+	_, c := newServer(t, serveFixture(t, "movies_guids.json"))
+	items, err := c.List(context.Background(), "1", TypeMovie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"imdb://tt0000001", "tmdb://100001", "tvdb://200001"}
+	if len(items) != 1 || !slices.Equal(items[0].ExternalIDs, want) {
+		t.Fatalf("items = %+v, want one movie with %v", items, want)
+	}
+}
+
+// A Guid value that is not a list of objects gives no IDs and does not fail
+// the listing, because only the wrong match check uses it.
+func TestListIgnoresOddGuidShape(t *testing.T) {
+	for _, guid := range []string{`"imdb://tt1"`, `{"id":"imdb://tt1"}`, `[{"id":""}]`, `null`} {
+		t.Run(guid, func(t *testing.T) {
+			_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Write([]byte(`{"MediaContainer":{"size":1,"totalSize":1,"Metadata":[{"ratingKey":"1","guid":"plex://movie/1","Guid":` + guid + `}]}}`))
+			})
+			items, err := c.List(context.Background(), "1", TypeMovie)
+			if err != nil || len(items) != 1 || items[0].ExternalIDs != nil {
+				t.Fatalf("List = %+v, %v, want one movie without IDs", items, err)
+			}
+		})
+	}
+}
+
+// Every item read asks for the external IDs, which a check and the live view
+// compare with the paths.
+func TestItemReadsAskForExternalIDs(t *testing.T) {
+	rec, c := newServer(t, serveFixture(t, "item_show_guids.json"))
+	it, err := c.Item(context.Background(), "1004")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := c.ItemDetails(context.Background(), "1004")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"imdb://tt0000001", "tmdb://100001", "tvdb://200004"}
+	if !slices.Equal(it.ExternalIDs, want) || !slices.Equal(d.ExternalIDs, want) {
+		t.Errorf("ExternalIDs = %v and %v, want %v", it.ExternalIDs, d.ExternalIDs, want)
+	}
+	for _, r := range rec.all() {
+		if r.URL.RawQuery != "includeGuids=1" {
+			t.Errorf("query of %s = %q, want includeGuids=1", r.URL.Path, r.URL.RawQuery)
+		}
 	}
 }

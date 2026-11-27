@@ -23,6 +23,7 @@ import { FixMatchDialog } from './fixmatch';
 import { ItemTimeline } from './history';
 import { useNotify } from './notify';
 import { disposition, refreshOutcome, refreshText } from './timeline';
+import { WrongMatchWarning } from './wrongmatch';
 import type { ItemKey } from './route';
 
 const styles = stylex.create({
@@ -136,6 +137,7 @@ function DetailBody({ detail, server, ignored, params }: BodyProps) {
         <Text as="p" color="secondary">Plex has no summary for this item.</Text>
       ) : null}
       {live.error && <LiveError error={live.error} />}
+      <WrongMatchWarning live={live} />
       <MetadataList label={{ position: 'start', width: 128 }}>
         {path && (
           <MetadataListItem label="Path">
