@@ -268,7 +268,13 @@ func TestRollbackOfWriteAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The rollback SQL of the README.
+	// The rollback SQL of the README, newest schema first.
+	if _, err := s.db.Exec(`BEGIN IMMEDIATE;
+		ALTER TABLE event DROP COLUMN merged_key;
+		DELETE FROM schema_migration WHERE version = 19;
+		COMMIT;`); err != nil {
+		t.Fatalf("rollback of schema 19: %v", err)
+	}
 	if _, err := s.db.Exec(`BEGIN IMMEDIATE;
 		DROP TABLE read_hold;
 		DROP TABLE write_attempt;
@@ -284,6 +290,10 @@ func TestRollbackOfWriteAttempts(t *testing.T) {
 	defer s.Close()
 	if n := countRows(t, s, "prune_fence"); n != 1 {
 		t.Errorf("fence rows = %d, want 1", n)
+	}
+	var merged int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('event') WHERE name = 'merged_key'`).Scan(&merged); err != nil || merged != 1 {
+		t.Errorf("merged_key columns = %d, %v, want the column again", merged, err)
 	}
 }
 

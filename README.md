@@ -209,9 +209,20 @@ Other new log lines: `Skipped follow-up refresh` means that a run did not send t
 
 ### Upgrade and rollback
 
-The upgrade adds database tables for the write attempts and the holds. Before you upgrade, stop every autorefresh process that uses the database, also a `--once` run from cron. An older version refuses to open the upgraded database.
+Schema 18 adds database tables for the write attempts and the holds. Schema 19 adds the `merged_key` column, which marks a fix where Plex merged the matched item into another item. Before you upgrade, stop every autorefresh process that uses the database, also a `--once` run from cron. An older version refuses to open a database with a newer schema.
 
-To go back to an older version, stop every autorefresh process, and then run this SQL on the database, for example with `sqlite3 autorefresh.db`:
+To go back to an older version, stop every autorefresh process. Then run the SQL of each schema that the older version does not know, newest first, on the database, for example with `sqlite3 autorefresh.db`. Check the schema of the database with `SELECT MAX(version) FROM schema_migration;`.
+
+Schema 19 (merged fixes). `DROP COLUMN` needs sqlite3 3.35 or later. The merged fixes then show as plain fixes.
+
+```sql
+BEGIN IMMEDIATE;
+ALTER TABLE event DROP COLUMN merged_key;
+DELETE FROM schema_migration WHERE version = 19;
+COMMIT;
+```
+
+Schema 18 (write attempts and holds):
 
 ```sql
 BEGIN IMMEDIATE;
