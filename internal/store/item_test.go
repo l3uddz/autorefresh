@@ -35,11 +35,24 @@ func apply(t *testing.T, s *Store, r Read) []Item {
 	if r.At.IsZero() {
 		r.At = base
 	}
-	fixed, err := s.ApplyRead(r)
+	res, err := s.ApplyRead(r)
+	fixed := res.Fixed
 	if err != nil {
 		t.Fatalf("ApplyRead: %v", err)
 	}
 	return fixed
+}
+
+// readTimes returns the read times of a library.
+func readTimes(s *Store, server, section string) (Library, error) {
+	st, err := s.ReadStart(server, section)
+	return st.Library, err
+}
+
+// eventMark returns the mark of the newest event now.
+func eventMark(s *Store) (EventMark, error) {
+	st, err := s.ReadStart(srv, sec)
+	return st.Mark, err
 }
 
 // rows returns the rows of the test section by rating key.
@@ -128,7 +141,7 @@ func TestApplyReadReturnsFixedItem(t *testing.T) {
 func TestApplyReadKeepsNewerSettlement(t *testing.T) {
 	readAt := base.Add(time.Hour)
 	checked := func(t *testing.T, s *Store, at time.Time) {
-		if fixed, err := s.ApplyCheck(srv, item("a", 0), at, 0); err != nil || !fixed {
+		if fixed, err := s.ApplyCheck(srv, item("a", 0), at, 0, Observation{}); err != nil || !fixed {
 			t.Fatalf("check = %v, %v", fixed, err)
 		}
 	}
@@ -160,7 +173,7 @@ func TestApplyReadKeepsNewerSettlement(t *testing.T) {
 			var mark EventMark
 			if tc.marked {
 				var err error
-				if mark, err = s.EventMark(); err != nil {
+				if mark, err = eventMark(s); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -730,13 +743,13 @@ func TestApplyReadReturnsActionsOfFixedRows(t *testing.T) {
 func TestRecordGoneDeletesRow(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
-	if err := s.RecordGone(srv, "a", base, SourceAuto, "", 0); err != nil {
+	if err := s.RecordGone(srv, "a", base, SourceAuto, "", 0, AttemptResult{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(rows(t, s)) != 0 {
 		t.Fatal("row not deleted")
 	}
-	if err := s.RecordGone(srv, "a", base, SourceAuto, "", 0); err != nil {
+	if err := s.RecordGone(srv, "a", base, SourceAuto, "", 0, AttemptResult{}); err != nil {
 		t.Fatalf("missing row: %v", err)
 	}
 }
@@ -808,7 +821,7 @@ func libraryState(t *testing.T, s *Store) map[string]int {
 	t.Helper()
 	got := map[string]int{}
 	for _, scope := range [][2]string{{"a", "1"}, {"a", "2"}, {"b", "1"}, {"b", "3"}} {
-		lib, err := s.Library(scope[0], scope[1])
+		lib, err := readTimes(s, scope[0], scope[1])
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1006,7 +1019,7 @@ func TestApplyReadKeepsRowsOfNewerRequests(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := openTest(t)
 			apply(t, s, Read{Items: []Item{item("a", NoSummary), item("b", NoSummary)}})
-			mark, err := s.EventMark()
+			mark, err := eventMark(s)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1017,7 +1030,7 @@ func TestApplyReadKeepsRowsOfNewerRequests(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := s.ApplyCheck(srv, item("a", Mismatched), base, 0); err != nil {
+			if _, err := s.ApplyCheck(srv, item("a", Mismatched), base, 0, Observation{}); err != nil {
 				t.Fatal(err)
 			}
 
@@ -1055,7 +1068,7 @@ func TestApplyReadKeepsGoneAndFolderOfNewerRequests(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := openTest(t)
 			apply(t, s, Read{Items: []Item{item("g", NoSummary), item("f", NoSummary)}, Folders: map[string]string{"f": "/tv/Old"}})
-			mark, err := s.EventMark()
+			mark, err := eventMark(s)
 			if err != nil {
 				t.Fatal(err)
 			}

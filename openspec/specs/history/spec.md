@@ -360,7 +360,7 @@ When a run ends after another process marked it `interrupted`, its end SHALL rep
 
 ### Requirement: History retention removes old events
 
-At the start of each scheduled run and manual scan, autorefresh SHALL remove the events older than `history-retention` of every server, also when the scan covers one server, with their searches and candidates, in one transaction. It SHALL log the numbers of removed events and runs at debug level when it removed any.
+At the start of each scheduled run and manual scan, autorefresh SHALL remove the events older than `history-retention` of every server, also when the scan covers one server, with their searches and candidates, in one transaction, and SHALL increment in it the generation of the fence of reads when it removed any event (see `library-scan`). It SHALL log the numbers of removed events and runs at debug level when it removed any.
 
 #### Scenario: Old decision removed
 
@@ -378,6 +378,16 @@ At the start of each scheduled run and manual scan, autorefresh SHALL remove the
 
 - **WHEN** retention removes one event and one run
 - **THEN** the log has one `Pruned history` debug line with `events` 1 and `runs` 1
+
+#### Scenario: Fence of events
+
+- **WHEN** retention removes an event while a read of another process runs
+- **THEN** that read is not applied
+
+#### Scenario: Read after all events were removed
+
+- **WHEN** retention removed every event before a read takes its mark
+- **THEN** the read is applied as usual
 
 ### Requirement: History retention removes old runs
 

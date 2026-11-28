@@ -134,7 +134,7 @@ func TestRecordGoneWritesEventAndDeletesRow(t *testing.T) {
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
 	at := base.Add(time.Hour)
 
-	if err := s.RecordGone(srv, "a", at, SourceAuto, ActionRefresh, 0); err != nil {
+	if err := s.RecordGone(srv, "a", at, SourceAuto, ActionRefresh, 0, AttemptResult{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := rows(t, s)["a"]; ok {
@@ -145,7 +145,7 @@ func TestRecordGoneWritesEventAndDeletesRow(t *testing.T) {
 		!events[0].At.Equal(at) || events[0].Source != SourceAuto || events[0].Action != ActionRefresh {
 		t.Fatalf("events = %+v", events)
 	}
-	if err := s.RecordGone(srv, "a", at, SourceAuto, "", 0); err != nil {
+	if err := s.RecordGone(srv, "a", at, SourceAuto, "", 0, AttemptResult{}); err != nil {
 		t.Fatalf("missing row: %v", err)
 	}
 	if events, _ := s.Timeline(srv, "a"); len(events) != 1 {
@@ -395,7 +395,7 @@ func TestDryRunReadWritesNoEvents(t *testing.T) {
 	if got := rows(t, s); len(got) != 1 || got["c"].RatingKey != "c" {
 		t.Fatalf("rows = %+v", got)
 	}
-	if lib, _ := s.Library(srv, sec); !lib.LastFullRead.Equal(at) {
+	if lib, _ := readTimes(s, srv, sec); !lib.LastFullRead.Equal(at) {
 		t.Fatalf("library = %+v", lib)
 	}
 	for _, key := range []string{"a", "b", "c"} {
@@ -522,7 +522,7 @@ func TestManualStoreLifecycle(t *testing.T) {
 		t.Fatalf("cached item = %+v, %v, %v, %v", row, cached, found, err)
 	}
 	it.Reasons, it.Title = 0, "Updated"
-	if completed, err := s.ApplyCheck(srv, it, base, 0); err != nil || !completed {
+	if completed, err := s.ApplyCheck(srv, it, base, 0, Observation{}); err != nil || !completed {
 		t.Fatalf("check = %v, %v", completed, err)
 	}
 	row, cached, found, err = s.KnownItem(srv, "a")

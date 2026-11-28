@@ -385,7 +385,7 @@ func TestRunDetailGivesTheActionOfARemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := testNow.Add(time.Minute)
-	if err := db.RecordGone("home", "1", at, store.SourceAuto, store.ActionTMDBMatch, id); err != nil {
+	if err := db.RecordGone("home", "1", at, store.SourceAuto, store.ActionTMDBMatch, id, store.AttemptResult{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ApplyRead(store.Read{Server: "home", Section: "1", At: at, Full: true, Gone: []string{"2"}, RunID: id}); err != nil {

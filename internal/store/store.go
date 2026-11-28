@@ -24,7 +24,8 @@ var migrations embed.FS
 
 // Store is the SQLite database of incomplete items.
 type Store struct {
-	db *sql.DB
+	db    *sql.DB
+	clock func() time.Time // nil: time.Now; see SetClock
 }
 
 // Open opens the database file and applies the migrations that are missing.

@@ -121,7 +121,8 @@ export function queueState(state: string | undefined, nextDue: string | undefine
     case 'due':
       return 'Due';
     case 'waiting':
-      return `Waiting · ${relative(nextDue, now)}`;
+      // A held item whose wait has passed waits for the next run of its server.
+      return nextDue && Date.parse(nextDue) <= now ? 'Waiting · next run' : `Waiting · ${relative(nextDue, now)}`;
     case 'too-new':
       return `Too new · ${relative(nextDue, now)}`;
     case 'ignored':

@@ -2,8 +2,11 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"math"
 	"reflect"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -694,6 +697,77 @@ func TestListSortsNeverDueRowsAfterEveryDueTime(t *testing.T) {
 			if it.RatingKey[0] != 'k' && !it.NextDue.IsZero() {
 				t.Errorf("%s NextDue = %v, want zero", it.RatingKey, it.NextDue)
 			}
+		}
+	}
+}
+
+func TestHeldRows(t *testing.T) {
+	s := openTest(t)
+	now := base.Add(1000 * time.Hour)
+	young := item("young", NoSummary)
+	young.AddedAt = now
+	apply(t, s, Read{Items: []Item{item("free", NoSummary), item("attempt", NoSummary), item("hold", NoSummary), item("max", NoSummary), young,
+		item("manual", Mismatched)}})
+	fixedClock(s, now)
+	id := attempt(t, s, AttemptSpec{RatingKey: "attempt", Timeout: 30 * time.Second})
+	_, ends := attemptTimes(t, s, id)
+	attempt(t, s, AttemptSpec{RatingKey: "young"})
+	// A saturated end.
+	fixedClock(s, time.Unix(math.MaxInt64-100, 0))
+	attempt(t, s, AttemptSpec{RatingKey: "max", Timeout: time.Hour})
+	hold(t, s, sec, "hold")
+
+	due, total, err := s.Due(DueQuery{Server: srv, Sections: []string{sec}, Now: now, MinimumAge: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := keys(due); total != 1 || !slices.Equal(got, []string{"free"}) {
+		t.Errorf("due = %v of %d, want only free", got, total)
+	}
+	if due, _, err := s.Due(DueQuery{Server: srv, Sections: []string{"9"}, Now: now}); err != nil || len(due) != 0 {
+		t.Errorf("due of an unread library = %v, err %v, want none", keys(due), err)
+	}
+
+	rules := DueRules{Now: now, MinimumAge: time.Hour}
+	items := listAll(t, s, ListQuery{Tab: TabAttention, Sort: SortDue, Rules: rules})
+	got := map[string]ListItem{}
+	for _, it := range items {
+		got[it.RatingKey] = it
+	}
+	want := map[string]QueueState{"free": StateDue, "attempt": StateWaiting, "hold": StateWaiting, "max": StateWaiting, "young": StateTooNew}
+	for key, state := range want {
+		if got[key].State != state {
+			t.Errorf("%s: state = %s, want %s", key, got[key].State, state)
+		}
+	}
+	if !got["attempt"].NextDue.Equal(time.Unix(ends, 0)) {
+		t.Errorf("attempt: next due = %v, want the end of the attempt %v", got["attempt"].NextDue, time.Unix(ends, 0))
+	}
+	if next := got["hold"].NextDue; next.After(now) {
+		t.Errorf("hold: next due = %v, want the usual time, not after %v", next, now)
+	}
+	if want := time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC); !got["max"].NextDue.Equal(want) {
+		t.Errorf("max: next due = %v, want %v", got["max"].NextDue, want)
+	}
+	if order := listKeys(items); order[len(order)-2] != "max" || order[len(order)-1] != "manual" {
+		t.Errorf("order by due = %v, want the saturated end last before the never due item", order)
+	}
+	// In a zone east of UTC, the clamped end still encodes.
+	prev := time.Local
+	time.Local = time.FixedZone("east", 14*3600)
+	t.Cleanup(func() { time.Local = prev })
+	if items, _, err := s.ListItems(context.Background(), ListQuery{Tab: TabAttention, Limit: 100, Rules: rules}); err != nil {
+		t.Fatal(err)
+	} else {
+		for _, it := range items {
+			if _, err := json.Marshal(it.NextDue); err != nil {
+				t.Errorf("%s: next due %v does not encode: %v", it.RatingKey, it.NextDue, err)
+			}
+		}
+	}
+	for key, want := range map[string]bool{"free": false, "attempt": true, "hold": true, "none": false} {
+		if held, err := s.Held(srv, key, now); err != nil || held != want {
+			t.Errorf("Held(%s) = %v, err %v, want %v", key, held, err, want)
 		}
 	}
 }

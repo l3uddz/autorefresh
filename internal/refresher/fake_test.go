@@ -2,6 +2,7 @@ package refresher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -31,6 +32,7 @@ type fakePlex struct {
 	matchErrs      map[string]error            // by rating key
 	series         map[string]plex.Series      // the provider series by GUID; a missing GUID is ErrNotFound
 	seriesErrs     map[string]error            // by GUID
+	matched        map[string]string           // the GUID of the last accepted match, by rating key
 	calls          []string
 	onCall         func(call string) // runs after each recorded call, if set
 }
@@ -134,12 +136,25 @@ func (f *fakePlex) EpisodeNumbers(ctx context.Context, ratingKey string) (map[in
 	return f.episodeNumbers[ratingKey], f.episodeReadErr
 }
 
-func (f *fakePlex) Refresh(ctx context.Context, ratingKey string) error {
+func (f *fakePlex) Refresh(ctx context.Context, ratingKey string) (plex.Outcome, error) {
 	if err := canceled(ctx); err != nil {
-		return err
+		return plex.OutcomeUnknown, err
 	}
 	f.record("Refresh " + ratingKey)
-	return f.refreshErrs[ratingKey]
+	return fakeOutcome(f.refreshErrs[ratingKey])
+}
+
+// fakeOutcome returns the outcome that a Plex answer with err would give:
+// accepted without an error, rejected for a 404, and unknown otherwise.
+func fakeOutcome(err error) (plex.Outcome, error) {
+	switch {
+	case err == nil:
+		return plex.OutcomeAccepted, nil
+	case errors.Is(err, plex.ErrNotFound):
+		return plex.OutcomeRejected, err
+	default:
+		return plex.OutcomeUnknown, err
+	}
 }
 
 // SearchMatches records "SearchMatches <rating key> <title> <agent> <language>".
@@ -178,10 +193,17 @@ func (f *fakePlex) ProviderSeries(ctx context.Context, guid string) (plex.Series
 }
 
 // Match records "Match <rating key> <candidate guid>".
-func (f *fakePlex) Match(ctx context.Context, ratingKey string, cand plex.Candidate) error {
+func (f *fakePlex) Match(ctx context.Context, ratingKey string, cand plex.Candidate) (plex.Outcome, error) {
 	if err := canceled(ctx); err != nil {
-		return err
+		return plex.OutcomeUnknown, err
 	}
 	f.record("Match " + ratingKey + " " + cand.GUID)
-	return f.matchErrs[ratingKey]
+	outcome, err := fakeOutcome(f.matchErrs[ratingKey])
+	if err == nil {
+		if f.matched == nil {
+			f.matched = map[string]string{}
+		}
+		f.matched[ratingKey] = cand.GUID
+	}
+	return outcome, err
 }

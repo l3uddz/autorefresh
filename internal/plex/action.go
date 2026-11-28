@@ -20,17 +20,19 @@ type Candidate struct {
 	Score      int
 }
 
-// Refresh asks Plex to refresh the metadata of one item.
-func (c *Client) Refresh(ctx context.Context, ratingKey string) error {
+// Refresh asks Plex to refresh the metadata of one item. It returns the
+// outcome of the request with the error.
+func (c *Client) Refresh(ctx context.Context, ratingKey string) (Outcome, error) {
 	endpoint, err := c.metadataEndpoint(ratingKey, "refresh")
 	if err != nil {
-		return err
+		return OutcomeRejected, err
 	}
 
-	if err := c.send(ctx, http.MethodPut, endpoint, nil, nil); err != nil {
-		return fmt.Errorf("refresh: %w", err)
+	outcome, err := c.write(ctx, endpoint, nil)
+	if err != nil {
+		return outcome, fmt.Errorf("refresh: %w", err)
 	}
-	return nil
+	return outcome, nil
 }
 
 // SearchMatches asks Plex for the matches of one item.
@@ -100,11 +102,12 @@ func decodeCandidate(raw json.RawMessage) (Candidate, error) {
 	}, nil
 }
 
-// Match applies a candidate to one item.
-func (c *Client) Match(ctx context.Context, ratingKey string, cand Candidate) error {
+// Match applies a candidate to one item. It returns the outcome of the
+// request with the error.
+func (c *Client) Match(ctx context.Context, ratingKey string, cand Candidate) (Outcome, error) {
 	endpoint, err := c.metadataEndpoint(ratingKey, "match")
 	if err != nil {
-		return err
+		return OutcomeRejected, err
 	}
 
 	query := url.Values{"guid": {cand.GUID}, "name": {cand.Name}}
@@ -112,8 +115,9 @@ func (c *Client) Match(ctx context.Context, ratingKey string, cand Candidate) er
 		query.Set("year", strconv.Itoa(cand.Year))
 	}
 
-	if err := c.send(ctx, http.MethodPut, endpoint, query, nil); err != nil {
-		return fmt.Errorf("match: %w", err)
+	outcome, err := c.write(ctx, endpoint, query)
+	if err != nil {
+		return outcome, fmt.Errorf("match: %w", err)
 	}
-	return nil
+	return outcome, nil
 }

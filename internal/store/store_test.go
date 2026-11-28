@@ -57,7 +57,7 @@ func TestApplyReadIncrementalKeepsFullRead(t *testing.T) {
 	if _, err := s.ApplyRead(Read{Server: "s", Section: "1", At: t2}); err != nil {
 		t.Fatal(err)
 	}
-	lib, err := s.Library("s", "1")
+	lib, err := readTimes(s, "s", "1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestApplyReadIncrementalKeepsFullRead(t *testing.T) {
 
 func TestLibraryMissing(t *testing.T) {
 	s := openTest(t)
-	lib, err := s.Library("s", "1")
+	lib, err := readTimes(s, "s", "1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestMigrationKeepsItemsWithoutLibrary(t *testing.T) {
 	if len(items) != 1 || items[0].RatingKey != "101" || items[0].Refreshes != 3 {
 		t.Fatalf("items = %+v, want 101 with 3 refreshes", items)
 	}
-	lib, err := s.Library("home", "9")
+	lib, err := readTimes(s, "home", "9")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -567,8 +567,13 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 	s.Close()
 
 	calls := map[string]func() error{
-		"Library":   func() error { _, err := s.Library(srv, sec); return err },
-		"EventMark": func() error { _, err := s.EventMark(); return err },
+		"ReadStart": func() error { _, err := s.ReadStart(srv, sec); return err },
+		"BeginAttempt": func() error {
+			_, err := s.BeginAttempt(context.Background(), AttemptSpec{Server: srv, RatingKey: "101", Action: ActionRefresh})
+			return err
+		},
+		"DropAttempt":   func() error { return s.DropAttempt(context.Background(), 1) },
+		"PruneAttempts": func() error { _, err := s.PruneAttempts(base); return err },
 		"ApplyRead": func() error {
 			_, err := s.ApplyRead(Read{Server: srv, Section: sec, At: base})
 			return err
@@ -594,7 +599,7 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 		"RecordRequest": func() error {
 			return s.RecordRequest(Request{Server: srv, RatingKey: "101", At: base, Source: SourceAuto, Action: ActionRefresh})
 		},
-		"RecordGone": func() error { return s.RecordGone(srv, "101", base, SourceAuto, "", 0) },
+		"RecordGone": func() error { return s.RecordGone(srv, "101", base, SourceAuto, "", 0, AttemptResult{}) },
 		"RecordMatchDecision": func() error {
 			return s.RecordMatchDecision(MatchDecision{Server: srv, RatingKey: "101", At: base, Source: SourceAuto, Outcome: DecisionNoIDs})
 		},
@@ -610,7 +615,7 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 		"KnownItems":    func() error { _, err := s.KnownItems(context.Background(), srv, []string{"101"}); return err },
 		"SetStopped":    func() error { _, err := s.SetStopped(context.Background(), srv, "101", base, true); return err },
 		"RecordManual":  func() error { return s.RecordManual(ManualRecord{Request: Request{Source: SourceManual}}) },
-		"ApplyCheck":    func() error { _, err := s.ApplyCheck(srv, item("101", NoSummary), base, 0); return err },
+		"ApplyCheck":    func() error { _, err := s.ApplyCheck(srv, item("101", NoSummary), base, 0, Observation{}); return err },
 		"LibraryInfo":   func() error { _, _, err := s.LibraryInfo(srv, sec); return err },
 		"FinishJob":     func() error { _, err := s.FinishJob(1, RunStart{}, RunResult{}, nil); return err },
 		"RunItems":      func() error { _, err := s.RunItems(context.Background(), 1); return err },
@@ -635,6 +640,12 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 			_, err := s.ConvertAutoVacuum(context.Background())
 			return err
 		},
+		"ApplyCheckGone": func() error {
+			return s.ApplyCheckGone(srv, "101", base, SourceAuto, 0, Observation{})
+		},
+		"AddHold":  func() error { return s.AddHold(context.Background(), srv, "101") },
+		"Held":     func() error { _, err := s.Held(srv, "101", base); return err },
+		"Observe":  func() error { _, err := s.Observe(srv, nil, base); return err },
 		"Reclaim":  func() error { _, err := s.Reclaim(context.Background()); return err },
 		"Optimize": func() error { return s.Optimize(context.Background()) },
 	}
@@ -860,7 +871,7 @@ func TestApplyCheckPreservesAddedAtWhenZero(t *testing.T) {
 	orig := item("a", NoArt)
 	apply(t, s, Read{Items: []Item{orig}})
 	check := Item{RatingKey: "a", Title: "Updated", Reasons: NoSummary}
-	if _, err := s.ApplyCheck(srv, check, base.Add(time.Hour), 0); err != nil {
+	if _, err := s.ApplyCheck(srv, check, base.Add(time.Hour), 0, Observation{}); err != nil {
 		t.Fatalf("ApplyCheck: %v", err)
 	}
 	got, cached, known, err := s.KnownItem(srv, "a")

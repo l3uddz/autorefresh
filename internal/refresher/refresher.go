@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -23,10 +24,10 @@ type Plex interface {
 	ItemPaths(ctx context.Context, ratingKey string) (plex.Paths, error)
 	ItemWithPaths(ctx context.Context, ratingKey string) (plex.Item, plex.Paths, error)
 	EpisodeNumbers(ctx context.Context, ratingKey string) (map[int][]int, error)
-	Refresh(ctx context.Context, ratingKey string) error
+	Refresh(ctx context.Context, ratingKey string) (plex.Outcome, error)
 	Item(ctx context.Context, ratingKey string) (plex.Item, error)
 	SearchMatches(ctx context.Context, ratingKey, title, agent, language string, year int) ([]plex.Candidate, error)
-	Match(ctx context.Context, ratingKey string, cand plex.Candidate) error
+	Match(ctx context.Context, ratingKey string, cand plex.Candidate) (plex.Outcome, error)
 	ProviderSeries(ctx context.Context, guid string) (plex.Series, error)
 }
 
@@ -34,19 +35,23 @@ type Plex interface {
 type Store interface {
 	FinishJob(int64, store.RunStart, store.RunResult, []store.RunItem) (bool, error)
 	SetStopped(context.Context, string, string, time.Time, bool) (bool, error)
-	ApplyCheck(string, store.Item, time.Time, int64) (bool, error)
+	ApplyCheck(string, store.Item, time.Time, int64, store.Observation) (bool, error)
+	ApplyCheckGone(server, key string, at time.Time, source store.Source, runID int64, obs store.Observation) error
+	Observe(server string, chain []int64, at time.Time) (store.Observation, error)
+	AddHold(ctx context.Context, server, key string) error
 	LibraryInfo(string, string) (store.LibraryInfo, bool, error)
 	RecordManual(store.ManualRecord) error
 	KnownItem(server, ratingKey string) (store.Item, bool, bool, error)
 	KnownItems(ctx context.Context, server string, keys []string) (map[string]store.KnownResult, error)
-	Library(server, section string) (store.Library, error)
-	EventMark() (store.EventMark, error)
-	ApplyRead(r store.Read) (fixed []store.Item, err error)
+	ReadStart(server, section string) (store.ReadState, error)
+	Held(server, key string, now time.Time) (bool, error)
+	PruneAttempts(now time.Time) (int, error)
+	ApplyRead(r store.Read) (store.ReadResult, error)
 	Unseen(server, section string, seen []string) ([]store.Item, error)
 	Due(q store.DueQuery) (items []store.Item, total int, err error)
 	CountIncomplete(server string, sections []string, ignored store.Reasons) (int, error)
 	RecordRequest(r store.Request) error
-	RecordGone(server, ratingKey string, at time.Time, source store.Source, action store.Action, runID int64) error
+	RecordGone(server, ratingKey string, at time.Time, source store.Source, action store.Action, runID int64, attempt store.AttemptResult) error
 	RecordMatchDecision(d store.MatchDecision) error
 	SaveLibraries(server string, libs []store.LibraryInfo) error
 	SetPath(server, ratingKey, path string) error
@@ -57,6 +62,8 @@ type Store interface {
 	StartRun(r store.RunStart) (int64, error)
 	FinishRun(id int64, start store.RunStart, r store.RunResult) (bool, error)
 	PruneHistory(before time.Time) (events, runs int, err error)
+	BeginAttempt(ctx context.Context, spec store.AttemptSpec) (int64, error)
+	DropAttempt(ctx context.Context, id int64) error
 	Reclaim(ctx context.Context) (store.ReclaimResult, error)
 	Optimize(ctx context.Context) error
 }
@@ -65,7 +72,8 @@ type Store interface {
 type Server struct {
 	Name      string
 	Plex      Plex
-	Libraries []string // titles; empty means all supported libraries
+	Libraries []string      // titles; empty means all supported libraries
+	Timeout   time.Duration // the request timeout of the server; 0 or less: config.DefaultTimeout
 }
 
 // Schedule is the part of cron.Schedule that the refresher uses.
@@ -131,6 +139,7 @@ type serverRun struct {
 	server               Server
 	began                time.Time
 	libraries            []plex.Library        // the selected libraries
+	read                 []string              // the sections whose read the run applied
 	files                map[string][]string   // movie files by rating key, from the reads of this run
 	prePaths             map[string]plex.Paths // pre-fetched item paths by rating key, e.g. from manual refresh pre-check
 	full                 bool                  // read every library fully
@@ -195,9 +204,16 @@ func (run *serverRun) sections() []string {
 	return sections
 }
 
+// readSections returns the sections whose read the run applied. Only their
+// items get automatic writes in the run.
+func (run *serverRun) readSections() []string { return run.read }
+
+// readIn reports whether the run applied the read of section.
+func (run *serverRun) readIn(section string) bool { return slices.Contains(run.read, section) }
+
 // pruneBeforeRun removes the cache of the servers that are not configured,
-// and the events and runs that are older than the history retention. A dry
-// run keeps both.
+// the write attempts that ended more than a day ago, and the events and
+// runs that are older than the history retention. A dry run keeps all.
 func (r *Refresher) pruneBeforeRun(now time.Time) error {
 	if r.opts.DryRun {
 		return nil
@@ -211,6 +227,13 @@ func (r *Refresher) pruneBeforeRun(now time.Time) error {
 		return err
 	}
 	logPruned(pruned, nil)
+	attempts, err := r.store.PruneAttempts(now)
+	if err != nil {
+		return err
+	}
+	if attempts > 0 {
+		log.Debug().Int("attempts", attempts).Msg("Pruned write attempts")
+	}
 	if r.opts.HistoryRetention <= 0 {
 		return nil
 	}
@@ -335,10 +358,11 @@ func (r *Refresher) upkeep(ctx context.Context) {
 
 // serverOnly reports whether err ends only the run of its own server: an
 // unavailable server or a failed library read. Other errors, such as a store
-// error, stop the runs of the other servers too.
+// error, stop the runs of the other servers too, also when they come with
+// one of these.
 func serverOnly(err error) bool {
 	var readErr *libraryReadError
-	return errors.Is(err, plex.ErrUnavailable) || errors.As(err, &readErr)
+	return !errors.Is(err, ErrStore) && (errors.Is(err, plex.ErrUnavailable) || errors.As(err, &readErr))
 }
 
 func (r *Refresher) runServer(ctx context.Context, started startedRun) error {

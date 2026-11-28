@@ -109,6 +109,20 @@ func (c *Client) PathPrefix() string {
 // status error it drains and closes the body. Otherwise the caller reads the
 // body, then drains and closes it.
 func (c *Client) do(ctx context.Context, method string, endpoint *url.URL, query url.Values, accept string) (*http.Response, error) {
+	res, err := c.roundTrip(ctx, c.http, method, endpoint, query, accept)
+	if err != nil {
+		return nil, err
+	}
+	if err := statusError(res); err != nil {
+		neterr.DrainAndClose(res)
+		return nil, fmt.Errorf("%s %s: %w", method, res.Request.URL.Path, err)
+	}
+	return res, nil
+}
+
+// roundTrip sends a request to endpoint with the query through client and
+// returns the response, whatever its status.
+func (c *Client) roundTrip(ctx context.Context, client *http.Client, method string, endpoint *url.URL, query url.Values, accept string) (*http.Response, error) {
 	u := *endpoint
 	u.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), nil)
@@ -119,17 +133,11 @@ func (c *Client) do(ctx context.Context, method string, endpoint *url.URL, query
 	req.Header.Set("Accept", accept)
 
 	start := time.Now()
-	res, err := c.http.Do(req)
+	res, err := client.Do(req)
 	if err != nil {
 		return nil, c.transportError(ctx, req, start, err)
 	}
-
 	c.trace(req, start).Int("status", res.StatusCode).Msg("Plex request")
-
-	if err := statusError(res); err != nil {
-		neterr.DrainAndClose(res)
-		return nil, fmt.Errorf("%s %s: %w", method, req.URL.Path, err)
-	}
 	return res, nil
 }
 

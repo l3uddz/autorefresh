@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -139,38 +140,20 @@ func (r *Refresher) selectLibraries(srv Server, libraries []plex.Library) []plex
 }
 
 // readLibrary stages all requests of one library and applies them to the
-// cache only if every request succeeds.
+// cache only if every request succeeds. A library with a hold gets a full
+// read.
 func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Library) error {
 	at := r.now()
 	name, client := run.server.Name, run.server.Plex
 
-	state, err := r.store.Library(name, lib.ID)
+	// One snapshot gives the read times, the holds, and the mark. A check
+	// that settles an item after the mark settles it during the read.
+	state, err := r.store.ReadStart(name, lib.ID)
 	if err != nil {
 		return err
 	}
-	// A check that settles an item after the mark settles it during the read.
-	mark, err := r.store.EventMark()
-	if err != nil {
-		return err
-	}
-	rd := store.Read{
-		Server:  name,
-		Section: lib.ID,
-		At:      at,
-		Full:    run.full || state.LastFullRead.IsZero() || !r.opts.CacheRefresh.Next(state.LastFullRead).After(at),
-		Shows:   lib.Type == plex.ShowLibrary,
-		DryRun:  r.opts.DryRun,
-		RunID:   run.id,
-		Mark:    mark,
-	}
-	itemType := plex.TypeMovie
-	if rd.Shows {
-		itemType = plex.TypeShow
-		// episodeSeries sends no request for an ignored episode reason.
-		rd.EpisodeSkipped = r.opts.IgnoreReasons &^ store.ItemReasons
-	}
-
-	items, err := r.listItems(ctx, client, lib.ID, itemType, rd.Full, state.LastRead)
+	rd := r.newRead(run, lib, at, state)
+	items, err := r.listItems(ctx, client, lib.ID, readType(rd), rd.Full, state.LastRead)
 	if err != nil {
 		return readFailed(ctx, run, lib, err)
 	}
@@ -178,12 +161,12 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 	var wrong []wrongMatchItem
 	rd.Items, seen, wrong = listedRows(name, lib, items)
 
+	var unseen []store.Item
 	if rd.Full {
-		unseen, err := r.store.Unseen(name, lib.ID, seen)
-		if err != nil {
+		if unseen, err = r.store.Unseen(name, lib.ID, seen); err != nil {
 			return err
 		}
-		if rd.Gone, rd.Folders, err = goneKeys(ctx, client, name, lib, unseen); err != nil {
+		if rd.Gone, rd.Present, rd.Folders, err = goneKeys(ctx, client, name, lib, unseen); err != nil {
 			return readFailed(ctx, run, lib, err)
 		}
 	}
@@ -194,15 +177,62 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 		}
 	}
 
-	fixed, err := r.store.ApplyRead(rd)
+	res, err := r.store.ApplyRead(rd)
+	if errors.Is(err, store.ErrReadPruned) {
+		return readFailed(ctx, run, lib, err)
+	}
 	if err != nil {
 		return err
 	}
-	run.recordRead(rd, lib, items, fixed)
+	run.read = append(run.read, lib.ID)
+	run.recordRead(rd, lib, items, res.Fixed)
 	logWrongMatches(name, lib, wrong)
+	logOmitted(name, lib, unseen, res.Omitted)
 	r.logRead(rd, lib, r.now().Sub(at))
 	r.progress().LibraryRead(name, lib.Title)
 	return nil
+}
+
+// newRead returns the read of lib at the time at, from its read state. The
+// read is full in a full run, on the first read, when the cache refresh is
+// due, and when the library has a hold.
+func (r *Refresher) newRead(run *serverRun, lib plex.Library, at time.Time, state store.ReadState) store.Read {
+	rd := store.Read{
+		Server:  run.server.Name,
+		Section: lib.ID,
+		At:      at,
+		Full: run.full || state.LastFullRead.IsZero() || !r.opts.CacheRefresh.Next(state.LastFullRead).After(at) ||
+			state.Held,
+		Shows:  lib.Type == plex.ShowLibrary,
+		DryRun: r.opts.DryRun,
+		RunID:  run.id,
+		Mark:   state.Mark,
+	}
+	if rd.Shows {
+		// episodeSeries sends no request for an ignored episode reason.
+		rd.EpisodeSkipped = r.opts.IgnoreReasons &^ store.ItemReasons
+	}
+	return rd
+}
+
+// readType returns the Plex item type of the listing of rd.
+func readType(rd store.Read) int {
+	if rd.Shows {
+		return plex.TypeShow
+	}
+	return plex.TypeMovie
+}
+
+// logOmitted logs a warning for each held item of the unseen rows that the
+// full listing omitted while Plex still has it. Its hold stays, so each
+// read of the library is full until the listing shows it again.
+func logOmitted(server string, lib plex.Library, unseen []store.Item, omitted []string) {
+	for _, it := range unseen {
+		if slices.Contains(omitted, it.RatingKey) {
+			log.Warn().Str("server", server).Str("library", lib.Title).Str("title", it.Title).
+				Str("rating_key", it.RatingKey).Msg("Held item not in listing")
+		}
+	}
 }
 
 // complete adds the row it of library, which the run found complete, to
@@ -264,7 +294,11 @@ func readFailed(ctx context.Context, run *serverRun, lib plex.Library, err error
 	if run.full {
 		return &libraryReadError{library: lib.Title, err: err}
 	}
-	log.Warn().Str("server", run.server.Name).Str("library", lib.Title).Err(err).Msg("Reading library failed")
+	msg := "Reading library failed"
+	if errors.Is(err, store.ErrReadPruned) {
+		msg = "Read is older than pruning"
+	}
+	log.Warn().Str("server", run.server.Name).Str("library", lib.Title).Err(err).Msg(msg)
 	return nil
 }
 
@@ -311,13 +345,15 @@ func (r *Refresher) listItems(ctx context.Context, client Plex, section string, 
 }
 
 // goneKeys returns the rating keys of the unseen rows that Plex answers with
-// 404. A row with another answer stays. folders holds the folder of each
-// unseen series that Plex answers with a location, by rating key.
-func goneKeys(ctx context.Context, client Plex, server string, lib plex.Library, unseen []store.Item) (gone []string, folders map[string]string, err error) {
+// 404, and of the unseen rows that Plex answers with the item (present). A
+// row with another answer stays. folders holds the folder of each unseen
+// series that Plex answers with a location, by rating key.
+func goneKeys(ctx context.Context, client Plex, server string, lib plex.Library, unseen []store.Item) (gone, present []string, folders map[string]string, err error) {
 	folders = map[string]string{}
 	for _, it := range unseen {
 		paths, err := client.ItemPaths(ctx, it.RatingKey)
 		if err == nil {
+			present = append(present, it.RatingKey)
 			if folder := seriesFolder(lib.Type, paths); folder != "" {
 				folders[it.RatingKey] = folder
 			}
@@ -328,12 +364,12 @@ func goneKeys(ctx context.Context, client Plex, server string, lib plex.Library,
 			continue
 		}
 		if stop := stopError(ctx, err); stop != nil {
-			return nil, nil, stop
+			return nil, nil, nil, stop
 		}
 		log.Warn().Str("server", server).Str("library", lib.Title).Str("title", it.Title).
 			Err(err).Msg("Checking unseen item failed")
 	}
-	return gone, folders, nil
+	return gone, present, folders, nil
 }
 
 // episodeSeries sends the episode requests of a show library. It skips the

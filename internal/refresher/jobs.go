@@ -342,7 +342,8 @@ func (r *Refresher) bulkItem(ctx context.Context, srv Server, a bulkAdmission, i
 	case row.Attempts != a.attempts:
 		item.Outcome = store.ItemChanged
 	default:
-		sent, err := r.sendManual(ctx, srv, row, true, nil)
+		_, err := r.sendManual(ctx, srv, row, true, nil)
+		sent := !errors.Is(err, ErrNotSent)
 		return sent, bulkPlexOutcome(ctx, item, sent, err)
 	}
 	return false, nil

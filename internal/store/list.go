@@ -40,17 +40,49 @@ func (r DueRules) backoffArgs() []any {
 	return []any{maxWait, interval, doublings}
 }
 
-// waiting is true for a row with an attempt in its wait before Now.
+// waiting is true for a row with an attempt in its wait before Now, or a
+// held row.
 func (r DueRules) waiting() sqlPart {
-	return sqlPart{`last_attempt IS NOT NULL AND last_attempt > (? - ` + waitSQL + `) / 1000`,
-		append([]any{r.Now.UnixMilli()}, r.backoffArgs()...)}
+	held := r.held()
+	return sqlPart{`(last_attempt IS NOT NULL AND last_attempt > (? - ` + waitSQL + `) / 1000 OR ` + held.sql + `)`,
+		append(append([]any{r.Now.UnixMilli()}, r.backoffArgs()...), held.args...)}
 }
 
+// held is true for a row with a write attempt that is live at Now, or with
+// a hold in any library.
+func (r DueRules) held() sqlPart {
+	return sqlPart{`(EXISTS (SELECT 1 FROM write_attempt a
+			WHERE a.server = item.server AND a.rating_key = item.rating_key AND a.ends_at >= ?)
+		OR EXISTS (SELECT 1 FROM read_hold h WHERE h.server = item.server AND h.rating_key = item.rating_key))`,
+		[]any{r.Now.Unix()}}
+}
+
+// Held reports whether the cached item key of server is held at now, as
+// DueRules count it: a write attempt that is live at now, or a hold.
+func (s *Store) Held(server, key string, now time.Time) (bool, error) {
+	h := DueRules{Now: now}.held()
+	var held bool
+	err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM item WHERE server = ? AND rating_key = ? AND `+h.sql+`)`,
+		append([]any{server, key}, h.args...)...).Scan(&held)
+	if err != nil {
+		return false, fmt.Errorf("read held item: %w", err)
+	}
+	return held, nil
+}
+
+// lastEndSQL is the latest end, in Unix seconds, of a write attempt for the
+// row that is live at Now, or 0. It is at most the last second of the year
+// 9999, so a saturated end stays a valid time in milliseconds.
+const lastEndSQL = `COALESCE((SELECT MIN(MAX(a.ends_at), 253402300799) FROM write_attempt a
+	WHERE a.server = item.server AND a.rating_key = item.rating_key AND a.ends_at >= ?), 0)`
+
 // nextDue is the time in Unix milliseconds when a row stops being too new
-// and waiting.
+// and waiting: the end of its backoff wait, or of a live write attempt. A row
+// that only a hold keeps waits for the next read of its library.
 func (r DueRules) nextDue() sqlPart {
-	return sqlPart{`MAX(added_at * 1000 + ?, COALESCE(last_attempt * 1000 + ` + waitSQL + `, 0))`,
-		append([]any{r.MinimumAge.Milliseconds()}, r.backoffArgs()...)}
+	args := append([]any{r.MinimumAge.Milliseconds()}, r.backoffArgs()...)
+	return sqlPart{`MAX(added_at * 1000 + ?, COALESCE(last_attempt * 1000 + ` + waitSQL + `, 0), ` + lastEndSQL + ` * 1000)`,
+		append(args, r.Now.Unix())}
 }
 
 // neverDue is the sort value of the next due time of a row that is never
@@ -82,7 +114,7 @@ type QueueState string
 
 const (
 	StateDue     QueueState = "due"
-	StateWaiting QueueState = "waiting" // until the end of its backoff wait
+	StateWaiting QueueState = "waiting" // until the end of its backoff wait, or held by a write attempt or a hold
 	StateTooNew  QueueState = "too-new" // until MinimumAge passes
 	StateIgnored QueueState = "ignored" // all its reasons are ignored
 	StateManual  QueueState = "manual"  // only reasons that need a manual fix, such as a wrong match
@@ -403,7 +435,9 @@ func scanQueueRow(row scanner, extra ...any) (ListItem, error) {
 	it.Cached = true
 	it.Reasons = Reasons(reasons)
 	if it.State == StateWaiting || it.State == StateTooNew {
-		it.NextDue = time.UnixMilli(nextDue)
+		// UTC keeps the clamped end of a saturated attempt in the year 9999,
+		// which JSON can encode, in every time zone.
+		it.NextDue = time.UnixMilli(nextDue).UTC()
 	}
 	it.AddedAt = time.Unix(addedAt, 0)
 	it.LastAttempt = timeFrom(lastAttempt)

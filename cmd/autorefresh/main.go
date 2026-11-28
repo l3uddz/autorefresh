@@ -230,6 +230,7 @@ func newServers(cfg config.Config) ([]refresher.Server, []*plex.Client, []string
 			Name:      s.Name,
 			Plex:      client,
 			Libraries: s.Libraries,
+			Timeout:   s.RequestTimeout(),
 		})
 		clients = append(clients, client)
 		names = append(names, s.Name)

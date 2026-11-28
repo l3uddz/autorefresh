@@ -45,7 +45,7 @@ func TestRunRechecksSameSecondManualAttempt(t *testing.T) {
 	if _, err := f.r.RefreshItem(t.Context(), "home", "1"); err != nil {
 		t.Fatal(err)
 	}
-	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto}
+	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto, read: []string{"1"}}
 	if sent, err := f.r.runItem(t.Context(), run, batch); err != nil || sent {
 		t.Fatalf("runItem = sent %v, err %v", sent, err)
 	}
@@ -62,7 +62,7 @@ func TestManualRefreshOfHistoryOnlyItem(t *testing.T) {
 	f.seed("home", lib, incompleteItem("1"), store.NoSummary, 0)
 	row, _ := f.row("home", "1", "1")
 	row.Reasons = 0
-	if _, err := f.store.ApplyCheck("home", row, t0, 0); err != nil {
+	if _, err := f.store.ApplyCheck("home", row, t0, 0, store.Observation{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.r.RefreshItem(t.Context(), "home", "1"); err != nil {
@@ -221,7 +221,7 @@ func TestManualMatchRecordsTargetAndStoppedRunSkipsItem(t *testing.T) {
 	if changed, err := f.r.SetStopped(t.Context(), "home", "1", true); err != nil || !changed {
 		t.Fatalf("stop = %v, %v", changed, err)
 	}
-	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto}
+	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto, read: []string{"1"}}
 	if sent, err := f.r.runItem(t.Context(), run, batch); err != nil || sent || run.skipped != 1 {
 		t.Fatalf("scheduled skip = sent %v, skipped %d, %v", sent, run.skipped, err)
 	}
@@ -260,14 +260,21 @@ type checkedMetadata struct {
 	checks  *int
 }
 
+// checkAnswer is the answer of one check. After an accepted match, a
+// matched item shows the GUID of the match, as Plex does once it applied
+// the match, unless keepGUID is set.
 type checkAnswer struct {
-	item plex.Item
-	err  error
+	item     plex.Item
+	err      error
+	keepGUID bool
 }
 
-func (p checkedMetadata) Item(context.Context, string) (plex.Item, error) {
+func (p checkedMetadata) Item(_ context.Context, ratingKey string) (plex.Item, error) {
 	a := p.answers[min(*p.checks, len(p.answers)-1)]
 	*p.checks++
+	if guid := p.matched[ratingKey]; guid != "" && !a.keepGUID && !strings.HasPrefix(a.item.GUID, "local://") {
+		a.item.GUID = guid
+	}
 	return a.item, a.err
 }
 
@@ -373,7 +380,7 @@ func TestApplyMatchStopsWhenRowLeavesCache(t *testing.T) {
 	buf := captureLogs(t)
 	f.r.sleep = func(context.Context, time.Duration) error {
 		f.sleeps = append(f.sleeps, time.Second)
-		return f.store.RecordGone("home", "1", t0, store.SourceAuto, "", 0)
+		return f.store.RecordGone("home", "1", t0, store.SourceAuto, "", 0, store.AttemptResult{})
 	}
 	cand := plex.Candidate{GUID: "plex://movie/1", Name: "Match", Year: 2020}
 	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {
@@ -399,6 +406,9 @@ func TestApplyMatchRefreshUnavailableSkipsChecks(t *testing.T) {
 	if *checks != 0 || len(f.sleeps) != 0 {
 		t.Errorf("checks %d, sleeps %v; want none", *checks, f.sleeps)
 	}
+	if !f.held("1") {
+		t.Error("the unchecked match left no hold")
+	}
 }
 
 func TestApplyMatchStopsCheckingWhenPlexIsUnavailable(t *testing.T) {
@@ -409,6 +419,9 @@ func TestApplyMatchStopsCheckingWhenPlexIsUnavailable(t *testing.T) {
 	}
 	if *checks != 1 {
 		t.Errorf("checks = %d, want 1", *checks)
+	}
+	if !f.held("1") {
+		t.Error("the checks that ended without the GUID left no hold")
 	}
 }
 
@@ -700,9 +713,12 @@ func TestReadKeepsRefreshNowSettlement(t *testing.T) {
 				t.Errorf("newest event = %+v, want the %s event of Refresh now", last, tc.kind)
 			}
 
-			// The dry run keeps the row that its read adds.
+			// The dry run keeps the row that its read adds. After the check
+			// completed the item during the read, the read held it, so this
+			// read is full.
 			f.r.opts.DryRun = true
 			fake.lists["1?type=1&updatedAt>>="+unixString(t0.Add(-oversample))] = []plex.Item{incompleteItem("1")}
+			fake.lists["1?type=1"] = []plex.Item{incompleteItem("1")}
 			f.run(t0.Add(time.Hour))
 			if row, found := f.row("home", "1", "1"); !found || row.Reasons != store.NoSummary || row.Attempts != 0 {
 				t.Fatalf("row = %+v, found %v; want the row again", row, found)

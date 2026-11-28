@@ -169,6 +169,9 @@ func (s *Store) RecordManual(m ManualRecord) error {
 		return fmt.Errorf("begin manual request: %w", err)
 	}
 	defer tx.Rollback()
+	if err := finishAttempt(tx, m.Attempt); err != nil {
+		return err
+	}
 	if err := writeManual(tx, m); err != nil {
 		return err
 	}
@@ -178,17 +181,18 @@ func (s *Store) RecordManual(m ManualRecord) error {
 	return nil
 }
 
+// writeManual writes the event and the row changes of m. Without a cached
+// row, it writes the event from the snapshot of the admission.
 func writeManual(tx *sql.Tx, m ManualRecord) error {
 	if !m.Cached {
-		_, err := insertEvent(tx, requestEvent(m.Request, m.Snapshot, m.Outcome()))
-		return err
+		return writeManualSnapshot(tx, m, false)
 	}
 	row, found, err := readItem(tx, m.Server, m.RatingKey)
 	if err != nil {
 		return err
 	}
 	if !found {
-		row = m.Snapshot
+		return writeManualSnapshot(tx, m, m.Gone)
 	}
 	if m.Gone {
 		e := snapshotEvent(row, m.At, EventGone, SourceManual)
@@ -196,33 +200,47 @@ func writeManual(tx *sql.Tx, m ManualRecord) error {
 		if _, err := insertEvent(tx, e); err != nil {
 			return err
 		}
-		if found {
-			return deleteItem(tx, m.Server, m.RatingKey)
-		}
+		return deleteItem(tx, m.Server, m.RatingKey)
+	}
+	return recordRequest(tx, m.Request, row)
+}
+
+// writeManualSnapshot writes the gone or request event of m from its
+// snapshot. When the library of the snapshot is gone, for example because
+// another process removed it after the send, it writes nothing, because the
+// event needs its library.
+func writeManualSnapshot(tx *sql.Tx, m ManualRecord, gone bool) error {
+	var exists bool
+	if err := tx.QueryRow(`SELECT EXISTS (SELECT 1 FROM library WHERE server = ? AND section = ?)`,
+		m.Server, m.Snapshot.Section).Scan(&exists); err != nil {
+		return fmt.Errorf("read library: %w", err)
+	}
+	if !exists {
 		return nil
 	}
-	if found {
-		return recordRequest(tx, m.Request, row)
+	e := requestEvent(m.Request, m.Snapshot, m.Outcome())
+	if gone {
+		e = snapshotEvent(m.Snapshot, m.At, EventGone, SourceManual)
+		e.Action = m.Action
 	}
-	_, err = insertEvent(tx, requestEvent(m.Request, row, m.Outcome()))
+	_, err := insertEvent(tx, e)
 	return err
 }
 
 // ApplyCheck updates an existing item from an individual metadata check.
 // runID is the run that checked the item, which a completed event names;
-// 0: none.
-func (s *Store) ApplyCheck(server string, it Item, at time.Time, runID int64) (bool, error) {
+// 0: none. obs is the observation of the check; when the check must yield,
+// it saves a hold instead and returns ErrCheckYielded. Without a row, it
+// returns ErrNoItem.
+func (s *Store) ApplyCheck(server string, it Item, at time.Time, runID int64, obs Observation) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return false, fmt.Errorf("begin item check: %w", err)
 	}
 	defer tx.Rollback()
-	prev, found, err := readItem(tx, server, it.RatingKey)
+	prev, err := s.checkRow(tx, server, it.RatingKey, obs)
 	if err != nil {
 		return false, err
-	}
-	if !found {
-		return false, ErrNoItem
 	}
 	if it.Type == "" {
 		it.Type = prev.Type

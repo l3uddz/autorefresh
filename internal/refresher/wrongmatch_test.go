@@ -214,11 +214,11 @@ func TestRecheckSkipsRowWithOnlyWrongMatchLeft(t *testing.T) {
 	batch, _ := f.row("home", "1", "1")
 	left := batch
 	left.Reasons = store.Mismatched
-	if _, err := f.store.ApplyCheck("home", left, t0, 0); err != nil {
+	if _, err := f.store.ApplyCheck("home", left, t0, 0, store.Observation{}); err != nil {
 		t.Fatal(err)
 	}
 
-	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto}
+	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto, read: []string{"1"}}
 	if sent, err := f.r.runItem(t.Context(), run, batch); err != nil || sent || run.skipped != 1 {
 		t.Fatalf("runItem = sent %v, skipped %d, %v; want a skip", sent, run.skipped, err)
 	}

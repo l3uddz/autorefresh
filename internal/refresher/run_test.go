@@ -255,6 +255,8 @@ func TestServerOnly(t *testing.T) {
 		{"unavailable", fmt.Errorf("server home: %w", plex.ErrUnavailable), true},
 		{"store", fmt.Errorf("server home: %w: %w", ErrStore, errors.New("disk full")), false},
 		{"other", errors.New("boom"), false},
+		// A hold that failed to save after the server became unavailable.
+		{"unavailable and store", errors.Join(plex.ErrUnavailable, fmt.Errorf("%w: disk full", ErrStore)), false},
 	}
 	for _, tt := range tests {
 		if got := serverOnly(tt.err); got != tt.want {

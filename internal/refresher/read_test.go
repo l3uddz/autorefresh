@@ -75,6 +75,7 @@ func captureLogs(t *testing.T) *bytes.Buffer {
 
 type fixture struct {
 	t      *testing.T
+	file   string // the database file of store
 	store  *store.Store
 	r      *Refresher
 	logs   *bytes.Buffer
@@ -86,7 +87,8 @@ type fixture struct {
 func newFixture(t *testing.T, servers ...Server) *fixture {
 	t.Helper()
 	logs := captureLogs(t)
-	st, err := store.Open(filepath.Join(t.TempDir(), "cache.db"))
+	file := filepath.Join(t.TempDir(), "cache.db")
+	st, err := store.Open(file)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -96,7 +98,7 @@ func newFixture(t *testing.T, servers ...Server) *fixture {
 		t.Fatalf("parse schedule: %v", err)
 	}
 
-	f := &fixture{t: t, store: st, logs: logs}
+	f := &fixture{t: t, file: file, store: st, logs: logs}
 	// The read tests use a dry run, so the refresh step after the reads sends
 	// no request and changes no row. newRefreshFixture turns it off.
 	f.r = New(servers, st, Options{
@@ -107,6 +109,8 @@ func newFixture(t *testing.T, servers ...Server) *fixture {
 		DryRun:          true,
 	})
 	f.r.now = func() time.Time { return f.now }
+	// The store reads the clock of the refresher, also after a test replaces it.
+	st.SetClock(func() time.Time { return f.r.now() })
 	f.r.sleep = func(_ context.Context, d time.Duration) error {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -155,11 +159,11 @@ func (f *fixture) reasons(section string) map[string]store.Reasons {
 
 func (f *fixture) library(server, section string) store.Library {
 	f.t.Helper()
-	lib, err := f.store.Library(server, section)
+	st, err := f.store.ReadStart(server, section)
 	if err != nil {
 		f.t.Fatalf("read library: %v", err)
 	}
-	return lib
+	return st.Library
 }
 
 func (f *fixture) refreshed(key string, times int) {

@@ -188,6 +188,39 @@ autorefresh --once --dry-run
 
 A dry run still updates the database cache without recording history. If it sees a cached item that is now complete or gone from Plex, it removes that item from the cache. A later normal run then records no fixed or removed event for it.
 
+## Requests and library reads
+
+Before each refresh or match request, autorefresh saves a write attempt in the database. This costs one database write for each request. The attempt protects its item for `timeout` plus 10 minutes after it starts, because Plex can apply a request after it answers.
+
+- While an attempt is live, the dashboard shows its item as `waiting`, and no run sends the item an automatic request. This also applies when the answer was lost, or was a 3xx, 408, 429, or 5xx answer, because Plex can still have taken the request. A request that Plex rejects (400, 401, 403, 404, or 405) ends the protection at once.
+- A library read leaves an item unchanged when an attempt for it was live during the read, and saves a hold for the item. The next read of a library with a hold is a full read. It applies the item, deletes the hold, and costs one full listing of the library. A held item stays `waiting` and gets no automatic request until then. The dashboard shows it as "Waiting · next run" when its usual wait has passed. If your `schedule` starts runs more often than every `timeout` plus 10 minutes, a library with recent requests can get a full read on every run.
+- A held item that the full listing omits while Plex still has it keeps its hold, and autorefresh logs `Held item not in listing`. Its library then gets a full read on every run.
+- After a match, the checks wait until Plex shows the GUID of the chosen candidate. If Plex does not show it before the checks end, the row stays as it was and the item gets a hold.
+- A check after a request saves nothing, and the item gets a hold, when another request can still change the item. For example, Refresh now within `timeout` plus 10 minutes after an accepted match reports the reasons as not current, and the item stays `waiting` until the next run. Refresh now and then Fix match still moves a fixed item to Fixed at once.
+- A refresh or match request does not follow a redirect. If a proxy in front of Plex redirects these requests, they fail.
+- An item action whose save or request runs past the server `timeout` answers 504 `timed out` instead of 502.
+- A run sends no request to the items of a library whose read failed in that run. Before, it still refreshed the cached items of that library.
+- When another autorefresh process prunes the history, the attempts, or the cache of a library during a read, autorefresh does not apply the read. A full scan then fails. Another run logs `Read is older than pruning` and reads the library again in the next run.
+- A dry run saves and deletes holds, because they are cache state.
+- Two processes that read the same library at the same time, such as a `--once` run beside the service, are not protected against each other.
+
+Other new log lines: `Skipped follow-up refresh` means that a run did not send the refresh after its match because another request or a hold holds the item. `Dropping write attempt failed` means that the attempt of a request that was not sent stays until its end.
+
+### Upgrade and rollback
+
+The upgrade adds database tables for the write attempts and the holds. Before you upgrade, stop every autorefresh process that uses the database, also a `--once` run from cron. An older version refuses to open the upgraded database.
+
+To go back to an older version, stop every autorefresh process, and then run this SQL on the database, for example with `sqlite3 autorefresh.db`:
+
+```sql
+BEGIN IMMEDIATE;
+DROP TABLE read_hold;
+DROP TABLE write_attempt;
+DROP TABLE prune_fence;
+DELETE FROM schema_migration WHERE version = 18;
+COMMIT;
+```
+
 ## Build from source
 
 Install [mise](https://mise.jdx.dev), then build the binary with the embedded dashboard:
