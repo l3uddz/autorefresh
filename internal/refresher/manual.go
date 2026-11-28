@@ -185,22 +185,24 @@ func (r *Refresher) manualMatch(ctx context.Context, item manualItem) (*fixMatch
 }
 
 // matchState is what the first read of manualMatch found: an unmatched
-// item, or the current match of a mismatched movie with the IDs of its
-// files, which the search used. The flag and the GUID are separate, so an
+// item, or the current match of a mismatched movie with the IDs of the
+// paths that the search used. The flag and the GUID are separate, so an
 // empty GUID never passes as unmatched.
 type matchState struct {
 	unmatched bool
 	guid      string   // the current match of a mismatched movie
-	ids       []pathID // the file IDs of a mismatched movie
+	ids       []pathID // the IDs of the searched paths of a mismatched movie
 }
 
-// stateOf returns the match state of the cached row from its live item, or
-// the reason why the item no longer needs the fix match.
-func stateOf(row store.Item, live plex.Item) (matchState, string) {
+// stateOf returns the match state of the cached row from its live item and
+// the paths that the search uses, or the reason why the item no longer
+// needs the fix match. A movie lists its paths as files, so a path that is
+// not a file of the movie fails the state as changed paths.
+func stateOf(row store.Item, live plex.Item, paths plex.Paths) (matchState, string) {
 	if row.Reasons&store.Unmatched != 0 {
 		return matchState{unmatched: true}, matchState{unmatched: true}.lost(live)
 	}
-	state := matchState{guid: live.GUID, ids: parseIDs(live.Files)}
+	state := matchState{guid: live.GUID, ids: parseIDs(paths.All())}
 	if live.GUID == "" {
 		return state, "no longer mismatched"
 	}
@@ -210,7 +212,7 @@ func stateOf(row store.Item, live plex.Item) (matchState, string) {
 // lost returns why the live item no longer needs the fix match of the
 // state, or "" when it still does: an unmatched item that Plex matched, or
 // a mismatched movie whose match changed, whose IDs no longer disagree with
-// its paths, or whose file IDs changed since the search.
+// its paths, or whose file IDs are not the IDs of the searched paths.
 func (s matchState) lost(live plex.Item) string {
 	if s.unmatched {
 		if itemReasons(live)&store.Unmatched == 0 {
@@ -247,7 +249,7 @@ func (r *Refresher) preCheck(ctx, searchCtx context.Context, run *serverRun, lib
 		}
 		return plex.Paths{}, matchState{}, false, nil
 	}
-	state, reason := stateOf(item.row, live)
+	state, reason := stateOf(item.row, live, paths)
 	if reason != "" {
 		itemEvent(log.Info(), item.server.Name, lib, item.row).Str("reason", reason).Msg("Skipped fix match")
 		return plex.Paths{}, matchState{}, false, nil

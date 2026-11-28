@@ -402,3 +402,22 @@ func TestRefreshItemIgnoredMismatchedOnlyRefreshes(t *testing.T) {
 		t.Error("decision recorded")
 	}
 }
+
+// A movie lists its paths as files. If Plex gave a location too, the search
+// would use other paths than the files, so Refresh now neither searches nor
+// matches.
+func TestRefreshItemMismatchedMovieWithLocation(t *testing.T) {
+	f, fp := mismatchFixture(t, []plex.Candidate{rightMatch}, checkAnswer{item: wrongMovie()})
+	fp.paths["101"] = []string{"/movies/Other {tmdb-300}"}
+
+	res, err := f.r.RefreshItem(t.Context(), testServer, "101")
+	if err != nil || res.Match != nil {
+		t.Fatalf("refresh = %+v, %v; want a plain refresh", res, err)
+	}
+	wantCalls(t, sends(fp.calls), "Refresh 101")
+	wantCalls(t, matchReads(fp.calls))
+	lines := f.logLines("info", "Skipped fix match")
+	if len(lines) != 1 || lines[0]["reason"] != "paths changed" {
+		t.Errorf("Skipped fix match lines = %v, want one with paths changed", lines)
+	}
+}
