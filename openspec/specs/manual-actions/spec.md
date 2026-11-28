@@ -33,7 +33,7 @@ When the user refreshes one item and no fix match applies, autorefresh SHALL sen
 
 #### Scenario: Refresh a cached item
 
-- **WHEN** the user refreshes a cached item that is not unmatched
+- **WHEN** the user refreshes a cached item that is neither unmatched nor a mismatched movie
 - **THEN** Plex gets one refresh request for that item
 - **AND** the item has one more attempt and one more refresh, and its history has an accepted manual request
 
@@ -109,7 +109,7 @@ When the fix match search of Refresh now fails, also when it runs out of its 45 
 
 ### Requirement: Refresh now keeps a match that the item got meanwhile
 
-Just before it applies a picked match after searching, autorefresh SHALL read the item from Plex again. It SHALL apply the match only when Plex still has the item unmatched. Otherwise, also when Plex cannot answer, it SHALL send only the plain refresh, because a library read or user action can match the item during the search.
+Just before it applies a picked match after searching, autorefresh SHALL read the item from Plex again. It SHALL apply the match only when Plex still has an unmatched item unmatched, or still shows a mismatched movie with the same match, the same file IDs, and IDs that disagree with its paths. Otherwise, also when Plex cannot answer, it SHALL send only the plain refresh, because a library read or user action can change the match during the search.
 
 #### Scenario: Matched during the search
 
@@ -120,6 +120,24 @@ Just before it applies a picked match after searching, autorefresh SHALL read th
 
 - **WHEN** the read just before the match fails
 - **THEN** autorefresh sends no match and sends only the refresh
+
+#### Scenario: Mismatched movie got another match during the search
+
+- **GIVEN** a mismatched movie matched to `plex://movie/200` at the first read
+- **WHEN** Plex shows `plex://movie/300` just before the match, whose IDs also disagree with the path
+- **THEN** autorefresh sends only the refresh and the action reports no applied match
+
+#### Scenario: Mismatched movie no longer disagrees just before the match
+
+- **GIVEN** a mismatched movie matched to `plex://movie/200` at the first read
+- **WHEN** Plex still shows `plex://movie/200` just before the match, but now lists an external ID that agrees with the path, or none that can be compared
+- **THEN** autorefresh sends only the refresh and the action reports no applied match
+
+#### Scenario: File IDs of a mismatched movie changed during the search
+
+- **GIVEN** a mismatched movie whose file named `{tmdb-100}` at the first read
+- **WHEN** Plex still shows the same match just before the match, but the file now names `{tmdb-300}`
+- **THEN** autorefresh sends only the refresh, logs `Skipped fix match` with the reason `paths changed`, and the action reports no applied match
 
 ### Requirement: Check after a manual request
 
@@ -506,7 +524,7 @@ Each metadata read of a check of a movie SHALL ask for its external IDs with `in
 #### Scenario: A refresh keeps a wrong match
 
 - **GIVEN** a cached movie with the reasons `mismatched` and `no-summary`
-- **WHEN** a manual refresh and its checks find a summary but Plex still lists `tmdb://200` for a path that names `{tmdb-100}`
+- **WHEN** the fix match search of a manual refresh finds no candidate, and the plain refresh and its checks find a summary but Plex still lists `tmdb://200` for a path that names `{tmdb-100}`
 - **THEN** the row keeps only `mismatched`
 
 #### Scenario: A check cannot compare
@@ -579,3 +597,46 @@ A check SHALL save nothing, also for a 404, and SHALL add a hold when no write a
 - **GIVEN** Plex accepted a Refresh now of movie `a`, then the movie was deleted, and the attempt of the refresh is still live
 - **WHEN** the check gets a 404, and an incremental read that does not list `a` is applied before the check saves
 - **THEN** the check records `a` as gone
+
+### Requirement: Refresh now runs the automatic fix match for a mismatched movie
+
+When refreshing a cached movie with the reason `mismatched` and `mismatched` not ignored, autorefresh SHALL read the movie from Plex first. If Plex shows it without a GUID or no longer mismatched, it SHALL send a plain refresh without a search. Otherwise it SHALL run automatic fix match with those paths, record the decision, and apply and follow up a pick whose GUID differs from the current match. A decision without such a pick SHALL give a plain refresh.
+
+#### Scenario: Mismatched movie with a pick
+
+- **GIVEN** a cached movie with the reason `mismatched`, matched to `plex://movie/200`, whose path names `{tmdb-100}`
+- **AND** the search of `tmdb-100` finds one candidate, `plex://movie/100`
+- **WHEN** the user refreshes it
+- **THEN** Plex gets the match request to `plex://movie/100` and then a refresh request
+- **AND** the history has an automatic decision that belongs to no run and an accepted manual match request
+- **AND** the action reports the applied match
+
+#### Scenario: Pick is the current match
+
+- **GIVEN** a cached movie with the reason `mismatched`, matched to `plex://movie/100`
+- **WHEN** the user refreshes it and the decision picks `plex://movie/100`
+- **THEN** autorefresh records the decision, logs `Skipped fix match` with the reason `already matched`, and sends only the plain refresh
+
+#### Scenario: No pick
+
+- **GIVEN** a cached movie with the reason `mismatched` whose folder ID searches find two different candidates
+- **WHEN** the user refreshes it
+- **THEN** autorefresh records the decision with its conflict and sends only the plain refresh
+
+#### Scenario: Movie no longer mismatched in Plex
+
+- **GIVEN** a cached movie with the stored reason `mismatched`, but Plex now lists an external ID that agrees with its path
+- **WHEN** the user refreshes it
+- **THEN** autorefresh runs no match search, records no match decision, and sends only the plain refresh
+
+#### Scenario: Mismatched is ignored
+
+- **GIVEN** `mismatched` is in `ignore-reasons`
+- **WHEN** the user refreshes a movie with the reason `mismatched`
+- **THEN** autorefresh runs no match search, records no decision, and sends only the refresh
+
+#### Scenario: A check confirms the fix
+
+- **GIVEN** Plex accepted the match of a mismatched movie whose only reason is `mismatched`
+- **WHEN** a check shows the GUID of the pick and an external ID that agrees with the path
+- **THEN** autorefresh removes the row and records a completed event

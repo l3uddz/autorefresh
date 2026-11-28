@@ -1,9 +1,11 @@
 package refresher
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -100,10 +102,10 @@ type RefreshResult struct {
 }
 
 // RefreshItem handles the item now as a run handles a due item, and
-// records each step as a manual action. A cached item that seeksMatch gets
-// the automatic fix match decision, also before its first refresh, and the
-// decision is recorded. With a pick, RefreshItem applies the match and
-// follows it up as settleMatch does. Otherwise, also when the decision
+// records each step as a manual action. A cached item that
+// refreshSeeksMatch gets the automatic fix match decision, also before its
+// first refresh, and the decision is recorded. With a pick, RefreshItem
+// applies the match and follows it up as settleMatch does. Otherwise, also when the decision
 // failed, it requests a refresh and then checks a cached item as
 // followUpCheck does. It returns the error of the Plex request, a store
 // error (ErrStore), or the error of ctx. It logs a failed follow-up,
@@ -142,13 +144,13 @@ var manualSearchTimeout = 45 * time.Second
 
 // manualMatch runs the automatic fix match of the item of RefreshItem and
 // records its decision, as a run does, if the item is cached and
-// seeksMatch. It returns the fix match of the decision, or nil for a plain
-// refresh. A failed search, also one that ran out of manualSearchTimeout,
+// refreshSeeksMatch. It returns the fix match of the decision, or nil for a
+// plain refresh. A failed search, also one that ran out of manualSearchTimeout,
 // gives nil too, so the refresh follows, and a 404 answer of that refresh
 // records the item as gone. It returns a store error (ErrStore) or the
 // error of ctx.
 func (r *Refresher) manualMatch(ctx context.Context, item manualItem) (*fixMatch, error) {
-	if !item.cached || !r.seeksMatch(item.row) {
+	if !item.cached || !r.refreshSeeksMatch(item.row) {
 		return nil, nil
 	}
 	lib, err := r.itemLibrary(item.server.Name, item.row.Section)
@@ -158,7 +160,7 @@ func (r *Refresher) manualMatch(ctx context.Context, item manualItem) (*fixMatch
 	searchCtx, cancel := context.WithTimeout(ctx, manualSearchTimeout)
 	defer cancel()
 	run := &serverRun{server: item.server, files: map[string][]string{}}
-	paths, ok, err := r.preCheckUnmatched(ctx, searchCtx, run, lib, item)
+	paths, state, ok, err := r.preCheck(ctx, searchCtx, run, lib, item)
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -180,54 +182,123 @@ func (r *Refresher) manualMatch(ctx context.Context, item manualItem) (*fixMatch
 	if ev.fm == nil {
 		return nil, nil
 	}
-	return r.keepMatch(ctx, item, lib, ev.fm), nil
+	return r.keepMatch(ctx, item, lib, ev.fm, state), nil
 }
 
-// preCheckUnmatched reads the item and its paths once before autoMatch. If
-// Plex already matched the item, it skips autoMatch without recording a
+// matchState is what the first read of manualMatch found: an unmatched
+// item, or the current match of a mismatched movie with the IDs of the
+// paths that the search used. The flag and the GUID are separate, so an
+// empty GUID never passes as unmatched.
+type matchState struct {
+	unmatched bool
+	guid      string   // the current match of a mismatched movie
+	ids       []pathID // the IDs of the searched paths of a mismatched movie
+}
+
+// stateOf returns the match state of the cached row from its live item and
+// the paths that the search uses, or the reason why the item no longer
+// needs the fix match. A movie lists its paths as files, so a searched path
+// whose IDs differ from the file IDs fails the state as changed paths.
+func stateOf(row store.Item, live plex.Item, paths plex.Paths) (matchState, string) {
+	if row.Reasons&store.Unmatched != 0 {
+		return matchState{unmatched: true}, matchState{unmatched: true}.lost(live)
+	}
+	state := matchState{guid: live.GUID, ids: idSet(paths.All())}
+	if live.GUID == "" {
+		return state, "no longer mismatched"
+	}
+	return state, state.lost(live)
+}
+
+// lost returns why the live item no longer needs the fix match of the
+// state, or "" when it still does: an unmatched item that Plex matched, or
+// a mismatched movie whose match changed, whose IDs no longer disagree with
+// its paths, or whose file IDs are not the IDs of the searched paths.
+func (s matchState) lost(live plex.Item) string {
+	if s.unmatched {
+		if itemReasons(live)&store.Unmatched == 0 {
+			return "no longer unmatched"
+		}
+		return ""
+	}
+	if live.GUID != s.guid || CompareMovieIDs(live.GUID, live.Files, live.ExternalIDs).Result != WrongMatchMismatched {
+		return "no longer mismatched"
+	}
+	if !slices.Equal(idSet(live.Files), s.ids) {
+		return "paths changed"
+	}
+	return ""
+}
+
+// idSet returns the path IDs of paths sorted, so two reads that list the
+// same files in another order give the same set.
+func idSet(paths []string) []pathID {
+	ids := parseIDs(paths)
+	slices.SortFunc(ids, func(a, b pathID) int {
+		return cmp.Or(cmp.Compare(a.Source, b.Source), cmp.Compare(a.Value, b.Value))
+	})
+	return ids
+}
+
+// preCheck reads the item and its paths once before autoMatch, and returns
+// the paths and the match state. If Plex no longer has the item unmatched,
+// or the movie mismatched, it skips autoMatch without recording a
 // decision. On 404 it records no decision so the plain refresh records the
 // item gone once; other failures record a failed decision.
-func (r *Refresher) preCheckUnmatched(ctx, searchCtx context.Context, run *serverRun, lib plex.Library, item manualItem) (plex.Paths, bool, error) {
+func (r *Refresher) preCheck(ctx, searchCtx context.Context, run *serverRun, lib plex.Library, item manualItem) (plex.Paths, matchState, bool, error) {
 	live, paths, err := item.server.Plex.ItemWithPaths(searchCtx, item.row.RatingKey)
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return plex.Paths{}, false, ctxErr
+		return plex.Paths{}, matchState{}, false, ctxErr
 	}
 	if err != nil {
 		dec := store.MatchDecision{ItemYear: item.row.Year, Outcome: store.DecisionFailed, Error: err.Error()}
 		if recErr := r.recordDecision(ctx, run, item.row, dec, err); recErr != nil {
-			return plex.Paths{}, false, fmt.Errorf("%w: %w", ErrStore, recErr)
+			return plex.Paths{}, matchState{}, false, fmt.Errorf("%w: %w", ErrStore, recErr)
 		}
 		if !errors.Is(err, plex.ErrNotFound) {
 			itemEvent(log.Warn(), item.server.Name, lib, item.row).Err(err).Msg("Match search failed")
 		}
-		return plex.Paths{}, false, nil
+		return plex.Paths{}, matchState{}, false, nil
 	}
-	if itemReasons(live)&store.Unmatched == 0 {
-		itemEvent(log.Info(), item.server.Name, lib, item.row).Str("reason", "no longer unmatched").Msg("Skipped fix match")
-		return plex.Paths{}, false, nil
+	state, reason := stateOf(item.row, live, paths)
+	if reason != "" {
+		itemEvent(log.Info(), item.server.Name, lib, item.row).Str("reason", reason).Msg("Skipped fix match")
+		return plex.Paths{}, matchState{}, false, nil
 	}
-	return paths, true, nil
+	return paths, state, true, nil
 }
 
-// keepMatch returns the fix match fm of the item of manualMatch if Plex
-// still has the item unmatched, or else nil for a plain refresh. The item
-// lock does not hold off the library reads of a run, and a read saves what
-// it found only at its end, so it asks Plex: the item can have got a match
-// during the search, which then stays. If Plex cannot tell, it keeps no
-// match either.
-func (r *Refresher) keepMatch(ctx context.Context, item manualItem, lib plex.Library, fm *fixMatch) *fixMatch {
-	live, err := item.server.Plex.Item(ctx, item.row.RatingKey)
-	if err == nil && itemReasons(live)&store.Unmatched != 0 {
+// keepMatch returns the fix match fm of the item of manualMatch if it still
+// applies, or else nil for a plain refresh. A pick that is the current
+// match of a mismatched movie never applies. Otherwise it asks Plex,
+// because the item lock does not hold off the library reads of a run, and
+// a read saves what it found only at its end: the item can have got
+// another match during the search, which then stays. If Plex cannot tell,
+// it keeps no match either.
+func (r *Refresher) keepMatch(ctx context.Context, item manualItem, lib plex.Library, fm *fixMatch, state matchState) *fixMatch {
+	reason, err := r.matchLost(ctx, item, fm, state)
+	if reason == "" {
 		return fm
 	}
 	ev := itemEvent(log.Info(), item.server.Name, lib, item.row).Str("candidate", fm.cand.Name)
 	if err != nil {
-		ev = ev.Err(err).Str("reason", "match state unknown")
-	} else {
-		ev = ev.Str("reason", "no longer unmatched")
+		ev = ev.Err(err)
 	}
-	ev.Msg("Skipped fix match")
+	ev.Str("reason", reason).Msg("Skipped fix match")
 	return nil
+}
+
+// matchLost returns why the fix match fm of keepMatch no longer applies,
+// with the error of a failed read, or "" when it still applies.
+func (r *Refresher) matchLost(ctx context.Context, item manualItem, fm *fixMatch, state matchState) (string, error) {
+	if !state.unmatched && fm.cand.GUID == state.guid {
+		return "already matched", nil
+	}
+	live, err := item.server.Plex.Item(ctx, item.row.RatingKey)
+	if err != nil {
+		return "match state unknown", err
+	}
+	return state.lost(live), nil
 }
 
 // ApplyMatch requests a selected Plex match and records its result.

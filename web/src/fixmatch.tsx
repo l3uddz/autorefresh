@@ -315,7 +315,7 @@ interface AutoMatchProps {
 
 /** The last automatic fix match, or the preview that runs it now. The
  * preview records nothing and sends nothing to Plex. */
-function AutoMatchPanel({ decision, isPreview, title, hasHeading, preview, canRun, onRun }: AutoMatchProps) {
+export function AutoMatchPanel({ decision, isPreview, title, hasHeading, preview, canRun, onRun }: AutoMatchProps) {
   const run = (label: string, variant: 'primary' | 'secondary') => (
     <Button label={label} variant={variant} size="sm" isLoading={preview.isFetching} isDisabled={!canRun} tooltip={canRun ? undefined : 'Waiting for the status of autorefresh'} onClick={onRun} />
   );
@@ -335,7 +335,7 @@ function AutoMatchPanel({ decision, isPreview, title, hasHeading, preview, canRu
     <VStack gap={4}>
       {hasHeading && <Heading level={3} accessibilityLevel={3}>{title}</Heading>}
       <Text type="supporting" color="secondary">
-        Autorefresh searched as a run would, but recorded nothing and sent nothing to Plex. To apply its pick, click Match on that candidate. For an unmatched item in the queue, Refresh now in the item details also applies the automatic pick.
+        Autorefresh searched as a run would, but recorded nothing and sent nothing to Plex. To apply its pick, click Match on that candidate. For an unmatched item or a mismatched movie in the queue, Refresh now in the item details also applies the automatic pick.
       </Text>
       <DecisionPanel decision={decision} hasHeading={false} />
       {failure}

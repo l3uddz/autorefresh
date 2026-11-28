@@ -20,7 +20,7 @@ interface LiveState {
 
 /** Warns that Plex matched a movie to another entry than its path names.
  * It shows nothing without a live view, while the live view fails, or for
- * another result. The Fix match action of the detail fixes it, so the
+ * another result. Fix match or Refresh now in the detail fixes it, so the
  * banner has no button. */
 export function WrongMatchWarning({ live: { data, error } }: { live: LiveState }) {
   const mismatch = error ? undefined : data?.mismatch;
@@ -31,7 +31,7 @@ export function WrongMatchWarning({ live: { data, error } }: { live: LiveState }
       title="Plex matched this movie to a different entry than its path names"
       description={
         <VStack gap={1}>
-          <Text color="inherit">Use Fix match to choose the right one.</Text>
+          <Text color="inherit">Use Fix match to choose the right one, or Refresh now to try the automatic fix match.</Text>
           {sourceLines(mismatch.sources).map(line => (
             <Text key={line} type="code" color="inherit">{line}</Text>
           ))}

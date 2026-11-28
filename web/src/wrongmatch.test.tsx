@@ -20,10 +20,10 @@ const live: LiveItem = {
 };
 
 describe('wrong match warning', () => {
-  it('names each disagreeing source and points to Fix match', () => {
+  it('names each disagreeing source and points to Fix match and Refresh now', () => {
     const html = renderToString(<WrongMatchWarning live={{ data: live, error: null }} />);
     expect(html).toContain('Plex matched this movie to a different entry than its path names');
-    expect(html).toContain('Use Fix match to choose the right one.');
+    expect(html).toContain('Use Fix match to choose the right one, or Refresh now to try the automatic fix match.');
     expect(html).toContain('TMDB: path 100, Plex 200');
     expect(html).toContain('IMDb: path tt5, Plex tt6, tt7');
     expect(html).not.toContain('<button');

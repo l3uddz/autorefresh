@@ -396,6 +396,15 @@ func (r *Refresher) seeksMatch(it store.Item) bool {
 	return it.Reasons&store.Unmatched != 0 && r.opts.IgnoreReasons&store.Unmatched == 0
 }
 
+// refreshSeeksMatch reports whether Refresh now runs the automatic fix
+// match of the item: an item that seeksMatch, or a movie with the reason
+// mismatched that is not ignored. A run never matches a mismatched movie.
+func (r *Refresher) refreshSeeksMatch(it store.Item) bool {
+	mismatched := it.Type == plex.MovieLibrary && it.Reasons&store.Mismatched != 0 &&
+		r.opts.IgnoreReasons&store.Mismatched == 0
+	return r.seeksMatch(it) || mismatched
+}
+
 // autoMatch runs the automatic fix match of the item and returns its
 // evaluation and its decision. A run and a preview both decide through it,
 // so they always choose the same way. err is the error of evaluateMatch,
