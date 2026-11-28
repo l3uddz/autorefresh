@@ -429,7 +429,7 @@ func (r *Refresher) checkHeld(ctx context.Context, item manualItem, run *serverR
 func (r *Refresher) recordCheckGone(item manualItem, run *serverRun) error {
 	server, key := item.server.Name, item.row.RatingKey
 	if run != nil {
-		return r.store.RecordGone(server, key, r.now(), store.SourceAuto, "", run.id)
+		return r.store.RecordGone(server, key, r.now(), store.SourceAuto, "", run.id, store.AttemptResult{})
 	}
 	req := store.Request{Server: server, RatingKey: key, At: r.now(), Source: store.SourceManual}
 	return r.store.RecordManual(store.ManualRecord{Request: req, Snapshot: item.row, Cached: true, Gone: true})

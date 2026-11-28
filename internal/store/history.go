@@ -47,8 +47,9 @@ type Request struct {
 	Action            Action
 	Accepted          bool
 	Error             string
-	Match             *MatchTarget // match requests, accepted or failed
-	RunID             int64        // the run that sent it; 0: none
+	Match             *MatchTarget  // match requests, accepted or failed
+	RunID             int64         // the run that sent it; 0: none
+	Attempt           AttemptResult // the write attempt of the request; zero: none
 }
 
 // MatchCandidate is one candidate that a Plex search returned.
@@ -141,8 +142,9 @@ func (r Request) Outcome() string {
 }
 
 // RecordRequest counts one attempt of an item and, if the request has an
-// action, writes a request event with a snapshot of the row. It writes
-// nothing for a missing row.
+// action, writes a request event with a snapshot of the row. It keeps or
+// deletes the write attempt of r first, and commits that also for a missing
+// row, for which it writes nothing else.
 func (s *Store) RecordRequest(r Request) error {
 	if r.Source == "" {
 		return fmt.Errorf("record request: empty source")
@@ -153,12 +155,17 @@ func (s *Store) RecordRequest(r Request) error {
 	}
 	defer tx.Rollback()
 
-	snap, found, err := readItem(tx, r.Server, r.RatingKey)
-	if err != nil || !found {
+	if err := finishAttempt(tx, r.Attempt); err != nil {
 		return err
 	}
-	if err := recordRequest(tx, r, snap); err != nil {
+	snap, found, err := readItem(tx, r.Server, r.RatingKey)
+	if err != nil {
 		return err
+	}
+	if found {
+		if err := recordRequest(tx, r, snap); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit request: %w", err)
@@ -345,25 +352,32 @@ func snapshotEvent(row Item, at time.Time, kind EventKind, source Source) Event 
 // RecordGone writes a gone event of the run runID (0: none) with a snapshot
 // of the row and deletes the row, in one transaction. action is the action
 // of the request that found the item gone, or empty for a removal that no
-// request found. It writes nothing for a missing row.
-func (s *Store) RecordGone(server, ratingKey string, at time.Time, source Source, action Action, runID int64) error {
+// request found. attempt is the write attempt of that request, which it
+// keeps or deletes first; it commits that also for a missing row, for which
+// it writes nothing else.
+func (s *Store) RecordGone(server, ratingKey string, at time.Time, source Source, action Action, runID int64, attempt AttemptResult) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin gone: %w", err)
 	}
 	defer tx.Rollback()
 
+	if err := finishAttempt(tx, attempt); err != nil {
+		return err
+	}
 	snap, found, err := readItem(tx, server, ratingKey)
-	if err != nil || !found {
+	if err != nil {
 		return err
 	}
-	e := snapshotEvent(snap, at, EventGone, source)
-	e.Action, e.RunID = action, runID
-	if _, err := insertEvent(tx, e); err != nil {
-		return err
-	}
-	if err := deleteItem(tx, server, ratingKey); err != nil {
-		return err
+	if found {
+		e := snapshotEvent(snap, at, EventGone, source)
+		e.Action, e.RunID = action, runID
+		if _, err := insertEvent(tx, e); err != nil {
+			return err
+		}
+		if err := deleteItem(tx, server, ratingKey); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit gone: %w", err)

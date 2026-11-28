@@ -134,7 +134,7 @@ func TestRecordGoneWritesEventAndDeletesRow(t *testing.T) {
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
 	at := base.Add(time.Hour)
 
-	if err := s.RecordGone(srv, "a", at, SourceAuto, ActionRefresh, 0); err != nil {
+	if err := s.RecordGone(srv, "a", at, SourceAuto, ActionRefresh, 0, AttemptResult{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := rows(t, s)["a"]; ok {
@@ -145,7 +145,7 @@ func TestRecordGoneWritesEventAndDeletesRow(t *testing.T) {
 		!events[0].At.Equal(at) || events[0].Source != SourceAuto || events[0].Action != ActionRefresh {
 		t.Fatalf("events = %+v", events)
 	}
-	if err := s.RecordGone(srv, "a", at, SourceAuto, "", 0); err != nil {
+	if err := s.RecordGone(srv, "a", at, SourceAuto, "", 0, AttemptResult{}); err != nil {
 		t.Fatalf("missing row: %v", err)
 	}
 	if events, _ := s.Timeline(srv, "a"); len(events) != 1 {

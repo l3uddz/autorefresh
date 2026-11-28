@@ -286,3 +286,121 @@ func TestRollbackOfWriteAttempts(t *testing.T) {
 		t.Errorf("fence rows = %d, want 1", n)
 	}
 }
+
+// attemptState returns whether the attempt id exists, with its outcome and
+// answered_seq.
+func attemptState(t *testing.T, s *Store, id int64) (found bool, outcome string, answered int64) {
+	t.Helper()
+	var seq *int64
+	err := s.db.QueryRow(`SELECT outcome, answered_seq FROM write_attempt WHERE id = ?`, id).Scan(&outcome, &seq)
+	if err != nil {
+		return false, "", 0
+	}
+	if seq != nil {
+		answered = *seq
+	}
+	return true, outcome, answered
+}
+
+// recorders are the methods that record a sent request with its attempt.
+var recorders = map[string]func(s *Store, key string, a AttemptResult) error{
+	"request": func(s *Store, key string, a AttemptResult) error {
+		return s.RecordRequest(Request{Server: srv, RatingKey: key, At: base, Source: SourceAuto, Action: ActionRefresh, Attempt: a})
+	},
+	"gone": func(s *Store, key string, a AttemptResult) error {
+		return s.RecordGone(srv, key, base, SourceAuto, ActionRefresh, 0, a)
+	},
+	"manual": func(s *Store, key string, a AttemptResult) error {
+		return s.RecordManual(ManualRecord{
+			Request:  Request{Server: srv, RatingKey: key, At: base, Source: SourceManual, Action: ActionRefresh, Attempt: a},
+			Snapshot: item(key, NoSummary),
+			Cached:   true,
+		})
+	},
+	"manual gone": func(s *Store, key string, a AttemptResult) error {
+		return s.RecordManual(ManualRecord{
+			Request:  Request{Server: srv, RatingKey: key, At: base, Source: SourceManual, Action: ActionRefresh, Attempt: a},
+			Snapshot: item(key, NoSummary),
+			Cached:   true,
+			Gone:     true,
+		})
+	},
+}
+
+func TestRecordingFinishesTheAttempt(t *testing.T) {
+	for name, record := range recorders {
+		t.Run(name, func(t *testing.T) {
+			s := openTest(t)
+			fixedClock(s, base)
+			apply(t, s, Read{Items: []Item{item("1", NoSummary), item("2", NoSummary), item("3", NoSummary)}})
+			accepted := attempt(t, s, AttemptSpec{RatingKey: "1"})
+			unknown := attempt(t, s, AttemptSpec{RatingKey: "2"})
+			rejected := attempt(t, s, AttemptSpec{RatingKey: "3"})
+
+			for key, a := range map[string]AttemptResult{
+				"1": {ID: accepted, Outcome: AttemptAccepted},
+				"2": {ID: unknown, Outcome: AttemptUnknown},
+				"3": {ID: rejected, Outcome: AttemptRejected},
+			} {
+				if err := record(s, key, a); err != nil {
+					t.Fatalf("record %s: %v", key, err)
+				}
+			}
+			for id, want := range map[int64]AttemptOutcome{accepted: AttemptAccepted, unknown: AttemptUnknown} {
+				found, outcome, answered := attemptState(t, s, id)
+				if !found || outcome != string(want) || answered != rejected {
+					t.Errorf("attempt %d = %v %q %d, want %s answered at the newest attempt %d", id, found, outcome, answered, want, rejected)
+				}
+			}
+			if found, _, _ := attemptState(t, s, rejected); found {
+				t.Error("the rejected attempt was kept")
+			}
+		})
+	}
+}
+
+func TestRecordingWithoutAttempt(t *testing.T) {
+	for name, record := range recorders {
+		t.Run(name, func(t *testing.T) {
+			s := openTest(t)
+			apply(t, s, Read{Items: []Item{item("1", NoSummary)}})
+			other := attempt(t, s, AttemptSpec{RatingKey: "1"})
+			if err := record(s, "1", AttemptResult{}); err != nil {
+				t.Fatal(err)
+			}
+			if found, outcome, _ := attemptState(t, s, other); !found || outcome != "pending" {
+				t.Errorf("the attempt of another write = %v %q, want it unchanged", found, outcome)
+			}
+		})
+	}
+}
+
+func TestRecordingAfterTheLibraryIsGone(t *testing.T) {
+	for name, record := range recorders {
+		t.Run(name, func(t *testing.T) {
+			a, b := openPair(t)
+			apply(t, a, Read{Items: []Item{item("1", NoSummary), item("2", NoSummary)}})
+			rejected := attempt(t, a, AttemptSpec{RatingKey: "1"})
+			accepted := attempt(t, a, AttemptSpec{RatingKey: "2"})
+			// The other connection removes the library after the sends.
+			if _, err := b.PruneSections(srv, nil); err != nil {
+				t.Fatal(err)
+			}
+			if err := record(a, "1", AttemptResult{ID: rejected, Outcome: AttemptRejected}); err != nil {
+				t.Fatalf("record rejected: %v", err)
+			}
+			if err := record(a, "2", AttemptResult{ID: accepted, Outcome: AttemptAccepted}); err != nil {
+				t.Fatalf("record accepted: %v", err)
+			}
+			if found, _, _ := attemptState(t, a, rejected); found {
+				t.Error("the rejected attempt was kept")
+			}
+			if found, outcome, _ := attemptState(t, a, accepted); !found || outcome != string(AttemptAccepted) {
+				t.Errorf("accepted attempt = %v %q, want it kept as accepted", found, outcome)
+			}
+			if n := countRows(t, a, "event"); n != 0 {
+				t.Errorf("events = %d, want 0", n)
+			}
+		})
+	}
+}

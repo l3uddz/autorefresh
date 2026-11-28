@@ -730,13 +730,13 @@ func TestApplyReadReturnsActionsOfFixedRows(t *testing.T) {
 func TestRecordGoneDeletesRow(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
-	if err := s.RecordGone(srv, "a", base, SourceAuto, "", 0); err != nil {
+	if err := s.RecordGone(srv, "a", base, SourceAuto, "", 0, AttemptResult{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(rows(t, s)) != 0 {
 		t.Fatal("row not deleted")
 	}
-	if err := s.RecordGone(srv, "a", base, SourceAuto, "", 0); err != nil {
+	if err := s.RecordGone(srv, "a", base, SourceAuto, "", 0, AttemptResult{}); err != nil {
 		t.Fatalf("missing row: %v", err)
 	}
 }

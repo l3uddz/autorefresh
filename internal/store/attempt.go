@@ -153,6 +153,27 @@ func insertHoldOfRow(ctx context.Context, tx *sql.Tx, server, key string) error 
 	return nil
 }
 
+// finishAttempt saves the outcome of the attempt of a, in the transaction
+// that records its request: it deletes a rejected attempt and keeps an
+// accepted or unknown one until its end, with the newest attempt id as its
+// answered_seq. The zero AttemptResult changes nothing.
+func finishAttempt(tx *sql.Tx, a AttemptResult) error {
+	if a.ID == 0 {
+		return nil
+	}
+	var err error
+	if a.Outcome == AttemptRejected {
+		_, err = tx.Exec(`DELETE FROM write_attempt WHERE id = ?`, a.ID)
+	} else {
+		_, err = tx.Exec(`UPDATE write_attempt SET outcome = ?,
+			answered_seq = (SELECT seq FROM sqlite_sequence WHERE name = 'write_attempt') WHERE id = ?`, string(a.Outcome), a.ID)
+	}
+	if err != nil {
+		return fmt.Errorf("record attempt outcome: %w", err)
+	}
+	return nil
+}
+
 // DropAttempt deletes the attempt id of a write that was not sent.
 func (s *Store) DropAttempt(ctx context.Context, id int64) error {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM write_attempt WHERE id = ?`, id); err != nil {
