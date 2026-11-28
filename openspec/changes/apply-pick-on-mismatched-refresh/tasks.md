@@ -32,8 +32,8 @@ Commit: `feat(web): name Refresh now as a fix for a mismatched movie`
 
 Commit: `docs(readme): say that Refresh now fixes a mismatched movie`
 
-- [ ] 3.1 Update the wrong match texts of `README.md`: Refresh now on a mismatched movie applies the automatic pick when it differs from the current match, and runs still never match such a movie. Update the `internal/refresher` row of `AGENTS.md` for the manual fix match of a mismatched movie.
+- [x] 3.1 Update the wrong match texts of `README.md`: Refresh now on a mismatched movie applies the automatic pick when it differs from the current match, and runs still never match such a movie. Update the `internal/refresher` row of `AGENTS.md` for the manual fix match of a mismatched movie.
 
 ## 4. Checks
 
-- [ ] 4.1 Run the CI sequence of AGENTS.md: `mise run vendor`, `mise run test`, `mise run lint`, `mise run web-install`, `mise run web-lint`, `mise run web-test`, and `mise run test-webui`. Then run `pnpm exec astryx doctor --built .` in `web/`, and `openspec validate --all --strict`.
+- [x] 4.1 Run the CI sequence of AGENTS.md: `mise run vendor`, `mise run test`, `mise run lint`, `mise run web-install`, `mise run web-lint`, `mise run web-test`, and `mise run test-webui`. Then run `pnpm exec astryx doctor --built .` in `web/`, and `openspec validate --all --strict`.
