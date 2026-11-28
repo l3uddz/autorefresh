@@ -4,8 +4,8 @@
 
 Commit: `feat(plex): find the items of a library with a GUID`
 
-- [ ] 1.1 Add `FindByGUID(ctx, section, itemType, guid)` to the Plex client: one request with `X-Plex-Container-Start=0` and `X-Plex-Container-Size=50`, the `listQuery` of the type, and the `guid` filter, with no further page. Reject an invalid section, an unknown type, or an empty GUID before any request.
-- [ ] 1.2 Add tests with `httptest`: the query parameters, one request also when `totalSize` is larger than the page, the guards, and a 404 or 503 answer (`ErrNotFound`, `ErrUnavailable`).
+- [x] 1.1 Add `FindByGUID(ctx, section, itemType, guid)` to the Plex client: one request with `X-Plex-Container-Start=0` and `X-Plex-Container-Size=50`, the `listQuery` of the type, and the `guid` filter, with no further page. Reject an invalid section, an unknown type, or an empty GUID before any request.
+- [x] 1.2 Add tests with `httptest`: the query parameters, one request also when `totalSize` is larger than the page, the guards, and a 404 or 503 answer (`ErrNotFound`, `ErrUnavailable`).
 
 ## 2. Store: record a merge as a completion
 

@@ -206,6 +206,36 @@ func (c *Client) List(ctx context.Context, section string, itemType int, filters
 	return items, nil
 }
 
+// findPageSize is the most items that FindByGUID asks for.
+const findPageSize = 50
+
+// FindByGUID lists the items of one item type in a section that Plex
+// gives for the filter guid=<guid>. It reads one page of at most
+// findPageSize items and no further page, so a Plex version that ignores
+// the filter costs one small page. The caller checks the GUID of each item.
+func (c *Client) FindByGUID(ctx context.Context, section string, itemType int, guid string) ([]Item, error) {
+	switch {
+	case !idPattern.MatchString(section):
+		return nil, errors.New("invalid plex section")
+	case itemType != TypeMovie && itemType != TypeShow:
+		return nil, fmt.Errorf("invalid plex item type %d", itemType)
+	case guid == "":
+		return nil, errors.New("empty plex guid")
+	}
+	query := listQuery(itemType, []Filter{{Key: "guid", Value: guid}})
+	query.Set("X-Plex-Container-Start", "0")
+	query.Set("X-Plex-Container-Size", strconv.Itoa(findPageSize))
+	var resp metadataResponse
+	if err := c.send(ctx, http.MethodGet, c.endpoint("library", "sections", section, "all"), query, &resp); err != nil {
+		return nil, fmt.Errorf("finding guid in section %s: %w", section, err)
+	}
+	items := make([]Item, 0, len(resp.MediaContainer.Metadata))
+	for _, m := range resp.MediaContainer.Metadata {
+		items = append(items, m.item())
+	}
+	return items, nil
+}
+
 // walkMetadataPages visits one page at a time and returns the final total.
 // Each page after the first overlaps the previous page by one item. Returning
 // false from visit stops pagination early.

@@ -579,3 +579,87 @@ func TestItemReadsAskForExternalIDs(t *testing.T) {
 		}
 	}
 }
+
+// FindByGUID sends one request for at most 50 items with the guid filter,
+// also when the answer says that more items exist.
+func TestFindByGUIDReadsOnePage(t *testing.T) {
+	tests := []struct {
+		name string
+		typ  int
+		want string
+	}{
+		{"movie", TypeMovie, "X-Plex-Container-Size=50&X-Plex-Container-Start=0" +
+			"&excludeElements=Role%2CDirector%2CWriter%2CGenre%2CCountry&guid=plex%3A%2F%2Fmovie%2F100&includeGuids=1&sort=addedAt&type=1"},
+		{"show", TypeShow, "X-Plex-Container-Size=50&X-Plex-Container-Start=0" +
+			"&excludeElements=Media%2CRole%2CDirector%2CWriter%2CGenre%2CCountry&guid=plex%3A%2F%2Fmovie%2F100&sort=addedAt&type=2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Write([]byte(`{"MediaContainer":{"size":1,"totalSize":900,"Metadata":[{"ratingKey":"7","guid":"plex://movie/100"}]}}`))
+			})
+
+			items, err := c.FindByGUID(context.Background(), "2", tt.typ, "plex://movie/100")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(items) != 1 || items[0].RatingKey != "7" || items[0].GUID != "plex://movie/100" {
+				t.Errorf("items = %+v", items)
+			}
+			reqs := rec.all()
+			if len(reqs) != 1 {
+				t.Fatalf("got %d requests, want 1", len(reqs))
+			}
+			if reqs[0].Method != http.MethodGet || reqs[0].URL.Path != "/library/sections/2/all" {
+				t.Errorf("request = %s %s", reqs[0].Method, reqs[0].URL.Path)
+			}
+			if reqs[0].URL.RawQuery != tt.want {
+				t.Errorf("query =\n%s\nwant\n%s", reqs[0].URL.RawQuery, tt.want)
+			}
+		})
+	}
+}
+
+func TestFindByGUIDRejectsBadInput(t *testing.T) {
+	tests := []struct {
+		name, section string
+		typ           int
+		guid          string
+	}{
+		{"section", "../1", TypeMovie, "plex://movie/1"},
+		{"type", "1", 3, "plex://movie/1"},
+		{"guid", "1", TypeMovie, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Write([]byte(`{"MediaContainer":{"totalSize":0}}`))
+			})
+			if _, err := c.FindByGUID(context.Background(), tt.section, tt.typ, tt.guid); err == nil {
+				t.Fatal("no error")
+			}
+			if n := len(rec.all()); n != 0 {
+				t.Errorf("sent %d requests, want none", n)
+			}
+		})
+	}
+}
+
+func TestFindByGUIDErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		want   error
+	}{
+		{"not found", http.StatusNotFound, ErrNotFound},
+		{"unavailable", http.StatusServiceUnavailable, ErrUnavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(tt.status) })
+			if _, err := c.FindByGUID(context.Background(), "1", TypeMovie, "plex://movie/1"); !errors.Is(err, tt.want) {
+				t.Fatalf("error = %v, want %v", err, tt.want)
+			}
+		})
+	}
+}
