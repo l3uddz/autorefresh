@@ -32,7 +32,7 @@ A library read takes its event mark, lists the library, and then applies the lis
 - **Configuration keys**: none added, changed, or removed.
 - **API routes**: none added or removed. An item action whose attempt cannot be saved fails like any other database error (500), or with 504 when its deadline passed, and sends nothing. An item action whose send passes the server timeout answers 504 `timed out` instead of 502.
 - **Dashboard pages**: none added. The item list and the item detail show an item that a write attempt or a hold keeps as `waiting`, and a waiting item whose next due time has passed as "Waiting · next run".
-- **Plex**: no new kind of request. A write that Plex answers with a redirect fails instead of being sent again. A hold adds one full read of its library.
+- **Plex**: no new kind of request. A write that Plex answers with a redirect fails instead of being sent again. A hold keeps its library on full reads until a full read reconciles the item. A held item that the listing omits while Plex still has it keeps the library on full reads until then.
 - **Database**: migration 18 adds three tables.
 
 ## Capabilities
