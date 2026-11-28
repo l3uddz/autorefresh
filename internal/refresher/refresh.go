@@ -181,7 +181,7 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	// match that fixed the item moves it to Fixed now.
 	var stop error
 	if fm != nil {
-		_, stop = r.settleMatch(ctx, manualItem{server: run.server, row: it, cached: true}, run, res)
+		_, stop = r.settleMatch(ctx, manualItem{server: run.server, row: it, cached: true}, run, res, fm.cand.GUID)
 		if errors.Is(stop, ErrStore) {
 			return true, stop
 		}

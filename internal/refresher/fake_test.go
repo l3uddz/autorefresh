@@ -32,6 +32,7 @@ type fakePlex struct {
 	matchErrs      map[string]error            // by rating key
 	series         map[string]plex.Series      // the provider series by GUID; a missing GUID is ErrNotFound
 	seriesErrs     map[string]error            // by GUID
+	matched        map[string]string           // the GUID of the last accepted match, by rating key
 	calls          []string
 	onCall         func(call string) // runs after each recorded call, if set
 }
@@ -197,5 +198,12 @@ func (f *fakePlex) Match(ctx context.Context, ratingKey string, cand plex.Candid
 		return plex.OutcomeUnknown, err
 	}
 	f.record("Match " + ratingKey + " " + cand.GUID)
-	return fakeOutcome(f.matchErrs[ratingKey])
+	outcome, err := fakeOutcome(f.matchErrs[ratingKey])
+	if err == nil {
+		if f.matched == nil {
+			f.matched = map[string]string{}
+		}
+		f.matched[ratingKey] = cand.GUID
+	}
+	return outcome, err
 }

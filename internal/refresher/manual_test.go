@@ -260,14 +260,21 @@ type checkedMetadata struct {
 	checks  *int
 }
 
+// checkAnswer is the answer of one check. After an accepted match, a
+// matched item shows the GUID of the match, as Plex does once it applied
+// the match, unless keepGUID is set.
 type checkAnswer struct {
-	item plex.Item
-	err  error
+	item     plex.Item
+	err      error
+	keepGUID bool
 }
 
-func (p checkedMetadata) Item(context.Context, string) (plex.Item, error) {
+func (p checkedMetadata) Item(_ context.Context, ratingKey string) (plex.Item, error) {
 	a := p.answers[min(*p.checks, len(p.answers)-1)]
 	*p.checks++
+	if guid := p.matched[ratingKey]; guid != "" && !a.keepGUID && !strings.HasPrefix(a.item.GUID, "local://") {
+		a.item.GUID = guid
+	}
 	return a.item, a.err
 }
 
@@ -399,6 +406,9 @@ func TestApplyMatchRefreshUnavailableSkipsChecks(t *testing.T) {
 	if *checks != 0 || len(f.sleeps) != 0 {
 		t.Errorf("checks %d, sleeps %v; want none", *checks, f.sleeps)
 	}
+	if !f.held("1") {
+		t.Error("the unchecked match left no hold")
+	}
 }
 
 func TestApplyMatchStopsCheckingWhenPlexIsUnavailable(t *testing.T) {
@@ -409,6 +419,9 @@ func TestApplyMatchStopsCheckingWhenPlexIsUnavailable(t *testing.T) {
 	}
 	if *checks != 1 {
 		t.Errorf("checks = %d, want 1", *checks)
+	}
+	if !f.held("1") {
+		t.Error("the checks that ended without the GUID left no hold")
 	}
 }
 

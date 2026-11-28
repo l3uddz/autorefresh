@@ -36,6 +36,9 @@ type Store interface {
 	FinishJob(int64, store.RunStart, store.RunResult, []store.RunItem) (bool, error)
 	SetStopped(context.Context, string, string, time.Time, bool) (bool, error)
 	ApplyCheck(string, store.Item, time.Time, int64, store.Observation) (bool, error)
+	ApplyCheckGone(server, key string, at time.Time, source store.Source, runID int64, obs store.Observation) error
+	Observe(server string, chain []int64, at time.Time) (store.Observation, error)
+	AddHold(ctx context.Context, server, key string) error
 	LibraryInfo(string, string) (store.LibraryInfo, bool, error)
 	RecordManual(store.ManualRecord) error
 	KnownItem(server, ratingKey string) (store.Item, bool, bool, error)
@@ -355,10 +358,11 @@ func (r *Refresher) upkeep(ctx context.Context) {
 
 // serverOnly reports whether err ends only the run of its own server: an
 // unavailable server or a failed library read. Other errors, such as a store
-// error, stop the runs of the other servers too.
+// error, stop the runs of the other servers too, also when they come with
+// one of these.
 func serverOnly(err error) bool {
 	var readErr *libraryReadError
-	return errors.Is(err, plex.ErrUnavailable) || errors.As(err, &readErr)
+	return !errors.Is(err, ErrStore) && (errors.Is(err, plex.ErrUnavailable) || errors.As(err, &readErr))
 }
 
 func (r *Refresher) runServer(ctx context.Context, started startedRun) error {
