@@ -208,6 +208,11 @@ func (s *Store) PruneHistory(before time.Time) (events, runs int, err error) {
 	if events, err = deleteBefore(tx, `DELETE FROM event WHERE at < ?`, cutoff); err != nil {
 		return 0, 0, fmt.Errorf("prune events: %w", err)
 	}
+	if events > 0 {
+		if err := bumpGeneration(tx, ""); err != nil {
+			return 0, 0, err
+		}
+	}
 	if runs, err = deleteBefore(tx, `DELETE FROM run WHERE status != ? AND COALESCE(finished_at, started_at) < ?`, RunRunning, cutoff); err != nil {
 		return 0, 0, fmt.Errorf("prune runs: %w", err)
 	}

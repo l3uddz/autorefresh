@@ -569,6 +569,13 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 	calls := map[string]func() error{
 		"Library":   func() error { _, err := s.Library(srv, sec); return err },
 		"EventMark": func() error { _, err := s.EventMark(); return err },
+		"ReadStart": func() error { _, err := s.ReadStart(srv, sec); return err },
+		"BeginAttempt": func() error {
+			_, err := s.BeginAttempt(context.Background(), AttemptSpec{Server: srv, RatingKey: "101", Action: ActionRefresh})
+			return err
+		},
+		"DropAttempt":   func() error { return s.DropAttempt(context.Background(), 1) },
+		"PruneAttempts": func() error { _, err := s.PruneAttempts(base); return err },
 		"ApplyRead": func() error {
 			_, err := s.ApplyRead(Read{Server: srv, Section: sec, At: base})
 			return err

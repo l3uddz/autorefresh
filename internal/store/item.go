@@ -736,7 +736,14 @@ func (s *Store) prune(server string, remove func(server, section string) bool, a
 }
 
 func deletePrunedLibraries(tx *sql.Tx, pruned []Pruned) error {
+	bumped := map[string]bool{}
 	for _, p := range pruned {
+		if !bumped[p.Server] {
+			if err := bumpGeneration(tx, p.Server); err != nil {
+				return err
+			}
+			bumped[p.Server] = true
+		}
 		if _, err := tx.Exec(`UPDATE item SET last_match_event_id = NULL
 			WHERE last_match_event_id IS NOT NULL
 				AND EXISTS (SELECT 1 FROM event WHERE id = item.last_match_event_id AND server = ? AND section = ?)`,
