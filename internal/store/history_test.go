@@ -134,7 +134,7 @@ func TestRecordGoneWritesEventAndDeletesRow(t *testing.T) {
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
 	at := base.Add(time.Hour)
 
-	if err := s.RecordGone(srv, "a", at, SourceAuto, ActionRefresh, 0, AttemptResult{}); err != nil {
+	if _, _, err := s.RecordGone(srv, "a", at, SourceAuto, ActionRefresh, 0, AttemptResult{}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := rows(t, s)["a"]; ok {
@@ -145,7 +145,7 @@ func TestRecordGoneWritesEventAndDeletesRow(t *testing.T) {
 		!events[0].At.Equal(at) || events[0].Source != SourceAuto || events[0].Action != ActionRefresh {
 		t.Fatalf("events = %+v", events)
 	}
-	if err := s.RecordGone(srv, "a", at, SourceAuto, "", 0, AttemptResult{}); err != nil {
+	if _, _, err := s.RecordGone(srv, "a", at, SourceAuto, "", 0, AttemptResult{}, ""); err != nil {
 		t.Fatalf("missing row: %v", err)
 	}
 	if events, _ := s.Timeline(srv, "a"); len(events) != 1 {
@@ -514,7 +514,7 @@ func TestManualStoreLifecycle(t *testing.T) {
 		t.Fatalf("resume = %v, %v", changed, err)
 	}
 	request := Request{Server: srv, RatingKey: "a", At: base, Source: SourceManual, Action: ActionRefresh, Accepted: true}
-	if err := s.RecordManual(ManualRecord{Request: request, Snapshot: it, Cached: true}); err != nil {
+	if _, err := s.RecordManual(ManualRecord{Request: request, Snapshot: it, Cached: true}); err != nil {
 		t.Fatal(err)
 	}
 	row, cached, found, err := s.KnownItem(srv, "a")
@@ -564,7 +564,7 @@ func TestRecordManualUsesAdmissionSnapshotAcrossRowChanges(t *testing.T) {
 				apply(t, s, Read{Items: []Item{complete}, DryRun: true})
 			}
 			req := Request{Server: srv, RatingKey: "1", At: base, Source: SourceManual, Action: ActionRefresh, Accepted: !tc.gone}
-			if err := s.RecordManual(ManualRecord{Request: req, Snapshot: snapshot, Cached: tc.cached, Gone: tc.gone}); err != nil {
+			if _, err := s.RecordManual(ManualRecord{Request: req, Snapshot: snapshot, Cached: tc.cached, Gone: tc.gone}); err != nil {
 				t.Fatal(err)
 			}
 			row, cached, found, err := s.KnownItem(srv, "1")

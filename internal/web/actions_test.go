@@ -96,12 +96,12 @@ type pendingManualRecord struct {
 	entered, release, recorded chan struct{}
 }
 
-func (s pendingManualRecord) RecordManual(m store.ManualRecord) error {
+func (s pendingManualRecord) RecordManual(m store.ManualRecord) (bool, error) {
 	close(s.entered)
 	<-s.release
-	err := s.Store.RecordManual(m)
+	wroteMerge, err := s.Store.RecordManual(m)
 	close(s.recorded)
-	return err
+	return wroteMerge, err
 }
 
 func TestForcedHTTPStopPreservesInFlightManualRecording(t *testing.T) {
@@ -251,7 +251,7 @@ type goneActions struct {
 
 func (a goneActions) RefreshItem(_ context.Context, server, key string) (refresher.RefreshResult, error) {
 	req := store.Request{Server: server, RatingKey: key, At: testNow, Source: store.SourceManual}
-	return refresher.RefreshResult{Match: a.match}, a.db.RecordManual(store.ManualRecord{Request: req, Cached: true, Gone: true})
+	return refresher.RefreshResult{Match: a.match}, manualErr(a.db.RecordManual(store.ManualRecord{Request: req, Cached: true, Gone: true}))
 }
 
 // The dashboard tells a removed item from a complete one by this answer:
@@ -485,3 +485,6 @@ func TestRefreshAnswersWithoutDetailWhenTheReadFails(t *testing.T) {
 		t.Errorf("answer lost the applied match: %s", w.Body)
 	}
 }
+
+// manualErr returns the error of RecordManual.
+func manualErr(_ bool, err error) error { return err }

@@ -48,7 +48,7 @@ func saveChecks(t *testing.T, s *Store, obs Observation) (check, gone error) {
 	if check == nil {
 		return nil, errors.New("the check saved, so the 404 was not tried")
 	}
-	return check, s.ApplyCheckGone(srv, "1", base, SourceAuto, 0, obs)
+	return check, goneErr(s.ApplyCheckGone(srv, "1", base, SourceAuto, 0, obs, ""))
 }
 
 func TestCheckYields(t *testing.T) {
@@ -172,7 +172,7 @@ func TestCheckSaves(t *testing.T) {
 func TestCheckGoneSaves(t *testing.T) {
 	a, _ := openPair(t)
 	chain := checkSetup(t, a)
-	if err := a.ApplyCheckGone(srv, "1", base, SourceAuto, 0, observe(t, a, chain, base)); err != nil {
+	if _, _, err := a.ApplyCheckGone(srv, "1", base, SourceAuto, 0, observe(t, a, chain, base), ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := rows(t, a)["1"]; ok {
@@ -193,7 +193,7 @@ func TestCheckAfterTheLibraryIsGone(t *testing.T) {
 	if _, err := a.ApplyCheck(srv, item("1", 0), base, 0, obs); !errors.Is(err, ErrNoItem) {
 		t.Errorf("check: err = %v, want ErrNoItem", err)
 	}
-	if err := a.ApplyCheckGone(srv, "1", base, SourceAuto, 0, obs); !errors.Is(err, ErrNoItem) {
+	if _, _, err := a.ApplyCheckGone(srv, "1", base, SourceAuto, 0, obs, ""); !errors.Is(err, ErrNoItem) {
 		t.Errorf("check 404: err = %v, want ErrNoItem", err)
 	}
 	if n := countRows(t, a, "read_hold") + countRows(t, a, "event"); n != 0 {

@@ -308,22 +308,34 @@ var recorders = map[string]func(s *Store, key string, a AttemptResult) error{
 		return s.RecordRequest(Request{Server: srv, RatingKey: key, At: base, Source: SourceAuto, Action: ActionRefresh, Attempt: a})
 	},
 	"gone": func(s *Store, key string, a AttemptResult) error {
-		return s.RecordGone(srv, key, base, SourceAuto, ActionRefresh, 0, a)
+		return goneErr(s.RecordGone(srv, key, base, SourceAuto, ActionRefresh, 0, a, ""))
 	},
 	"manual": func(s *Store, key string, a AttemptResult) error {
-		return s.RecordManual(ManualRecord{
+		return manualErr(s.RecordManual(ManualRecord{
 			Request:  Request{Server: srv, RatingKey: key, At: base, Source: SourceManual, Action: ActionRefresh, Attempt: a},
 			Snapshot: item(key, NoSummary),
 			Cached:   true,
-		})
+		}))
 	},
 	"manual gone": func(s *Store, key string, a AttemptResult) error {
-		return s.RecordManual(ManualRecord{
+		return manualErr(s.RecordManual(ManualRecord{
 			Request:  Request{Server: srv, RatingKey: key, At: base, Source: SourceManual, Action: ActionRefresh, Attempt: a},
 			Snapshot: item(key, NoSummary),
 			Cached:   true,
 			Gone:     true,
-		})
+		}))
+	},
+	"merged": func(s *Store, key string, a AttemptResult) error {
+		return goneErr(s.RecordGone(srv, key, base, SourceAuto, ActionRefresh, 0, a, "900"))
+	},
+	"manual merged": func(s *Store, key string, a AttemptResult) error {
+		return manualErr(s.RecordManual(ManualRecord{
+			Request:  Request{Server: srv, RatingKey: key, At: base, Source: SourceManual, Action: ActionRefresh, Attempt: a},
+			Snapshot: item(key, NoSummary),
+			Cached:   true,
+			Gone:     true,
+			Merged:   "900",
+		}))
 	},
 }
 

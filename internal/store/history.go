@@ -119,14 +119,17 @@ type Event struct {
 	FixedAction, FixedMatch          Action
 	FixedMatchEventID                int64 // 0: none
 	RunID                            int64 // the run that wrote it; 0: none
-	Searches                         []MatchSearch
-	MatchEvidence                    // match decisions
+	// MergedKey is the rating key of the item that Plex kept when it merged
+	// the item into it after a match; only such a completed event has one.
+	MergedKey     string
+	Searches      []MatchSearch
+	MatchEvidence // match decisions
 }
 
 const eventColumns = `id, server, section, rating_key, at, kind, source, title, year, type, thumb, art, path,
 	action, accepted, outcome, error, match_guid, match_title, match_year, conflict, path_year, tmdb_year,
 	episode_count, links, fixed_action, fixed_match, fixed_match_event_id, run_id, tmdb_id, tmdb_skip, tmdb_missing,
-	episode_season, episode_plex, episode_tmdb, episode_missing, episode_extra, episode_group`
+	episode_season, episode_plex, episode_tmdb, episode_missing, episode_extra, episode_group, merged_key`
 
 // Outcome is the outcome of the request: the action, with "-failed" when
 // Plex did not accept it, or "search-failed" without an action.
@@ -342,37 +345,66 @@ func snapshotEvent(row Item, at time.Time, kind EventKind, source Source) Event 
 // RecordGone writes a gone event of the run runID (0: none) with a snapshot
 // of the row and deletes the row, in one transaction. action is the action
 // of the request that found the item gone, or empty for a removal that no
-// request found. attempt is the write attempt of that request, which it
-// keeps or deletes first; it commits that also for a missing row, for which
-// it writes nothing else.
-func (s *Store) RecordGone(server, ratingKey string, at time.Time, source Source, action Action, runID int64, attempt AttemptResult) error {
+// request found. merged is the rating key of the item that Plex merged the
+// item into after a match, or "": with it, the event is the merged
+// completion (removeRow). attempt is the write attempt of that request,
+// which it keeps or deletes first; it commits that also for a missing row,
+// for which it writes nothing else. It returns the removed row (zero for a
+// missing row) and whether it wrote the merged completion.
+func (s *Store) RecordGone(server, ratingKey string, at time.Time, source Source, action Action, runID int64,
+	attempt AttemptResult, merged string) (removed Item, wroteMerge bool, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("begin gone: %w", err)
+		return Item{}, false, fmt.Errorf("begin gone: %w", err)
 	}
 	defer tx.Rollback()
 
 	if err := finishAttempt(tx, attempt); err != nil {
-		return err
+		return Item{}, false, err
 	}
 	snap, found, err := readItem(tx, server, ratingKey)
 	if err != nil {
-		return err
+		return Item{}, false, err
 	}
 	if found {
 		e := snapshotEvent(snap, at, EventGone, source)
 		e.Action, e.RunID = action, runID
-		if _, err := insertEvent(tx, e); err != nil {
-			return err
+		if wroteMerge, err = removeRow(tx, snap, e, merged); err != nil {
+			return Item{}, false, err
 		}
-		if err := deleteItem(tx, server, ratingKey); err != nil {
-			return err
-		}
+		removed = snap
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit gone: %w", err)
+		return Item{}, false, fmt.Errorf("commit gone: %w", err)
 	}
-	return nil
+	return removed, wroteMerge, nil
+}
+
+// removeRow deletes the row and writes its gone event gone. With the rating
+// key merged of the item that Plex merged the row into, and an accepted
+// match of the row, it writes the merged completion instead (see
+// mergedCompletion). It reports whether it wrote the merged completion.
+func removeRow(tx *sql.Tx, row Item, gone Event, merged string) (bool, error) {
+	e, wroteMerge := gone, merged != "" && row.LastMatch != ""
+	if wroteMerge {
+		e = mergedCompletion(row, gone.At, gone.RunID, merged)
+	}
+	if _, err := insertEvent(tx, e); err != nil {
+		return false, err
+	}
+	return wroteMerge, deleteItem(tx, row.Server, row.RatingKey)
+}
+
+// mergedCompletion returns the completed event of the row that Plex merged
+// into the item merged after a match. It has source auto, as every
+// completed event, and credits the last accepted match of the row as both
+// the action and the match kind, because the last action of the row can be
+// the refresh after the match.
+func mergedCompletion(row Item, at time.Time, runID int64, merged string) Event {
+	e := snapshotEvent(row, at, EventCompleted, SourceAuto)
+	e.FixedAction, e.FixedMatch, e.FixedMatchEventID = row.LastMatch, row.LastMatch, row.LastMatchEventID
+	e.RunID, e.MergedKey = runID, merged
+	return e
 }
 
 // writeGone writes a gone event of the read r for the row of key, if it
@@ -432,14 +464,14 @@ func insertEventContext(ctx context.Context, tx *sql.Tx, e Event) (int64, error)
 	res, err := tx.ExecContext(ctx, `INSERT INTO event (server, section, rating_key, at, kind, source, title, year, type, thumb, art, path,
 		action, accepted, outcome, error, match_guid, match_title, match_year, conflict, path_year, tmdb_year,
 		episode_count, links, fixed_action, fixed_match, fixed_match_event_id, run_id, tmdb_id, tmdb_skip, tmdb_missing,
-		episode_season, episode_plex, episode_tmdb, episode_missing, episode_extra, episode_group)
+		episode_season, episode_plex, episode_tmdb, episode_missing, episode_extra, episode_group, merged_key)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT id FROM event WHERE id = ?),
-		(SELECT id FROM run WHERE id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(SELECT id FROM run WHERE id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.Server, e.Section, e.RatingKey, e.At.Unix(), e.Kind, e.Source, e.Title, e.Year, e.Type, e.Thumb, e.Art, e.Path,
 		e.Action, e.Accepted, e.Outcome, e.Error, e.MatchGUID, e.MatchTitle, e.MatchYear, e.Conflict,
 		e.PathYear, e.TMDBYear, e.EpisodeCount, strings.Join(e.Links, "\n"), e.FixedAction, e.FixedMatch, e.FixedMatchEventID,
 		e.RunID, e.TMDBID, e.TMDBSkip, strings.Join(e.TMDBMissing, "\n"), e.EpisodeDiff.Season, e.EpisodeDiff.Plex,
-		e.EpisodeDiff.TMDB, joinNumbers(e.EpisodeDiff.Missing), joinNumbers(e.EpisodeDiff.Extra), e.EpisodeGroup)
+		e.EpisodeDiff.TMDB, joinNumbers(e.EpisodeDiff.Missing), joinNumbers(e.EpisodeDiff.Extra), e.EpisodeGroup, e.MergedKey)
 	if err != nil {
 		return 0, fmt.Errorf("write event: %w", err)
 	}
@@ -600,7 +632,7 @@ func scanEvent(row scanner) (Event, error) {
 		&e.Thumb, &e.Art, &e.Path, &e.Action, &e.Accepted, &e.Outcome, &e.Error, &e.MatchGUID, &e.MatchTitle,
 		&e.MatchYear, &e.Conflict, &e.PathYear, &e.TMDBYear, &e.EpisodeCount, &links, &e.FixedAction, &e.FixedMatch,
 		&fixedID, &runID, &e.TMDBID, &e.TMDBSkip, &missing, &e.EpisodeDiff.Season, &e.EpisodeDiff.Plex, &e.EpisodeDiff.TMDB,
-		&onlyIn[0], &onlyIn[1], &e.EpisodeGroup)
+		&onlyIn[0], &onlyIn[1], &e.EpisodeGroup, &e.MergedKey)
 	if err != nil {
 		return Event{}, err
 	}

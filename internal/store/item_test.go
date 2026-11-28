@@ -147,7 +147,7 @@ func TestApplyReadKeepsNewerSettlement(t *testing.T) {
 	}
 	gone := func(t *testing.T, s *Store, at time.Time) {
 		req := Request{Server: srv, RatingKey: "a", At: at, Source: SourceManual, Action: ActionRefresh}
-		if err := s.RecordManual(ManualRecord{Request: req, Snapshot: item("a", NoSummary), Cached: true, Gone: true}); err != nil {
+		if _, err := s.RecordManual(ManualRecord{Request: req, Snapshot: item("a", NoSummary), Cached: true, Gone: true}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -743,13 +743,13 @@ func TestApplyReadReturnsActionsOfFixedRows(t *testing.T) {
 func TestRecordGoneDeletesRow(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("a", NoArt)}})
-	if err := s.RecordGone(srv, "a", base, SourceAuto, "", 0, AttemptResult{}); err != nil {
+	if _, _, err := s.RecordGone(srv, "a", base, SourceAuto, "", 0, AttemptResult{}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(rows(t, s)) != 0 {
 		t.Fatal("row not deleted")
 	}
-	if err := s.RecordGone(srv, "a", base, SourceAuto, "", 0, AttemptResult{}); err != nil {
+	if _, _, err := s.RecordGone(srv, "a", base, SourceAuto, "", 0, AttemptResult{}, ""); err != nil {
 		t.Fatalf("missing row: %v", err)
 	}
 }
@@ -1025,7 +1025,7 @@ func TestApplyReadKeepsRowsOfNewerRequests(t *testing.T) {
 			}
 			for _, key := range []string{"a", "n"} {
 				req := Request{Server: srv, RatingKey: key, At: base, Source: SourceManual, Action: ActionMatch, Accepted: tc.accepted}
-				err := s.RecordManual(ManualRecord{Request: req, Snapshot: item(key, NoArt), Cached: key == "a"})
+				_, err := s.RecordManual(ManualRecord{Request: req, Snapshot: item(key, NoArt), Cached: key == "a"})
 				if err != nil {
 					t.Fatal(err)
 				}

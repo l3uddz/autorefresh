@@ -110,31 +110,31 @@ func checkMaySave(tx *sql.Tx, server, key string, obs Observation, now int64) (b
 }
 
 // ApplyCheckGone records that a check found the cached item gone from Plex:
-// a gone event of source and runID (0: none), and the removal of its row,
-// unless the check must yield (ErrCheckYielded). Without a row, it returns
-// ErrNoItem and saves nothing.
-func (s *Store) ApplyCheckGone(server, key string, at time.Time, source Source, runID int64, obs Observation) error {
+// a gone event of source and runID (0: none), or with the rating key merged
+// of the item that Plex merged it into after a match, the merged completion
+// (removeRow), and the removal of its row, unless the check must yield
+// (ErrCheckYielded). Without a row, it returns ErrNoItem and saves nothing.
+// It returns the removed row and whether it wrote the merged completion.
+func (s *Store) ApplyCheckGone(server, key string, at time.Time, source Source, runID int64, obs Observation,
+	merged string) (removed Item, wroteMerge bool, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("begin check gone: %w", err)
+		return Item{}, false, fmt.Errorf("begin check gone: %w", err)
 	}
 	defer tx.Rollback()
 	row, err := s.checkRow(tx, server, key, obs)
 	if err != nil {
-		return err
+		return Item{}, false, err
 	}
 	e := snapshotEvent(row, at, EventGone, source)
 	e.RunID = runID
-	if _, err := insertEvent(tx, e); err != nil {
-		return err
-	}
-	if err := deleteItem(tx, server, key); err != nil {
-		return err
+	if wroteMerge, err = removeRow(tx, row, e, merged); err != nil {
+		return Item{}, false, err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit check gone: %w", err)
+		return Item{}, false, fmt.Errorf("commit check gone: %w", err)
 	}
-	return nil
+	return row, wroteMerge, nil
 }
 
 // AddHold saves a hold for the cached item in the library of its row. It

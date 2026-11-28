@@ -52,14 +52,15 @@ func (s *attemptLog) RecordRequest(r store.Request) error {
 	return s.Store.RecordRequest(r)
 }
 
-func (s *attemptLog) RecordManual(m store.ManualRecord) error {
+func (s *attemptLog) RecordManual(m store.ManualRecord) (bool, error) {
 	s.step("record %d %s", m.Attempt.ID, m.Attempt.Outcome)
 	return s.Store.RecordManual(m)
 }
 
-func (s *attemptLog) RecordGone(server, key string, at time.Time, source store.Source, action store.Action, runID int64, a store.AttemptResult) error {
+func (s *attemptLog) RecordGone(server, key string, at time.Time, source store.Source, action store.Action, runID int64,
+	a store.AttemptResult, merged string) (store.Item, bool, error) {
 	s.step("gone %d %s", a.ID, a.Outcome)
-	return s.Store.RecordGone(server, key, at, source, action, runID, a)
+	return s.Store.RecordGone(server, key, at, source, action, runID, a, merged)
 }
 
 // logAttempts wraps the store of f in an attemptLog that also records the

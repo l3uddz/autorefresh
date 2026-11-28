@@ -599,7 +599,7 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 		"RecordRequest": func() error {
 			return s.RecordRequest(Request{Server: srv, RatingKey: "101", At: base, Source: SourceAuto, Action: ActionRefresh})
 		},
-		"RecordGone": func() error { return s.RecordGone(srv, "101", base, SourceAuto, "", 0, AttemptResult{}) },
+		"RecordGone": func() error { return goneErr(s.RecordGone(srv, "101", base, SourceAuto, "", 0, AttemptResult{}, "")) },
 		"RecordMatchDecision": func() error {
 			return s.RecordMatchDecision(MatchDecision{Server: srv, RatingKey: "101", At: base, Source: SourceAuto, Outcome: DecisionNoIDs})
 		},
@@ -614,7 +614,7 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 		"KnownItem":     func() error { _, _, _, err := s.KnownItem(srv, "101"); return err },
 		"KnownItems":    func() error { _, err := s.KnownItems(context.Background(), srv, []string{"101"}); return err },
 		"SetStopped":    func() error { _, err := s.SetStopped(context.Background(), srv, "101", base, true); return err },
-		"RecordManual":  func() error { return s.RecordManual(ManualRecord{Request: Request{Source: SourceManual}}) },
+		"RecordManual":  func() error { return manualErr(s.RecordManual(ManualRecord{Request: Request{Source: SourceManual}})) },
 		"ApplyCheck":    func() error { _, err := s.ApplyCheck(srv, item("101", NoSummary), base, 0, Observation{}); return err },
 		"LibraryInfo":   func() error { _, _, err := s.LibraryInfo(srv, sec); return err },
 		"FinishJob":     func() error { _, err := s.FinishJob(1, RunStart{}, RunResult{}, nil); return err },
@@ -641,7 +641,7 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 			return err
 		},
 		"ApplyCheckGone": func() error {
-			return s.ApplyCheckGone(srv, "101", base, SourceAuto, 0, Observation{})
+			return goneErr(s.ApplyCheckGone(srv, "101", base, SourceAuto, 0, Observation{}, ""))
 		},
 		"AddHold":  func() error { return s.AddHold(context.Background(), srv, "101") },
 		"Held":     func() error { _, err := s.Held(srv, "101", base); return err },
@@ -902,3 +902,9 @@ func TestPruneSectionsClearsDanglingMatchEventPointer(t *testing.T) {
 		t.Errorf("LastMatchEventID = %d, want 0 after old section was pruned", got.LastMatchEventID)
 	}
 }
+
+// goneErr returns the error of RecordGone or ApplyCheckGone.
+func goneErr(_ Item, _ bool, err error) error { return err }
+
+// manualErr returns the error of RecordManual.
+func manualErr(_ bool, err error) error { return err }

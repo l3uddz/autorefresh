@@ -522,7 +522,7 @@ func (r *Refresher) sendManual(ctx context.Context, srv Server, it store.Item, c
 	if err != nil {
 		req.Error = err.Error()
 	}
-	if recordErr := r.store.RecordManual(store.ManualRecord{Request: req, Snapshot: it, Cached: cached, Gone: errors.Is(err, plex.ErrNotFound)}); recordErr != nil {
+	if _, recordErr := r.store.RecordManual(store.ManualRecord{Request: req, Snapshot: it, Cached: cached, Gone: errors.Is(err, plex.ErrNotFound)}); recordErr != nil {
 		return res, fmt.Errorf("%w: %w", ErrStore, recordErr)
 	}
 	itemEvent(log.Info(), srv.Name, r.logLibrary(it), it).Str("action", string(action)).Bool("accepted", req.Accepted).Msg("Sent manual request")
@@ -618,7 +618,8 @@ func (r *Refresher) recordCheckGone(item manualItem, run *serverRun, obs store.O
 	if run != nil {
 		source = store.SourceAuto
 	}
-	return r.store.ApplyCheckGone(item.server.Name, item.row.RatingKey, r.now(), source, runIDOf(run), obs)
+	_, _, err := r.store.ApplyCheckGone(item.server.Name, item.row.RatingKey, r.now(), source, runIDOf(run), obs, "")
+	return err
 }
 
 // SetStopped stops or resumes automatic work for a cached item.

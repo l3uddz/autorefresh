@@ -231,7 +231,7 @@ func (r *Refresher) runRefresh(ctx context.Context, run *serverRun, it store.Ite
 	}
 	run.refreshes++
 	if errors.Is(err, plex.ErrNotFound) {
-		if recErr := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, store.ActionRefresh, run.id, res); recErr != nil {
+		if _, _, recErr := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, store.ActionRefresh, run.id, res, ""); recErr != nil {
 			return res, fmt.Errorf("%w: %w", ErrStore, recErr)
 		}
 		return res, err
@@ -284,7 +284,7 @@ func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Ite
 	notFound := ctx.Err() == nil && errors.Is(err, plex.ErrNotFound)
 	switch {
 	case notFound && !r.opts.DryRun:
-		if err := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, action, run.id, attempt); err != nil {
+		if _, _, err := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, action, run.id, attempt, ""); err != nil {
 			return err
 		}
 		r.itemDone(run, it.RatingKey, OutcomeGone)

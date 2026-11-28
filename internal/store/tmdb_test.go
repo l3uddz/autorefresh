@@ -29,7 +29,7 @@ func TestTMDBIDGoesWithItem(t *testing.T) {
 		remove func(t *testing.T, s *Store)
 	}{
 		{"gone", func(t *testing.T, s *Store) {
-			if err := s.RecordGone(srv, "a", base, SourceAuto, "", 0, AttemptResult{}); err != nil {
+			if _, _, err := s.RecordGone(srv, "a", base, SourceAuto, "", 0, AttemptResult{}, ""); err != nil {
 				t.Fatal(err)
 			}
 		}},
