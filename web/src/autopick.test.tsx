@@ -23,7 +23,7 @@ describe('texts about the automatic pick of Refresh now', () => {
   it('the empty decision panel names Refresh now for a mismatched movie', () => {
     const html = renderToString(<DecisionPanel />);
     expect(html).toContain('It tries one for unmatched items with IDs in their folder or file names');
-    expect(html).toContain('Refresh now also tries one for a mismatched movie.');
+    expect(html).toContain('Refresh now also tries one for a mismatched movie, unless mismatched is in ignore-reasons.');
   });
 
   it('the Refresh now tooltip no longer claims to act as a scheduled run', () => {

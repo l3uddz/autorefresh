@@ -977,7 +977,7 @@ The dashboard SHALL catch uncaught page errors and failed lazy route chunk loads
 
 ### Requirement: Wrong match in the item detail
 
-When the live Plex view of a movie reports the result `mismatched`, the item detail SHALL show a warning "Plex matched this movie to a different entry than its path names. Use Fix match to choose the right one, or Refresh now to apply the automatic pick." It SHALL list each compared source with its name (TMDB, IMDb, or TVDB), the path ID, and the Plex IDs. With another result, without a live view, or while the live view fails, it SHALL show no such warning.
+When the live Plex view of a movie reports the result `mismatched`, the item detail SHALL show a warning "Plex matched this movie to a different entry than its path names. Use Fix match to choose the right one, or Refresh now to try the automatic fix match." It SHALL list each compared source with its name (TMDB, IMDb, or TVDB), the path ID, and the Plex IDs. With another result, without a live view, or while the live view fails, it SHALL show no such warning.
 
 #### Scenario: Movie with a wrong match
 
@@ -1021,4 +1021,4 @@ The dashboard SHALL say where Refresh now applies the automatic pick: for an unm
 #### Scenario: No decision to explain
 
 - **WHEN** the automatic fix match panel has no decision and no preview to show
-- **THEN** it says "Autorefresh has not tried a fix match on this item within the history it keeps. It tries one for unmatched items with IDs in their folder or file names and, with a TMDB token, for unmatched series by their title. Refresh now also tries one for a mismatched movie."
+- **THEN** it says "Autorefresh has not tried a fix match on this item within the history it keeps. It tries one for unmatched items with IDs in their folder or file names and, with a TMDB token, for unmatched series by their title. Refresh now also tries one for a mismatched movie, unless mismatched is in ignore-reasons."

@@ -151,7 +151,7 @@ export function DecisionPanel({ decision, hasHeading = true, emptyAction }: Deci
         isCompact
         icon={<Icon icon={ClockIcon} size="lg" />}
         title="No automatic fix match to explain"
-        description="Autorefresh has not tried a fix match on this item within the history it keeps. It tries one for unmatched items with IDs in their folder or file names and, with a TMDB token, for unmatched series by their title. Refresh now also tries one for a mismatched movie."
+        description="Autorefresh has not tried a fix match on this item within the history it keeps. It tries one for unmatched items with IDs in their folder or file names and, with a TMDB token, for unmatched series by their title. Refresh now also tries one for a mismatched movie, unless mismatched is in ignore-reasons."
         actions={emptyAction}
       />
     );

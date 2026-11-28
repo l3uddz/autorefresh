@@ -31,7 +31,7 @@ export function WrongMatchWarning({ live: { data, error } }: { live: LiveState }
       title="Plex matched this movie to a different entry than its path names"
       description={
         <VStack gap={1}>
-          <Text color="inherit">Use Fix match to choose the right one, or Refresh now to apply the automatic pick.</Text>
+          <Text color="inherit">Use Fix match to choose the right one, or Refresh now to try the automatic fix match.</Text>
           {sourceLines(mismatch.sources).map(line => (
             <Text key={line} type="code" color="inherit">{line}</Text>
           ))}
