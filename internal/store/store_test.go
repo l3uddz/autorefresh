@@ -617,7 +617,7 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 		"KnownItems":    func() error { _, err := s.KnownItems(context.Background(), srv, []string{"101"}); return err },
 		"SetStopped":    func() error { _, err := s.SetStopped(context.Background(), srv, "101", base, true); return err },
 		"RecordManual":  func() error { return s.RecordManual(ManualRecord{Request: Request{Source: SourceManual}}) },
-		"ApplyCheck":    func() error { _, err := s.ApplyCheck(srv, item("101", NoSummary), base, 0); return err },
+		"ApplyCheck":    func() error { _, err := s.ApplyCheck(srv, item("101", NoSummary), base, 0, Observation{}); return err },
 		"LibraryInfo":   func() error { _, _, err := s.LibraryInfo(srv, sec); return err },
 		"FinishJob":     func() error { _, err := s.FinishJob(1, RunStart{}, RunResult{}, nil); return err },
 		"RunItems":      func() error { _, err := s.RunItems(context.Background(), 1); return err },
@@ -642,6 +642,11 @@ func TestMethodsReportDatabaseFailure(t *testing.T) {
 			_, err := s.ConvertAutoVacuum(context.Background())
 			return err
 		},
+		"ApplyCheckGone": func() error {
+			return s.ApplyCheckGone(srv, "101", base, SourceAuto, 0, Observation{})
+		},
+		"AddHold":  func() error { return s.AddHold(context.Background(), srv, "101") },
+		"Observe":  func() error { _, err := s.Observe(srv, nil, base); return err },
 		"Reclaim":  func() error { _, err := s.Reclaim(context.Background()); return err },
 		"Optimize": func() error { return s.Optimize(context.Background()) },
 	}
@@ -867,7 +872,7 @@ func TestApplyCheckPreservesAddedAtWhenZero(t *testing.T) {
 	orig := item("a", NoArt)
 	apply(t, s, Read{Items: []Item{orig}})
 	check := Item{RatingKey: "a", Title: "Updated", Reasons: NoSummary}
-	if _, err := s.ApplyCheck(srv, check, base.Add(time.Hour), 0); err != nil {
+	if _, err := s.ApplyCheck(srv, check, base.Add(time.Hour), 0, Observation{}); err != nil {
 		t.Fatalf("ApplyCheck: %v", err)
 	}
 	got, cached, known, err := s.KnownItem(srv, "a")

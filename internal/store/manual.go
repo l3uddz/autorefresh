@@ -229,19 +229,18 @@ func writeManualSnapshot(tx *sql.Tx, m ManualRecord, gone bool) error {
 
 // ApplyCheck updates an existing item from an individual metadata check.
 // runID is the run that checked the item, which a completed event names;
-// 0: none.
-func (s *Store) ApplyCheck(server string, it Item, at time.Time, runID int64) (bool, error) {
+// 0: none. obs is the observation of the check; when the check must yield,
+// it saves a hold instead and returns ErrCheckYielded. Without a row, it
+// returns ErrNoItem.
+func (s *Store) ApplyCheck(server string, it Item, at time.Time, runID int64, obs Observation) (bool, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return false, fmt.Errorf("begin item check: %w", err)
 	}
 	defer tx.Rollback()
-	prev, found, err := readItem(tx, server, it.RatingKey)
+	prev, err := s.checkRow(tx, server, it.RatingKey, obs)
 	if err != nil {
 		return false, err
-	}
-	if !found {
-		return false, ErrNoItem
 	}
 	if it.Type == "" {
 		it.Type = prev.Type

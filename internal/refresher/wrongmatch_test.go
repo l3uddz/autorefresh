@@ -214,7 +214,7 @@ func TestRecheckSkipsRowWithOnlyWrongMatchLeft(t *testing.T) {
 	batch, _ := f.row("home", "1", "1")
 	left := batch
 	left.Reasons = store.Mismatched
-	if _, err := f.store.ApplyCheck("home", left, t0, 0); err != nil {
+	if _, err := f.store.ApplyCheck("home", left, t0, 0, store.Observation{}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -905,11 +905,11 @@ func (s failedFollowUp) RecordRequest(r store.Request) error {
 	return s.Store.RecordRequest(r)
 }
 
-func (s failedFollowUp) ApplyCheck(server string, it store.Item, at time.Time, runID int64) (bool, error) {
+func (s failedFollowUp) ApplyCheck(server string, it store.Item, at time.Time, runID int64, obs store.Observation) (bool, error) {
 	if s.check {
 		return false, errDisk
 	}
-	return s.Store.ApplyCheck(server, it, at, runID)
+	return s.Store.ApplyCheck(server, it, at, runID, obs)
 }
 
 // A store error in the follow-up of a run's match ends the run as a store

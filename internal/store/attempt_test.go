@@ -404,3 +404,23 @@ func TestRecordingAfterTheLibraryIsGone(t *testing.T) {
 		})
 	}
 }
+
+func TestReadStartWhileAnotherConnectionWrites(t *testing.T) {
+	a, b := openPair(t)
+	apply(t, a, Read{Items: []Item{item("1", NoSummary)}})
+	tx, err := b.db.Begin() // an immediate transaction takes the write lock
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	start := time.Now()
+	if _, err := a.ReadStart(srv, sec); err != nil {
+		t.Fatalf("ReadStart: %v", err)
+	}
+	if _, err := a.Observe(srv, nil, base); err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("the reads took %v, want no wait for the write lock", took)
+	}
+}

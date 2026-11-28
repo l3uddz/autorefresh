@@ -409,7 +409,7 @@ func (r *Refresher) checkHeld(ctx context.Context, item manualItem, run *serverR
 	if run != nil {
 		runID = run.id
 	}
-	fixed, err := r.store.ApplyCheck(server, row, r.now(), runID)
+	fixed, err := r.store.ApplyCheck(server, row, r.now(), runID, store.Observation{})
 	if err != nil {
 		return false, manualStoreError(err)
 	}

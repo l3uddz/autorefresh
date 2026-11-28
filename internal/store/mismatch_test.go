@@ -80,12 +80,12 @@ func TestApplyCheckKeepsUndecidedMismatch(t *testing.T) {
 	s := openTest(t)
 	apply(t, s, Read{Items: []Item{item("a", Mismatched|NoSummary)}})
 
-	fixed, err := s.ApplyCheck(srv, undecided("a", 0), base.Add(time.Minute), 0)
+	fixed, err := s.ApplyCheck(srv, undecided("a", 0), base.Add(time.Minute), 0, Observation{})
 
 	if err != nil || fixed || rows(t, s)["a"].Reasons != Mismatched {
 		t.Fatalf("ApplyCheck = %v, %v, row = %+v, want only Mismatched kept", fixed, err, rows(t, s)["a"])
 	}
-	if fixed, err := s.ApplyCheck(srv, item("a", 0), base.Add(2*time.Minute), 0); err != nil || !fixed {
+	if fixed, err := s.ApplyCheck(srv, item("a", 0), base.Add(2*time.Minute), 0, Observation{}); err != nil || !fixed {
 		t.Fatalf("decided ApplyCheck = %v, %v, want the row completed", fixed, err)
 	}
 }

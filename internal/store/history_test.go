@@ -522,7 +522,7 @@ func TestManualStoreLifecycle(t *testing.T) {
 		t.Fatalf("cached item = %+v, %v, %v, %v", row, cached, found, err)
 	}
 	it.Reasons, it.Title = 0, "Updated"
-	if completed, err := s.ApplyCheck(srv, it, base, 0); err != nil || !completed {
+	if completed, err := s.ApplyCheck(srv, it, base, 0, Observation{}); err != nil || !completed {
 		t.Fatalf("check = %v, %v", completed, err)
 	}
 	row, cached, found, err = s.KnownItem(srv, "a")

@@ -129,7 +129,7 @@ func TestApplyReadReturnsFixedItem(t *testing.T) {
 func TestApplyReadKeepsNewerSettlement(t *testing.T) {
 	readAt := base.Add(time.Hour)
 	checked := func(t *testing.T, s *Store, at time.Time) {
-		if fixed, err := s.ApplyCheck(srv, item("a", 0), at, 0); err != nil || !fixed {
+		if fixed, err := s.ApplyCheck(srv, item("a", 0), at, 0, Observation{}); err != nil || !fixed {
 			t.Fatalf("check = %v, %v", fixed, err)
 		}
 	}
@@ -1018,7 +1018,7 @@ func TestApplyReadKeepsRowsOfNewerRequests(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := s.ApplyCheck(srv, item("a", Mismatched), base, 0); err != nil {
+			if _, err := s.ApplyCheck(srv, item("a", Mismatched), base, 0, Observation{}); err != nil {
 				t.Fatal(err)
 			}
 
