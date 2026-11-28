@@ -68,6 +68,9 @@ export interface TimelineEvent {
   fixedMatch?: string;
   /** The ID of the accepted match request that fixed the item. */
   fixedMatchEventId?: number;
+  /** The rating key of the item that Plex merged the item into after a
+   * match, on the completed event of that merge. */
+  mergedKey?: string;
   /** The match rule that stopped a match, on a match decision. */
   conflict?: string;
   pathYear?: number;

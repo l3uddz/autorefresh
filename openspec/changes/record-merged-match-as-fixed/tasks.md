@@ -47,9 +47,9 @@ Commit: `feat(web): add the merged key to timeline events`
 
 Commit: `feat(web): show a match that Plex merged as fixed`
 
-- [ ] 5.1 Add `mergedKey` to `TimelineEvent` in `web/src/api-types.ts`.
-- [ ] 5.2 In `timeline.ts`, give the history texts of a merged fix, and the Refresh now result `merged` with its toast only when the answer has an applied match. In `detail.tsx`, show the Fixed fact as "<match> · merged into another item", and in place of the 404 warning, the info banner with "Open the merged item in Plex". Use Astryx components only.
-- [ ] 5.3 Add Vitest tests for the history texts, the Fixed fact, the toast with and without an applied match, the banner with and without a server identity, and the 404 warning after a removal.
+- [x] 5.1 Add `mergedKey` to `TimelineEvent` in `web/src/api-types.ts`.
+- [x] 5.2 In `timeline.ts`, give the history texts of a merged fix, and the Refresh now result `merged` with its toast only when the answer has an applied match. In `detail.tsx`, show the Fixed fact as "<match> · merged into another item", and in place of the 404 warning, the info banner with "Open the merged item in Plex". Use Astryx components only.
+- [x] 5.3 Add Vitest tests for the history texts, the Fixed fact, the toast with and without an applied match, the banner with and without a server identity, and the 404 warning after a removal.
 
 ## 6. Documentation
 
