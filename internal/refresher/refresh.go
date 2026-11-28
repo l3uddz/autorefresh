@@ -92,12 +92,17 @@ func (r *Refresher) runItem(ctx context.Context, run *serverRun, batch store.Ite
 		return false, err
 	}
 	if skip != "" {
-		run.skipped++
-		log.Debug().Str("server", server).Str("title", batch.Title).Str("reason", skip).Msg("Skipped item")
-		r.itemDone(run, batch.RatingKey, OutcomeSkipped)
+		r.skipItem(run, batch, skip)
 		return false, nil
 	}
 	return r.refreshItem(ctx, run, row)
+}
+
+// skipItem counts and logs the due item as skipped for reason.
+func (r *Refresher) skipItem(run *serverRun, it store.Item, reason string) {
+	run.skipped++
+	log.Debug().Str("server", run.server.Name).Str("title", it.Title).Str("reason", reason).Msg("Skipped item")
+	r.itemDone(run, it.RatingKey, OutcomeSkipped)
 }
 
 func (r *Refresher) recheck(run *serverRun, batch store.Item) (store.Item, string, error) {
@@ -139,7 +144,7 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	lib := run.library(it.Section)
 	fm, err := r.findMatch(ctx, run, lib, it)
 	if err != nil {
-		return false, r.itemFailed(ctx, run, it, "", nil, err)
+		return false, r.itemFailed(ctx, run, it, "", nil, store.AttemptResult{}, err)
 	}
 
 	action := store.ActionRefresh
@@ -152,23 +157,16 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 		return false, nil
 	}
 
-	// A canceled request still counts as sent and as an attempt.
-	if err := ctx.Err(); err != nil {
+	res, sent, err := r.sendRunWrite(ctx, run, it, fm)
+	if !sent {
 		return false, err
 	}
-	if fm != nil {
-		run.matches++
-		_, err = run.server.Plex.Match(ctx, it.RatingKey, fm.cand)
-	} else {
-		run.refreshes++
-		_, err = run.server.Plex.Refresh(ctx, it.RatingKey)
-	}
 	if err != nil {
-		return true, r.itemFailed(ctx, run, it, action, fm, err)
+		return true, r.itemFailed(ctx, run, it, action, fm, res, err)
 	}
 
 	req := r.request(run, it, action, fm)
-	req.Accepted = true
+	req.Accepted, req.Attempt = true, res
 	if err := r.store.RecordRequest(req); err != nil {
 		return true, err
 	}
@@ -178,7 +176,7 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	// match that fixed the item moves it to Fixed now.
 	var stop error
 	if fm != nil {
-		_, stop = r.settleMatch(ctx, manualItem{server: run.server, row: it, cached: true}, run)
+		_, stop = r.settleMatch(ctx, manualItem{server: run.server, row: it, cached: true}, run, res)
 		if errors.Is(stop, ErrStore) {
 			return true, stop
 		}
@@ -189,46 +187,75 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	return true, stop
 }
 
-// runRefresh sends the refresh after a match that Plex accepted in the run
-// and records it as a request of the run. A 404 answer records the item as
-// gone by the refresh. It returns the error of the request, or a store error (ErrStore).
-func (r *Refresher) runRefresh(ctx context.Context, run *serverRun, it store.Item) error {
-	if err := ctx.Err(); err != nil {
-		return err
+// sendRunWrite sends the match fm of the due item, or a refresh if fm is
+// nil, as an automatic write of run, and counts the request. sent is false
+// when it sent nothing: for a held item, which it skips with the cause
+// held, and for every other ErrNotSent, which it returns.
+func (r *Refresher) sendRunWrite(ctx context.Context, run *serverRun, it store.Item, fm *fixMatch) (res store.AttemptResult, sent bool, err error) {
+	spec := store.AttemptSpec{RatingKey: it.RatingKey, Action: store.ActionRefresh, Automatic: true, Sections: run.sections()}
+	send := refreshSend(run.server, it.RatingKey)
+	if fm != nil {
+		spec.Action, send = fm.action, matchSend(run.server, it.RatingKey, fm)
+	}
+	res, err = r.sendWrite(ctx, run.server, spec, send)
+	switch {
+	case errors.Is(err, store.ErrHeld):
+		r.skipItem(run, it, "held")
+		return res, false, nil
+	case errors.Is(err, ErrNotSent):
+		return res, false, err
+	case fm != nil:
+		run.matches++
+	default:
+		run.refreshes++
+	}
+	return res, true, err
+}
+
+// runRefresh sends the refresh after the match attempt match that Plex
+// accepted in the run, and records it as a request of the run. A 404
+// answer records the item as gone by the refresh. It returns the attempt of
+// the refresh with the error of the request, an ErrNotSent error, or a
+// store error (ErrStore).
+func (r *Refresher) runRefresh(ctx context.Context, run *serverRun, it store.Item, match int64) (store.AttemptResult, error) {
+	spec := store.AttemptSpec{RatingKey: it.RatingKey, Action: store.ActionRefresh, Automatic: true,
+		Sections: run.sections(), FollowsUp: match}
+	res, err := r.sendWrite(ctx, run.server, spec, refreshSend(run.server, it.RatingKey))
+	if errors.Is(err, ErrNotSent) {
+		return res, err
 	}
 	run.refreshes++
-	_, err := run.server.Plex.Refresh(ctx, it.RatingKey)
 	if errors.Is(err, plex.ErrNotFound) {
-		if recErr := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, store.ActionRefresh, run.id, store.AttemptResult{}); recErr != nil {
-			return fmt.Errorf("%w: %w", ErrStore, recErr)
+		if recErr := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, store.ActionRefresh, run.id, res); recErr != nil {
+			return res, fmt.Errorf("%w: %w", ErrStore, recErr)
 		}
-		return err
+		return res, err
 	}
 	req := r.request(run, it, store.ActionRefresh, nil)
-	req.Accepted = err == nil
+	req.Accepted, req.Attempt = err == nil, res
 	if err != nil {
 		run.failures++
 		req.Error = err.Error()
 	}
 	if recErr := r.store.RecordRequest(req); recErr != nil {
-		return fmt.Errorf("%w: %w", ErrStore, recErr)
+		return res, fmt.Errorf("%w: %w", ErrStore, recErr)
 	}
 	lib := run.library(it.Section)
 	if err != nil {
 		itemEvent(log.Warn(), run.server.Name, lib, it).Err(err).Str("action", string(store.ActionRefresh)).Msg("Request failed")
-		return err
+		return res, err
 	}
 	requestEvent(log.Info(), run.server.Name, lib, it, store.ActionRefresh, nil).Msg("Sent request")
 	// The match counted one refresh already.
 	matched := it
 	matched.Refreshes++
 	r.warnAtLongestWait(run.server.Name, lib, matched)
-	return nil
+	return res, nil
 }
 
 // itemFailed handles the failure of a due item: a failed refresh or match
-// request, with its action and its fix match fm, or a failed match search,
-// with no action and no fm.
+// request, with its action, its fix match fm, and its attempt, or a failed
+// match search, with no action, no fm, and no attempt.
 //
 //   - A 404 answer removes the row and records a gone event, with the action
 //     of a sent request. A dry run keeps the row and logs a warning.
@@ -239,7 +266,8 @@ func (r *Refresher) runRefresh(ctx context.Context, run *serverRun, it store.Ite
 //   - A match search that the end of the run interrupted changes nothing.
 //
 // It returns the error of stopError or a store error.
-func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Item, action store.Action, fm *fixMatch, err error) error {
+func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Item, action store.Action, fm *fixMatch,
+	attempt store.AttemptResult, err error) error {
 	sent := action != ""
 	if errors.Is(err, errCache) {
 		return err
@@ -251,7 +279,7 @@ func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Ite
 	notFound := ctx.Err() == nil && errors.Is(err, plex.ErrNotFound)
 	switch {
 	case notFound && !r.opts.DryRun:
-		if err := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, action, run.id, store.AttemptResult{}); err != nil {
+		if err := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, action, run.id, attempt); err != nil {
 			return err
 		}
 		r.itemDone(run, it.RatingKey, OutcomeGone)
@@ -259,7 +287,7 @@ func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Ite
 	case notFound:
 		r.itemDone(run, it.RatingKey, OutcomeGone)
 	default:
-		if err := r.countFailure(ctx, run, it, action, fm, err); err != nil {
+		if err := r.countFailure(ctx, run, it, action, fm, attempt, err); err != nil {
 			return err
 		}
 	}
@@ -274,14 +302,15 @@ func (r *Refresher) itemFailed(ctx context.Context, run *serverRun, it store.Ite
 }
 
 // countFailure counts a failure of the item and records its attempt with
-// the error failed and, if a request was sent, its action and fix match. A
-// dry run records nothing. It returns a store error, or the error of ctx if
-// the run ended.
-func (r *Refresher) countFailure(ctx context.Context, run *serverRun, it store.Item, action store.Action, fm *fixMatch, failed error) error {
+// the error failed and, if a request was sent, its action, fix match, and
+// write attempt. A dry run records nothing. It returns a store error, or
+// the error of ctx if the run ended.
+func (r *Refresher) countFailure(ctx context.Context, run *serverRun, it store.Item, action store.Action, fm *fixMatch,
+	attempt store.AttemptResult, failed error) error {
 	run.failures++
 	if !r.opts.DryRun {
 		req := r.request(run, it, action, fm)
-		req.Error = failed.Error()
+		req.Error, req.Attempt = failed.Error(), attempt
 		if err := r.store.RecordRequest(req); err != nil {
 			return err
 		}

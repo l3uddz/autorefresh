@@ -173,6 +173,10 @@ func TestWriteActionErrorsMapToHTTP(t *testing.T) {
 		{refresher.ErrNotCached, 409, "item not cached"},
 		{refresher.ErrClosed, 503, "shutting down"},
 		{fmt.Errorf("%w: %w", refresher.ErrTMDB, tmdb.ErrUnauthorized), 502, "TMDB rejected the token"},
+		// The save of the write attempt ran out of the server timeout.
+		{fmt.Errorf("%w: %w: %w", refresher.ErrNotSent, refresher.ErrStore, context.DeadlineExceeded), 504, "timed out"},
+		// The write ran out of the server timeout.
+		{fmt.Errorf("PUT /library/metadata/1/refresh: %w: %w", plex.ErrUnavailable, context.DeadlineExceeded), 504, "timed out"},
 	} {
 		s := New(Options{Actions: rejectedRefresh{err: tc.err}, Servers: []PlexServer{{Name: "home"}}})
 		req := httptest.NewRequest(http.MethodPost, "/api/item/refresh?srv=0&key=1", nil)

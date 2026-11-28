@@ -57,6 +57,8 @@ type Store interface {
 	StartRun(r store.RunStart) (int64, error)
 	FinishRun(id int64, start store.RunStart, r store.RunResult) (bool, error)
 	PruneHistory(before time.Time) (events, runs int, err error)
+	BeginAttempt(ctx context.Context, spec store.AttemptSpec) (int64, error)
+	DropAttempt(ctx context.Context, id int64) error
 	Reclaim(ctx context.Context) (store.ReclaimResult, error)
 	Optimize(ctx context.Context) error
 }
@@ -65,7 +67,8 @@ type Store interface {
 type Server struct {
 	Name      string
 	Plex      Plex
-	Libraries []string // titles; empty means all supported libraries
+	Libraries []string      // titles; empty means all supported libraries
+	Timeout   time.Duration // the request timeout of the server; 0 or less: config.DefaultTimeout
 }
 
 // Schedule is the part of cron.Schedule that the refresher uses.

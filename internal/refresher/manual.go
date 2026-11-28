@@ -245,10 +245,11 @@ func (r *Refresher) ApplyMatch(ctx context.Context, server, ratingKey string, ca
 // it returns. It returns the error of the request. It logs a failed
 // follow-up, because Plex accepted the match.
 func (r *Refresher) applyMatch(ctx context.Context, item manualItem, fm *fixMatch) (checked bool, err error) {
-	if _, err := r.sendManual(ctx, item.server, item.row, item.cached, fm); err != nil {
+	match, err := r.sendManual(ctx, item.server, item.row, item.cached, fm)
+	if err != nil {
 		return false, err
 	}
-	checked, err = r.settleMatch(ctx, item, nil)
+	checked, err = r.settleMatch(ctx, item, nil, match)
 	if err != nil {
 		r.logSettleFailure(item, "record", err)
 	}
@@ -259,9 +260,11 @@ func (r *Refresher) applyMatch(ctx context.Context, item manualItem, fm *fixMatc
 // fetches the metadata of the new match in the background.
 var matchCheckDelays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
 
-// settleMatch runs after Plex accepted a match of item, under its item
-// lock: a manual match when run is nil, or else a match of run, which then
-// records the steps as its own. It requests a refresh, then checks a cached
+// settleMatch runs after Plex accepted the match attempt match of item,
+// under its item lock: a manual match when run is nil, or else a match of
+// run, which then records the steps as its own. It requests a refresh,
+// which a run skips without checks when a hold or another write attempt
+// holds the item (store.ErrHeld), then checks a cached
 // item until the check completes it, Plex no longer has it, a run removed
 // its row, the waits run out, or a failure ends it. It returns a store
 // error (ErrStore). It logs any other failure, because Plex accepted the
@@ -269,8 +272,13 @@ var matchCheckDelays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Se
 // the end of ctx (stopError) ends the follow-up; a run then also gets that
 // error, which ends the run of the server as a failed request does.
 // checked is the result of followUpCheck.
-func (r *Refresher) settleMatch(ctx context.Context, item manualItem, run *serverRun) (checked bool, err error) {
-	if err := r.followUpRefresh(ctx, item, run); err != nil {
+func (r *Refresher) settleMatch(ctx context.Context, item manualItem, run *serverRun, match store.AttemptResult) (checked bool, err error) {
+	if _, err := r.followUpRefresh(ctx, item, run, match.ID); err != nil {
+		if errors.Is(err, store.ErrHeld) {
+			log.Info().Str("server", item.server.Name).Str("title", item.row.Title).Str("reason", "held").
+				Msg("Skipped follow-up refresh")
+			return false, nil
+		}
 		if end, stop := r.settleFailed(ctx, item, run, "refresh", err); end || errors.Is(err, plex.ErrNotFound) {
 			return false, stop
 		}
@@ -329,14 +337,14 @@ func (r *Refresher) settleFailed(ctx context.Context, item manualItem, run *serv
 	return true, stop
 }
 
-// followUpRefresh sends and records the refresh after an accepted match:
-// a manual request when run is nil, or else a request of run.
-func (r *Refresher) followUpRefresh(ctx context.Context, item manualItem, run *serverRun) error {
+// followUpRefresh sends and records the refresh after the accepted match
+// attempt match: a manual request when run is nil, or else a request of
+// run. It returns the attempt of the refresh also with an error answer.
+func (r *Refresher) followUpRefresh(ctx context.Context, item manualItem, run *serverRun, match int64) (store.AttemptResult, error) {
 	if run == nil {
-		_, err := r.sendManual(ctx, item.server, item.row, item.cached, nil)
-		return err
+		return r.sendManual(ctx, item.server, item.row, item.cached, nil)
 	}
-	return r.runRefresh(ctx, run, item.row)
+	return r.runRefresh(ctx, run, item.row, match)
 }
 
 func (r *Refresher) logSettleFailure(item manualItem, step string, err error) {
@@ -345,32 +353,29 @@ func (r *Refresher) logSettleFailure(item manualItem, step string, err error) {
 }
 
 // sendManual sends the fix match fm of the item as a manual request, or a
-// refresh if fm is nil, and records the result. sent is false if ctx ended
-// before the request.
-func (r *Refresher) sendManual(ctx context.Context, srv Server, it store.Item, cached bool, fm *fixMatch) (sent bool, err error) {
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	action := store.ActionRefresh
+// refresh if fm is nil, and records the result. It returns the attempt of
+// the request with its error, or an error that wraps ErrNotSent when it
+// sent nothing.
+func (r *Refresher) sendManual(ctx context.Context, srv Server, it store.Item, cached bool, fm *fixMatch) (store.AttemptResult, error) {
+	action, send := store.ActionRefresh, refreshSend(srv, it.RatingKey)
 	if fm != nil {
-		action = fm.action
+		action, send = fm.action, matchSend(srv, it.RatingKey, fm)
 	}
 	req := store.Request{Server: srv.Name, RatingKey: it.RatingKey, At: r.now(), Source: store.SourceManual,
 		Action: action, Match: target(fm)}
-	if fm == nil {
-		_, err = srv.Plex.Refresh(ctx, it.RatingKey)
-	} else {
-		_, err = srv.Plex.Match(ctx, it.RatingKey, fm.cand)
+	res, err := r.sendWrite(ctx, srv, store.AttemptSpec{RatingKey: it.RatingKey, Action: action}, send)
+	if errors.Is(err, ErrNotSent) {
+		return res, err
 	}
-	req.Accepted = err == nil
+	req.Accepted, req.Attempt = err == nil, res
 	if err != nil {
 		req.Error = err.Error()
 	}
 	if recordErr := r.store.RecordManual(store.ManualRecord{Request: req, Snapshot: it, Cached: cached, Gone: errors.Is(err, plex.ErrNotFound)}); recordErr != nil {
-		return true, fmt.Errorf("%w: %w", ErrStore, recordErr)
+		return res, fmt.Errorf("%w: %w", ErrStore, recordErr)
 	}
 	itemEvent(log.Info(), srv.Name, r.logLibrary(it), it).Str("action", string(action)).Bool("accepted", req.Accepted).Msg("Sent manual request")
-	return true, err
+	return res, err
 }
 
 func (r *Refresher) logLibrary(row store.Item) plex.Library {

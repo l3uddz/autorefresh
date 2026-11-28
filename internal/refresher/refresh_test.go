@@ -996,8 +996,9 @@ func TestSleepWaitsOrStops(t *testing.T) {
 	}
 }
 
-// An item that keeps failing must not keep the only slot of each run. Runs
-// come more often than the wait of the items here, so both items are due in
+// An item that keeps failing must not keep the only slot of each run. The
+// wait of the items here is shorter than the time between runs, which is
+// longer than a write attempt protects an item, so both items are due in
 // every run. The failing item starts 4 refreshes behind the other item. Each
 // attempt counts in the order, also a failed one, so the failing item gives
 // up the slot after 4 failed attempts.
@@ -1030,8 +1031,9 @@ func TestFailingItemGivesUpTheSlot(t *testing.T) {
 			var got []string
 			for run := range 6 {
 				fp.calls = nil
-				f.run(t0.Add(time.Duration(run) * 2 * time.Minute))
-				if row, _ := f.row(testServer, "1", "102"); row.LastAttempt.Equal(t0.Add(time.Duration(run) * 2 * time.Minute)) {
+				at := t0.Add(time.Duration(run) * 11 * time.Minute)
+				f.run(at)
+				if row, _ := f.row(testServer, "1", "102"); row.LastAttempt.Equal(at) {
 					got = append(got, "102")
 				} else {
 					got = append(got, "101")
