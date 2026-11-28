@@ -355,6 +355,7 @@ func TestRefreshItemPlainRefreshOfMismatchedMovie(t *testing.T) {
 		{"another match during the search", []plex.Candidate{rightMatch}, []checkAnswer{{item: wrongMovie()}, {item: other}}, matched, "", "no longer mismatched"},
 		{"same match, IDs agree", []plex.Candidate{rightMatch}, []checkAnswer{{item: wrongMovie()}, {item: movie("101", "{tmdb-100}", "tmdb://100")}}, matched, "", "no longer mismatched"},
 		{"same match, IDs undecided", []plex.Candidate{rightMatch}, []checkAnswer{{item: wrongMovie()}, {item: movie("101", "{tmdb-100}", "imdb://tt1")}}, matched, "", "no longer mismatched"},
+		{"paths changed during the search", []plex.Candidate{rightMatch}, []checkAnswer{{item: wrongMovie()}, {item: movie("101", "{tmdb-300}", "tmdb://200")}}, matched, "", "paths changed"},
 		{"read before the match fails", []plex.Candidate{rightMatch}, []checkAnswer{{item: wrongMovie()}, {err: unavailable}}, matched, "", "match state unknown"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

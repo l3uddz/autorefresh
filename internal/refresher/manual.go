@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -184,11 +185,13 @@ func (r *Refresher) manualMatch(ctx context.Context, item manualItem) (*fixMatch
 }
 
 // matchState is what the first read of manualMatch found: an unmatched
-// item, or the current match of a mismatched movie. The flag and the GUID
-// are separate, so an empty GUID never passes as unmatched.
+// item, or the current match of a mismatched movie with the IDs of its
+// files, which the search used. The flag and the GUID are separate, so an
+// empty GUID never passes as unmatched.
 type matchState struct {
 	unmatched bool
-	guid      string // the current match of a mismatched movie
+	guid      string   // the current match of a mismatched movie
+	ids       []pathID // the file IDs of a mismatched movie
 }
 
 // stateOf returns the match state of the cached row from its live item, or
@@ -197,7 +200,7 @@ func stateOf(row store.Item, live plex.Item) (matchState, string) {
 	if row.Reasons&store.Unmatched != 0 {
 		return matchState{unmatched: true}, matchState{unmatched: true}.lost(live)
 	}
-	state := matchState{guid: live.GUID}
+	state := matchState{guid: live.GUID, ids: parseIDs(live.Files)}
 	if live.GUID == "" {
 		return state, "no longer mismatched"
 	}
@@ -206,8 +209,8 @@ func stateOf(row store.Item, live plex.Item) (matchState, string) {
 
 // lost returns why the live item no longer needs the fix match of the
 // state, or "" when it still does: an unmatched item that Plex matched, or
-// a mismatched movie whose match changed or whose IDs no longer disagree
-// with its paths.
+// a mismatched movie whose match changed, whose IDs no longer disagree with
+// its paths, or whose file IDs changed since the search.
 func (s matchState) lost(live plex.Item) string {
 	if s.unmatched {
 		if itemReasons(live)&store.Unmatched == 0 {
@@ -217,6 +220,9 @@ func (s matchState) lost(live plex.Item) string {
 	}
 	if live.GUID != s.guid || CompareMovieIDs(live.GUID, live.Files, live.ExternalIDs).Result != WrongMatchMismatched {
 		return "no longer mismatched"
+	}
+	if !slices.Equal(parseIDs(live.Files), s.ids) {
+		return "paths changed"
 	}
 	return ""
 }

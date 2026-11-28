@@ -109,7 +109,7 @@ When the fix match search of Refresh now fails, also when it runs out of its 45 
 
 ### Requirement: Refresh now keeps a match that the item got meanwhile
 
-Just before it applies a picked match after searching, autorefresh SHALL read the item from Plex again. It SHALL apply the match only when Plex still has an unmatched item unmatched, or still shows a mismatched movie with the same match and IDs that disagree with its paths. Otherwise, also when Plex cannot answer, it SHALL send only the plain refresh, because a library read or user action can change the match during the search.
+Just before it applies a picked match after searching, autorefresh SHALL read the item from Plex again. It SHALL apply the match only when Plex still has an unmatched item unmatched, or still shows a mismatched movie with the same match, the same file IDs, and IDs that disagree with its paths. Otherwise, also when Plex cannot answer, it SHALL send only the plain refresh, because a library read or user action can change the match during the search.
 
 #### Scenario: Matched during the search
 
@@ -132,6 +132,12 @@ Just before it applies a picked match after searching, autorefresh SHALL read th
 - **GIVEN** a mismatched movie matched to `plex://movie/200` at the first read
 - **WHEN** Plex still shows `plex://movie/200` just before the match, but now lists an external ID that agrees with the path, or none that can be compared
 - **THEN** autorefresh sends only the refresh and the action reports no applied match
+
+#### Scenario: File IDs of a mismatched movie changed during the search
+
+- **GIVEN** a mismatched movie whose file named `{tmdb-100}` at the first read
+- **WHEN** Plex still shows the same match just before the match, but the file now names `{tmdb-300}`
+- **THEN** autorefresh sends only the refresh, logs `Skipped fix match` with the reason `paths changed`, and the action reports no applied match
 
 ### Requirement: Check after a manual request
 
