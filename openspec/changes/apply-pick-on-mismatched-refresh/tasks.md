@@ -26,7 +26,7 @@ Commit: `feat(refresher): apply the automatic pick to a mismatched movie`
 
 Commit: `feat(web): name Refresh now as a fix for a mismatched movie`
 
-- [ ] 2.1 Change the preview help text in `web/src/fixmatch.tsx`, the warning text in `web/src/wrongmatch.tsx`, the tooltip of Refresh now in `web/src/detail.tsx`, and the empty state of the decision panel in `web/src/history.tsx` to the texts of the `dashboard-ui` delta. Update `web/src/wrongmatch.test.tsx`, and add Vitest tests that assert the preview help text, the tooltip, and the empty state.
+- [x] 2.1 Change the preview help text in `web/src/fixmatch.tsx`, the warning text in `web/src/wrongmatch.tsx`, the tooltip of Refresh now in `web/src/detail.tsx`, and the empty state of the decision panel in `web/src/history.tsx` to the texts of the `dashboard-ui` delta. Update `web/src/wrongmatch.test.tsx`, and add Vitest tests that assert the preview help text, the tooltip, and the empty state.
 
 ## 3. Documentation
 

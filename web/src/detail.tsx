@@ -196,6 +196,11 @@ interface ActionProps {
   live?: LiveItem;
 }
 
+/** The tooltip of Refresh now. Refresh now applies the automatic fix match
+ * to a mismatched movie, which a scheduled run never does. */
+export const refreshNowTooltip =
+  'Handle this item now: an unmatched item or a mismatched movie gets the automatic fix match, then Plex refreshes the item and autorefresh checks it again';
+
 function DetailActions({ item, server, params, timeline, live }: ActionProps) {
   const [isMatching, setIsMatching] = useState(false);
   const client = useQueryClient();
@@ -251,7 +256,7 @@ function DetailActions({ item, server, params, timeline, live }: ActionProps) {
         <Button
           label="Refresh now"
           variant="primary"
-          tooltip="Handle this item now as a scheduled run does: an unmatched item gets the automatic fix match, then Plex refreshes it and autorefresh checks it again"
+          tooltip={refreshNowTooltip}
           isLoading={busy && running === 'refresh'}
           isDisabled={busy && running !== 'refresh'}
           onClick={() => action.mutate('refresh')}
