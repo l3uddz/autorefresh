@@ -233,7 +233,7 @@ When Plex accepts a request, the run SHALL record an accepted attempt at the tim
 
 ### Requirement: Follow-up after a request
 
-After an accepted plain refresh, a run SHALL do nothing more for that item: it SHALL NOT wait for or check the result. The item SHALL leave the queue when a later read finds it complete (see `library-scan`). After an accepted match request, the run SHALL follow up the item as `fix-match` describes, and a follow-up check that finds the item complete SHALL count as a completion of this run.
+After an accepted plain refresh, a run SHALL do nothing more for that item: it SHALL NOT wait for or check the result. The item SHALL leave the queue when a later read finds it complete (see `library-scan`). After an accepted match request, the run SHALL follow up the item as `fix-match` describes, and a follow-up that finds the item complete, or merged into another item, SHALL count as a completion of this run.
 
 #### Scenario: Plain refresh
 
@@ -245,6 +245,11 @@ After an accepted plain refresh, a run SHALL do nothing more for that item: it S
 - **WHEN** Plex accepts a match, and a follow-up check finds the item complete
 - **THEN** the item leaves the queue in the same run
 - **AND** the summary counts it in `completed_items` and `completed_after_match`
+
+#### Scenario: Match that Plex merged
+
+- **WHEN** Plex accepts a match, and the follow-up finds that Plex merged the item into another item
+- **THEN** the item leaves the queue in the same run, and the summary counts it in `completed_items` and `completed_after_match`
 
 ### Requirement: Failed request
 
@@ -267,7 +272,7 @@ When a refresh, a match request, or a match search fails with an error that does
 
 ### Requirement: Gone item
 
-When Plex answers a request of a run with 404, the run SHALL remove the item from the cache, record it as gone with the action of that request (see `history`), and continue with the next item. The request SHALL count as sent but not as a failure, and the run SHALL log no warning for it.
+When Plex answers a request of a run with 404, the run SHALL remove the item from the cache, record it as gone with the action of that request (see `history`), or as merged after a match (see `fix-match`), and continue with the next item. The request SHALL count as sent but not as a failure, and the run SHALL log no warning for it.
 
 #### Scenario: Refresh answered with 404
 
