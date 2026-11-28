@@ -194,11 +194,11 @@ func (r *Refresher) readLibrary(ctx context.Context, run *serverRun, lib plex.Li
 		}
 	}
 
-	fixed, err := r.store.ApplyRead(rd)
+	res, err := r.store.ApplyRead(rd)
 	if err != nil {
 		return err
 	}
-	run.recordRead(rd, lib, items, fixed)
+	run.recordRead(rd, lib, items, res.Fixed)
 	logWrongMatches(name, lib, wrong)
 	r.logRead(rd, lib, r.now().Sub(at))
 	r.progress().LibraryRead(name, lib.Title)

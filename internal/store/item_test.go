@@ -35,7 +35,8 @@ func apply(t *testing.T, s *Store, r Read) []Item {
 	if r.At.IsZero() {
 		r.At = base
 	}
-	fixed, err := s.ApplyRead(r)
+	res, err := s.ApplyRead(r)
+	fixed := res.Fixed
 	if err != nil {
 		t.Fatalf("ApplyRead: %v", err)
 	}

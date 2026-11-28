@@ -41,7 +41,7 @@ type Store interface {
 	KnownItems(ctx context.Context, server string, keys []string) (map[string]store.KnownResult, error)
 	Library(server, section string) (store.Library, error)
 	EventMark() (store.EventMark, error)
-	ApplyRead(r store.Read) (fixed []store.Item, err error)
+	ApplyRead(r store.Read) (store.ReadResult, error)
 	Unseen(server, section string, seen []string) ([]store.Item, error)
 	Due(q store.DueQuery) (items []store.Item, total int, err error)
 	CountIncomplete(server string, sections []string, ignored store.Reasons) (int, error)

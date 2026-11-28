@@ -64,6 +64,7 @@ type Read struct {
 	Full             bool
 	Items            []Item   // the full or incremental read, with item reasons only
 	Gone             []string // full read only: rating keys that Plex answered with 404
+	Present          []string // full read only: unseen rating keys whose 404 check answered with the item
 	Shows            bool     // a show library: replace both episode reasons
 	EpisodeSkipped   Reasons  // show reads only: the episode reasons without a request, which the rows keep
 	EpisodeNoSummary []Item   // the series of the first episode request
@@ -80,7 +81,8 @@ type Read struct {
 	// neither adds nor changes the row of an item with a completed or gone
 	// event, or a request that Plex accepted, after Mark: a check or a manual
 	// action settled or changed the item during the read, so the listing can
-	// be older. The zero EventMark checks no event.
+	// be older. The zero EventMark checks no event. A mark of ReadStart also
+	// fences the read against prunings.
 	Mark EventMark
 }
 
@@ -181,84 +183,99 @@ func (s *Store) Library(server, section string) (Library, error) {
 // number, and must not put a key in both r.Items and r.Gone. A row of the
 // same rating key in another section moves to r.Section and keeps its history
 // and its reasons that the read does not replace. It neither inserts nor
-// changes the row of an item that an event after r.Mark settled or changed;
-// a later read applies its listing again, at the latest the next full read.
-func (s *Store) ApplyRead(r Read) (fixed []Item, err error) {
+// changes the row of an item that an event after r.Mark settled or changed,
+// or that a write attempt protected at or after r.At; a later read applies
+// its listing again, at the latest the next full read. It saves a hold for
+// each item that it skipped because a write can have changed it, and a full
+// read deletes the holds of its library that it reconciled. With a fenced
+// mark, it returns ErrReadPruned and writes nothing when a pruning ran since
+// the mark.
+func (s *Store) ApplyRead(r Read) (ReadResult, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return nil, fmt.Errorf("begin read: %w", err)
+		return ReadResult{}, fmt.Errorf("begin read: %w", err)
 	}
 	defer tx.Rollback()
 
+	if err := checkFence(tx, r); err != nil {
+		return ReadResult{}, err
+	}
 	// The events of the read itself are not newer than the read.
-	newer, err := newerKeys(tx, r)
+	guard, err := newReadGuard(tx, r)
 	if err != nil {
-		return nil, err
+		return ReadResult{}, err
 	}
 	// The item rows of the library need its library row first.
 	if err := writeReadTimes(tx, r); err != nil {
-		return nil, err
+		return ReadResult{}, err
 	}
-	if err := deleteGone(tx, r, newer); err != nil {
-		return nil, err
+	if err := deleteGone(tx, r, guard); err != nil {
+		return ReadResult{}, err
 	}
 	incoming := readKeys(r)
 	old, err := oldRows(tx, r, incoming)
 	if err != nil {
-		return nil, err
+		return ReadResult{}, err
 	}
-	fixed, err = applyOldRows(tx, r, old, incoming, newer)
-	if err != nil {
-		return nil, err
+	var res ReadResult
+	if res.Fixed, err = applyOldRows(tx, r, old, incoming, guard); err != nil {
+		return ReadResult{}, err
 	}
-	if err := insertNewRows(tx, r, old, incoming, newer); err != nil {
-		return nil, err
+	if err := insertNewRows(tx, r, old, incoming, guard); err != nil {
+		return ReadResult{}, err
 	}
-	if err := writeFolders(tx, r, newer); err != nil {
-		return nil, err
+	if err := writeFolders(tx, r, guard); err != nil {
+		return ReadResult{}, err
+	}
+	if err := guard.saveHolds(tx, r); err != nil {
+		return ReadResult{}, err
+	}
+	if res.Omitted, err = reconcileHolds(tx, r, guard, old, incoming); err != nil {
+		return ReadResult{}, err
 	}
 
 	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit read: %w", err)
+		return ReadResult{}, fmt.Errorf("commit read: %w", err)
 	}
-	return fixed, nil
+	return res, nil
 }
 
-// newerKeys returns the rating keys of r.Server with a completed or gone
-// event, or a request that Plex accepted, after r.Mark, or none for the zero
-// mark. Plex can have changed such an item after the listing of the read.
-func newerKeys(tx *sql.Tx, r Read) (map[string]bool, error) {
+// newerKeys adds to protected the rating keys of r.Server with a completed
+// or gone event, or a request that Plex accepted, after r.Mark, and none for
+// the zero mark. Plex can have changed such an item after the listing of the
+// read. The value of a key is true when an accepted request needs a hold.
+func newerKeys(tx *sql.Tx, r Read, protected map[string]bool) error {
 	if !r.Mark.set {
-		return nil, nil
+		return nil
 	}
 	// NOT INDEXED keeps SQLite on the ID range, the few events after the
 	// mark, instead of the server's whole history in an index.
-	rows, err := tx.Query(`SELECT rating_key FROM event NOT INDEXED
+	rows, err := tx.Query(`SELECT rating_key, kind = ? AND accepted = 1 FROM event NOT INDEXED
 		WHERE id > ? AND server = ? AND (kind IN (?, ?) OR kind = ? AND accepted = 1)`,
-		r.Mark.id, r.Server, EventCompleted, EventGone, EventRequest)
+		EventRequest, r.Mark.id, r.Server, EventCompleted, EventGone, EventRequest)
 	if err != nil {
-		return nil, fmt.Errorf("read newer items: %w", err)
+		return fmt.Errorf("read newer items: %w", err)
 	}
 	defer rows.Close()
-	newer := map[string]bool{}
 	for rows.Next() {
 		var key string
-		if err := rows.Scan(&key); err != nil {
-			return nil, fmt.Errorf("read newer items: %w", err)
+		var hold bool
+		if err := rows.Scan(&key, &hold); err != nil {
+			return fmt.Errorf("read newer items: %w", err)
 		}
-		newer[key] = true
+		protected[key] = protected[key] || hold
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read newer items: %w", err)
+		return fmt.Errorf("read newer items: %w", err)
 	}
-	return newer, nil
+	return nil
 }
 
-// deleteGone deletes the rows of r.Gone except the rows of newer. Unless
-// r.DryRun, it writes a gone event for each row that it deletes.
-func deleteGone(tx *sql.Tx, r Read, newer map[string]bool) error {
+// deleteGone deletes the rows of r.Gone except the rows that guard skips.
+// Unless r.DryRun, it writes a gone event for each row that it deletes.
+func deleteGone(tx *sql.Tx, r Read, guard *readGuard) error {
 	for _, key := range r.Gone {
-		if newer[key] {
+		if guard.skip(key, true) {
 			continue
 		}
 		if !r.DryRun {
@@ -298,25 +315,31 @@ type completion struct {
 }
 
 // applyOldRows updates or deletes each stored row in old after the read r,
-// except the rows of newer, returning the rows that became complete. Unless
-// r.DryRun, it writes a completed event for each of them, ordered by rating
-// key.
-func applyOldRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]readKey, newer map[string]bool) ([]Item, error) {
+// except the rows that guard skips, returning the rows that became complete.
+// Unless r.DryRun, it writes a completed event for each of them, ordered by
+// rating key.
+func applyOldRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]readKey, guard *readGuard) ([]Item, error) {
 	var done []completion
 	for key, prev := range old {
-		if newer[key] {
+		in := incoming[key]
+		if guard.skip(key, in.present || in.reasons(r, prev.Reasons) != prev.Reasons) {
 			continue
 		}
-		fixed, err := writeExisting(tx, r, prev, incoming[key])
+		fixed, err := writeExisting(tx, r, prev, in)
 		if err != nil {
 			return nil, err
 		}
 		if fixed {
-			done = append(done, completion{prev, incoming[key]})
+			done = append(done, completion{prev, in})
 		}
 	}
-	sort.Slice(done, func(i, j int) bool { return done[i].prev.RatingKey < done[j].prev.RatingKey })
+	return writeCompletions(tx, r, done)
+}
 
+// writeCompletions returns the rows of done, ordered by rating key, and,
+// unless r.DryRun, writes a completed event for each of them.
+func writeCompletions(tx *sql.Tx, r Read, done []completion) ([]Item, error) {
+	sort.Slice(done, func(i, j int) bool { return done[i].prev.RatingKey < done[j].prev.RatingKey })
 	fixed := make([]Item, 0, len(done))
 	for _, c := range done {
 		if !r.DryRun {
@@ -355,9 +378,9 @@ func writeExisting(tx *sql.Tx, r Read, prev Item, in readKey) (fixed bool, err e
 	return false, nil
 }
 
-// insertNewRows inserts rows for incoming items not in old or newer that
-// have at least one incomplete reason.
-func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]readKey, newer map[string]bool) error {
+// insertNewRows inserts rows for incoming items that are not in old, that
+// guard does not skip, and that have at least one incomplete reason.
+func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]readKey, guard *readGuard) error {
 	if len(incoming) == 0 {
 		return nil
 	}
@@ -368,7 +391,7 @@ func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]
 	}
 	defer stmt.Close()
 	for key, in := range incoming {
-		if _, exists := old[key]; exists || newer[key] {
+		if _, exists := old[key]; exists || guard.skip(key, true) {
 			continue
 		}
 		final := in.reasons(r, 0)
@@ -385,9 +408,9 @@ func insertNewRows(tx *sql.Tx, r Read, old map[string]Item, incoming map[string]
 }
 
 // writeFolders saves the staged folder of each row that the read kept,
-// except the rows of newer. A key without a row, such as a deleted one,
-// matches nothing.
-func writeFolders(tx *sql.Tx, r Read, newer map[string]bool) error {
+// except the rows that guard skips. A key without a row, such as a deleted
+// one, matches nothing.
+func writeFolders(tx *sql.Tx, r Read, guard *readGuard) error {
 	if len(r.Folders) == 0 {
 		return nil
 	}
@@ -397,7 +420,7 @@ func writeFolders(tx *sql.Tx, r Read, newer map[string]bool) error {
 	}
 	defer stmt.Close()
 	for key, folder := range r.Folders {
-		if folder == "" || newer[key] {
+		if folder == "" || guard.skip(key, true) {
 			continue
 		}
 		if _, err := stmt.Exec(folder, r.Server, key); err != nil {
