@@ -29,6 +29,7 @@ type Plex interface {
 	SearchMatches(ctx context.Context, ratingKey, title, agent, language string, year int) ([]plex.Candidate, error)
 	Match(ctx context.Context, ratingKey string, cand plex.Candidate) (plex.Outcome, error)
 	ProviderSeries(ctx context.Context, guid string) (plex.Series, error)
+	FindByGUID(ctx context.Context, section string, itemType int, guid string) ([]plex.Item, error)
 }
 
 // Store is the part of store.Store that the refresher uses.

@@ -24,12 +24,12 @@ Commit: `feat(store): record a match that Plex merged as a completion`
 
 Commit: `fix(refresher): record a match that Plex merged as fixed`
 
-- [ ] 3.1 Add `mergedInto` (the merge rule of the design, with the item type of the row's library type), with the log line `Merge lookup failed` (warn) for an error, and `Plex merged the item` (info) after the commit of a merge.
-- [ ] 3.2 Pass the GUID through `followUpRefresh` to `sendManual` and `runRefresh`. On a 404 of a cached item with a GUID, they look up the merge (`recordFollowUpGone`) and record it with the merged key. In `checkHeld`, a 404 with `followUp.guid` looks up the merge before the gone record (`checkGone`), and a merge gives `stepMerged`.
-- [ ] 3.3 `followUpRefresh` returns whether it recorded a merge. `settleMatch` handles a merge before `settleFailed`: no further check, no hold, `checked` true. `followUpCheck` ends on `stepMerged` with `checked` true, and on `stepSettled` before its error, with no hold. A lookup error that stops the server ends a run after the gone record: `recordFollowUpGone` joins it to the 404, and `checkGone` returns it with `stepSettled`. A run calls `run.complete` with the row that the store removed. `refreshItem` keeps `req.Outcome()`.
-- [ ] 3.4 Keep every function at a cognitive complexity of 15 or less.
-- [ ] 3.5 Add tests with the fake Plex server (an entry for the GUID request):
-  - a manual Refresh now of a mismatched movie, whose follow-up refresh gets 404 and finds the merge, with `checked` true;
+- [x] 3.1 Add `mergedInto` (the merge rule of the design, with the item type of the row's library type), with the log line `Merge lookup failed` (warn) for an error, and `Plex merged the item` (info) after the commit of a merge.
+- [x] 3.2 Pass the GUID through `followUpRefresh` to `sendManual` and `runRefresh`. On a 404 of a cached item with a GUID, they look up the merge (`recordFollowUpGone`) and record it with the merged key. In `checkHeld`, a 404 with `followUp.guid` looks up the merge before the gone record (`checkGone`), and the gone or merged record gives `stepSettled`.
+- [x] 3.3 `followUpRefresh` returns whether it recorded a merge. `settleMatch` handles a merge before `settleFailed`: no further check, no hold, `checked` true. `followUpCheck` ends on `stepSettled` with `checked` true before it handles an error, with no hold. A lookup error that stops the server ends a run after the gone record: `recordFollowUpGone` joins it to the 404, and `checkGone` returns it with `stepSettled`. A run calls `run.complete` with the row that the store removed. `refreshItem` keeps `req.Outcome()`.
+- [x] 3.4 Keep every function at a cognitive complexity of 15 or less.
+- [x] 3.5 Add tests with the fake Plex server (an entry for the GUID request):
+  - a manual Refresh now that applies the automatic match, whose follow-up refresh gets 404 and finds the merge, with `checked` true;
   - a run match with the same merge, counted in `completed_items` and `completed_after_match` from the removed row, with the outcome of the accepted match;
   - a check after the match that gets 404 and finds the merge, in a run and in a manual action;
   - a series library, with the type `TypeShow` in the request;

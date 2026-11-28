@@ -96,6 +96,20 @@ func (f *fakePlex) List(ctx context.Context, section string, itemType int, filte
 	return f.lists[key], nil
 }
 
+// FindByGUID records "FindByGUID <listKey>" and answers like List, with the
+// listing of the filter guid=<guid>.
+func (f *fakePlex) FindByGUID(ctx context.Context, section string, itemType int, guid string) ([]plex.Item, error) {
+	if err := canceled(ctx); err != nil {
+		return nil, err
+	}
+	key := listKey(section, itemType, plex.Filter{Key: "guid", Value: guid})
+	f.record("FindByGUID " + key)
+	if err := f.listErrs[key]; err != nil {
+		return nil, err
+	}
+	return f.lists[key], nil
+}
+
 // Item answers a check as if Plex had not loaded a new match yet: the item
 // is still unmatched. checkedMetadata gives other answers.
 func (f *fakePlex) Item(ctx context.Context, ratingKey string) (plex.Item, error) {

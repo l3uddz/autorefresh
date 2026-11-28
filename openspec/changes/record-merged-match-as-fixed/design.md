@@ -74,8 +74,8 @@ Migration 19 adds `merged_key TEXT NOT NULL DEFAULT ''` to `event`. `Event.Merge
 
 ### The follow-up after a merge
 
-- `followUpRefresh` and `checkHeld` report a merge: `followUpRefresh` returns `(store.AttemptResult, bool, error)` with `merged` true when the recorder wrote the merged completion (`wroteMerge`), and `checkHeld` returns the new step `stepMerged`. A run counts a completion and logs the merge only when `wroteMerge` is true.
-- `settleMatch` checks a merge first, before `settleFailed`: on `merged`, it ends the follow-up and returns `checked = true`, because the store now holds the final state of the item. A merged check ends `followUpCheck` with `checked = true` as `stepSettled` does, and saves no hold, because the row is gone.
+- `followUpRefresh` and `checkHeld` report a merge: `followUpRefresh` returns `(store.AttemptResult, bool, error)` with `merged` true when the recorder wrote the merged completion (`wroteMerge`), and `checkHeld` returns `stepSettled`, as for every check that leaves the row out of the cache, also a row that a run removed meanwhile. A run counts a completion and logs the merge only when `wroteMerge` is true.
+- `settleMatch` checks a merge first, before `settleFailed`: on `merged`, it ends the follow-up and returns `checked = true`, because the store now holds the final state of the item. `followUpCheck` ends on `stepSettled` with `checked = true`, before it handles an error, and saves no hold, because the row is gone.
 - In a run, the caller that saw the merge calls `run.complete(lib, removed)` with the row that the store removed, after the commit. `removed.Refreshes` and `removed.LastMatch` are then current, so the summary counts the completion in `completed_items` and `completed_after_match`. A stale `it` is never counted.
 - The log line `Plex merged the item` (info) comes after the commit and names the server, the library, the title, the GUID, and `merged_key`.
 - `refreshItem` keeps `r.itemDone(run, it.RatingKey, req.Outcome())`: the item outcome stays the outcome of the accepted match.

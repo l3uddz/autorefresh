@@ -217,24 +217,25 @@ func (r *Refresher) sendRunWrite(ctx context.Context, run *serverRun, it store.I
 	return res, true, err
 }
 
-// runRefresh sends the refresh after the match attempt match that Plex
-// accepted in the run, and records it as a request of the run. A 404
-// answer records the item as gone by the refresh. It returns the attempt of
-// the refresh with the error of the request, an ErrNotSent error, or a
-// store error (ErrStore).
-func (r *Refresher) runRefresh(ctx context.Context, run *serverRun, it store.Item, match int64) (store.AttemptResult, error) {
+// runRefresh sends the refresh after the match attempt match of it to guid
+// that Plex accepted in the run, and records it as a request of the run. A
+// 404 answer records the item as gone by the refresh, or as merged
+// (recordFollowUpGone). It returns the attempt of the refresh, whether it
+// recorded a merge, and the error of the request (also joined with a failed
+// merge lookup), an ErrNotSent error, or a store error (ErrStore).
+func (r *Refresher) runRefresh(ctx context.Context, run *serverRun, it store.Item, match int64, guid string) (store.AttemptResult, bool, error) {
 	spec := store.AttemptSpec{RatingKey: it.RatingKey, Action: store.ActionRefresh, Automatic: true,
 		Sections: run.readSections(), FollowsUp: match}
 	res, err := r.sendWrite(ctx, run.server, spec, refreshSend(run.server, it.RatingKey))
 	if errors.Is(err, ErrNotSent) {
-		return res, err
+		return res, false, err
 	}
 	run.refreshes++
 	if errors.Is(err, plex.ErrNotFound) {
-		if _, _, recErr := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, store.ActionRefresh, run.id, res, ""); recErr != nil {
-			return res, fmt.Errorf("%w: %w", ErrStore, recErr)
-		}
-		return res, err
+		merged, err := r.recordFollowUpGone(ctx, run.server, run, it, guid, err, func(key string) (store.Item, bool, error) {
+			return r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, store.ActionRefresh, run.id, res, key)
+		})
+		return res, merged, err
 	}
 	req := r.request(run, it, store.ActionRefresh, nil)
 	req.Accepted, req.Attempt = err == nil, res
@@ -243,19 +244,19 @@ func (r *Refresher) runRefresh(ctx context.Context, run *serverRun, it store.Ite
 		req.Error = err.Error()
 	}
 	if recErr := r.store.RecordRequest(req); recErr != nil {
-		return res, fmt.Errorf("%w: %w", ErrStore, recErr)
+		return res, false, fmt.Errorf("%w: %w", ErrStore, recErr)
 	}
 	lib := run.library(it.Section)
 	if err != nil {
 		itemEvent(log.Warn(), run.server.Name, lib, it).Err(err).Str("action", string(store.ActionRefresh)).Msg("Request failed")
-		return res, err
+		return res, false, err
 	}
 	requestEvent(log.Info(), run.server.Name, lib, it, store.ActionRefresh, nil).Msg("Sent request")
 	// The match counted one refresh already.
 	matched := it
 	matched.Refreshes++
 	r.warnAtLongestWait(run.server.Name, lib, matched)
-	return res, nil
+	return res, false, nil
 }
 
 // itemFailed handles the failure of a due item: a failed refresh or match
