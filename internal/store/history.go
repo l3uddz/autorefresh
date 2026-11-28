@@ -320,24 +320,14 @@ func insertSearch(tx *sql.Tx, eventID int64, position int, m MatchSearch) error 
 	return nil
 }
 
-// EventMark marks the newest event at one moment. Each later event has a
-// greater ID, because the event IDs are never reused. The zero EventMark
-// marks nothing. A mark of ReadStart is also fenced: it carries the prune
-// generations of its moment.
+// EventMark marks the newest event at one moment, with the prune
+// generations of that moment. Each later event has a greater ID, because
+// the event IDs are never reused. ReadStart returns a mark; the zero
+// EventMark marks nothing.
 type EventMark struct {
 	id          int64
 	set         bool
-	fenced      bool
 	generations generations
-}
-
-// EventMark returns the mark of the newest event now.
-func (s *Store) EventMark() (EventMark, error) {
-	var id int64
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM event`).Scan(&id); err != nil {
-		return EventMark{}, fmt.Errorf("read event mark: %w", err)
-	}
-	return EventMark{id: id, set: true}, nil
 }
 
 // snapshotEvent returns an event of kind with the snapshot columns of the row.

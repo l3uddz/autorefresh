@@ -57,6 +57,19 @@ func (r DueRules) held() sqlPart {
 		[]any{r.Now.Unix()}}
 }
 
+// Held reports whether the cached item key of server is held at now, as
+// DueRules count it: a write attempt that is live at now, or a hold.
+func (s *Store) Held(server, key string, now time.Time) (bool, error) {
+	h := DueRules{Now: now}.held()
+	var held bool
+	err := s.db.QueryRow(`SELECT EXISTS (SELECT 1 FROM item WHERE server = ? AND rating_key = ? AND `+h.sql+`)`,
+		append([]any{server, key}, h.args...)...).Scan(&held)
+	if err != nil {
+		return false, fmt.Errorf("read held item: %w", err)
+	}
+	return held, nil
+}
+
 // lastEndSQL is the latest end, in Unix seconds, of a write attempt for the
 // row that is live at Now, or 0. It is at most the last second of the year
 // 9999, so a saturated end stays a valid time in milliseconds.

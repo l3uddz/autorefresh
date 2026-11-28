@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -81,8 +80,8 @@ type Read struct {
 	// neither adds nor changes the row of an item with a completed or gone
 	// event, or a request that Plex accepted, after Mark: a check or a manual
 	// action settled or changed the item during the read, so the listing can
-	// be older. The zero EventMark checks no event. A mark of ReadStart also
-	// fences the read against prunings.
+	// be older. The mark also fences the read against prunings. The zero
+	// EventMark checks no event and no pruning.
 	Mark EventMark
 }
 
@@ -153,21 +152,6 @@ func queryItemsContext(ctx context.Context, q querier, query string, args ...any
 	return items, rows.Err()
 }
 
-// Library returns the read times of a library. A library that was never read
-// gives the zero Library.
-func (s *Store) Library(server, section string) (Library, error) {
-	var full, read sql.NullInt64
-	err := s.db.QueryRow(`SELECT last_full_read, last_read FROM library WHERE server = ? AND section = ?`,
-		server, section).Scan(&full, &read)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Library{}, nil
-	}
-	if err != nil {
-		return Library{}, fmt.Errorf("read library: %w", err)
-	}
-	return Library{LastFullRead: timeFrom(full), LastRead: timeFrom(read)}, nil
-}
-
 // ApplyRead writes r in one transaction. For each row of the section, the
 // final reasons are the item bits from r.Items (or the old item bits if the
 // item is not in r.Items) and, if r.Shows, the episode bits from the two
@@ -187,9 +171,9 @@ func (s *Store) Library(server, section string) (Library, error) {
 // or that a write attempt protected at or after r.At; a later read applies
 // its listing again, at the latest the next full read. It saves a hold for
 // each item that it skipped because a write can have changed it, and a full
-// read deletes the holds of its library that it reconciled. With a fenced
-// mark, it returns ErrReadPruned and writes nothing when a pruning ran since
-// the mark.
+// read deletes the holds of its library that it reconciled. With a mark, it
+// returns ErrReadPruned and writes nothing when a pruning ran since the
+// mark.
 func (s *Store) ApplyRead(r Read) (ReadResult, error) {
 	tx, err := s.db.Begin()
 	if err != nil {

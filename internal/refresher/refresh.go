@@ -22,7 +22,7 @@ import (
 func (r *Refresher) refreshDue(ctx context.Context, run *serverRun) error {
 	due, total, err := r.store.Due(store.DueQuery{
 		Server:             run.server.Name,
-		Sections:           run.sections(),
+		Sections:           run.readSections(),
 		Now:                r.now(),
 		MinimumAge:         r.opts.MinimumAge,
 		RefreshInterval:    r.opts.RefreshInterval,
@@ -105,6 +105,8 @@ func (r *Refresher) skipItem(run *serverRun, it store.Item, reason string) {
 	r.itemDone(run, it.RatingKey, OutcomeSkipped)
 }
 
+// recheck reads the row of the due item again under its item lock and
+// returns the reason to skip it, or "".
 func (r *Refresher) recheck(run *serverRun, batch store.Item) (store.Item, string, error) {
 	row, cached, _, err := r.store.KnownItem(run.server.Name, batch.RatingKey)
 	switch {
@@ -114,11 +116,14 @@ func (r *Refresher) recheck(run *serverRun, batch store.Item) (store.Item, strin
 		return store.Item{}, "gone", nil
 	case !row.StoppedAt.IsZero():
 		return row, "stopped", nil
-	case row.Attempts != batch.Attempts || row.Reasons&^(r.opts.IgnoreReasons|store.ManualReasons) == 0:
+	case row.Attempts != batch.Attempts || row.Reasons&^(r.opts.IgnoreReasons|store.ManualReasons) == 0 || !run.readIn(row.Section):
 		return row, "changed", nil
-	default:
-		return row, "", nil
 	}
+	held, err := r.store.Held(run.server.Name, row.RatingKey, r.now())
+	if err != nil || !held {
+		return row, "", err
+	}
+	return row, "held", nil
 }
 
 // logSummary logs the summary line of the server.
@@ -192,7 +197,7 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 // when it sent nothing: for a held item, which it skips with the cause
 // held, and for every other ErrNotSent, which it returns.
 func (r *Refresher) sendRunWrite(ctx context.Context, run *serverRun, it store.Item, fm *fixMatch) (res store.AttemptResult, sent bool, err error) {
-	spec := store.AttemptSpec{RatingKey: it.RatingKey, Action: store.ActionRefresh, Automatic: true, Sections: run.sections()}
+	spec := store.AttemptSpec{RatingKey: it.RatingKey, Action: store.ActionRefresh, Automatic: true, Sections: run.readSections()}
 	send := refreshSend(run.server, it.RatingKey)
 	if fm != nil {
 		spec.Action, send = fm.action, matchSend(run.server, it.RatingKey, fm)
@@ -219,7 +224,7 @@ func (r *Refresher) sendRunWrite(ctx context.Context, run *serverRun, it store.I
 // store error (ErrStore).
 func (r *Refresher) runRefresh(ctx context.Context, run *serverRun, it store.Item, match int64) (store.AttemptResult, error) {
 	spec := store.AttemptSpec{RatingKey: it.RatingKey, Action: store.ActionRefresh, Automatic: true,
-		Sections: run.sections(), FollowsUp: match}
+		Sections: run.readSections(), FollowsUp: match}
 	res, err := r.sendWrite(ctx, run.server, spec, refreshSend(run.server, it.RatingKey))
 	if errors.Is(err, ErrNotSent) {
 		return res, err

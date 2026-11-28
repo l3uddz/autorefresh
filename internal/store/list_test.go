@@ -765,4 +765,9 @@ func TestHeldRows(t *testing.T) {
 			}
 		}
 	}
+	for key, want := range map[string]bool{"free": false, "attempt": true, "hold": true, "none": false} {
+		if held, err := s.Held(srv, key, now); err != nil || held != want {
+			t.Errorf("Held(%s) = %v, err %v, want %v", key, held, err, want)
+		}
+	}
 }

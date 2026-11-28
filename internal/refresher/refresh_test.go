@@ -1069,6 +1069,7 @@ func TestRefreshBatchSkipsPaceAfterSkippedItem(t *testing.T) {
 		server:    Server{Name: testServer, Plex: fp},
 		source:    store.SourceAuto,
 		libraries: []plex.Library{moviesLib},
+		read:      []string{moviesLib.ID},
 		remaining: len(batch),
 	}
 	if err := f.r.refreshBatch(t.Context(), run, batch); err != nil {

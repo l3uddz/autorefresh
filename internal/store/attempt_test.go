@@ -251,8 +251,8 @@ func TestReadStartReportsHolds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Held || st.LastRead.IsZero() || !st.Mark.fenced {
-		t.Errorf("state = %+v, want read times, no hold, and a fenced mark", st)
+	if st.Held || st.LastRead.IsZero() || !st.Mark.set {
+		t.Errorf("state = %+v, want read times, no hold, and a mark", st)
 	}
 	if _, err := s.db.Exec(`INSERT INTO read_hold (server, section, rating_key) VALUES (?, ?, '1')`, srv, sec); err != nil {
 		t.Fatal(err)

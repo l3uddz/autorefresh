@@ -20,10 +20,10 @@ type ReadResult struct {
 	Omitted []string
 }
 
-// checkFence returns ErrReadPruned when a generation of the fenced mark of
-// r changed. An unfenced mark checks nothing.
+// checkFence returns ErrReadPruned when a generation of the mark of r
+// changed. The zero mark checks nothing.
 func checkFence(tx *sql.Tx, r Read) error {
-	if !r.Mark.fenced {
+	if !r.Mark.set {
 		return nil
 	}
 	g, err := readGenerations(tx, r.Server)

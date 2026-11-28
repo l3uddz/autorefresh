@@ -255,7 +255,7 @@ func (s *Store) ReadStart(server, section string) (ReadState, error) {
 
 // readMark returns the newest event id and the generations of server.
 func readMark(tx *sql.Tx, server string) (EventMark, error) {
-	m := EventMark{set: true, fenced: true}
+	m := EventMark{set: true}
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM event`).Scan(&m.id); err != nil {
 		return EventMark{}, fmt.Errorf("read event mark: %w", err)
 	}

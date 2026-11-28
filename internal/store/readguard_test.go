@@ -73,7 +73,7 @@ func TestReadSkipsAndHoldsAnItemWithALiveAttempt(t *testing.T) {
 	if n := countRows(t, a, "event"); n != 0 {
 		t.Errorf("events = %d, want none", n)
 	}
-	if lib, err := a.Library(srv, sec); err != nil || !lib.LastRead.Equal(base) {
+	if lib, err := readTimes(a, srv, sec); err != nil || !lib.LastRead.Equal(base) {
 		t.Errorf("last read = %v, err %v, want the read time to advance", lib.LastRead, err)
 	}
 }
@@ -264,7 +264,7 @@ func TestReadOlderThanPruning(t *testing.T) {
 			if !errors.Is(err, ErrReadPruned) {
 				t.Fatalf("err = %v, want ErrReadPruned", err)
 			}
-			if lib, err := a.Library(srv, sec); err != nil || !lib.LastRead.Equal(at) || !lib.LastFullRead.Equal(at) {
+			if lib, err := readTimes(a, srv, sec); err != nil || !lib.LastRead.Equal(at) || !lib.LastFullRead.Equal(at) {
 				t.Errorf("library = %+v, err %v, want the read times kept", lib, err)
 			}
 			if _, ok := rows(t, a)["1"]; !ok {

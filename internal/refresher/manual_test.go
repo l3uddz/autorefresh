@@ -45,7 +45,7 @@ func TestRunRechecksSameSecondManualAttempt(t *testing.T) {
 	if _, err := f.r.RefreshItem(t.Context(), "home", "1"); err != nil {
 		t.Fatal(err)
 	}
-	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto}
+	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto, read: []string{"1"}}
 	if sent, err := f.r.runItem(t.Context(), run, batch); err != nil || sent {
 		t.Fatalf("runItem = sent %v, err %v", sent, err)
 	}
@@ -221,7 +221,7 @@ func TestManualMatchRecordsTargetAndStoppedRunSkipsItem(t *testing.T) {
 	if changed, err := f.r.SetStopped(t.Context(), "home", "1", true); err != nil || !changed {
 		t.Fatalf("stop = %v, %v", changed, err)
 	}
-	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto}
+	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto, read: []string{"1"}}
 	if sent, err := f.r.runItem(t.Context(), run, batch); err != nil || sent || run.skipped != 1 {
 		t.Fatalf("scheduled skip = sent %v, skipped %d, %v", sent, run.skipped, err)
 	}
@@ -700,9 +700,12 @@ func TestReadKeepsRefreshNowSettlement(t *testing.T) {
 				t.Errorf("newest event = %+v, want the %s event of Refresh now", last, tc.kind)
 			}
 
-			// The dry run keeps the row that its read adds.
+			// The dry run keeps the row that its read adds. After the check
+			// completed the item during the read, the read held it, so this
+			// read is full.
 			f.r.opts.DryRun = true
 			fake.lists["1?type=1&updatedAt>>="+unixString(t0.Add(-oversample))] = []plex.Item{incompleteItem("1")}
+			fake.lists["1?type=1"] = []plex.Item{incompleteItem("1")}
 			f.run(t0.Add(time.Hour))
 			if row, found := f.row("home", "1", "1"); !found || row.Reasons != store.NoSummary || row.Attempts != 0 {
 				t.Fatalf("row = %+v, found %v; want the row again", row, found)

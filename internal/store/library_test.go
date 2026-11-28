@@ -42,7 +42,7 @@ func TestSaveLibrariesInsertsMissingRowWithoutReadTimes(t *testing.T) {
 	if err := s.SaveLibraries(srv, []LibraryInfo{{Section: sec, Title: "Movies"}}); err != nil {
 		t.Fatal(err)
 	}
-	lib, err := s.Library(srv, sec)
+	lib, err := readTimes(s, srv, sec)
 	if err != nil || !lib.LastFullRead.Equal(time.Time{}) || !lib.LastRead.Equal(time.Time{}) {
 		t.Fatalf("Library = %+v, %v, want zero times", lib, err)
 	}

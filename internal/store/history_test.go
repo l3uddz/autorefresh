@@ -395,7 +395,7 @@ func TestDryRunReadWritesNoEvents(t *testing.T) {
 	if got := rows(t, s); len(got) != 1 || got["c"].RatingKey != "c" {
 		t.Fatalf("rows = %+v", got)
 	}
-	if lib, _ := s.Library(srv, sec); !lib.LastFullRead.Equal(at) {
+	if lib, _ := readTimes(s, srv, sec); !lib.LastFullRead.Equal(at) {
 		t.Fatalf("library = %+v", lib)
 	}
 	for _, key := range []string{"a", "b", "c"} {

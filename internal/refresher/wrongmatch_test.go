@@ -218,7 +218,7 @@ func TestRecheckSkipsRowWithOnlyWrongMatchLeft(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto}
+	run := &serverRun{server: f.r.servers[0], source: store.SourceAuto, read: []string{"1"}}
 	if sent, err := f.r.runItem(t.Context(), run, batch); err != nil || sent || run.skipped != 1 {
 		t.Fatalf("runItem = sent %v, skipped %d, %v; want a skip", sent, run.skipped, err)
 	}

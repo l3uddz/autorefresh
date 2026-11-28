@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -39,8 +40,9 @@ type Store interface {
 	RecordManual(store.ManualRecord) error
 	KnownItem(server, ratingKey string) (store.Item, bool, bool, error)
 	KnownItems(ctx context.Context, server string, keys []string) (map[string]store.KnownResult, error)
-	Library(server, section string) (store.Library, error)
-	EventMark() (store.EventMark, error)
+	ReadStart(server, section string) (store.ReadState, error)
+	Held(server, key string, now time.Time) (bool, error)
+	PruneAttempts(now time.Time) (int, error)
 	ApplyRead(r store.Read) (store.ReadResult, error)
 	Unseen(server, section string, seen []string) ([]store.Item, error)
 	Due(q store.DueQuery) (items []store.Item, total int, err error)
@@ -134,6 +136,7 @@ type serverRun struct {
 	server               Server
 	began                time.Time
 	libraries            []plex.Library        // the selected libraries
+	read                 []string              // the sections whose read the run applied
 	files                map[string][]string   // movie files by rating key, from the reads of this run
 	prePaths             map[string]plex.Paths // pre-fetched item paths by rating key, e.g. from manual refresh pre-check
 	full                 bool                  // read every library fully
@@ -198,9 +201,16 @@ func (run *serverRun) sections() []string {
 	return sections
 }
 
+// readSections returns the sections whose read the run applied. Only their
+// items get automatic writes in the run.
+func (run *serverRun) readSections() []string { return run.read }
+
+// readIn reports whether the run applied the read of section.
+func (run *serverRun) readIn(section string) bool { return slices.Contains(run.read, section) }
+
 // pruneBeforeRun removes the cache of the servers that are not configured,
-// and the events and runs that are older than the history retention. A dry
-// run keeps both.
+// the write attempts that ended more than a day ago, and the events and
+// runs that are older than the history retention. A dry run keeps all.
 func (r *Refresher) pruneBeforeRun(now time.Time) error {
 	if r.opts.DryRun {
 		return nil
@@ -214,6 +224,13 @@ func (r *Refresher) pruneBeforeRun(now time.Time) error {
 		return err
 	}
 	logPruned(pruned, nil)
+	attempts, err := r.store.PruneAttempts(now)
+	if err != nil {
+		return err
+	}
+	if attempts > 0 {
+		log.Debug().Int("attempts", attempts).Msg("Pruned write attempts")
+	}
 	if r.opts.HistoryRetention <= 0 {
 		return nil
 	}
