@@ -55,8 +55,8 @@ Commit: `feat(web): show a match that Plex merged as fixed`
 
 Commit: `docs(readme): describe a match that Plex merged`
 
-- [ ] 6.1 Say in `README.md` that a match which makes Plex merge two copies shows as fixed, and update the `internal/plex`, `internal/store`, `internal/refresher`, and `web/` rows of `AGENTS.md`.
+- [x] 6.1 Say in `README.md` that a match which makes Plex merge two copies shows as fixed, and update the `internal/plex`, `internal/store`, `internal/refresher`, and `web/` rows of `AGENTS.md`.
 
 ## 7. Checks
 
-- [ ] 7.1 Run the CI sequence of AGENTS.md: `mise run vendor`, `mise run test`, `mise run lint`, `mise run web-install`, `mise run web-lint`, `mise run web-test`, and `mise run test-webui`. Then run `pnpm exec astryx doctor --built .` in `web/`, and `openspec validate --all --strict`.
+- [x] 7.1 Run the CI sequence of AGENTS.md: `mise run vendor`, `mise run test`, `mise run lint`, `mise run web-install`, `mise run web-lint`, `mise run web-test`, and `mise run test-webui`. Then run `pnpm exec astryx doctor --built .` in `web/`, and `openspec validate --all --strict`.
