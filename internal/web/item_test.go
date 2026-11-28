@@ -72,7 +72,7 @@ func TestItemFromRowAndHistory(t *testing.T) {
 		t.Errorf("request id = %v", req["id"])
 	}
 	assertTime(t, req, "at", requested.Truncate(time.Second))
-	assertAbsent(t, req, "error", "conflict", "episodeCount", "fixedAction", "fixedMatch", "fixedMatchEventId",
+	assertAbsent(t, req, "error", "conflict", "episodeCount", "fixedAction", "fixedMatch", "fixedMatchEventId", "mergedKey",
 		"itemYear", "tmdbId", "tmdbSkip", "tmdbMissing", "episodeDiff")
 	if !strings.Contains(body, `"searches":[]`) {
 		t.Errorf("body has no empty searches: %s", body)
@@ -96,6 +96,7 @@ func TestItemFromRowAndHistory(t *testing.T) {
 		t.Errorf("completed event = %v", completed)
 	}
 	assertTime(t, completed, "at", done.Truncate(time.Second))
+	assertAbsent(t, completed, "mergedKey")
 	if got.Timeline[1]["id"] != req["id"] {
 		t.Errorf("second event = %v, want the request", got.Timeline[1])
 	}

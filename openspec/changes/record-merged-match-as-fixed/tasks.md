@@ -41,7 +41,7 @@ Commit: `fix(refresher): record a match that Plex merged as fixed`
 
 Commit: `feat(web): add the merged key to timeline events`
 
-- [ ] 4.1 Add `mergedKey` (omitted when empty) to the timeline event DTO of `internal/web`, and tests for the item detail route, the run details, and a Refresh now answer that finds a merge.
+- [x] 4.1 Add `mergedKey` (omitted when empty) to the timeline event DTO of `internal/web`, and tests for the item detail route, the run details, and a Refresh now answer that finds a merge.
 
 ## 5. Dashboard: show a merged fix
 

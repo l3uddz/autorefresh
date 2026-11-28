@@ -42,7 +42,10 @@ type eventJSON struct {
 	FixedAction       store.Action `json:"fixedAction,omitempty"`
 	FixedMatch        store.Action `json:"fixedMatch,omitempty"`
 	FixedMatchEventID int64        `json:"fixedMatchEventId,omitempty"`
-	Searches          []searchJSON `json:"searches"`
+	// MergedKey is the rating key of the item that Plex merged the item
+	// into after a match, on the completed event of that merge.
+	MergedKey string       `json:"mergedKey,omitempty"`
+	Searches  []searchJSON `json:"searches"`
 	// The evidence of a match decision beyond its searches.
 	ItemYear     int              `json:"itemYear,omitempty"`
 	TMDBID       string           `json:"tmdbId,omitempty"`
@@ -225,7 +228,7 @@ func (s *Server) toEventJSON(e store.Event) eventJSON {
 		ID: e.ID, At: e.At, Kind: string(e.Kind), Source: string(e.Source), Action: e.Action,
 		Accepted: e.Accepted, Outcome: e.Outcome, Error: s.redact(e.Error), Conflict: e.Conflict,
 		PathYear: e.PathYear, TMDBYear: e.TMDBYear, EpisodeCount: e.EpisodeCount, Links: e.Links,
-		FixedAction: e.FixedAction, FixedMatch: e.FixedMatch, FixedMatchEventID: e.FixedMatchEventID,
+		FixedAction: e.FixedAction, FixedMatch: e.FixedMatch, FixedMatchEventID: e.FixedMatchEventID, MergedKey: e.MergedKey,
 		Searches: make([]searchJSON, 0, len(e.Searches)),
 	}
 	if e.Kind == store.EventMatchDecision {
