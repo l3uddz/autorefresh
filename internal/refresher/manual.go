@@ -1,6 +1,7 @@
 package refresher
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -202,7 +203,7 @@ func stateOf(row store.Item, live plex.Item, paths plex.Paths) (matchState, stri
 	if row.Reasons&store.Unmatched != 0 {
 		return matchState{unmatched: true}, matchState{unmatched: true}.lost(live)
 	}
-	state := matchState{guid: live.GUID, ids: parseIDs(paths.All())}
+	state := matchState{guid: live.GUID, ids: idSet(paths.All())}
 	if live.GUID == "" {
 		return state, "no longer mismatched"
 	}
@@ -223,10 +224,20 @@ func (s matchState) lost(live plex.Item) string {
 	if live.GUID != s.guid || CompareMovieIDs(live.GUID, live.Files, live.ExternalIDs).Result != WrongMatchMismatched {
 		return "no longer mismatched"
 	}
-	if !slices.Equal(parseIDs(live.Files), s.ids) {
+	if !slices.Equal(idSet(live.Files), s.ids) {
 		return "paths changed"
 	}
 	return ""
+}
+
+// idSet returns the path IDs of paths sorted, so two reads that list the
+// same files in another order give the same set.
+func idSet(paths []string) []pathID {
+	ids := parseIDs(paths)
+	slices.SortFunc(ids, func(a, b pathID) int {
+		return cmp.Or(cmp.Compare(a.Source, b.Source), cmp.Compare(a.Value, b.Value))
+	})
+	return ids
 }
 
 // preCheck reads the item and its paths once before autoMatch, and returns

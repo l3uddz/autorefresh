@@ -420,4 +420,25 @@ func TestRefreshItemMismatchedMovieWithLocation(t *testing.T) {
 	if len(lines) != 1 || lines[0]["reason"] != "paths changed" {
 		t.Errorf("Skipped fix match lines = %v, want one with paths changed", lines)
 	}
+	if _, ok := f.decisionOf("101"); ok {
+		t.Error("decision recorded")
+	}
+}
+
+// A movie with two files whose IDs differ keeps its pick when Plex lists
+// the files in another order just before the match.
+func TestRefreshItemMismatchedMovieFilesInAnotherOrder(t *testing.T) {
+	first := movie("101", "{tmdb-100}", "tmdb://200", "imdb://tt6")
+	first.Files = append(first.Files, movieFolder+"{imdb-tt5}/Title.mkv")
+	reordered := first
+	reordered.Files = []string{first.Files[1], first.Files[0]}
+	f, fp := mismatchFixture(t, []plex.Candidate{rightMatch},
+		checkAnswer{item: first}, checkAnswer{item: reordered}, checkAnswer{item: completeItem("101")})
+	fp.candidates["101 imdb-tt5"] = []plex.Candidate{rightMatch}
+
+	res, err := f.r.RefreshItem(t.Context(), testServer, "101")
+	if err != nil || res.Match == nil || res.Match.GUID != rightMatch.GUID {
+		t.Fatalf("refresh = %+v, %v; want the match %s", res, err, rightMatch.GUID)
+	}
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/100", "Refresh 101")
 }
