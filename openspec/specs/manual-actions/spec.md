@@ -123,7 +123,7 @@ Just before it applies a picked match after searching, autorefresh SHALL read th
 
 ### Requirement: Check after a manual request
 
-After Plex accepts a manual refresh of a cached item, also the refresh after a match, autorefresh SHALL check that one item. It SHALL wait 1 s, 2 s, and 4 s before up to three metadata reads of the item. Each check SHALL save the reasons that Plex shows, unless a newer write yields it (see below). After a match, a check SHALL save nothing while Plex shows a GUID other than the chosen one. The checks SHALL end at the first check that completes the item or finds it gone. The action SHALL report whether a check saved the current reasons.
+After Plex accepts a manual refresh of a cached item, also the refresh after a match, autorefresh SHALL check that one item. It SHALL wait 1 s, 2 s, and 4 s before up to three metadata reads of the item. Each check SHALL save the reasons that Plex shows, unless a newer write yields it (see below) or Plex shows another GUID than the chosen match. The checks SHALL end at the first check that completes the item or finds it gone. The action SHALL report whether a check saved the current reasons.
 
 #### Scenario: Check completes the item
 
