@@ -196,8 +196,8 @@ type matchState struct {
 
 // stateOf returns the match state of the cached row from its live item and
 // the paths that the search uses, or the reason why the item no longer
-// needs the fix match. A movie lists its paths as files, so a path that is
-// not a file of the movie fails the state as changed paths.
+// needs the fix match. A movie lists its paths as files, so a searched path
+// whose IDs differ from the file IDs fails the state as changed paths.
 func stateOf(row store.Item, live plex.Item, paths plex.Paths) (matchState, string) {
 	if row.Reasons&store.Unmatched != 0 {
 		return matchState{unmatched: true}, matchState{unmatched: true}.lost(live)

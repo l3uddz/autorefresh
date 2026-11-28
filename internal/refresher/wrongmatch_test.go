@@ -403,9 +403,9 @@ func TestRefreshItemIgnoredMismatchedOnlyRefreshes(t *testing.T) {
 	}
 }
 
-// A movie lists its paths as files. If Plex gave a location too, the search
-// would use other paths than the files, so Refresh now neither searches nor
-// matches.
+// A movie lists its paths as files. If Plex gave a location whose IDs
+// differ from the file IDs, the search would use other IDs than the files
+// name, so Refresh now neither searches nor matches.
 func TestRefreshItemMismatchedMovieWithLocation(t *testing.T) {
 	f, fp := mismatchFixture(t, []plex.Candidate{rightMatch}, checkAnswer{item: wrongMovie()})
 	fp.paths["101"] = []string{"/movies/Other {tmdb-300}"}
