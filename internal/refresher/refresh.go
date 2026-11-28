@@ -158,10 +158,10 @@ func (r *Refresher) refreshItem(ctx context.Context, run *serverRun, it store.It
 	}
 	if fm != nil {
 		run.matches++
-		err = run.server.Plex.Match(ctx, it.RatingKey, fm.cand)
+		_, err = run.server.Plex.Match(ctx, it.RatingKey, fm.cand)
 	} else {
 		run.refreshes++
-		err = run.server.Plex.Refresh(ctx, it.RatingKey)
+		_, err = run.server.Plex.Refresh(ctx, it.RatingKey)
 	}
 	if err != nil {
 		return true, r.itemFailed(ctx, run, it, action, fm, err)
@@ -197,7 +197,7 @@ func (r *Refresher) runRefresh(ctx context.Context, run *serverRun, it store.Ite
 		return err
 	}
 	run.refreshes++
-	err := run.server.Plex.Refresh(ctx, it.RatingKey)
+	_, err := run.server.Plex.Refresh(ctx, it.RatingKey)
 	if errors.Is(err, plex.ErrNotFound) {
 		if recErr := r.store.RecordGone(run.server.Name, it.RatingKey, r.now(), store.SourceAuto, store.ActionRefresh, run.id); recErr != nil {
 			return fmt.Errorf("%w: %w", ErrStore, recErr)

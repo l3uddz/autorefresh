@@ -2,7 +2,7 @@
 
 ## 1. Outcome of a Plex write
 
-- [ ] 1.1 Add `plex.Outcome` (`accepted`, `rejected`, `unknown`) and return it from `Refresh` and `Match` with the error, from the status of the one answer. Send the two writes through a client that does not follow redirects (`http.ErrUseLastResponse`), and turn a 3xx answer into an error that is neither `ErrNotFound` nor `ErrUnavailable`. Keep `neterr.SameOrigin` for reads and every existing error class. Build the no-redirect client of a write from `*c.http` on each call, so tests that swap `c.http.Transport` keep working, and clear its `Timeout` when the context of the write has a deadline at or before it, so the deadline of the context ends the write and a timeout keeps `context.DeadlineExceeded`.
+- [x] 1.1 Add `plex.Outcome` (`accepted`, `rejected`, `unknown`) and return it from `Refresh` and `Match` with the error, from the status of the one answer. Send the two writes through a client that does not follow redirects (`http.ErrUseLastResponse`), and turn a 3xx answer into an error that is neither `ErrNotFound` nor `ErrUnavailable`. Keep `neterr.SameOrigin` for reads and every existing error class. Build the no-redirect client of a write from `*c.http` on each call, so tests that swap `c.http.Transport` keep working, and clear its `Timeout` when the context of the write has a deadline at or before it, so the deadline of the context ends the write and a timeout keeps `context.DeadlineExceeded`.
   - `httptest` tests: 200, 400, 401, 403, 404, 405, 408, 429, 500, a timeout, a refused connection, and a 307 answer to a write that the server sees as exactly one `PUT`, while a read still follows a same-origin redirect.
   - Update the `internal/plex` row of `AGENTS.md`.
   - Verify with `go test ./internal/plex/`.

@@ -140,10 +140,9 @@ func TestRejectsInvalidRatingKey(t *testing.T) {
 	ctx := context.Background()
 
 	for _, key := range []string{"", "../sections/1", "1/refresh", "12a"} {
-		calls := map[string]error{
-			"Refresh": c.Refresh(ctx, key),
-			"Match":   c.Match(ctx, key, Candidate{GUID: "g", Name: "n"}),
-		}
+		calls := map[string]error{}
+		_, calls["Refresh"] = c.Refresh(ctx, key)
+		_, calls["Match"] = c.Match(ctx, key, Candidate{GUID: "g", Name: "n"})
 		_, calls["ItemPaths"] = c.ItemPaths(ctx, key)
 		_, calls["SearchMatches"] = c.SearchMatches(ctx, key, "t", "a", "l", 0)
 
@@ -186,7 +185,7 @@ func TestBaseURLPathIsPrefix(t *testing.T) {
 		if _, err := c.Libraries(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		if err := c.Refresh(context.Background(), "1001"); err != nil {
+		if _, err := c.Refresh(context.Background(), "1001"); err != nil {
 			t.Fatal(err)
 		}
 		want := []string{"/plex/library/sections", "/plex/library/metadata/1001/refresh"}
@@ -215,7 +214,7 @@ func TestStatusMapping(t *testing.T) {
 		t.Run(http.StatusText(tt.status), func(t *testing.T) {
 			_, c := newServer(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(tt.status) })
 
-			err := c.Refresh(context.Background(), "1001")
+			_, err := c.Refresh(context.Background(), "1001")
 			if err == nil {
 				t.Fatal("no error")
 			}
@@ -236,7 +235,7 @@ func TestStatusMapping(t *testing.T) {
 		c := New("test", mustURL(t, srv.URL), testToken, testTimeout)
 		srv.Close()
 
-		if err := c.Refresh(context.Background(), "1001"); !errors.Is(err, ErrUnavailable) {
+		if _, err := c.Refresh(context.Background(), "1001"); !errors.Is(err, ErrUnavailable) {
 			t.Errorf("err = %v, want ErrUnavailable", err)
 		}
 	})
@@ -270,7 +269,7 @@ func TestTransportErrorsKeepNoTransportText(t *testing.T) {
 			buf.Reset()
 			c.http.Transport = failingTransport{tt.cause}
 
-			err := c.Refresh(context.Background(), "1001")
+			_, err := c.Refresh(context.Background(), "1001")
 			if !errors.Is(err, ErrUnavailable) {
 				t.Fatalf("err = %v, want ErrUnavailable", err)
 			}
@@ -291,7 +290,7 @@ func TestTransportErrorsKeepNoTransportText(t *testing.T) {
 	t.Run("canceled context", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		if err := c.Refresh(ctx, "1001"); !errors.Is(err, context.Canceled) || !errors.Is(err, ErrUnavailable) {
+		if _, err := c.Refresh(ctx, "1001"); !errors.Is(err, context.Canceled) || !errors.Is(err, ErrUnavailable) {
 			t.Errorf("err = %v", err)
 		}
 	})
@@ -308,9 +307,13 @@ func TestErrorsAndTraceOmitSecrets(t *testing.T) {
 	host := strings.TrimPrefix(srv.URL, "http://")
 	c := New("test", mustURL(t, srv.URL), testToken, testTimeout)
 
+	refresh := func(key string) error {
+		_, err := c.Refresh(context.Background(), key)
+		return err
+	}
 	var errs []error
-	errs = append(errs, c.Refresh(context.Background(), "1")) // succeeds
-	errs = append(errs, c.Refresh(context.Background(), "2")) // fails with 503
+	errs = append(errs, refresh("1")) // succeeds
+	errs = append(errs, refresh("2")) // fails with 503
 	if errs[0] != nil || errs[1] == nil {
 		t.Fatalf("errors = %v", errs)
 	}
@@ -318,7 +321,7 @@ func TestErrorsAndTraceOmitSecrets(t *testing.T) {
 	// Close only closes the idle connections of http.DefaultTransport. Drop the
 	// pooled connection of the client, so the request dials and is refused.
 	c.http.CloseIdleConnections()
-	errs = append(errs, c.Refresh(context.Background(), "3")) // transport error
+	errs = append(errs, refresh("3")) // transport error
 
 	for _, err := range errs[1:] {
 		if err == nil {
@@ -371,7 +374,7 @@ func TestRefusesCrossOriginRedirect(t *testing.T) {
 	buf := captureLog(t)
 	c := New("test", mustURL(t, origin.URL), testToken, testTimeout)
 
-	err := c.Refresh(context.Background(), "1001")
+	_, err := c.Libraries(context.Background())
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v, want ErrUnavailable", err)
 	}
@@ -396,13 +399,14 @@ func TestAllowsSameOriginRedirect(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/moved" {
 			final.Add(1)
+			w.Write([]byte(`{"MediaContainer":{"Directory":[]}}`))
 			return
 		}
 		http.Redirect(w, r, "/moved", http.StatusTemporaryRedirect)
 	}))
 	t.Cleanup(srv.Close)
 
-	if err := New("test", mustURL(t, srv.URL), testToken, testTimeout).Refresh(context.Background(), "1001"); err != nil {
+	if _, err := New("test", mustURL(t, srv.URL), testToken, testTimeout).Libraries(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if final.Load() != 1 {
@@ -428,7 +432,7 @@ func TestStatusErrorsOmitReasonPhrase(t *testing.T) {
 	for _, code := range []int{503, 404, 500} {
 		c.http.Transport = phraseTransport{code}
 
-		err := c.Refresh(context.Background(), "1001")
+		_, err := c.Refresh(context.Background(), "1001")
 		if err == nil || strings.Contains(err.Error(), "plex.private") {
 			t.Errorf("status %d: err = %v", code, err)
 		}
@@ -465,7 +469,7 @@ func TestTimeoutLimitsRequest(t *testing.T) {
 
 	c := New("test", mustURL(t, srv.URL), testToken, 50*time.Millisecond)
 	start := time.Now()
-	err := c.Refresh(context.Background(), "1001")
+	_, err := c.Refresh(context.Background(), "1001")
 	if !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "request timed out") {
 		t.Fatalf("Refresh error = %v, want a timeout that wraps ErrUnavailable", err)
 	}

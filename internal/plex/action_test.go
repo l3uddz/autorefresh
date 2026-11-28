@@ -11,7 +11,7 @@ import (
 func TestRefreshSendsPutToItem(t *testing.T) {
 	rec, c := newServer(t, func(http.ResponseWriter, *http.Request) {})
 
-	if err := c.Refresh(context.Background(), "1001"); err != nil {
+	if _, err := c.Refresh(context.Background(), "1001"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -92,10 +92,10 @@ func TestMatchSendsGuidNameYear(t *testing.T) {
 	rec, c := newServer(t, func(http.ResponseWriter, *http.Request) {})
 	ctx := context.Background()
 
-	if err := c.Match(ctx, "1001", Candidate{GUID: "plex://movie/1", Name: "Name", Year: 2020}); err != nil {
+	if _, err := c.Match(ctx, "1001", Candidate{GUID: "plex://movie/1", Name: "Name", Year: 2020}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Match(ctx, "1001", Candidate{GUID: "plex://movie/1", Name: "Name"}); err != nil {
+	if _, err := c.Match(ctx, "1001", Candidate{GUID: "plex://movie/1", Name: "Name"}); err != nil {
 		t.Fatal(err)
 	}
 

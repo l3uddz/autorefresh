@@ -82,7 +82,9 @@ func TestMatchRejectsUnsafeOrInvalidRequests(t *testing.T) {
 
 type successfulPlexRefresh struct{ refresher.Plex }
 
-func (successfulPlexRefresh) Refresh(context.Context, string) error { return nil }
+func (successfulPlexRefresh) Refresh(context.Context, string) (plex.Outcome, error) {
+	return plex.OutcomeAccepted, nil
+}
 
 // Item ends the check after the refresh at once.
 func (successfulPlexRefresh) Item(context.Context, string) (plex.Item, error) {

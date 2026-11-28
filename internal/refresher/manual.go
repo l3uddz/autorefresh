@@ -358,9 +358,9 @@ func (r *Refresher) sendManual(ctx context.Context, srv Server, it store.Item, c
 	req := store.Request{Server: srv.Name, RatingKey: it.RatingKey, At: r.now(), Source: store.SourceManual,
 		Action: action, Match: target(fm)}
 	if fm == nil {
-		err = srv.Plex.Refresh(ctx, it.RatingKey)
+		_, err = srv.Plex.Refresh(ctx, it.RatingKey)
 	} else {
-		err = srv.Plex.Match(ctx, it.RatingKey, fm.cand)
+		_, err = srv.Plex.Match(ctx, it.RatingKey, fm.cand)
 	}
 	req.Accepted = err == nil
 	if err != nil {

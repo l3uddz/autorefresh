@@ -119,10 +119,10 @@ type blockingRefresh struct {
 	entered chan struct{}
 }
 
-func (p blockingRefresh) Refresh(ctx context.Context, _ string) error {
+func (p blockingRefresh) Refresh(ctx context.Context, _ string) (plex.Outcome, error) {
 	close(p.entered)
 	<-ctx.Done()
-	return fmt.Errorf("%w: %w", plex.ErrUnavailable, ctx.Err())
+	return plex.OutcomeUnknown, fmt.Errorf("%w: %w", plex.ErrUnavailable, ctx.Err())
 }
 
 func TestCancelBulkRecordsInFlightAttemptAndRemainingKey(t *testing.T) {

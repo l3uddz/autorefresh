@@ -2,6 +2,7 @@ package refresher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -134,12 +135,25 @@ func (f *fakePlex) EpisodeNumbers(ctx context.Context, ratingKey string) (map[in
 	return f.episodeNumbers[ratingKey], f.episodeReadErr
 }
 
-func (f *fakePlex) Refresh(ctx context.Context, ratingKey string) error {
+func (f *fakePlex) Refresh(ctx context.Context, ratingKey string) (plex.Outcome, error) {
 	if err := canceled(ctx); err != nil {
-		return err
+		return plex.OutcomeUnknown, err
 	}
 	f.record("Refresh " + ratingKey)
-	return f.refreshErrs[ratingKey]
+	return fakeOutcome(f.refreshErrs[ratingKey])
+}
+
+// fakeOutcome returns the outcome that a Plex answer with err would give:
+// accepted without an error, rejected for a 404, and unknown otherwise.
+func fakeOutcome(err error) (plex.Outcome, error) {
+	switch {
+	case err == nil:
+		return plex.OutcomeAccepted, nil
+	case errors.Is(err, plex.ErrNotFound):
+		return plex.OutcomeRejected, err
+	default:
+		return plex.OutcomeUnknown, err
+	}
 }
 
 // SearchMatches records "SearchMatches <rating key> <title> <agent> <language>".
@@ -178,10 +192,10 @@ func (f *fakePlex) ProviderSeries(ctx context.Context, guid string) (plex.Series
 }
 
 // Match records "Match <rating key> <candidate guid>".
-func (f *fakePlex) Match(ctx context.Context, ratingKey string, cand plex.Candidate) error {
+func (f *fakePlex) Match(ctx context.Context, ratingKey string, cand plex.Candidate) (plex.Outcome, error) {
 	if err := canceled(ctx); err != nil {
-		return err
+		return plex.OutcomeUnknown, err
 	}
 	f.record("Match " + ratingKey + " " + cand.GUID)
-	return f.matchErrs[ratingKey]
+	return fakeOutcome(f.matchErrs[ratingKey])
 }
