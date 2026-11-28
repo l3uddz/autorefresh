@@ -4,12 +4,12 @@
 
 Commit: `feat(refresher): apply the automatic pick to a mismatched movie`
 
-- [ ] 1.1 Add `refreshSeeksMatch` beside `seeksMatch` in `internal/refresher/refresh.go`: an item that `seeksMatch`, or a movie with the reason `mismatched` that `ignore-reasons` does not list. Call it from `manualMatch`, and keep `seeksMatch` in `findMatch`.
-- [ ] 1.2 Replace `preCheckUnmatched` with `preCheck`, which returns the paths and a `matchState{unmatched bool; guid string}`. For a mismatched movie, require a GUID that is not empty, and require `CompareMovieIDs` with the live GUID, files, and external IDs to give `mismatched`. Otherwise log `Skipped fix match` with the reason `no longer mismatched` and send the plain refresh. Keep the current failure handling.
-- [ ] 1.3 In `manualMatch`, return no match for a mismatched movie whose pick has the GUID of the state, after the decision is recorded, and log `Skipped fix match` with the reason `already matched`.
-- [ ] 1.4 Make `keepMatch` check the state: still unmatched, or the same GUID and still `mismatched`. Keep the reasons `no longer unmatched` and `match state unknown`, and add `no longer mismatched`.
-- [ ] 1.5 Keep every function at a cognitive complexity of 15 or less, and update the doc comments of `RefreshItem`, `manualMatch`, `preCheck`, and `keepMatch`.
-- [ ] 1.6 Make the fake `checkedMetadata.ItemWithPaths` in `internal/refresher/manual_test.go` return `Files: a.item.Files`, as the Plex client does for a movie. Check `TestRefreshKeepsWrongMatch` and `TestCheckKeepsUndecidedWrongMatch` in `wrongmatch_test.go` against the new behavior. Add tests with the fake Plex server, one for each scenario of the `manual-actions` delta:
+- [x] 1.1 Add `refreshSeeksMatch` beside `seeksMatch` in `internal/refresher/refresh.go`: an item that `seeksMatch`, or a movie with the reason `mismatched` that `ignore-reasons` does not list. Call it from `manualMatch`, and keep `seeksMatch` in `findMatch`.
+- [x] 1.2 Replace `preCheckUnmatched` with `preCheck`, which returns the paths and a `matchState{unmatched bool; guid string}`. For a mismatched movie, require a GUID that is not empty, and require `CompareMovieIDs` with the live GUID, files, and external IDs to give `mismatched`. Otherwise log `Skipped fix match` with the reason `no longer mismatched` and send the plain refresh. Keep the current failure handling.
+- [x] 1.3 In `manualMatch`, return no match for a mismatched movie whose pick has the GUID of the state, after the decision is recorded, and log `Skipped fix match` with the reason `already matched`.
+- [x] 1.4 Make `keepMatch` check the state: still unmatched, or the same GUID and still `mismatched`. Keep the reasons `no longer unmatched` and `match state unknown`, and add `no longer mismatched`.
+- [x] 1.5 Keep every function at a cognitive complexity of 15 or less, and update the doc comments of `RefreshItem`, `manualMatch`, `preCheck`, and `keepMatch`.
+- [x] 1.6 Make the fake `checkedMetadata.ItemWithPaths` in `internal/refresher/manual_test.go` return `Files: a.item.Files`, as the Plex client does for a movie. Check `TestRefreshKeepsWrongMatch` and `TestCheckKeepsUndecidedWrongMatch` in `wrongmatch_test.go` against the new behavior. Add tests with the fake Plex server, one for each scenario of the `manual-actions` delta:
   - a pick applied, then refreshed and checked to Fixed;
   - a pick that is the current match;
   - no pick, because of a conflict;

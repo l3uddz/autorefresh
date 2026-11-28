@@ -291,7 +291,7 @@ func (p checkedMetadata) ItemWithPaths(ctx context.Context, ratingKey string) (p
 	if a.err != nil {
 		return plex.Item{}, plex.Paths{}, a.err
 	}
-	return a.item, plex.Paths{Locations: p.paths[ratingKey]}, nil
+	return a.item, plex.Paths{Locations: p.paths[ratingKey], Files: a.item.Files}, nil
 }
 
 func matchCheckFixture(t *testing.T, answers ...checkAnswer) (*fixture, *fakePlex, *int) {
