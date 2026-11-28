@@ -196,6 +196,7 @@ Before each refresh or match request, autorefresh saves a write attempt in the d
 - A library read leaves an item unchanged when an attempt for it was live during the read, and saves a hold for the item. The next read of a library with a hold is a full read. It applies the item, deletes the hold, and costs one full listing of the library. A held item stays `waiting` and gets no automatic request until then. The dashboard shows it as "Waiting · next run" when its usual wait has passed. If your `schedule` starts runs more often than every `timeout` plus 10 minutes, a library with recent requests can get a full read on every run.
 - A held item that the full listing omits while Plex still has it keeps its hold, and autorefresh logs `Held item not in listing`. Its library then gets a full read on every run.
 - After a match, the checks wait until Plex shows the GUID of the chosen candidate. If Plex does not show it before the checks end, the row stays as it was and the item gets a hold.
+- Plex merges two items of one library that get the same match. It keeps the item that already had the match, with the files of both, and deletes the other item. When the refresh or a check after a match gets a 404 for a cached item, autorefresh asks Plex once for at most 50 items of that library with the chosen GUID. If another item has that GUID, the item moves to Fixed as fixed by the match, and autorefresh logs `Plex merged the item`. Its history says "Fixed: Plex merged it into another item", and its detail links to the kept item. Otherwise, also when that request fails (`Merge lookup failed`), the item is recorded as removed.
 - A check after a request saves nothing, and the item gets a hold, when another request can still change the item. For example, Refresh now within `timeout` plus 10 minutes after an accepted match reports the reasons as not current, and the item stays `waiting` until the next run. Refresh now and then Fix match still moves a fixed item to Fixed at once.
 - A refresh or match request does not follow a redirect. If a proxy in front of Plex redirects these requests, they fail.
 - An item action whose save or request runs past the server `timeout` answers 504 `timed out` instead of 502.
@@ -208,9 +209,20 @@ Other new log lines: `Skipped follow-up refresh` means that a run did not send t
 
 ### Upgrade and rollback
 
-The upgrade adds database tables for the write attempts and the holds. Before you upgrade, stop every autorefresh process that uses the database, also a `--once` run from cron. An older version refuses to open the upgraded database.
+Schema 18 adds database tables for the write attempts and the holds. Schema 19 adds the `merged_key` column, which marks a fix where Plex merged the matched item into another item. Before you upgrade, stop every autorefresh process that uses the database, also a `--once` run from cron. An older version refuses to open a database with a newer schema.
 
-To go back to an older version, stop every autorefresh process, and then run this SQL on the database, for example with `sqlite3 autorefresh.db`:
+To go back to an older version, stop every autorefresh process. Then run the SQL of each schema that the older version does not know, newest first, on the database, for example with `sqlite3 autorefresh.db`. Check the schema of the database with `SELECT MAX(version) FROM schema_migration;`.
+
+Schema 19 (merged fixes). `DROP COLUMN` needs sqlite3 3.35 or later. The merged fixes then show as plain fixes.
+
+```sql
+BEGIN IMMEDIATE;
+ALTER TABLE event DROP COLUMN merged_key;
+DELETE FROM schema_migration WHERE version = 19;
+COMMIT;
+```
+
+Schema 18 (write attempts and holds):
 
 ```sql
 BEGIN IMMEDIATE;

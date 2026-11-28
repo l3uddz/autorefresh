@@ -41,7 +41,7 @@ Each refresh or match request to Plex, except a 404 for a cached item, SHALL rec
 
 ### Requirement: A 404 of a cached item replaces the request event
 
-When Plex answers a request of a cached item with 404, autorefresh SHALL record a `gone` event and no `request` event. When Plex answers a manual refresh of an item with only history with 404, autorefresh SHALL record a failed `request` event and no `gone` event.
+When Plex answers a request of a cached item with 404, autorefresh SHALL record a `gone` event, or the completion of a merge (see `fix-match`), and no `request` event. When Plex answers a manual refresh of an item with only history with 404, autorefresh SHALL record a failed `request` event and no `gone` event.
 
 #### Scenario: Cached item
 
@@ -133,7 +133,7 @@ When a read or a metadata check finds a cached item complete, autorefresh SHALL 
 
 ### Requirement: Gone events keep the action that found them
 
-When Plex no longer has a cached item, autorefresh SHALL record a `gone` event and remove the cached row in the same transaction. A `gone` event that a request found SHALL keep the action of that request. A `gone` event from a full read or a metadata check SHALL keep no action.
+When Plex no longer has a cached item, autorefresh SHALL record a `gone` event and remove the cached row in the same transaction, unless Plex merged it after a match (see `fix-match`). A `gone` event that a request found SHALL keep the action of that request. A `gone` event from a full read or a metadata check SHALL keep no action.
 
 #### Scenario: Refresh answered with 404
 
@@ -192,7 +192,7 @@ In a manual item action, the `request` event, the `stopped` and `resumed` events
 #### Scenario: Row removed during a manual action that finds the item gone
 
 - **GIVEN** an item that had a cache row when the manual action started
-- **WHEN** the row leaves the cache while the refresh is in flight, Plex answers 404, and the row is still absent when the outcome is recorded
+- **WHEN** the row leaves the cache while the refresh is in flight, Plex answers 404, the row is still absent when the outcome is recorded, and Plex did not merge the item after a match
 - **THEN** a `gone` event is recorded with the snapshot of the start, because the action keeps the cache state of its start
 
 ### Requirement: Event order
@@ -622,3 +622,22 @@ Outside a dry run, autorefresh SHALL run `PRAGMA optimize` once, within 5 second
 
 - **WHEN** `PRAGMA optimize` cannot finish within 5 seconds
 - **THEN** autorefresh logs a warning and closes the database
+
+### Requirement: Completed events of a merge
+
+When the follow-up of an accepted match finds that Plex merged a cached item into another item, autorefresh SHALL remove the row and record a `completed` event with source `auto` in the same transaction, also in a manual action. The event SHALL credit the row's last accepted match as both the action and the match kind, with the ID of its request event, and SHALL keep the rating key of the item that Plex kept. Every other event SHALL keep no such rating key.
+
+#### Scenario: Plex merged the matched item
+
+- **WHEN** the follow-up of an accepted match finds that Plex merged item `a` into item `b`
+- **THEN** the row of `a` is removed, and its `completed` event has source `auto`, credits the match and its request event, and keeps the rating key of `b`
+
+#### Scenario: Row left the cache during the action
+
+- **WHEN** the row of `a` left the cache while the refresh after the match was in flight, and the follow-up then finds the merge
+- **THEN** autorefresh records no event for `a`
+
+#### Scenario: Ordinary completion
+
+- **WHEN** a check finds an item complete after an accepted match
+- **THEN** its `completed` event keeps no merged rating key

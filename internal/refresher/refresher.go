@@ -29,6 +29,7 @@ type Plex interface {
 	SearchMatches(ctx context.Context, ratingKey, title, agent, language string, year int) ([]plex.Candidate, error)
 	Match(ctx context.Context, ratingKey string, cand plex.Candidate) (plex.Outcome, error)
 	ProviderSeries(ctx context.Context, guid string) (plex.Series, error)
+	FindByGUID(ctx context.Context, section string, itemType int, guid string) ([]plex.Item, error)
 }
 
 // Store is the part of store.Store that the refresher uses.
@@ -36,11 +37,11 @@ type Store interface {
 	FinishJob(int64, store.RunStart, store.RunResult, []store.RunItem) (bool, error)
 	SetStopped(context.Context, string, string, time.Time, bool) (bool, error)
 	ApplyCheck(string, store.Item, time.Time, int64, store.Observation) (bool, error)
-	ApplyCheckGone(server, key string, at time.Time, source store.Source, runID int64, obs store.Observation) error
+	ApplyCheckGone(server, key string, at time.Time, source store.Source, runID int64, obs store.Observation, merged string) (store.Item, bool, error)
 	Observe(server string, chain []int64, at time.Time) (store.Observation, error)
 	AddHold(ctx context.Context, server, key string) error
 	LibraryInfo(string, string) (store.LibraryInfo, bool, error)
-	RecordManual(store.ManualRecord) error
+	RecordManual(store.ManualRecord) (bool, error)
 	KnownItem(server, ratingKey string) (store.Item, bool, bool, error)
 	KnownItems(ctx context.Context, server string, keys []string) (map[string]store.KnownResult, error)
 	ReadStart(server, section string) (store.ReadState, error)
@@ -51,7 +52,7 @@ type Store interface {
 	Due(q store.DueQuery) (items []store.Item, total int, err error)
 	CountIncomplete(server string, sections []string, ignored store.Reasons) (int, error)
 	RecordRequest(r store.Request) error
-	RecordGone(server, ratingKey string, at time.Time, source store.Source, action store.Action, runID int64, attempt store.AttemptResult) error
+	RecordGone(server, ratingKey string, at time.Time, source store.Source, action store.Action, runID int64, attempt store.AttemptResult, merged string) (store.Item, bool, error)
 	RecordMatchDecision(d store.MatchDecision) error
 	SaveLibraries(server string, libs []store.LibraryInfo) error
 	SetPath(server, ratingKey, path string) error

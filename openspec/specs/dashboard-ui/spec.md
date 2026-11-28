@@ -525,7 +525,7 @@ The item detail SHALL show the item art faded behind its head, the poster, the t
 
 #### Scenario: Plex no longer has the item
 
-- **WHEN** the live Plex view answers that the item is gone
+- **WHEN** the live Plex view answers that the item is gone, and the newest completed or removed event is not a merged fix
 - **THEN** a warning says "Plex no longer has this item" and the cached details stay
 
 #### Scenario: Live view fails
@@ -566,7 +566,7 @@ The item detail SHALL show the item art faded behind its head, the poster, the t
 
 ### Requirement: Refresh now
 
-The item detail SHALL offer Refresh now without a confirmation; `manual-actions` gives the server rules. Its toast SHALL name the applied match, with its year when known, or the accepted refresh. When the answer has the item detail, the dashboard SHALL show it at once. The toast SHALL add a check result, read from the answer, only when the answer gives one: complete, still missing reasons, or gone. For a plain refresh of a gone item, the toast SHALL be only the removal notice.
+The item detail SHALL offer Refresh now without a confirmation; `manual-actions` gives the server rules. Its toast SHALL name the applied match, with its year when known, or the accepted refresh. When the answer has the item detail, the dashboard SHALL show it at once. The toast SHALL add a check result, read from the answer, only when the answer gives one: complete, merged, still missing reasons, or gone. For a plain refresh of a gone item, the toast SHALL be only the removal notice.
 
 #### Scenario: Item complete
 
@@ -575,12 +575,12 @@ The item detail SHALL offer Refresh now without a confirmation; `manual-actions`
 
 #### Scenario: Item complete after a fix match
 
-- **WHEN** the refresh applied a fix match, and the answer has the item detail and sets `checked`, the item is no longer in the queue, and its newest completion or removal event is a completion
+- **WHEN** the refresh applied a fix match, and the answer has the item detail and sets `checked`, the item is no longer in the queue, and its newest completion or removal event is a completion without `mergedKey`
 - **THEN** a success toast says "Matched <title> to <match>", with the year when known, followed by ". It is complete."
 
 #### Scenario: Answer without a check result
 
-- **WHEN** the answer has the item detail, and it fits none of the cases complete, still missing, or gone
+- **WHEN** the answer has the item detail, and it fits none of the cases complete, merged, still missing, or gone
 - **THEN** the dashboard shows the detail at once, and a success toast names only the accepted refresh or the applied match
 
 #### Scenario: Still missing
@@ -609,6 +609,16 @@ The item detail SHALL offer Refresh now without a confirmation; `manual-actions`
 
 - **WHEN** the refresh fails because Plex no longer has the item
 - **THEN** an error toast says "Plex no longer has this item. It was deleted or moved."
+
+#### Scenario: Match that Plex merged
+
+- **WHEN** the refresh applied a fix match, and the answer has the item detail and sets `checked`, the item is no longer in the queue, and its newest completion or removal event is a completion with `mergedKey`
+- **THEN** a success toast says "Matched <title> to <match>", with the year when known, followed by ". Plex merged it into the item that already had this match."
+
+#### Scenario: Merge without an applied match
+
+- **WHEN** after a plain refresh, the answer has the item detail and sets `checked`, the item is no longer in the queue, and its newest completion or removal event is a completion with `mergedKey`
+- **THEN** a success toast says "Plex accepted the refresh of <title>. It is complete."
 
 ### Requirement: Stop trying and Resume an item
 
@@ -1022,3 +1032,31 @@ The dashboard SHALL say where Refresh now applies the automatic pick: for an unm
 
 - **WHEN** the automatic fix match panel has no decision and no preview to show
 - **THEN** it says "Autorefresh has not tried a fix match on this item within the history it keeps. It tries one for unmatched items with IDs in their folder or file names and, with a TMDB token, for unmatched series by their title. Refresh now also tries one for a mismatched movie, unless mismatched is in ignore-reasons."
+
+### Requirement: Merged fix in the item detail
+
+When the newest completed or removed event of an item is a merged fix, the item detail SHALL show the Fixed fact as "<match> · merged into another item" with how long ago. When the live Plex view answers that the item is gone, it SHALL say "Plex merged this item into another item" instead of the gone warning. With a known server identity, it SHALL offer "Open the merged item in Plex", which opens the kept item on app.plex.tv in a new tab.
+
+#### Scenario: Detail of a merged fix
+
+- **WHEN** the newest completed event of item `560945` is a merged fix into `564849` by a match, and the live view answers 404
+- **THEN** the Fixed fact says "match · merged into another item", an info banner says "Plex merged this item into another item", and "Open the merged item in Plex" opens item `564849`
+
+#### Scenario: Unknown server identity
+
+- **WHEN** the machine identifier of the server is not known
+- **THEN** the banner shows no link
+
+#### Scenario: Removed item
+
+- **WHEN** the newest completed or removed event is a removal, and the live view answers 404
+- **THEN** the warning says "Plex no longer has this item"
+
+### Requirement: Merged fix in the history
+
+The history SHALL show a merged fix as "Fixed: Plex merged it into another item" with "By <match> · Plex kept the item that already had this match".
+
+#### Scenario: History of a merged fix
+
+- **WHEN** the history holds a `completed` event with `mergedKey` and the match kind `match`
+- **THEN** it shows "Fixed: Plex merged it into another item" with "By match · Plex kept the item that already had this match" and a success marker

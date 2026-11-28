@@ -124,7 +124,7 @@ func (r *Refresher) RefreshItem(ctx context.Context, server, key string) (Refres
 		checked, err := r.applyMatch(ctx, item, fm)
 		return RefreshResult{Match: target(fm), Checked: checked}, err
 	}
-	refresh, err := r.sendManual(ctx, item.server, item.row, item.cached, nil)
+	refresh, _, err := r.sendManual(ctx, item.server, item.row, item.cached, nil, "")
 	if err != nil {
 		return RefreshResult{}, err
 	}
@@ -317,7 +317,7 @@ func (r *Refresher) ApplyMatch(ctx context.Context, server, ratingKey string, ca
 // it returns. It returns the error of the request. It logs a failed
 // follow-up, because Plex accepted the match.
 func (r *Refresher) applyMatch(ctx context.Context, item manualItem, fm *fixMatch) (checked bool, err error) {
-	match, err := r.sendManual(ctx, item.server, item.row, item.cached, fm)
+	match, _, err := r.sendManual(ctx, item.server, item.row, item.cached, fm, "")
 	if err != nil {
 		return false, err
 	}
@@ -347,7 +347,12 @@ var matchCheckDelays = []time.Duration{time.Second, 2 * time.Second, 4 * time.Se
 // error, which ends the run of the server as a failed request does.
 // checked is the result of followUpCheck.
 func (r *Refresher) settleMatch(ctx context.Context, item manualItem, run *serverRun, match store.AttemptResult, guid string) (checked bool, err error) {
-	refresh, err := r.followUpRefresh(ctx, item, run, match.ID)
+	refresh, merged, err := r.followUpRefresh(ctx, item, run, match.ID, guid)
+	if merged {
+		// The store holds the final state of the item: Plex merged it into
+		// the item that already had the match.
+		return true, nil
+	}
 	if err != nil {
 		if errors.Is(err, store.ErrHeld) {
 			log.Info().Str("server", item.server.Name).Str("title", item.row.Title).Str("reason", "held").
@@ -392,7 +397,7 @@ type checkStep int
 
 const (
 	stepSaved     checkStep = iota // the check saved what Plex shows, and the item stays incomplete
-	stepSettled                    // the check completed the item or found it gone
+	stepSettled                    // the check completed the item or found it gone or merged, or a run removed its row
 	stepOtherGUID                  // Plex still shows another GUID than the match, so the check saved nothing
 	stepYielded                    // the store yielded the save to another write and saved a hold
 )
@@ -413,9 +418,9 @@ func (r *Refresher) followUpCheck(ctx context.Context, item manualItem, run *ser
 			return checked, errors.Join(runError(run, err), r.holdUnconfirmed(ctx, item, confirmed))
 		}
 		step, err := r.checkHeld(ctx, item, run, fu)
-		if errors.Is(err, ErrNotCached) {
-			// A run read the item meanwhile and completed or removed it.
-			return true, nil
+		if step == stepSettled {
+			// The row is gone, so no hold: err only stops a run.
+			return true, err
 		}
 		if err != nil {
 			if end, stop := r.settleFailed(ctx, item, run, "check", err); end {
@@ -430,9 +435,6 @@ func (r *Refresher) followUpCheck(ctx context.Context, item manualItem, run *ser
 			continue
 		}
 		confirmed, checked = true, true
-		if step == stepSettled {
-			return true, nil
-		}
 	}
 	return checked, r.holdUnconfirmed(ctx, item, confirmed)
 }
@@ -489,13 +491,14 @@ func (r *Refresher) settleFailed(ctx context.Context, item manualItem, run *serv
 }
 
 // followUpRefresh sends and records the refresh after the accepted match
-// attempt match: a manual request when run is nil, or else a request of
-// run. It returns the attempt of the refresh also with an error answer.
-func (r *Refresher) followUpRefresh(ctx context.Context, item manualItem, run *serverRun, match int64) (store.AttemptResult, error) {
+// attempt match to guid: a manual request when run is nil, or else a
+// request of run. It returns the attempt of the refresh also with an error
+// answer, and whether Plex had merged the item (recordFollowUpGone).
+func (r *Refresher) followUpRefresh(ctx context.Context, item manualItem, run *serverRun, match int64, guid string) (store.AttemptResult, bool, error) {
 	if run == nil {
-		return r.sendManual(ctx, item.server, item.row, item.cached, nil)
+		return r.sendManual(ctx, item.server, item.row, item.cached, nil, guid)
 	}
-	return r.runRefresh(ctx, run, item.row, match)
+	return r.runRefresh(ctx, run, item.row, match, guid)
 }
 
 func (r *Refresher) logSettleFailure(item manualItem, step string, err error) {
@@ -504,10 +507,12 @@ func (r *Refresher) logSettleFailure(item manualItem, step string, err error) {
 }
 
 // sendManual sends the fix match fm of the item as a manual request, or a
-// refresh if fm is nil, and records the result. It returns the attempt of
-// the request with its error, or an error that wraps ErrNotSent when it
-// sent nothing.
-func (r *Refresher) sendManual(ctx context.Context, srv Server, it store.Item, cached bool, fm *fixMatch) (store.AttemptResult, error) {
+// refresh if fm is nil, and records the result. guid is the GUID of the
+// match that the refresh follows up, or "": a 404 answer of a cached item
+// then looks up a merge (recordFollowUpGone). It returns the attempt of the
+// request, whether it recorded a merge, and the error of the request, or an
+// error that wraps ErrNotSent when it sent nothing.
+func (r *Refresher) sendManual(ctx context.Context, srv Server, it store.Item, cached bool, fm *fixMatch, guid string) (store.AttemptResult, bool, error) {
 	action, send := store.ActionRefresh, refreshSend(srv, it.RatingKey)
 	if fm != nil {
 		action, send = fm.action, matchSend(srv, it.RatingKey, fm)
@@ -516,17 +521,28 @@ func (r *Refresher) sendManual(ctx context.Context, srv Server, it store.Item, c
 		Action: action, Match: target(fm)}
 	res, err := r.sendWrite(ctx, srv, store.AttemptSpec{RatingKey: it.RatingKey, Action: action}, send)
 	if errors.Is(err, ErrNotSent) {
-		return res, err
+		return res, false, err
 	}
 	req.Accepted, req.Attempt = err == nil, res
 	if err != nil {
 		req.Error = err.Error()
 	}
-	if recordErr := r.store.RecordManual(store.ManualRecord{Request: req, Snapshot: it, Cached: cached, Gone: errors.Is(err, plex.ErrNotFound)}); recordErr != nil {
-		return res, fmt.Errorf("%w: %w", ErrStore, recordErr)
+	m := store.ManualRecord{Request: req, Snapshot: it, Cached: cached, Gone: errors.Is(err, plex.ErrNotFound)}
+	var merged bool
+	if m.Gone && cached && guid != "" {
+		merged, err = r.recordFollowUpGone(ctx, srv, nil, it, guid, err, func(key string) (store.Item, bool, error) {
+			m.Merged = key
+			wroteMerge, err := r.store.RecordManual(m)
+			return it, wroteMerge, err
+		})
+	} else if _, recordErr := r.store.RecordManual(m); recordErr != nil {
+		err = fmt.Errorf("%w: %w", ErrStore, recordErr)
+	}
+	if errors.Is(err, ErrStore) {
+		return res, false, err
 	}
 	itemEvent(log.Info(), srv.Name, r.logLibrary(it), it).Str("action", string(action)).Bool("accepted", req.Accepted).Msg("Sent manual request")
-	return res, err
+	return res, merged, err
 }
 
 func (r *Refresher) logLibrary(row store.Item) plex.Library {
@@ -540,7 +556,7 @@ func (r *Refresher) logLibrary(row store.Item) plex.Library {
 // nil, or else for run, which links the events and counts a completion.
 // After a match, it saves nothing while Plex shows another GUID than fu.guid
 // (stepOtherGUID). A row that a run completed or removed meanwhile gives
-// ErrNotCached before any Plex request.
+// stepSettled before any Plex request.
 func (r *Refresher) checkHeld(ctx context.Context, item manualItem, run *serverRun, fu followUp) (checkStep, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
@@ -550,7 +566,8 @@ func (r *Refresher) checkHeld(ctx context.Context, item manualItem, run *serverR
 	if err != nil {
 		return 0, manualStoreError(err)
 	} else if !cached {
-		return 0, ErrNotCached
+		// A run read the item meanwhile and completed or removed it.
+		return stepSettled, nil
 	}
 	obs, err := r.store.Observe(server, fu.chain, r.now())
 	if err != nil {
@@ -558,7 +575,7 @@ func (r *Refresher) checkHeld(ctx context.Context, item manualItem, run *serverR
 	}
 	live, err := item.server.Plex.Item(ctx, key)
 	if errors.Is(err, plex.ErrNotFound) {
-		return r.checkSaved(item, true, r.recordCheckGone(item, run, obs))
+		return r.checkGone(ctx, item, run, fu, obs)
 	}
 	if err != nil {
 		return 0, err
@@ -572,7 +589,8 @@ func (r *Refresher) checkHeld(ctx context.Context, item manualItem, run *serverR
 	flagWrongMatch(&row, prev.Type, live)
 	fixed, err := r.store.ApplyCheck(server, row, r.now(), runIDOf(run), obs)
 	step, err := r.checkSaved(item, fixed, err)
-	if err != nil || step == stepYielded {
+	if err != nil || step == stepYielded || step == stepSettled && !fixed {
+		// A settled check that completed nothing found the row gone.
 		return step, err
 	}
 	lib := r.logLibrary(row)
@@ -587,9 +605,13 @@ func (r *Refresher) checkHeld(ctx context.Context, item manualItem, run *serverR
 }
 
 // checkSaved returns the step of a check save with the error err: settled
-// is true when the save completed the item or removed it as gone.
+// is true when the save completed the item or removed it as gone. A row
+// that left the cache during the check, because a run completed or removed
+// it, is settled too.
 func (r *Refresher) checkSaved(item manualItem, settled bool, err error) (checkStep, error) {
 	switch {
+	case errors.Is(err, store.ErrNoItem):
+		return stepSettled, nil
 	case errors.Is(err, store.ErrCheckYielded):
 		log.Info().Str("server", item.server.Name).Str("title", item.row.Title).Msg("Check yielded to another write")
 		return stepYielded, nil
@@ -610,15 +632,37 @@ func runIDOf(run *serverRun) int64 {
 	return run.id
 }
 
+// checkGone handles a 404 of a check of item with the observation obs:
+// after a match (fu.guid), it looks up a merge, and records the item as
+// merged or gone (recordCheckGone). It returns stepSettled once the store
+// removed the row, or stepYielded when the store yielded the save. A failed
+// lookup that stops the server (stopError) comes with either step for a
+// run, and is only logged for a manual action.
+func (r *Refresher) checkGone(ctx context.Context, item manualItem, run *serverRun, fu followUp, obs store.Observation) (checkStep, error) {
+	merged, lookupErr := r.lookupMerge(ctx, item.server, item.row, fu.guid)
+	removed, wroteMerge, err := r.recordCheckGone(item, run, obs, merged)
+	step, err := r.checkSaved(item, true, err)
+	if err != nil {
+		return step, err
+	}
+	if wroteMerge {
+		r.logMerge(run, item.server, removed, fu.guid, merged)
+	}
+	if lookupErr != nil {
+		return step, runError(run, stopError(ctx, lookupErr))
+	}
+	return step, nil
+}
+
 // recordCheckGone records that a check of item with the observation obs
-// found it gone from Plex: as a manual action when run is nil, or else as
-// an event of run.
-func (r *Refresher) recordCheckGone(item manualItem, run *serverRun, obs store.Observation) error {
+// found it gone from Plex, or merged into the item merged: as a manual
+// action when run is nil, or else as an event of run.
+func (r *Refresher) recordCheckGone(item manualItem, run *serverRun, obs store.Observation, merged string) (store.Item, bool, error) {
 	source := store.SourceManual
 	if run != nil {
 		source = store.SourceAuto
 	}
-	return r.store.ApplyCheckGone(item.server.Name, item.row.RatingKey, r.now(), source, runIDOf(run), obs)
+	return r.store.ApplyCheckGone(item.server.Name, item.row.RatingKey, r.now(), source, runIDOf(run), obs, merged)
 }
 
 // SetStopped stops or resumes automatic work for a cached item.

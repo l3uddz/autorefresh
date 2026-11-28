@@ -136,7 +136,7 @@ function DetailBody({ detail, server, ignored, params }: BodyProps) {
       ) : live.data ? (
         <Text as="p" color="secondary">Plex has no summary for this item.</Text>
       ) : null}
-      {live.error && <LiveError error={live.error} />}
+      {live.error && <LiveError error={live.error} mergedKey={end?.kind === 'fixed' ? end.event.mergedKey : undefined} machine={server?.machineIdentifier} />}
       <WrongMatchWarning live={live} />
       <MetadataList label={{ position: 'start', width: 128 }}>
         {path && (
@@ -148,7 +148,7 @@ function DetailBody({ detail, server, ignored, params }: BodyProps) {
           <MetadataListItem label="Queue">{queueState(item.state, item.nextDue, now)}</MetadataListItem>
         )}
         {item.stoppedAt && <MetadataListItem label="Stopped">{`${relative(item.stoppedAt, now)} · ${dateTime(item.stoppedAt)}`}</MetadataListItem>}
-        {end?.kind === 'fixed' && <MetadataListItem label="Fixed">{`${fixedBy(end.event.fixedAction, end.event.fixedMatch)} · ${relative(end.event.at, now)}`}</MetadataListItem>}
+        {end?.kind === 'fixed' && <MetadataListItem label="Fixed">{`${fixedFact(end.event)} · ${relative(end.event.at, now)}`}</MetadataListItem>}
         {end?.kind === 'removed' && <MetadataListItem label="Removed">{`Plex no longer had it · ${relative(end.event.at, now)}`}</MetadataListItem>}
         {item.cached && (
           <MetadataListItem label="Attempts">{`${plural(item.attempts, 'attempt')} · ${plural(item.refreshes, 'refresh', 'refreshes')} accepted`}</MetadataListItem>
@@ -166,8 +166,51 @@ function DetailBody({ detail, server, ignored, params }: BodyProps) {
   );
 }
 
-function LiveError({ error }: { error: Error }) {
+/** Returns what fixed the item of the completed event, and that Plex
+ * merged it into another item after its match. */
+export function fixedFact(event: TimelineEvent): string {
+  const by = fixedBy(event.fixedAction, event.fixedMatch);
+  return event.mergedKey ? `${by} · merged into another item` : by;
+}
+
+/** Returns the link that opens item key of the server machine on
+ * app.plex.tv. */
+export function plexItemLink(machine: string, key: string): string {
+  return `https://app.plex.tv/desktop/#!/server/${encodeURIComponent(machine)}/details?${new URLSearchParams({ key: `/library/metadata/${key}` })}`;
+}
+
+interface LiveErrorProps {
+  error: Error;
+  /** The item that Plex merged this item into, when its newest completed
+   * or removed event is that merge. */
+  mergedKey?: string;
+  /** The machine identifier of the server, for the link to the merged item. */
+  machine?: string;
+}
+
+export function LiveError({ error, mergedKey, machine }: LiveErrorProps) {
   const gone = error instanceof ApiError && error.status === 404;
+  if (gone && mergedKey) {
+    return (
+      <Banner
+        status="info"
+        title="Plex merged this item into another item"
+        description="The match worked: Plex kept the item that already had this match."
+        endContent={
+          machine ? (
+            <Button
+              label="Open the merged item in Plex"
+              variant="ghost"
+              href={plexItemLink(machine, mergedKey)}
+              target="_blank"
+              rel="noopener noreferrer"
+              endContent={<Icon icon={ArrowTopRightOnSquareIcon} size="sm" />}
+            />
+          ) : undefined
+        }
+      />
+    );
+  }
   return (
     <Banner
       status={gone ? 'warning' : 'info'}
@@ -234,9 +277,7 @@ function DetailActions({ item, server, params, timeline, live }: ActionProps) {
   const busy = action.isPending;
   const running = action.variables;
   const machine = server?.machineIdentifier;
-  const plexLink = machine
-    ? `https://app.plex.tv/desktop/#!/server/${encodeURIComponent(machine)}/details?${new URLSearchParams({ key: `/library/metadata/${item.key}` })}`
-    : undefined;
+  const plexLink = machine ? plexItemLink(machine, item.key) : undefined;
 
   const stop = () =>
     askThen(

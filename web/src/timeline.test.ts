@@ -74,6 +74,19 @@ describe('refresh result', () => {
     expect(refreshText(answer({}, [event(2, 'gone')]), 'Item')).toBe('Plex no longer has Item. Autorefresh removed it from the queue.');
     expect(refreshText({ ...answer({}, [event(3, 'gone'), event(2, 'request')]), match }, 'Item')).toBe('Matched Item to Show (2022). Then Plex no longer has Item. Autorefresh removed it from the queue.');
   });
+
+  it('reports a match that Plex merged into another item', () => {
+    const match = { guid: 'plex://movie/1', title: 'Film', year: 2020 };
+    const merged = [event(3, 'completed', { fixedAction: 'match', fixedMatch: 'match', mergedKey: '900' }), event(2, 'request')];
+    expect(refreshResult({ ...answer({}, merged), match })).toEqual({ kind: 'merged' });
+    expect(refreshOutcome({ ...answer({}, merged), match })).toBe('success');
+    expect(refreshText({ ...answer({}, merged), match }, 'Item')).toBe('Matched Item to Film (2020). Plex merged it into the item that already had this match.');
+    // Without an applied match, the refresh of an older merge is a plain completion.
+    expect(refreshResult(answer({}, merged))).toEqual({ kind: 'complete' });
+    expect(refreshText(answer({}, merged), 'Item')).toBe('Plex accepted the refresh of Item. It is complete.');
+    // A completion without a merged key is complete.
+    expect(refreshResult({ ...answer({}, [event(2, 'completed'), event(1, 'request')]), match })).toEqual({ kind: 'complete' });
+  });
 });
 
 describe('event views', () => {
@@ -85,6 +98,11 @@ describe('event views', () => {
 
   it('names completed and removed items', () => {
     expect(eventView(event(1, 'completed', { fixedAction: 'refresh', fixedMatch: 'match' }))).toMatchObject({ title: 'Fixed', detail: 'By match · then refresh' });
+    expect(eventView(event(1, 'completed', { source: 'auto', fixedAction: 'match', fixedMatch: 'match', mergedKey: '900' }))).toEqual({
+      title: 'Fixed: Plex merged it into another item',
+      tone: 'success',
+      detail: 'By match · Plex kept the item that already had this match',
+    });
     expect(eventView(event(1, 'completed', { fixedAction: 'tmdb-match', fixedMatch: 'tmdb-match' })).detail).toBe('By TMDB match');
     expect(eventView(event(1, 'completed'))).toMatchObject({ title: 'Completed by Plex on its own', tone: 'neutral' });
     expect(eventView(event(1, 'gone'))).toMatchObject({ title: 'Removed: Plex no longer had it', tone: 'warning' });

@@ -268,7 +268,13 @@ func TestRollbackOfWriteAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The rollback SQL of the README.
+	// The rollback SQL of the README, newest schema first.
+	if _, err := s.db.Exec(`BEGIN IMMEDIATE;
+		ALTER TABLE event DROP COLUMN merged_key;
+		DELETE FROM schema_migration WHERE version = 19;
+		COMMIT;`); err != nil {
+		t.Fatalf("rollback of schema 19: %v", err)
+	}
 	if _, err := s.db.Exec(`BEGIN IMMEDIATE;
 		DROP TABLE read_hold;
 		DROP TABLE write_attempt;
@@ -284,6 +290,10 @@ func TestRollbackOfWriteAttempts(t *testing.T) {
 	defer s.Close()
 	if n := countRows(t, s, "prune_fence"); n != 1 {
 		t.Errorf("fence rows = %d, want 1", n)
+	}
+	var merged int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('event') WHERE name = 'merged_key'`).Scan(&merged); err != nil || merged != 1 {
+		t.Errorf("merged_key columns = %d, %v, want the column again", merged, err)
 	}
 }
 
@@ -308,22 +318,34 @@ var recorders = map[string]func(s *Store, key string, a AttemptResult) error{
 		return s.RecordRequest(Request{Server: srv, RatingKey: key, At: base, Source: SourceAuto, Action: ActionRefresh, Attempt: a})
 	},
 	"gone": func(s *Store, key string, a AttemptResult) error {
-		return s.RecordGone(srv, key, base, SourceAuto, ActionRefresh, 0, a)
+		return goneErr(s.RecordGone(srv, key, base, SourceAuto, ActionRefresh, 0, a, ""))
 	},
 	"manual": func(s *Store, key string, a AttemptResult) error {
-		return s.RecordManual(ManualRecord{
+		return manualErr(s.RecordManual(ManualRecord{
 			Request:  Request{Server: srv, RatingKey: key, At: base, Source: SourceManual, Action: ActionRefresh, Attempt: a},
 			Snapshot: item(key, NoSummary),
 			Cached:   true,
-		})
+		}))
 	},
 	"manual gone": func(s *Store, key string, a AttemptResult) error {
-		return s.RecordManual(ManualRecord{
+		return manualErr(s.RecordManual(ManualRecord{
 			Request:  Request{Server: srv, RatingKey: key, At: base, Source: SourceManual, Action: ActionRefresh, Attempt: a},
 			Snapshot: item(key, NoSummary),
 			Cached:   true,
 			Gone:     true,
-		})
+		}))
+	},
+	"merged": func(s *Store, key string, a AttemptResult) error {
+		return goneErr(s.RecordGone(srv, key, base, SourceAuto, ActionRefresh, 0, a, "900"))
+	},
+	"manual merged": func(s *Store, key string, a AttemptResult) error {
+		return manualErr(s.RecordManual(ManualRecord{
+			Request:  Request{Server: srv, RatingKey: key, At: base, Source: SourceManual, Action: ActionRefresh, Attempt: a},
+			Snapshot: item(key, NoSummary),
+			Cached:   true,
+			Gone:     true,
+			Merged:   "900",
+		}))
 	},
 }
 

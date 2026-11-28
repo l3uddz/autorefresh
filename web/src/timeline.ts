@@ -22,7 +22,7 @@ export function disposition(detail: ItemDetail): Disposition | undefined {
   return undefined;
 }
 
-export type RefreshResult = { kind: 'gone' } | { kind: 'complete' } | { kind: 'missing'; reasons: string[] } | { kind: 'sent' };
+export type RefreshResult = { kind: 'gone' } | { kind: 'complete' } | { kind: 'merged' } | { kind: 'missing'; reasons: string[] } | { kind: 'sent' };
 
 /** Returns the result of "Refresh now" from its answer. A check runs only
  * for an item that was cached, and it is current only when the answer says
@@ -37,9 +37,11 @@ export function refreshResult(answer: RefreshAnswer): RefreshResult {
   const detail = { item: answer.item, timeline: answer.timeline };
   if (!answer.item.cached) {
     if (!answer.checked) return answer.timeline[0]?.kind === 'gone' ? { kind: 'gone' } : { kind: 'sent' };
-    const end = disposition(detail)?.kind;
-    if (end === 'fixed') return { kind: 'complete' };
-    return end === 'removed' ? { kind: 'gone' } : { kind: 'sent' };
+    const end = disposition(detail);
+    // Plex merged the item into the item that already had the match that
+    // the refresh applied.
+    if (end?.kind === 'fixed') return answer.match && end.event.mergedKey ? { kind: 'merged' } : { kind: 'complete' };
+    return end?.kind === 'removed' ? { kind: 'gone' } : { kind: 'sent' };
   }
   const reasons = answer.item.reasons ?? [];
   return answer.checked && reasons.length ? { kind: 'missing', reasons } : { kind: 'sent' };
@@ -67,6 +69,8 @@ export function refreshText(answer: RefreshAnswer, title: string): string {
       return `${sent}. Then ${removed}`;
     case 'complete':
       return `${sent}. It is complete.`;
+    case 'merged':
+      return `${sent}. Plex merged it into the item that already had this match.`;
     case 'missing':
       return `${sent}. Still missing: ${result.reasons.map(label).join(', ')}`;
     default:
@@ -120,6 +124,13 @@ export function eventView(event: TimelineEvent): EventView {
     case 'match-decision':
       return { ...decisionView(event), by };
     case 'completed':
+      if (event.mergedKey) {
+        return {
+          title: 'Fixed: Plex merged it into another item',
+          tone: 'success',
+          detail: `By ${fixedBy(event.fixedAction, event.fixedMatch)} · Plex kept the item that already had this match`,
+        };
+      }
       return event.fixedAction || event.fixedMatch
         ? { title: 'Fixed', tone: 'success', detail: `By ${fixedBy(event.fixedAction, event.fixedMatch)}` }
         : { title: 'Completed by Plex on its own', tone: 'neutral' };

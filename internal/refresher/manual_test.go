@@ -83,7 +83,7 @@ type recordingBarrier struct {
 	release chan struct{}
 }
 
-func (s recordingBarrier) RecordManual(m store.ManualRecord) error {
+func (s recordingBarrier) RecordManual(m store.ManualRecord) (bool, error) {
 	close(s.entered)
 	<-s.release
 	return s.Store.RecordManual(m)
@@ -380,7 +380,7 @@ func TestApplyMatchStopsWhenRowLeavesCache(t *testing.T) {
 	buf := captureLogs(t)
 	f.r.sleep = func(context.Context, time.Duration) error {
 		f.sleeps = append(f.sleeps, time.Second)
-		return f.store.RecordGone("home", "1", t0, store.SourceAuto, "", 0, store.AttemptResult{})
+		return goneErr(f.store.RecordGone("home", "1", t0, store.SourceAuto, "", 0, store.AttemptResult{}, ""))
 	}
 	cand := plex.Candidate{GUID: "plex://movie/1", Name: "Match", Year: 2020}
 	if err := f.r.ApplyMatch(t.Context(), "home", "1", cand); err != nil {
@@ -726,3 +726,6 @@ func TestReadKeepsRefreshNowSettlement(t *testing.T) {
 		})
 	}
 }
+
+// goneErr returns the error of RecordGone or ApplyCheckGone.
+func goneErr(_ store.Item, _ bool, err error) error { return err }

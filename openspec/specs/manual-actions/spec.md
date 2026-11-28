@@ -155,7 +155,7 @@ After Plex accepts a manual refresh of a cached item, also the refresh after a m
 
 #### Scenario: Check finds the item gone
 
-- **WHEN** Plex answers a check with 404
+- **WHEN** Plex answers a check with 404, and Plex did not merge the item after a match (see `fix-match`)
 - **THEN** autorefresh removes the cache row and records a manual gone event without an action
 
 #### Scenario: A run removed the row meanwhile
@@ -194,7 +194,7 @@ The user SHALL be able to apply a chosen candidate, given by its Plex GUID, name
 
 #### Scenario: Refresh after the match finds the item gone
 
-- **WHEN** Plex answers the refresh after an accepted match with 404, and the item had a cache row when the action started
+- **WHEN** Plex answers the refresh after an accepted match with 404, the item had a cache row when the action started, and Plex did not merge it (see `fix-match`)
 - **THEN** autorefresh records the item as gone by that refresh, makes no check, and the match action succeeds
 
 #### Scenario: Refresh after the match of an item with only history answers 404
@@ -207,6 +207,11 @@ The user SHALL be able to apply a chosen candidate, given by its Plex GUID, name
 
 - **WHEN** the refresh after an accepted match finds the server unavailable
 - **THEN** autorefresh makes no check and the match action succeeds
+
+#### Scenario: Plex merged the item after the match
+
+- **WHEN** Plex answers the refresh after an accepted match with 404, and Plex merged the cached item into another item with the chosen GUID
+- **THEN** autorefresh records the item as fixed by the match and merged, makes no check, and the match action succeeds
 
 ### Requirement: Manual match search
 

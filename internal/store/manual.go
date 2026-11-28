@@ -157,52 +157,61 @@ type ManualRecord struct {
 	Snapshot Item
 	Cached   bool
 	Gone     bool
+	// Merged is the rating key of the item that Plex merged the gone item
+	// into after a match, or "". It needs Gone and Cached.
+	Merged string
 }
 
-// RecordManual records a manual Plex outcome atomically.
-func (s *Store) RecordManual(m ManualRecord) error {
+// RecordManual records a manual Plex outcome atomically. It reports whether
+// it wrote the merged completion of m.Merged.
+func (s *Store) RecordManual(m ManualRecord) (bool, error) {
 	if m.Source != SourceManual {
-		return fmt.Errorf("record manual request: invalid source")
+		return false, fmt.Errorf("record manual request: invalid source")
+	}
+	if m.Merged != "" && (!m.Gone || !m.Cached) {
+		return false, fmt.Errorf("record manual request: a merge needs a gone cached item")
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
-		return fmt.Errorf("begin manual request: %w", err)
+		return false, fmt.Errorf("begin manual request: %w", err)
 	}
 	defer tx.Rollback()
 	if err := finishAttempt(tx, m.Attempt); err != nil {
-		return err
+		return false, err
 	}
-	if err := writeManual(tx, m); err != nil {
-		return err
+	wroteMerge, err := writeManual(tx, m)
+	if err != nil {
+		return false, err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit manual request: %w", err)
+		return false, fmt.Errorf("commit manual request: %w", err)
 	}
-	return nil
+	return wroteMerge, nil
 }
 
-// writeManual writes the event and the row changes of m. Without a cached
-// row, it writes the event from the snapshot of the admission.
-func writeManual(tx *sql.Tx, m ManualRecord) error {
+// writeManual writes the event and the row changes of m, and reports
+// whether it wrote the merged completion. Without a cached row, it writes
+// the event from the snapshot of the admission, except for a merge: the row
+// left the cache during the action, so it writes nothing.
+func writeManual(tx *sql.Tx, m ManualRecord) (bool, error) {
 	if !m.Cached {
-		return writeManualSnapshot(tx, m, false)
+		return false, writeManualSnapshot(tx, m, false)
 	}
 	row, found, err := readItem(tx, m.Server, m.RatingKey)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if !found {
-		return writeManualSnapshot(tx, m, m.Gone)
-	}
-	if m.Gone {
+	switch {
+	case !found && m.Merged != "":
+		return false, nil
+	case !found:
+		return false, writeManualSnapshot(tx, m, m.Gone)
+	case m.Gone:
 		e := snapshotEvent(row, m.At, EventGone, SourceManual)
 		e.Action = m.Action
-		if _, err := insertEvent(tx, e); err != nil {
-			return err
-		}
-		return deleteItem(tx, m.Server, m.RatingKey)
+		return removeRow(tx, row, e, m.Merged)
 	}
-	return recordRequest(tx, m.Request, row)
+	return false, recordRequest(tx, m.Request, row)
 }
 
 // writeManualSnapshot writes the gone or request event of m from its
