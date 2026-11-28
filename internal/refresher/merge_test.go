@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/l3uddz/autorefresh/internal/plex"
 	"github.com/l3uddz/autorefresh/internal/store"
@@ -327,5 +328,29 @@ func TestCheckSettlesWhenTheRowLeavesDuringTheCheck(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// yieldingGone yields every gone check, as the store does when another
+// write can still change the item.
+type yieldingGone struct{ Store }
+
+func (yieldingGone) ApplyCheckGone(string, string, time.Time, store.Source, int64, store.Observation, string) (store.Item, bool, error) {
+	return store.Item{}, false, store.ErrCheckYielded
+}
+
+// A gone check that yields after a lookup on an unavailable server still
+// ends the run of the server.
+func TestRunMergeLookupUnavailableEndsTheRunAfterAYield(t *testing.T) {
+	f, fp, _ := runMatchFixture(t, checkAnswer{err: plex.ErrNotFound})
+	f.seed(testServer, moviesLib, incompleteItem("102"), store.NoSummary, 2)
+	fp.listErrs[guidKey(moviesLib, "plex://movie/m")] = fmt.Errorf("find: %w", plex.ErrUnavailable)
+	f.r.store = yieldingGone{f.r.store}
+
+	f.runUnavailable(t0)
+
+	wantCalls(t, sends(fp.calls), "Match 101 plex://movie/m", "Refresh 101")
+	if got := f.onlyRun(); got.Status != store.RunFailed {
+		t.Errorf("run = %+v, want a failed run", got)
 	}
 }

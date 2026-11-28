@@ -635,14 +635,14 @@ func runIDOf(run *serverRun) int64 {
 // checkGone handles a 404 of a check of item with the observation obs:
 // after a match (fu.guid), it looks up a merge, and records the item as
 // merged or gone (recordCheckGone). It returns stepSettled once the store
-// removed the row. A failed lookup that stops the server (stopError) comes
-// with it for a run, after the gone record, and is only logged for a
-// manual action.
+// removed the row, or stepYielded when the store yielded the save. A failed
+// lookup that stops the server (stopError) comes with either step for a
+// run, and is only logged for a manual action.
 func (r *Refresher) checkGone(ctx context.Context, item manualItem, run *serverRun, fu followUp, obs store.Observation) (checkStep, error) {
 	merged, lookupErr := r.lookupMerge(ctx, item.server, item.row, fu.guid)
 	removed, wroteMerge, err := r.recordCheckGone(item, run, obs, merged)
 	step, err := r.checkSaved(item, true, err)
-	if err != nil || step == stepYielded {
+	if err != nil {
 		return step, err
 	}
 	if wroteMerge {
